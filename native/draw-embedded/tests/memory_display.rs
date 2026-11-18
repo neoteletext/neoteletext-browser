@@ -115,3 +115,39 @@ fn the_browser_draws_with_its_pages() {
         .any(|at| screen.target.pixels[at] == red);
     assert!(found, "no page colours inside {place:?}");
 }
+
+/// Renderer parity PAR-37: the embedded back end draws a ReGIS picture, 800
+/// by 480, and a NAPLPS picture, the 480 by 500 raster, in a page's place,
+/// each pixel where the layout of PAR-31 puts it: the ReGIS picture with its
+/// page's row 0 above it, the NAPLPS one over the whole place with row 0
+/// over its first twenty lines.
+#[test]
+fn a_regis_and_a_naplps_picture_are_drawn_where_their_layout_puts_them() {
+    use interface_core::canvas::{Canvas, PictureLanguage, picture_layout};
+    use interface_core::geometry::Rect;
+    let key = PageKey { channel: CHANNEL, page: 0x100 };
+    let palette: Vec<[u8; 3]> = (0..16_u8).map(|entry| [entry * 16, 255 - entry * 16, entry]).collect();
+    // A teletext page all of colour 1, whose row 0 shows above the picture.
+    let page_palette = [[0, 0, 0], [10, 20, 30]];
+    let page = vec![1_u8; 480 * 500];
+    for language in [PictureLanguage::Regis, PictureLanguage::Naplps] {
+        let mut screen = Screen::new(Memory { pixels: vec![Rgb888::BLACK; (WIDTH * HEIGHT) as usize] });
+        screen.set_page(key, &page_palette, 0, &page).unwrap();
+        let (width, height) = (usize::from(language.width()), usize::from(language.height()));
+        // Each pixel's colour is its column's sixteenth.
+        let indices: Vec<u8> = (0..width * height).map(|pixel| u8::try_from((pixel % width) * 16 / width).unwrap()).collect();
+        screen.set_picture(key, language, &palette, &indices).unwrap();
+        let place = Rect::new(0.0, 0.0, f64::from(WIDTH), f64::from(HEIGHT));
+        assert!(screen.page(key, place));
+        let layout = picture_layout(language, place, true, false);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "places on the display, inside it")]
+        let at = |screen: &Screen<Memory>, x: f64, y: f64| screen.target.pixels[(y as u32 * WIDTH + x as u32) as usize];
+        let [red, green, blue] = palette[15];
+        let last = Rgb888::new(red, green, blue);
+        assert_eq!(at(&screen, layout.picture.x1 - 2.0, layout.picture.y1 - 2.0), last, "{language:?}: the picture's last column, at its place");
+        let [red, green, blue] = palette[0];
+        assert_eq!(at(&screen, layout.picture.x0 + 1.0, layout.picture.y1 - 2.0), Rgb888::new(red, green, blue), "{language:?}: its first");
+        assert_eq!(at(&screen, layout.header.x0 + 1.0, layout.header.y0 + 1.0), Rgb888::new(10, 20, 30), "{language:?}: row 0 of the page above it");
+        assert!(screen.set_picture(key, language, &palette, &indices[1..]).is_err(), "the wrong size is refused");
+    }
+}

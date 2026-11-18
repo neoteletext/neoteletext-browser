@@ -34,7 +34,7 @@ use embedded_graphics::pixelcolor::Rgb888;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle, RoundedRectangle, Triangle};
 use embedded_graphics::text::{Baseline, Text};
-use interface_core::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, Style};
+use interface_core::canvas::{Canvas, PAGE_HEIGHT, PAGE_WIDTH, PageKey, PictureLanguage, ROWS, Style, picture_layout};
 use interface_core::geometry::Point as LogicalPoint;
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
@@ -51,10 +51,14 @@ const SMALL_BELOW: f32 = 12.0;
 const MEDIUM_BELOW: f32 = 15.0;
 const LARGE_BELOW: f32 = 19.0;
 
-/// Why a page image was refused.
+/// The colours a picture's indices name: a ReGIS or NAPLPS colour map of
+/// sixteen entries (renderer parity PAR-37).
+const PICTURE_COLOURS: usize = 16;
+
+/// Why a page image or a picture was refused.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PageError {
-    /// Not 480 by 500 indices.
+    /// Not 480 by 500 indices, or for a picture not its language's size.
     Size,
     /// More colours than teletext has, or an index past the palette's end.
     Palette,
@@ -67,6 +71,15 @@ struct PageImage {
     indices: Vec<u8>,
 }
 
+/// A page's picture (renderer parity PAR-37): its language, which says its
+/// size (800 by 480, or the 480 by 500 teletext raster), its colour map and
+/// one index a pixel.
+struct PictureImage {
+    language: PictureLanguage,
+    palette: Vec<Rgb888>,
+    indices: Vec<u8>,
+}
+
 /// A display and the pages it can show. Each page is 240 kilobytes of
 /// indices, so a small chip keeps only the visible pages
 /// ([`Screen::retain_pages`]).
@@ -74,6 +87,9 @@ pub struct Screen<D> {
     /// The display drawn on.
     pub target: D,
     pages: BTreeMap<PageKey, PageImage>,
+    /// The pages drawn as pictures, each drawn in its page's place with the
+    /// page's row 0 above it.
+    pictures: BTreeMap<PageKey, PictureImage>,
     /// Clips in force, innermost last.
     clips: Vec<Rectangle>,
 }
@@ -110,7 +126,7 @@ where
 {
     /// A screen drawing on `target`, holding no pages yet.
     pub fn new(target: D) -> Self {
-        Self { target, pages: BTreeMap::new(), clips: Vec::new() }
+        Self { target, pages: BTreeMap::new(), pictures: BTreeMap::new(), clips: Vec::new() }
     }
 
     /// The area drawing may touch: the display, within every clip.
@@ -137,9 +153,60 @@ where
         Ok(())
     }
 
+    /// Draws `key` as a picture in `language` from now on (renderer parity
+    /// PAR-37): its colour map and one index a pixel, replacing any it had.
+    /// The page's own image, when set, gives the rows drawn above and
+    /// beneath it.
+    ///
+    /// # Errors
+    /// When the indices are not the language's size, or the colour map or
+    /// an index is out of range.
+    pub fn set_picture(&mut self, key: PageKey, language: PictureLanguage, palette: &[[u8; 3]], indices: &[u8]) -> Result<(), PageError> {
+        if indices.len() != language.pixels() {
+            return Err(PageError::Size);
+        }
+        if palette.is_empty() || palette.len() > PICTURE_COLOURS || indices.iter().any(|&index| usize::from(index) >= palette.len()) {
+            return Err(PageError::Palette);
+        }
+        let palette = palette.iter().map(|&[red, green, blue]| Rgb888::new(red, green, blue)).collect();
+        self.pictures.insert(key, PictureImage { language, palette, indices: indices.to_vec() });
+        Ok(())
+    }
+
+    /// Draws `key` as its teletext page again.
+    pub fn clear_picture(&mut self, key: PageKey) {
+        self.pictures.remove(&key);
+    }
+
     /// Forgets the images of pages not in `keep`.
     pub fn retain_pages(&mut self, keep: impl Fn(&PageKey) -> bool) {
         self.pages.retain(|key, _| keep(key));
+        self.pictures.retain(|key, _| keep(key));
+    }
+
+    /// Draws lines `first` to `first + lines` of an image `width` dots
+    /// across, `indices` into `palette`, scaled into `place`, each display
+    /// pixel taking the dot under its corner; `fallback` for a dot that is
+    /// not there.
+    #[allow(clippy::too_many_arguments, reason = "one image's source and its destination, each in their parts")]
+    fn blit(&mut self, place: Rect, width: u16, (first, lines): (u16, u16), palette: &[Rgb888], indices: &[u8], fallback: Rgb888) {
+        let destination = rectangle(place);
+        let area = destination.intersection(&self.clip());
+        let (across, down) = (destination.size.width, destination.size.height);
+        if across == 0 || down == 0 || area.size.width == 0 || area.size.height == 0 {
+            return;
+        }
+        let fallback = D::Color::from(fallback);
+        let colours = area.points().map(|at| {
+            let (left, top) = (at.x.saturating_sub(destination.top_left.x), at.y.saturating_sub(destination.top_left.y));
+            #[allow(clippy::cast_sign_loss, reason = "points inside the destination are at or after its top-left")]
+            let (x, y) = (left as u32, top as u32);
+            let column = x.saturating_mul(u32::from(width)).checked_div(across).unwrap_or(0);
+            let row = y.saturating_mul(u32::from(lines)).checked_div(down).unwrap_or(0).saturating_add(u32::from(first));
+            let dot = (row as usize).saturating_mul(usize::from(width)).saturating_add(column as usize);
+            indices.get(dot).and_then(|&index| palette.get(usize::from(index))).map_or(fallback, |&colour| D::Color::from(colour))
+        });
+        let _ = self.target.fill_contiguous(&area, colours);
     }
 }
 
@@ -205,6 +272,23 @@ where
     }
 
     fn page(&mut self, key: PageKey, place: Rect) -> bool {
+        // A picture in its page's place, with the page's row 0 above it
+        // (renderer parity PAR-31, PAR-37): contained, as the desktop
+        // draws it by default.
+        if let Some(picture) = self.pictures.remove(&key) {
+            let layout = picture_layout(picture.language, place, true, false);
+            let black = Rgb888::new(0, 0, 0);
+            self.fill(place, 0.0, Colour { red: 0, green: 0, blue: 0 });
+            let (width, height) = (picture.language.width(), picture.language.height());
+            self.blit(layout.picture, width, (0, height), &picture.palette, &picture.indices, black);
+            if let Some(page) = self.pages.remove(&key) {
+                let row = PAGE_HEIGHT.checked_div(ROWS).unwrap_or(0);
+                self.blit(layout.header, PAGE_WIDTH, (0, row), &page.palette, &page.indices, black);
+                self.pages.insert(key, page);
+            }
+            self.pictures.insert(key, picture);
+            return true;
+        }
         let Some(page) = self.pages.get(&key) else { return false };
         let destination = rectangle(place);
         let area = destination.intersection(&self.clip());
