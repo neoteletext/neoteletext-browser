@@ -204,6 +204,15 @@ struct Core {
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: neoteletext::typing::Typing,
+    /// The watch list passed to the sound helper for each channel's open
+    /// page: its page and its length, which a metered report must have
+    /// (page-rules.md RULE-33 item 4).
+    #[cfg(feature = "interaction")]
+    watching: BTreeMap<u32, (u16, usize)>,
+    /// What each channel's open page last counted skipped, dropped and
+    /// overrun (RULE-72).
+    #[cfg(feature = "interaction")]
+    rule_troubles: BTreeMap<u32, (u16, (u32, u32, u32))>,
     /// The tiles of the wall being selected in turn (REQ-1559).
     #[cfg(feature = "interaction")]
     wall_fill: wall_fill::WallFill,
@@ -360,6 +369,10 @@ impl Core {
             next_sleep_check: std::time::Instant::now().checked_add(SLEEP_CHECK).unwrap_or_else(std::time::Instant::now),
             #[cfg(feature = "interaction")]
             typing: neoteletext::typing::Typing::default(),
+            #[cfg(feature = "interaction")]
+            watching: BTreeMap::new(),
+            #[cfg(feature = "interaction")]
+            rule_troubles: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             wall_fill: wall_fill::WallFill::default(),
             #[cfg(feature = "interaction")]

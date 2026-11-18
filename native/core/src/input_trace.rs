@@ -145,20 +145,31 @@ mod tests {
         out.get(..length).unwrap().to_vec()
     }
 
+    /// The report of rule 2 at page tick 7 that carries `item`, a viewer's
+    /// input, as it goes under push protocol 9 (page-rules.md RULE-46).
+    fn reported(item: &Item<'_>) -> Vec<u8> {
+        use neoteletext_input::rules::{RuleBody, RuleEvent};
+        let carried = message(item);
+        let event = RuleEvent { on: ON, generation: 1, rule: 2, tick: 7, target: neoteletext_rules::table::Target::NONE, body: RuleBody::Input(&carried) };
+        message(&Item::Event(Event::RuleEvent(event)))
+    }
+
     /// The same event again counts up; another starts afresh; the total
     /// counts every one; what was typed is never shown.
     #[test]
     fn the_trace_counts_the_same_event_and_never_shows_typing() {
         let mut trace = InputTrace::default();
         let at = Point { column: 12, row: 5, pixels: None, mods: 0 };
-        let moved = message(&Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
-        assert_eq!(trace.note(&moved), TraceLine { text: "MOUSE move b0 12,5".into(), repeats: 1, sent: 1 });
+        let moved = reported(&Item::Event(Event::Mouse(Mouse { on: ON, action: MouseAction::Move, button: 0, at, device: Device::Mouse })));
+        assert_eq!(trace.note(&moved), TraceLine { text: "RULE 2 t7: MOUSE move b0 12,5".into(), repeats: 1, sent: 1 });
         assert_eq!(trace.note(&moved).repeats, 2);
         assert_eq!(trace.note(&moved).repeats, 3);
-        let typed = trace.note(&message(&Item::Text("secret")));
-        assert_eq!(typed, TraceLine { text: "TEXT 6 chars".into(), repeats: 1, sent: 4 });
+        let typed = trace.note(&reported(&Item::Text("secret")));
+        assert_eq!(typed, TraceLine { text: "RULE 2 t7: TEXT 6 chars".into(), repeats: 1, sent: 4 });
         let key = neoteletext_input::event::Key { on: ON, action: Action::Press, key: KeyCode::Character('s'), mods: 0, text: None, base: None, lost: false };
-        assert_eq!(trace.note(&message(&Item::Event(Event::Key(key)))).text, "KEY a character press");
+        assert_eq!(trace.note(&reported(&Item::Event(Event::Key(key)))).text, "RULE 2 t7: KEY a character press");
+        // RULE-46: input outside a report is not what this core sends.
+        assert_eq!(trace.note(&message(&Item::Event(Event::Key(key)))).text, "unreadable");
         let select = neoteletext_input::event::Select::new(0x128, 0).unwrap();
         assert_eq!(trace.note(&message(&Item::Event(Event::Select(select, "")))).text, "SELECT 128/0000");
         assert_eq!(trace.note(&message(&Item::Event(Event::Select(select, "a=1")))).text, "SELECT 128/0000?a=1");

@@ -18,15 +18,67 @@ fn key(character: char) -> InputIntent {
     InputIntent { key: PAGE, intent }
 }
 
-/// Every item the sends gave the fetcher, as the channel reads them.
+/// Every item the sends gave: the session's own messages, as the channel
+/// reads them from the fetcher, and each input event given to the open
+/// page's decoder (page-rules.md RULE-52 item 1), as this core kept it for
+/// the report a rule may ask for. A viewer's input reaches the fetcher
+/// only inside a `RULE_EVENT` (`gate.rs`' tests).
 fn items(sends: &[Send]) -> Vec<String> {
     let mut out = Vec::new();
     for send in sends {
-        if let Send::Fetcher { bytes, .. } = send {
-            read_message(bytes, &mut |item| out.push(format!("{item:?}"))).unwrap();
+        match send {
+            // A rule's report is read as the input it carries, with the
+            // PICK that follows it (RULE-46).
+            Send::Fetcher { bytes, .. } => read_message(bytes, &mut |item| match item {
+                Item::Event(Event::RuleEvent(rule)) if rule.input().is_some() => {
+                    let (carried, pick) = rule.input().unwrap();
+                    out.push(format!("{carried:?}"));
+                    out.extend(pick.map(|pick| format!("{:?}", Item::Event(Event::Pick(pick)))));
+                }
+                item => out.push(format!("{item:?}")),
+            })
+            .unwrap(),
+            Send::Decoder { kept, .. } => out.push(format!("{:?}", event::read(kept).unwrap().unwrap().0)),
+            _ => {}
         }
     }
     out
+}
+
+/// What the page's channel is sent when a rule of its table sends every
+/// input event given in `sends`, as the default table's rules do: the
+/// decoder's reports, each naming its event by sequence number, answered
+/// by this core with the `RULE_EVENT`s (RULE-52 item 3).
+fn reported(typing: &mut Typing, sends: &[Send], now_us: u64) -> Vec<Send> {
+    let mut out = Vec::new();
+    for send in sends {
+        if let Send::Decoder { channel, page, sequence, .. } = send {
+            let report = protocol::rules::Report {
+                page: *page,
+                generation: 1,
+                rule: 0,
+                tick: 0,
+                target_kind: 0,
+                target_number: 0,
+                what: protocol::rules::Reported::Input { sequence: *sequence },
+            };
+            out.extend(typing.report(*channel, &report, now_us));
+        }
+    }
+    out
+}
+
+/// An intent given, and reported by a rule that sends it.
+fn typed(typing: &mut Typing, intent: &InputIntent, now_us: u64) -> Vec<Send> {
+    let given = typing.input_intent(intent, now_us);
+    reported(typing, &given, now_us)
+}
+
+/// A table that asks for every class of input, the wheel over the whole
+/// page: what the server's default table for a channel asks (RULE-53).
+fn send_all() -> protocol::rules::RulesOpen {
+    let whole = protocol::rules::WheelRect { x: 0, y: 0, width: 480, height: 500 };
+    protocol::rules::RulesOpen { page: PAGE.page, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: vec![whole] }
 }
 
 /// Microseconds in a millisecond, for times written in milliseconds.
@@ -49,6 +101,8 @@ fn ready(caps: u32) -> Typing {
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.control(PAGE.channel, &welcome(caps), 0);
     typing.drawn(PAGE, 0);
+    // The page's decoder says its table asks for everything.
+    typing.rules_open(PAGE.channel, &send_all(), 0);
     typing
 }
 
@@ -63,10 +117,14 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "nothing before WELCOME");
     let welcomed = typing.control(PAGE.channel, &welcome(SELECT_CAP | CURSOR_CAP), 5);
-    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)", SELECT_PAGE]);
+    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", SELECT_PAGE]);
     assert!(welcomed.iter().any(|send| matches!(send, Send::Interface(state) if state.on && state.secure)));
     assert_eq!(items(&typing.input_intent(&key('a'), 5)), [] as [String; 0], "nothing on screen yet (REQ-1554)");
     typing.drawn(PAGE, 0);
+    assert_eq!(items(&typing.input_intent(&key('a'), 6)), [] as [String; 0], "the page has no table: nothing is given (RULE-50)");
+    // The page's decoder says its table asks for input: the page hears
+    // that it holds the focus, and its keys are given from then on.
+    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"]);
     assert_eq!(items(&typing.input_intent(&key('a'), 6)), [KEY_A]);
 }
 
@@ -111,6 +169,8 @@ fn input_goes_only_under_every_condition() {
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "nothing on screen");
     typing.drawn(PAGE, 0);
+    assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "no table asks for it (RULE-50)");
+    typing.rules_open(PAGE.channel, &send_all(), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [KEY_A]);
     let away = typing.focused(false, 0);
     let release = KEY_A.replace("Press", "Release").replace("Some(\"a\")", "None").replace("lost: false", "lost: true");
@@ -131,7 +191,8 @@ fn losing_the_focus_never_changes_the_selection() {
     assert!(leaving.iter().any(|send| matches!(send, Send::Interface(state) if !state.on)));
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, SUBCODE_ANY)));
     let back = typing.opened(Some(PAGE.channel), Some(PAGE), 6);
-    assert_eq!(items(&back), ["Event(FocusIn)"], "no SELECT");
+    assert_eq!(items(&back), [] as [String; 0], "no SELECT");
+    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 6).0), ["Event(FocusIn)"], "the focus, once its table asks again");
     // Another tab in front: the same.
     assert_eq!(items(&typing.opened(Some(8), None, 7)), ["Event(FocusOut)"]);
     assert_eq!(typing.selection(PAGE.channel), Some((PAGE.page, SUBCODE_ANY)));
@@ -144,7 +205,8 @@ fn the_wall_selects_nothing_and_a_page_after_it_is_selected_again() {
     typing.opened(Some(PAGE.channel), None, 5);
     assert_eq!(items(&typing.selects_nothing(PAGE.channel, 6)), ["Event(Select(Select { page: 0, sub: 16255 }, \"\"))"]);
     let back = typing.opened(Some(PAGE.channel), Some(PAGE), 7);
-    assert_eq!(items(&back), [SELECT_PAGE, "Event(FocusIn)"]);
+    assert_eq!(items(&back), [SELECT_PAGE], "the focus is the page's to hear once its table asks again and it is on screen");
+    assert_eq!(items(&typing.rules_open(PAGE.channel, &send_all(), 7).0), [] as [String; 0]);
     assert_eq!(items(&typing.input_intent(&key('a'), 8)), [] as [String; 0], "nothing on screen until the page is drawn again");
 }
 
@@ -156,8 +218,9 @@ fn input_is_stamped_with_the_page_on_screen() {
     let next = PageKey { page: 0x201, ..PAGE };
     assert_eq!(items(&typing.opened(Some(PAGE.channel), Some(next), 5)), ["Event(Select(Select { page: 513, sub: 16255 }, \"\"))"]);
     let sent = items(&typing.input_intent(&InputIntent { key: next, intent: key('a').intent }, 6));
-    assert_eq!(sent, [KEY_A], "the old page's stamp, which the channel drops");
+    assert_eq!(sent, [] as [String; 0], "the old page is on screen still, and its table is no longer the open page's (RULE-58)");
     typing.drawn(next, 0x0003);
+    typing.rules_open(PAGE.channel, &protocol::rules::RulesOpen { page: next.page, ..send_all() }, 7);
     let sent = items(&typing.input_intent(&InputIntent { key: next, intent: key('a').intent }, 7));
     assert_eq!(sent, [KEY_A.replace("page: 512, sub: 0", "page: 513, sub: 3")]);
 }
@@ -298,11 +361,8 @@ fn every_button_and_modifier_goes_as_input_md_lays_it_out() {
     for button in [LEFT, MIDDLE, RIGHT, BACK, FORWARD] {
         for (action, flags) in [(MouseAction::Press, DOT | MODS), (MouseAction::Release, RELEASE | DOT | MODS)] {
             let intent = InputIntent { key: PAGE, intent: Intent::Mouse { action, button, at } };
-            let sent: Vec<Vec<u8>> = typing
-                .input_intent(&intent, 0)
-                .into_iter()
-                .filter_map(|send| if let Send::Fetcher { bytes, .. } = send { Some(bytes) } else { None })
-                .collect();
+            let sent: Vec<Vec<u8>> =
+                typing.input_intent(&intent, 0).into_iter().filter_map(|send| if let Send::Decoder { kept, .. } = send { Some(kept) } else { None }).collect();
             assert_eq!(
                 sent,
                 [vec![0xFF, 0x02, STAMP[0], STAMP[1], STAMP[2], flags, button, 10, 5, 125, 110, SHIFT | ALT | CONTROL]],
@@ -391,11 +451,12 @@ fn the_rate_is_limited() {
     let mut typing = ready(SELECT_CAP);
     let mut sent = 0;
     for n in 0..200_u32 {
-        sent += items(&typing.input_intent(&key(char::from(b'a' + u8::try_from(n % 26).unwrap())), 0)).len();
+        sent += items(&typed(&mut typing, &key(char::from(b'a' + u8::try_from(n % 26).unwrap())), 0)).len();
     }
-    assert_eq!(sent, usize::try_from(neoteletext_input::MAX_PER_SECOND).unwrap() - 2, "RESIZE and FOCUS_IN counted");
+    assert_eq!(sent, usize::try_from(protocol::rules::SEND_BUDGET).unwrap(), "the gate's budget of reports a second (RULE-52 item 5)");
 }
 
+mod gate;
 mod pointer;
 mod resume;
 
@@ -462,7 +523,7 @@ fn a_channel_that_did_not_take_select_is_sent_none() {
     typing.input(PAGE.channel, true, false, 0);
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     let welcomed = typing.control(PAGE.channel, &welcome(CURSOR_CAP), 1);
-    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", "Event(FocusIn)"], "no SELECT at the start");
+    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })"], "no SELECT at the start");
     typing.drawn(PAGE, 0);
     let next = PageKey { page: 0x201, ..PAGE };
     assert_eq!(selects(&typing.opened(Some(PAGE.channel), Some(next), 2)), [] as [String; 0]);
@@ -480,8 +541,8 @@ fn select_counts_nothing_against_the_rate() {
     assert_eq!(selections, 200, "every selection went");
     let mut keys = 0;
     for n in 0..200_u32 {
-        keys += items(&typing.input_intent(&key(char::from(b'a' + u8::try_from(n % 26).unwrap())), 0)).len();
+        keys += items(&typed(&mut typing, &key(char::from(b'a' + u8::try_from(n % 26).unwrap())), 0)).len();
     }
-    assert_eq!(keys, usize::try_from(neoteletext_input::MAX_PER_SECOND).unwrap() - 2, "the same keys as with no selection: RESIZE and FOCUS_IN counted");
+    assert_eq!(keys, usize::try_from(protocol::rules::SEND_BUDGET).unwrap(), "the same keys as with no selection");
     assert_eq!(selects(&typing.select(PAGE.channel, PAGE.page, 3, "", 0)).len(), 1, "a selection goes when the rate is spent");
 }

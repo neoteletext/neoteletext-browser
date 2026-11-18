@@ -22,6 +22,10 @@ confine.workspace = true
 # A redirect's query is held to what SELECT carries in every build, with
 # typing compiled out too.
 neoteletext-input = { workspace = true }
+# The rule table's names for a target and a value, which a RULE_EVENT
+# carries (page-rules.md RULE-46): the types alone. No table is decoded or
+# evaluated in this process (RULE-58).
+neoteletext-rules.workspace = true
 unicode-normalization = { workspace = true, optional = true }
 interface-core.workspace = true
 protocol.workspace = true

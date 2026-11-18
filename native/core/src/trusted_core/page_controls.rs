@@ -231,7 +231,10 @@ impl Core {
         }
         self.session.page_drawn(key.channel);
         #[cfg(feature = "interaction")]
-        self.typing.drawn(key, step.shown);
+        {
+            let sends = self.typing.drawn(key, step.shown);
+            self.deliver_typing(sends)?;
+        }
         let awaited = self.awaiting().is_some_and(|(awaited, subpage)| awaited == key && subpage == step.shown);
         if awaited && self.select_event(SelectionEvent::Drew) == SelectionAction::Say {
             self.send(&ToInterface::Strip(self.strip()))?;

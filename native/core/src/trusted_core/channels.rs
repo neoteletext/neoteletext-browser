@@ -90,6 +90,13 @@ impl Core {
                     let _ = decoder.tell(message);
                 }
                 self.note(Level::Info, Some(*id), &format!("decoder: confined: {}", decoder.report()));
+                // A new decoder is told which of its pages is the open page
+                // of the active tab, whose table it evaluates (RULE-58).
+                #[cfg(feature = "interaction")]
+                if let Some(page) = self.typing.rules_page(*id) {
+                    let _ = decoder.tell(&ToDecoder::RulesPage(Some(page)));
+                }
+                self.rules_decoder_gone(*id);
                 self.decoders.insert(*id, decoder);
                 self.rewind_source(*id);
                 started = true;
@@ -209,6 +216,7 @@ impl Core {
         if let Some(decoder) = self.decoders.remove(&channel) {
             decoder.end();
         }
+        self.rules_decoder_gone(channel);
         let sends = self.hearing.channel_gone(channel);
         self.deliver(sends);
         if broke {

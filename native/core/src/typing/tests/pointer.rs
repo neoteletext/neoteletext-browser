@@ -123,8 +123,11 @@ fn a_waiting_move_goes_before_the_release() {
     assert_eq!(items(&typing.input_intent(&moved(end), 2 * MS)), [] as [String; 0]);
     let sends = typing.input_intent(&intent(Intent::Mouse { action: MouseAction::Release, button: 0, at: end }), 3 * MS);
     assert_eq!(items(&sends), [mouse(MouseAction::Move, 1, end, Device::Mouse), mouse(MouseAction::Release, 0, end, Device::Mouse)]);
-    let tags: Vec<_> = sends.iter().filter_map(|send| if let Send::Fetcher { move_of, more, .. } = send { Some((*move_of, *more)) } else { None }).collect();
-    assert_eq!(tags, [(Some(0), true), (None, false)], "the move tagged as the mouse's, both in one write");
+    // Both are given in the one moment, in order; a rule's report of each
+    // is a message of its own, counted, and never held as a contact's move
+    // (page-rules.md RULE-46).
+    let order: Vec<u32> = sends.iter().filter_map(|send| if let Send::Decoder { sequence, .. } = send { Some(*sequence) } else { None }).collect();
+    assert!(matches!(order.as_slice(), [first, second] if second == &first.wrapping_add(1)), "{order:?}");
     assert_eq!(typing.due(), None);
 }
 
@@ -242,8 +245,7 @@ fn each_contact_is_paced_alone_and_due_moves_leave_together() {
     typing.input_intent(&contact(TouchPhase::Moved, 2, at(9, 1, 2)), 2 * MS);
     let due = typing.take_due(MS + PERIOD_US);
     assert_eq!(items(&due), [mouse(MouseAction::Move, 1, at(1, 1, 2), Device::Touch), touch(MouseAction::Move, 1, at(9, 1, 2))]);
-    let tags: Vec<_> = due.iter().filter_map(|send| if let Send::Fetcher { move_of, more, .. } = send { Some((*move_of, *more)) } else { None }).collect();
-    assert_eq!(tags, [(Some(0), true), (Some(1), false)]);
+    assert_eq!(due.iter().filter(|send| matches!(send, Send::Decoder { .. })).count(), 2, "both given at the one moment");
 }
 
 /// REQ-RCH-053, REQ-RCH-043: a hostile interface cannot invent a contact,
@@ -304,7 +306,7 @@ fn a_moments_messages_leave_together() {
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     let sends = typing.control(PAGE.channel, &welcome(SELECT_CAP), 0);
     let more: Vec<bool> = sends.iter().filter_map(|send| if let Send::Fetcher { more, .. } = send { Some(*more) } else { None }).collect();
-    assert_eq!(more, [true, true, false], "RESIZE, PAGE, FOCUS_IN");
+    assert_eq!(more, [true, false], "RESIZE, SELECT");
 }
 
 /// REQ-1357, DEC-2383: what an interface sends cannot raise the moves' pace

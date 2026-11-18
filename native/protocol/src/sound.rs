@@ -17,6 +17,8 @@ const KIND_CLOSE: u8 = 3;
 const KIND_SOUNDING: u8 = 4;
 /// The metered values of a view (page-rules.md RULE-33 item 3, RULE-63).
 const KIND_METERED: u8 = 5;
+/// A view's local sounds were stopped for overrunning their time (RULE-62).
+const KIND_LOCAL_OVERRUN: u8 = 6;
 
 /// From the trusted core to the sound helper.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -53,6 +55,14 @@ pub enum FromSound {
         channel: u32,
         /// The values, at most [`audio::MAX_WATCH_SLOTS`].
         values: Vec<u8>,
+    },
+    /// Rendering one view's local sounds took longer than the buffers it
+    /// filled, for too many buffers running, and the sound helper stopped
+    /// them with all notes released (page-rules.md RULE-62): fault 7 for
+    /// that view's open page.
+    LocalOverrun {
+        /// The view's channel.
+        channel: u32,
     },
 }
 
@@ -121,6 +131,10 @@ pub fn write_from_sound(out: &mut dyn Write, message: &FromSound) -> Result<(), 
             payload.extend_from_slice(values);
             KIND_METERED
         }
+        FromSound::LocalOverrun { channel } => {
+            payload.extend_from_slice(&channel.to_be_bytes());
+            KIND_LOCAL_OVERRUN
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -140,6 +154,7 @@ pub fn read_from_sound(input: &mut dyn Read) -> Result<Option<FromSound>, Protoc
             let count = fields.count_u8(audio::MAX_WATCH_SLOTS, "metered values")?;
             FromSound::Metered { channel, values: fields.take(count)?.to_vec() }
         }
+        KIND_LOCAL_OVERRUN => FromSound::LocalOverrun { channel: fields.u32()? },
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

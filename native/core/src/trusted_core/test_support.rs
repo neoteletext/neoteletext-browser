@@ -126,7 +126,7 @@ pub(super) fn decoder_watched(core: &mut Core, channel: u32) -> mpsc::Receiver<V
 }
 
 /// What the core writes to the interface, a chunk at a time.
-pub(super) struct Sink(mpsc::Sender<Vec<u8>>);
+pub(super) struct Sink(pub(super) mpsc::Sender<Vec<u8>>);
 
 impl Write for Sink {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {

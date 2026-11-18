@@ -52,6 +52,9 @@ struct Heard {
     sounds: BTreeMap<Held, u32>,
     held: u64,
     muted: bool,
+    /// The audio channels a local sound was started on and not stopped or
+    /// replaced since (page-rules.md RULE-60).
+    local: [bool; neoteletext_audio::CHANNELS as usize],
 }
 
 /// The trusted core's record of what is heard.
@@ -147,11 +150,35 @@ impl Hearing {
                 if !heard.sounds.contains_key(&Held::Stream(*voice, *sound)) && !heard.sounds.contains_key(&Held::Stored(*sound)) {
                     return None;
                 }
+                // It replaces a local sound on that audio channel.
+                if let Some(local) = heard.local.get_mut(usize::from(*voice)) {
+                    *local = false;
+                }
             }
             // A local sound (page-rules.md RULE-63): its fields were
             // bounded as the message was read; the bank image and the
-            // setup block are passed on unread, as samples are.
-            Audio::Stop { .. } | Audio::Gain { .. } | Audio::LocalBank { .. } | Audio::Local { .. } | Audio::LocalMidi { .. } => {}
+            // setup block are passed on unread, as samples are. At most
+            // `MOST_LOCAL_SOUNDS` play at once in a view (RULE-60), and a
+            // MIDI message goes only to an audio channel a local sound
+            // was started on (RULE-21).
+            Audio::LocalBank { .. } | Audio::Gain { .. } => {}
+            Audio::Local { channel: voice, .. } => {
+                let others = heard.local.iter().zip(0_u8..).filter(|(local, other)| **local && other != voice).count();
+                if others >= neoteletext_audio::MOST_LOCAL_SOUNDS {
+                    return None;
+                }
+                *heard.local.get_mut(usize::from(*voice))? = true;
+            }
+            Audio::LocalMidi { channel: voice, .. } => {
+                if !heard.local.get(usize::from(*voice)).copied().unwrap_or(false) {
+                    return None;
+                }
+            }
+            Audio::Stop { channel: voice, .. } => {
+                if let Some(local) = heard.local.get_mut(usize::from(*voice)) {
+                    *local = false;
+                }
+            }
             // Only the trusted core resets, mutes or gives a watch list;
             // the protocol refuses them from a decoder, and they are
             // refused here too.

@@ -1060,6 +1060,7 @@ dependencies = [
  "neoteletext-formats",
  "neoteletext-icon",
  "neoteletext-input",
+ "neoteletext-rules",
  "neoteletext-web",
  "protocol",
  "release-identity",

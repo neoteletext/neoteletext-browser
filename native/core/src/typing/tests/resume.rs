@@ -16,6 +16,9 @@ fn resumable() -> Typing {
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: TOKEN, taken: None })), 0);
     typing.drawn(PAGE, 0);
+    // The page's table sends everything: the focus it is given is reported.
+    let focus = typing.rules_open(PAGE.channel, &send_all(), 0).0;
+    reported(&mut typing, &focus, 0);
     typing
 }
 
@@ -33,8 +36,8 @@ fn acknowledge(typing: &mut Typing, acked: u16) {
 #[test]
 fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
     let mut typing = resumable();
-    typing.input_intent(&key('a'), MS);
-    typing.input_intent(&key('b'), 2 * MS);
+    typed(&mut typing, &key('a'), MS);
+    typed(&mut typing, &key('b'), 2 * MS);
     acknowledge(&mut typing, 4);
     typing.input(PAGE.channel, false, true, 3 * MS);
     assert_eq!(items(&typing.input_intent(&key('c'), 4 * MS)), [] as [String; 0], "nothing while the connection is down");
@@ -53,7 +56,7 @@ fn a_resumed_session_sends_again_what_the_channel_had_not_taken() {
             "Event(Select(Select { page: 512, sub: 16255 }, \"\"))".to_owned()
         ]
     );
-    assert_eq!(items(&typing.input_intent(&key('a'), 7 * MS)), [KEY_A], "then input goes on");
+    assert_eq!(items(&typed(&mut typing, &key('a'), 7 * MS)), [KEY_A], "then input goes on");
     // The next connection resumes from the new token.
     typing.input(PAGE.channel, false, true, 8 * MS);
     let again = items(&typing.input(PAGE.channel, true, true, 9 * MS));
@@ -92,7 +95,7 @@ fn without_resume_or_after_leaving_a_reconnection_is_new() {
 #[test]
 fn a_false_count_is_refused() {
     let mut typing = resumable();
-    typing.input_intent(&key('a'), MS);
+    typed(&mut typing, &key('a'), MS);
     typing.input(PAGE.channel, false, true, 2 * MS);
     typing.input(PAGE.channel, true, true, 3 * MS);
     let refused = typing.control(PAGE.channel, &welcome_with(SELECT_CAP | RESUME_CAP, Some(Resumption { token: NEXT_TOKEN, taken: Some(900) })), 4 * MS);

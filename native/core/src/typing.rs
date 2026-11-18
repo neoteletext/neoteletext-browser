@@ -83,17 +83,43 @@ pub enum Send {
     },
     /// The typing state for the interface.
     Interface(TypingState),
+    /// An input event of the viewer for the open page's decoder, whose
+    /// table asked for its class (page-rules.md RULE-52 item 1): what the
+    /// evaluator matches, under the sequence number a report names it by.
+    Decoder {
+        /// The channel.
+        channel: u32,
+        /// The open page.
+        page: u16,
+        /// This core's number for the event.
+        sequence: u32,
+        /// The event as the evaluator matches it.
+        input: protocol::rules::RuleInput,
+        /// The event as this core keeps it, encoded: never given to the
+        /// decoder, and here only so that a test can read what was given.
+        #[cfg(test)]
+        kept: Vec<u8>,
+    },
+    /// The page of a channel that is the open page of the active tab, or
+    /// none, for the channel's decoder: only its table is evaluated
+    /// (RULE-58).
+    RulesPage {
+        /// The channel.
+        channel: u32,
+        /// The page, or none.
+        page: Option<u16>,
+    },
 }
 
 /// One channel's input connection.
 #[derive(Debug)]
-#[allow(clippy::struct_excessive_bools, reason = "open, secure, wheel and started are independent facts about one connection, not states of one thing")]
+#[allow(clippy::struct_excessive_bools, reason = "open, secure and started are independent facts about one connection, not states of one thing")]
 struct Channel {
     open: bool,
     secure: bool,
-    /// The channel uses the mouse wheel over its pages (`push.wheel`,
-    /// DEC-6447).
-    wheel: bool,
+    /// The gate of the open page's rule table (page-rules.md RULE-52):
+    /// what its decoder said it asks for, and the events given it.
+    gate: gate::Gate,
     /// The session, kept across a lost connection when the channel set
     /// RESUME (DOC-1923).
     session: ResumableSession,
@@ -151,7 +177,7 @@ impl Channel {
         Self {
             open: false,
             secure: false,
-            wheel: false,
+            gate: gate::Gate::default(),
             session: ResumableSession::new(OFFERED),
             started: false,
             cursor: None,
@@ -177,10 +203,16 @@ impl Channel {
     /// count after it, if it went. A move is tagged with its contact, and
     /// every pointer event's position is kept for its gone.
     fn send(&mut self, channel: u32, item: &Item<'_>, now_us: u64, sends: &mut Vec<Send>) -> Option<u16> {
-        // RULE-46, RULE-50: a viewer's input goes only as a report the
-        // page's rule table asks for.
+        // RULE-46, RULE-50, RULE-52: a viewer's input goes to the page's
+        // decoder when its table asks for it, and to the channel only as a
+        // report that table's rules make.
         if event::is_page_input(item) {
-            return None;
+            if !self.give(channel, item, now_us, sends) {
+                return None;
+            }
+            self.sent_pointer(item);
+            self.down.take(item, &mut |_, _| {});
+            return Some(self.session.count());
         }
         let mut out = [0_u8; MAX_MESSAGE];
         match self.session.send(item, clock(now_us), &mut out) {
@@ -319,7 +351,9 @@ impl Typing {
             refused: state.is_some_and(|state| state.open && state.session.state() == State::Refused),
             cursor: cursor.filter(|_| on),
             round_trip_us: state.and_then(|state| state.round_trip_us).filter(|_| on),
-            wheel: state.is_some_and(|state| state.wheel),
+            // The wheel is the page's only where an enabled `wheel` rule
+            // applies under the pointer (RULE-51 item 4).
+            wheel: on && state.is_some_and(|state| state.gate.wheel_here()),
         })
     }
 
@@ -484,25 +518,33 @@ impl Typing {
     }
 
     /// PICK (the engine's REQ-6337): what lay under the pointer of the
-    /// pointer event just sent for `key`, a page the ReGIS renderer draws.
-    /// It goes under the conditions the event itself went under.
-    pub fn pick(&mut self, key: PageKey, pick: event::Pick, now_us: u64) -> Vec<Send> {
-        let mut sends = Vec::new();
+    /// pointer event just given for `key`, a page the ReGIS renderer draws.
+    /// It is kept with that event and follows it inside the event's report
+    /// (page-rules.md RULE-46); whether it was kept.
+    pub fn pick(&mut self, key: PageKey, pick: event::Pick) -> bool {
         if !self.on(key.channel) || self.opened != Some(key) || self.away() {
-            return sends;
+            return false;
         }
-        if let Some(state) = self.channels.get_mut(&key.channel).filter(|state| state.on_screen == Some(pick.on)) {
-            state.send(key.channel, &Item::Event(Event::Pick(pick)), now_us, &mut sends);
-        }
-        sends
+        self.channels.get_mut(&key.channel).filter(|state| state.on_screen == Some(pick.on)).is_some_and(|state| state.keep_pick(pick))
     }
 
     /// The decoder of `key`'s channel drew `key`'s sub-page `sub`: what
-    /// input is stamped with from now on (REQ-1555).
-    pub fn drawn(&mut self, key: PageKey, sub: u16) {
+    /// input is stamped with from now on (REQ-1555). A page whose table
+    /// asks for the focus hears that it holds it, if it was not on screen
+    /// when its table was taken.
+    pub fn drawn(&mut self, key: PageKey, sub: u16) -> Vec<Send> {
+        let mut sends = Vec::new();
+        let holds = self.takes_keys(key);
         if let Some(state) = self.channels.get_mut(&key.channel) {
             state.on_screen = Stamp::new(key.page, sub);
+            if let Some(stamp) = state.on_screen {
+                state.gate.drawn(stamp);
+                if holds {
+                    state.give_focus_owed(key.channel, 0, &mut sends);
+                }
+            }
         }
+        sends
     }
 
     /// Whether a page is open for typing: the active tab's open page's
@@ -537,6 +579,20 @@ impl Typing {
         for channel in [before.0, active].into_iter().flatten() {
             self.tell(channel, now_us, &mut sends);
         }
+        // The page that was open is no longer the one keys go to: its
+        // table is evaluated no more, and nothing more is given for it
+        // (page-rules.md RULE-58). The page now open is its channel's.
+        if let Some(left) = before.1.filter(|left| Some(*left) != opened) {
+            if let Some(state) = self.channels.get_mut(&left.channel) {
+                state.gate.closing(now_us);
+            }
+            if opened.is_none_or(|opened| opened.channel != left.channel) {
+                sends.push(Send::RulesPage { channel: left.channel, page: None });
+            }
+        }
+        if let Some(key) = opened {
+            sends.push(Send::RulesPage { channel: key.channel, page: Some(key.page) });
+        }
         if opened.is_none()
             && let Some(before) = before.1
         {
@@ -566,9 +622,6 @@ impl Typing {
         let was_open = state.open;
         state.open = open;
         state.secure = open && secure;
-        if !open {
-            state.wheel = false;
-        }
         // The channel takes everything held as released when the connection
         // goes (DOC-1923), resumed or not.
         state.pointer_forgotten();
@@ -617,6 +670,7 @@ impl Typing {
     /// session's rate, a move at the pointer's pace; otherwise dropped.
     pub fn input_intent(&mut self, input: &InputIntent, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
+        let mut wheel_changed = false;
         let channel = input.key.channel;
         if !self.on(channel) || self.opened != Some(input.key) || self.away() {
             return sends;
@@ -626,9 +680,25 @@ impl Typing {
         // selection not yet drawn leaves the old page's stamp, which the
         // channel drops (REQ-1555).
         let Some(on) = state.on_screen else { return sends };
+        // Where the pointer is decides whose the wheel is (RULE-51 item 4).
+        if let Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. } = &input.intent {
+            let before = state.gate.wheel_here();
+            state.gate.pointer_at(*at);
+            if state.gate.wheel_here() != before {
+                wheel_changed = true;
+            }
+        }
         if matches!(input.intent, Intent::Mouse { .. } | Intent::Gone | Intent::Touch { .. }) {
             state.pointer(channel, &input.intent, on, now_us, &mut sends);
+            if wheel_changed {
+                self.tell_interface(&mut sends);
+            }
             return together(sends);
+        }
+        // The wheel goes to the page only inside a rectangle an enabled
+        // `wheel` rule applies in; anywhere else it is the browser's.
+        if matches!(input.intent, Intent::Wheel { .. }) && !state.gate.wheel_here() {
+            return sends;
         }
         // Text goes in Normalization Form C (DOC-1937,
         // REQ-INT-116), a KEY's text too; a paste goes as it was copied.
@@ -722,8 +792,10 @@ impl Typing {
     }
 }
 
+mod gate;
 mod pointer;
 mod records;
+mod rules;
 
 #[cfg(test)]
 mod tests;

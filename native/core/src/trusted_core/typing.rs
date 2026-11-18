@@ -9,16 +9,19 @@ use super::Core;
 impl Core {
     /// PICK for a pointer event on a page drawn in ReGIS: the numbered
     /// drawing under the pointer, from the pick record of the picture the
-    /// interface was last sent. Nothing for any other page or event.
+    /// interface was last sent, kept with the event just given so that it
+    /// follows it in the event's report (page-rules.md RULE-46). Nothing
+    /// for any other page or event.
     #[cfg(feature = "interaction")]
-    fn pick_under(&mut self, input: &protocol::interaction::InputIntent) -> Vec<neoteletext::typing::Send> {
+    fn pick_under(&mut self, input: &protocol::interaction::InputIntent) {
         use protocol::interaction::Intent;
-        let (Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. }) = &input.intent else { return Vec::new() };
+        if !matches!(input.intent, Intent::Mouse { .. } | Intent::Touch { .. } | Intent::Wheel { .. }) {
+            return;
+        }
         // The place is the picture's own pixel, as the interface said it
         // before this event (REQ-6377), not the event's dot of the page image.
-        let _ = at;
-        let (Some(pixel), Some(on)) = (self.regis_pointing.at(input.key), self.typing.on_screen(input.key.channel)) else { return Vec::new() };
-        let Some(under) = self.regis.under(input.key, on.sub, pixel) else { return Vec::new() };
+        let (Some(pixel), Some(on)) = (self.regis_pointing.at(input.key), self.typing.on_screen(input.key.channel)) else { return };
+        let Some(under) = self.regis.under(input.key, on.sub, pixel) else { return };
         let pick = neoteletext_input::event::Pick {
             on,
             drawing: under.drawing,
@@ -28,7 +31,29 @@ impl Core {
             picture_y: under.picture_y,
             commits: under.commits,
         };
-        self.typing.pick(input.key, pick, self.now_us())
+        self.typing.pick(input.key, pick);
+    }
+
+    /// What the trusted core derives for a pointer intent before the
+    /// typing rules take it (RULE-52 item 1): the pixel of the page's
+    /// picture, for a page a renderer other than teletext's draws, and
+    /// the teletext control under its cell.
+    #[cfg(feature = "interaction")]
+    fn pointer_context(&mut self, input: &protocol::interaction::InputIntent) {
+        use protocol::interaction::Intent;
+        let cell = match &input.intent {
+            Intent::Mouse { at, .. } | Intent::Touch { at, .. } | Intent::Wheel { at, .. } => u8::try_from(at.column).ok().zip(u8::try_from(at.row).ok()),
+            Intent::Hover { column, row, .. } => Some((*column, *row)),
+            _ => return,
+        };
+        #[cfg(feature = "links")]
+        let control = cell.map_or(0, |(column, row)| self.links.control_at(input.key, column, row));
+        #[cfg(not(feature = "links"))]
+        let control = {
+            let _ = cell;
+            0
+        };
+        self.typing.pointer_context(input.key.channel, self.regis_pointing.at(input.key), control);
     }
 
     /// The keyboard's intents: input for the open page's channel, and the
@@ -45,15 +70,15 @@ impl Core {
                 {
                     return Ok(());
                 }
-                let mut sends = self.typing.input_intent(&intent, self.now_us());
-                // On a page drawn in ReGIS, a pointer event that went is
-                // followed by what lay under it (PICK, the engine's REQ-6337).
-                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
-                    sends.extend(self.pick_under(&intent));
-                }
-                // What went is answered by the page's next frame, which
-                // its interval does not hold (REQ-RCH-002).
-                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
+                self.pointer_context(&intent);
+                let sends = self.typing.input_intent(&intent, self.now_us());
+                // What was given to the page's decoder (RULE-52 item 1).
+                if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Decoder { .. })) {
+                    // On a page drawn in ReGIS, a pointer event is followed
+                    // by what lay under it (PICK, the engine's REQ-6337).
+                    self.pick_under(&intent);
+                    // It is answered by the page's next frame, which its
+                    // interval does not hold (REQ-RCH-002, RULE-65).
                     self.frames.input(intent.key);
                     if intent.intent.is_activation() {
                         // The viewer acted: a channel may now ask to know
@@ -119,6 +144,12 @@ impl Core {
                         let _ = write_to_fetcher(input, &ToFetcher::MeasureRoundTrip(on));
                     }
                 }
+                // An input event for the open page's decoder, whose table
+                // asked for its class (RULE-52 item 1).
+                Send::Decoder { channel, page, sequence, input, .. } => {
+                    self.tell(channel, protocol::decoder::ToDecoder::RuleInput { page, sequence, input });
+                }
+                Send::RulesPage { channel, page } => self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page)),
                 Send::Interface(state) => {
                     self.send(&ToInterface::Typing(state))?;
                     // Keys may have started or stopped going to the

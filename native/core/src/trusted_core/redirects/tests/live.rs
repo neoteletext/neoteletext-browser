@@ -281,10 +281,14 @@ fn welcomed(test: &mut Test, channel: u32) {
     test.core.typing.control(channel, &body[..length], 0);
 }
 
-/// The open page's first frame is drawn.
+/// The open page's first frame is drawn, and its decoder says its table
+/// asks for every class of input, as the default table of a channel does
+/// (page-rules.md RULE-53): without a table no key is the page's (RULE-50).
 fn draw(test: &mut Test, channel: u32, page: u16) {
     let step = SubPageStep { count: 1, shown: 0, place: Some(0), previous: None, next: None };
     test.core.decoded(channel, FromDecoder::SubPages { page, step }).unwrap();
+    let asks = protocol::rules::RulesOpen { page, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: Vec::new() };
+    test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
 }
 
 /// A key is pressed on the open page.

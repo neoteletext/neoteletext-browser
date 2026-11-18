@@ -231,6 +231,23 @@ impl Links {
                 .is_some_and(|image| image.controls.iter().any(|control| control.column == column && control.row == row))
     }
 
+    /// The control of the latest image of the page open in the active tab
+    /// whose cells hold the cell at `column`, `row`: its number, from 1 in
+    /// the order the page declares its controls (page-rules.md RULE-12),
+    /// or 0 for none.
+    #[must_use]
+    pub fn control_at(&self, key: PageKey, column: u8, row: u8) -> u16 {
+        if Some(key) != self.opened {
+            return 0;
+        }
+        self.pages
+            .get(&key)
+            .and_then(|state| state.images.front())
+            .and_then(|image| image.controls.iter().position(|control| control.contains(column, row)))
+            .and_then(|place| u16::try_from(place.saturating_add(1)).ok())
+            .unwrap_or(0)
+    }
+
     /// Whether `area` is a link's cells or a control of the latest image of
     /// `key`.
     fn lights(&self, key: PageKey, area: Area) -> bool {

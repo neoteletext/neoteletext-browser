@@ -640,6 +640,9 @@ mod tests {
             assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(message));
         }
         assert!(write_from_sound(&mut Vec::new(), &FromSound::Metered { channel: 7, values: vec![0; MAX_WATCH_SLOTS + 1] }).is_err());
+        let mut bytes = Vec::new();
+        write_from_sound(&mut bytes, &FromSound::LocalOverrun { channel: 9 }).unwrap();
+        assert_eq!(read_from_sound(&mut bytes.as_slice()).unwrap(), Some(FromSound::LocalOverrun { channel: 9 }));
         let query = FromFetcher::RulesQuery { page: 0x101, identifier: u32::MAX };
         let mut bytes = Vec::new();
         fetcher_writes(&mut bytes, &query).unwrap();

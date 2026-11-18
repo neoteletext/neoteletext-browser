@@ -96,7 +96,7 @@ impl Core {
                 }
             }
             // A state query for a page of the channel (RULE-47).
-            FromFetcher::RulesQuery { page, identifier } => self.rules_query(channel, page, identifier)?,
+            FromFetcher::RulesQuery { page, identifier } => self.rules_query(channel, page, identifier),
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
                 if open && self.typing.selection(channel).is_none() {
