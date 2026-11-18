@@ -98,70 +98,35 @@ const _: () = assert!(
         && CANVAS_HEIGHT <= DESIGN_HEIGHT
 );
 
-/// `value`, a length or place along a side of `from` pixels, along the
-/// same side of `to` pixels, to the nearest pixel (halves away from the
-/// top left).
-fn rescale(value: i64, from: i64, to: i64) -> i64 {
-    value.saturating_mul(to).saturating_mul(2).saturating_add(from).div_euclid(from.saturating_mul(2).max(1))
-}
-
-/// A place of the 640 by 480 picture on the canvas.
-fn canvas_x(x: i16) -> i16 {
-    i16::try_from(rescale(i64::from(x), DESIGN_WIDTH, CANVAS_WIDTH)).unwrap_or(i16::MAX)
-}
-
-/// See [`canvas_x`].
-fn canvas_y(y: i16) -> i16 {
-    i16::try_from(rescale(i64::from(y), DESIGN_HEIGHT, CANVAS_HEIGHT)).unwrap_or(i16::MAX)
-}
-
-/// A size of the 640 by 480 picture on the canvas: at least a pixel.
-fn canvas_size(size: u16, from: i64, to: i64) -> u16 {
-    u16::try_from(rescale(i64::from(size), from, to).max(1)).unwrap_or(u16::MAX)
-}
-
-/// An object of the 640 by 480 picture as the renderer draws it on the
-/// canvas: its rectangle and its origin in the macro's drawing scaled, the
-/// macro being drawn at the canvas's scale.
-fn on_canvas(object: &Object) -> Object {
-    Object {
-        x: canvas_x(object.x),
-        y: canvas_y(object.y),
-        width: canvas_size(object.width, DESIGN_WIDTH, CANVAS_WIDTH),
-        height: canvas_size(object.height, DESIGN_HEIGHT, CANVAS_HEIGHT),
-        origin_x: canvas_x(object.origin_x),
-        origin_y: canvas_y(object.origin_y),
-        ..object.clone()
-    }
-}
-
-/// A rectangle of the canvas in the 640 by 480 picture's pixels: left,
-/// top, right and bottom.
-fn design_rectangle(bounds: naplps::Rect) -> (i32, i32, i32, i32) {
-    let back = |value: u32, to: i64, from: i64| i32::try_from(rescale(i64::from(value), from, to)).unwrap_or(i32::MAX);
-    (
-        back(bounds.x, DESIGN_WIDTH, CANVAS_WIDTH),
-        back(bounds.y, DESIGN_HEIGHT, CANVAS_HEIGHT),
-        back(bounds.x.saturating_add(bounds.width), DESIGN_WIDTH, CANVAS_WIDTH),
-        back(bounds.y.saturating_add(bounds.height), DESIGN_HEIGHT, CANVAS_HEIGHT),
-    )
-}
-
 /// The pixel of the 640 by 480 picture (RULE-13) under the dot (`x`, `y`)
 /// of the raster a NAPLPS page is drawn on. A dot of the border lines
 /// above or below the display area is given as the first row past the
 /// picture's bottom, which no rectangle (cut to the picture, RULE-13) and
 /// no object holds: the press, release or move is still followed
 /// (RULE-8), on nothing.
+/// The pixel of the display area is the renderer's own rule for where a
+/// canvas pixel lies in the design picture, `naplps::design_pixel`, so the
+/// browser and the renderer share one (the NAPLPS renderer's TODO-6814).
 #[must_use]
 pub(crate) fn design_point(x: u16, y: u16) -> (u16, u16) {
-    let across = i64::from(x).saturating_mul(DESIGN_WIDTH).checked_div(CANVAS_WIDTH).unwrap_or(0).min(DESIGN_WIDTH);
-    let down = match i64::from(y).checked_sub(i64::from(NAPLPS_TOP_LINE)) {
-        Some(line) if (0..CANVAS_HEIGHT).contains(&line) => line.saturating_mul(DESIGN_HEIGHT).checked_div(CANVAS_HEIGHT).unwrap_or(0),
-        _ => DESIGN_HEIGHT,
+    let Some(line) = y.checked_sub(NAPLPS_TOP_LINE).filter(|line| i64::from(*line) < CANVAS_HEIGHT) else {
+        return (design_x(x), u16::try_from(DESIGN_HEIGHT).unwrap_or(u16::MAX));
     };
+    let (across, down) = naplps::design_pixel(u32::from(x), u32::from(line), CANVAS, CANVAS_LINES);
     (u16::try_from(across).unwrap_or(u16::MAX), u16::try_from(down).unwrap_or(u16::MAX))
 }
+
+/// The design picture's column of the raster's column `x`, for a dot of
+/// the border lines, which lies on no object.
+fn design_x(x: u16) -> u16 {
+    let (across, _) = naplps::design_pixel(u32::from(x), 0, CANVAS, CANVAS_LINES);
+    u16::try_from(across).unwrap_or(u16::MAX)
+}
+
+/// The canvas's width and height as the renderer takes them.
+const CANVAS: u32 = PAGE_WIDTH as u32;
+/// See [`CANVAS`].
+const CANVAS_LINES: u32 = NAPLPS_DISPLAY_LINES as u32;
 
 /// One sub-page's NAPLPS.
 struct Page {
@@ -315,11 +280,11 @@ impl Page {
     }
 
     /// Gives the terminal all the sub-page's objects, defined in the 640 by
-    /// 480 picture's pixels, scaled to the canvas; false, changing nothing,
+    /// 480 picture's pixels, which the renderer places on the canvas itself
+    /// (ANIM-11; the NAPLPS renderer's TODO-6814); false, changing nothing,
     /// when it refuses them.
     fn set_objects(&mut self, objects: Vec<Object>) -> bool {
-        let scaled: Vec<Object> = objects.iter().map(on_canvas).collect();
-        if self.terminal.set_objects(&scaled).is_err() {
+        if self.terminal.set_objects(&objects).is_err() {
             return false;
         }
         self.objects = objects;
@@ -335,7 +300,7 @@ impl Page {
     /// Redefines one object, or adds it (DEC-6638 item 3), keeping every
     /// other; false, changing nothing, when the terminal refuses it.
     fn replace_object(&mut self, object: Object) -> bool {
-        if self.terminal.replace_object(on_canvas(&object)).is_err() {
+        if self.terminal.replace_object(object.clone()).is_err() {
             return false;
         }
         let number = object.number;
@@ -427,8 +392,10 @@ impl Page {
         let mut record = vec![0_u16; PICTURE.pixels()];
         let mut origins = Vec::new();
         for object in objects {
-            // No rectangle while it is not shown.
-            let Some(bounds) = self.terminal.bounds(object.number) else { continue };
+            // No rectangle while it is not shown; on the canvas, as the
+            // renderer clips the object when it composes it, so the record
+            // picks exactly what is drawn (TODO-6814).
+            let Some(bounds) = self.terminal.bounds(object.number).and_then(|bounds| bounds.on_canvas(CANVAS, CANVAS_LINES)) else { continue };
             let place = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
             let top = TOP.saturating_add(place(bounds.y));
             for row in record.as_chunks_mut::<WIDTH>().0.iter_mut().skip(top).take(place(bounds.height)) {
@@ -452,7 +419,7 @@ impl Page {
             Some(state) => {
                 let given = Animation {
                     shown: blinked_off.or(state.shown),
-                    position: state.position.map(|(x, y)| (canvas_x(x), canvas_y(y))),
+                    position: state.position,
                     layer: state.layer,
                     order: state.order,
                     frame: Some(state.frame),
@@ -603,9 +570,11 @@ impl Page {
             order: state.order.unwrap_or(object.order),
             x,
             y,
+            // The renderer's bounds are the design picture's already.
             bounds: self.terminal.bounds(number).map(|bounds| {
-                let (left, top, right, bottom) = design_rectangle(bounds);
-                Bounds { left, top, right, bottom }
+                let edge = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
+                let (left, top) = (edge(bounds.x), edge(bounds.y));
+                Bounds { left, top, right: edge(bounds.x.saturating_add(bounds.width)), bottom: edge(bounds.y.saturating_add(bounds.height)) }
             }),
         })
     }
@@ -997,8 +966,8 @@ impl NaplpsPages {
         if i64::from(x) >= DESIGN_WIDTH || i64::from(y) >= DESIGN_HEIGHT {
             return 0;
         }
-        let on = |value: u16, from: i64, to: i64| u32::try_from(i64::from(value).saturating_mul(to).checked_div(from).unwrap_or(0)).unwrap_or(u32::MAX);
-        let found = held.terminal.objects_at(on(x, DESIGN_WIDTH, CANVAS_WIDTH), on(y, DESIGN_HEIGHT, CANVAS_HEIGHT));
+        // The rectangles are the design picture's, as the pixel is.
+        let found = held.terminal.objects_at(u32::from(x), u32::from(y));
         let mut count = 0_usize;
         for (slot, number) in objects.iter_mut().zip(found) {
             *slot = number;
@@ -1149,7 +1118,7 @@ mod tests {
     fn a_dot_of_the_raster_is_the_640_by_480_pixel_under_it() {
         assert_eq!(design_point(0, 19), (0, 0));
         assert_eq!(design_point(12, 19), (16, 0), "column 1 of the raster is the picture's 16th pixel");
-        assert_eq!(design_point(479, 480), (638, 478));
+        assert_eq!(design_point(479, 480), (639, 479), "the last dot's centre lies in the last design pixel (naplps::design_pixel)");
         assert_eq!(design_point(240, 250), (320, 240), "the middle");
         assert_eq!(design_point(100, 18), (133, 480), "above the display area: on nothing");
         assert_eq!(design_point(100, 481), (133, 480), "below it: on nothing");
@@ -1190,14 +1159,20 @@ mod tests {
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..square(7, "") }]);
         let drawn = pages.take(0x100, Some(0)).unwrap();
         let pixels = unpack(&drawn.picture.packed);
-        // (320, 240) is the canvas's (240, 231), the raster's (240, 250);
-        // 64 by 48 is 48 by 46.
-        assert_eq!(pixels[250 * 480 + 240], 3, "the hidden region's cover, at its place");
-        assert_eq!(pixels[250 * 480 + 287], 3);
-        assert_eq!(pixels[250 * 480 + 288], 0, "past its right edge");
-        assert_eq!(pixels[249 * 480 + 240], 0, "above its top");
-        assert_eq!(pixels[295 * 480 + 240], 3);
-        assert_eq!(pixels[296 * 480 + 240], 0, "past its bottom");
+        // (320, 240), 64 by 48, lies on the canvas where the renderer's own
+        // rule puts it (`Rect::on_canvas`), the raster's lines 19 lower.
+        let on = naplps::Rect { x: 320, y: 240, width: 64, height: 48 }.on_canvas(480, 462).unwrap();
+        let (left, top) = (on.x as usize, on.y as usize + TOP);
+        let (right, bottom) = (left + on.width as usize, top + on.height as usize);
+        // Design row 240 is canvas row 231 less a fraction, so canvas row
+        // 230, which straddles its top edge, is the object's too.
+        assert_eq!((left, top), (240, 249), "the raster's (240, 249)");
+        assert_eq!(pixels[top * 480 + left], 3, "the hidden region's cover, at its place");
+        assert_eq!(pixels[top * 480 + right - 1], 3);
+        assert_eq!(pixels[top * 480 + right], 0, "past its right edge");
+        assert_eq!(pixels[(top - 1) * 480 + left], 0, "above its top");
+        assert_eq!(pixels[(bottom - 1) * 480 + left], 3);
+        assert_eq!(pixels[bottom * 480 + left], 0, "past its bottom");
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![square(7, "")]);
         let pick = pages.take(0x100, Some(0)).unwrap().pick.unwrap();
         assert_eq!(pick.at(PictureLanguage::Naplps, 240, 250).drawing, 7, "picked at its dot of the raster");
@@ -1210,6 +1185,30 @@ mod tests {
         assert_eq!(found[0], 7);
         assert_eq!(pages.objects_at(0x100, Some(0), 310, 250, &mut found), 0);
         assert_eq!(pages.objects_at(0x100, Some(0), 330, 480, &mut found), 0, "past the picture's bottom: the border lines");
+    }
+
+    /// The NAPLPS renderer's TODO-6814 on the 480 by 462 raster: an object
+    /// of a component-library page's row 7, design rows 126 to 145, is
+    /// drawn whole on canvas rows 121 to 140 (raster lines 140 to 159), and
+    /// the pick record names it on exactly those lines. The browser scaled
+    /// objects to the canvas itself before, so the renderer scaled them a
+    /// second time, and its own rounding drew the object a line short.
+    #[test]
+    fn an_object_on_a_row_of_cells_is_drawn_whole_and_picked_where_drawn() {
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, b"A"));
+        let cell_row = Object { x: 0, y: 126, width: 64, height: 20, ..square(7, "") };
+        // Hidden, a region shows its cover; shown, it is picked.
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..cell_row.clone() }]);
+        let pixels = unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed);
+        let lines: Vec<usize> = (0..500).filter(|&line| pixels[line * 480 + 10] == 3).collect();
+        assert_eq!(lines, (140..160).collect::<Vec<_>>(), "drawn on raster lines 140 to 159");
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![cell_row]);
+        let pick = pages.take(0x100, Some(0)).unwrap().pick.unwrap();
+        let picked: Vec<usize> = (0..500).filter(|&line| pick.at(PictureLanguage::Naplps, 10, line).drawing == 7).collect();
+        assert_eq!(picked, lines, "picked on exactly the lines drawn");
+        let state = pages.target_state(0x100, Some(0), 7).unwrap();
+        assert_eq!(state.bounds, Some(Bounds { left: 0, top: 126, right: 64, bottom: 146 }), "its rectangle in the design picture");
     }
 
     /// A filled rectangle of colour-map entry `entry` over the bottom left
@@ -1373,7 +1372,7 @@ mod tests {
         assert_eq!(pages.labels(0x100, 0), [(7, "Pause"), (8, "Stop")]);
         assert_eq!(pages.title(0x100), Some("Weather map"), "the title kept");
         let canvas_object = pages.pages.get(&(0x100, 0)).unwrap().terminal.object(7).unwrap().clone();
-        assert_eq!((canvas_object.x, canvas_object.y), (75, 48), "on the canvas, scaled");
+        assert_eq!((canvas_object.x, canvas_object.y), (100, 50), "in the design picture: the renderer places it on the canvas (TODO-6814)");
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![other]);
         assert_eq!(pages.title(0x100), None, "a whole record without a title takes it away");
         // For generation 2, not yet begun: a whole set and one object more.
