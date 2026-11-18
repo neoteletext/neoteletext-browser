@@ -6,20 +6,21 @@
 
 use libfuzzer_sys::fuzz_target;
 use neoteletext::typing::{Send, Typing};
-use neoteletext_input::control::MAX_BODY;
+use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP};
+use neoteletext_input::control::{Control, MAX_BODY, write_body};
 use neoteletext_input::cursor::{BLOCK, BODY};
-
-/// WELCOME, version 2, with every capability NeoTeletext offers but the
-/// agent: pages, the cursor, echo and every mode, 459 007, whose varint
-/// is FF 81 1C (DOC-1929).
-const WELCOME: [u8; 6] = [0xFF, 0x01, 0x02, 0xFF, 0x81, 0x1C];
 
 fuzz_target!(|data: &[u8]| {
     let key = interface_core::canvas::PageKey { channel: 7, page: 0x100 };
     let mut typing = Typing::default();
     typing.input(7, true, false, 0);
     typing.opened(Some(7), Some(key), 0);
-    typing.control(7, &WELCOME, 0);
+    // WELCOME at the protocol's version, with the capabilities a channel
+    // may set: the cursor and SELECT (DOC-1922).
+    let welcome = Control::Welcome { version: neoteletext_input::VERSION, caps: CURSOR_CAP | SELECT_CAP, resume: None };
+    let mut body = [0_u8; MAX_BODY];
+    let Ok(length) = write_body(&welcome, &mut body) else { return };
+    typing.control(7, body.get(..length).unwrap_or(&[]), 0);
     let mut rest = data;
     let mut now = 0_u64;
     while let Some((&kind, after)) = rest.split_first() {

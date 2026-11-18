@@ -280,3 +280,17 @@ path = "fuzz_targets/icon_png.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "core_report_gate"
+path = "fuzz_targets/core_report_gate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_audio_local"
+path = "fuzz_targets/protocol_audio_local.rs"
+test = false
+doc = false
+bench = false
