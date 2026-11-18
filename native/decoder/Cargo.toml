@@ -61,6 +61,8 @@ naplps-fonts.workspace = true
 [dev-dependencies]
 # Writing the audio packets the tests read.
 neoteletext-audio = { workspace = true, features = ["encode"] }
+# A synth6581 patch packed as its interface says (the engine's S6581-45).
+neoteletext-audio-instruments = { workspace = true, features = ["synth6581"] }
 # Authoring a Level 2.5 test page, and writing it as TTI.
 neoteletext-formats = { workspace = true, features = ["std"] }
 

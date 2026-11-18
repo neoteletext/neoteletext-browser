@@ -690,26 +690,33 @@ fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
     assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. } | Audio::Start { .. })), "{sounds:?}");
 }
 
-/// REQ-6415: a synth6581 sound (the engine's codec 3, DEC-6410) is rendered by
-/// the engine's own chip in the decoder process and given to the sound
-/// helper as samples at 48 kHz, as an Opus sound's are.
+/// REQ-6415: a synth6581 sound (the engine's codec 12, MIDI-107), whose
+/// blocks are event lists (MIDI-39 to MIDI-42), is rendered by the engine's
+/// own chip in the decoder process and given to the sound helper as samples
+/// at 48 kHz, as an Opus sound's are.
 #[test]
 fn a_synth6581_sound_is_rendered_into_samples_for_the_sound_helper() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
-    /// The chip's writable registers, and the samples of a 20 ms block.
-    const REGISTERS: usize = 25;
+    use neoteletext_audio_instruments::midi::status;
+    use neoteletext_audio_instruments::synth6581::interface::{FULL_UPDATE_IDS, Patch, pack_patch};
+    /// The samples of a 20 ms block.
     const BLOCK: usize = 960;
-    // Voice 1 a sawtooth with its gate set and a held envelope, at full
-    // volume: registers 0 and 1 its frequency, 4 its control, 6 its
-    // sustain, 24 the volume.
-    let mut image = [0_u8; REGISTERS];
-    image[0] = 0x45;
-    image[1] = 0x1D;
-    image[4] = 0x21;
-    image[6] = 0xF0;
-    image[24] = 0x0F;
-    let blocks: Vec<u8> = (0..3).flat_map(|_| image).collect();
-    let stored = Writer::instrument(9, 1, neoteletext_audio::Codec::Synth6581, 25, &blocks).unwrap();
+    // A full register update at time 0 (S6581-45): voice 1 a gated
+    // sawtooth near 440 Hz on the PAL clock, its sustain at the peak, at
+    // full volume.
+    let mut values = [0_u8; FULL_UPDATE_IDS];
+    values[0] = 0x45;
+    values[1] = 0x1D;
+    values[5] = 0xF0;
+    values[21] = 0x0F;
+    values[22] = 0x21;
+    let packed = pack_patch(&Patch { values });
+    // The event at time 0: a system exclusive message, its length, then its
+    // bytes after the status (MIDI-42).
+    let mut first = vec![0, status::SYSTEM_EXCLUSIVE, u8::try_from(packed.len() - 1).unwrap()];
+    first.extend_from_slice(&packed[1..]);
+    let blocks = vec![first, Vec::new(), Vec::new()];
+    let stored = Writer::events(9, 1, neoteletext_audio::Codec::Synth6581, &blocks).unwrap();
     let play = Command { channel: 0, sequence: 1, operation: 1, handle: 9, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None };
     let mut records = vec![stored.object_record().unwrap()];
     records.extend(stored.data_records());
