@@ -3116,12 +3116,12 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 [[package]]
 name = "regis"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=9cbbe83d432650280f279bc5dd00839b97d8161b#9cbbe83d432650280f279bc5dd00839b97d8161b"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=993ee9115c310e627ee7b1d0db48e5303dd021ae#993ee9115c310e627ee7b1d0db48e5303dd021ae"
 
 [[package]]
 name = "regis-fonts"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=9cbbe83d432650280f279bc5dd00839b97d8161b#9cbbe83d432650280f279bc5dd00839b97d8161b"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-regis?rev=993ee9115c310e627ee7b1d0db48e5303dd021ae#993ee9115c310e627ee7b1d0db48e5303dd021ae"
 
 [[package]]
 name = "release-identity"
