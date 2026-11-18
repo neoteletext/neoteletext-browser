@@ -110,6 +110,27 @@ impl Engine {
         }
     }
 
+    /// Whether `page` is held (decision 67): its picture, ReGIS or NAPLPS,
+    /// is then not replaced, and its animation and cursor do not move,
+    /// while its records are still read (renderer parity PAR-32).
+    #[must_use]
+    pub fn held(&self, page: u16) -> bool {
+        self.views.get(&page).is_some_and(|view| view.hold)
+    }
+
+    /// The pictures of the sub-page `sub` of `page` on screen, ReGIS and
+    /// NAPLPS, that changed since they were last taken and may be sent at
+    /// `now_us` (see [`crate::regis::RegisPages::take`] and
+    /// [`crate::naplps::NaplpsPages::take`]). None while the page is held
+    /// (renderer parity PAR-32, decision 67): what its records drew
+    /// meanwhile is owed, and taken at the release.
+    pub fn take_pictures(&mut self, page: u16, sub: Option<u16>, now_us: u64) -> (Option<crate::regis::Drawn>, Option<crate::regis::Drawn>) {
+        if self.held(page) {
+            return (None, None);
+        }
+        (self.regis.take(page, sub, now_us), self.naplps.take(page, sub))
+    }
+
     /// The stored sub-page of `page` to draw: the one chosen, while the
     /// store has it, else the latest.
     pub(super) fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {

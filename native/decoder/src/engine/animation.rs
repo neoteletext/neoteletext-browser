@@ -239,8 +239,12 @@ impl Engine {
             self.animation.stepped = Some(tick);
             for &page in showing {
                 let sub = self.shown_subcode(page);
-                self.regis.advance(page, sub, tick);
-                self.naplps.advance(page, sub, tick);
+                // A held page's picture does not move (PAR-32): its
+                // animation and cursor wait for the release.
+                if !self.held(page) {
+                    self.regis.advance(page, sub, tick);
+                    self.naplps.advance(page, sub, tick);
+                }
                 if let Some(sub) = sub {
                     self.animation.teletext.advance(page, sub, tick);
                 }
@@ -274,7 +278,11 @@ impl Engine {
         let pages = showing.iter().filter_map(|&page| {
             let sub = self.shown_subcode(page);
             let teletext = sub.and_then(|sub| self.animation.teletext.next_tick(page, sub, tick));
-            [self.regis.next_tick(page, sub, tick), self.naplps.next_tick(page, sub, tick), teletext].into_iter().flatten().min()
+            // A held picture needs no tick (PAR-32).
+            let held = self.held(page);
+            let regis = self.regis.next_tick(page, sub, tick).filter(|_| !held);
+            let naplps = self.naplps.next_tick(page, sub, tick).filter(|_| !held);
+            [regis, naplps, teletext].into_iter().flatten().min()
         });
         pages.chain(soon).min().map(due_at)
     }

@@ -320,6 +320,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 engine.set_view(view);
                 if showing.contains(&view.page) {
                     draw(&engine, &[view.page], now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                    // Released, the latest picture is shown at once (PAR-32).
+                    draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
                 }
                 continue;
             }
@@ -550,7 +552,16 @@ fn shown_subpage(sent: &BTreeMap<u16, Rendered>, page: u16) -> Option<u16> {
 
 /// When the earliest repaint owed to a ReGIS picture on screen may be made.
 fn regis_owed(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now_us: u64) -> Option<u64> {
-    showing.iter().filter_map(|&page| engine.regis().owed_us(page, shown_subpage(sent, page), now_us)).min()
+    // A held picture is owed nothing until its release (PAR-32).
+    let mut owed = None;
+    for &page in showing {
+        if engine.held(page) {
+            continue;
+        }
+        let due = engine.regis().owed_us(page, shown_subpage(sent, page), now_us);
+        owed = [owed, due].into_iter().flatten().min();
+    }
+    owed
 }
 
 /// Sends the picture of each page on screen that the channel draws in
@@ -559,7 +570,8 @@ fn regis_owed(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
 /// with none drawn the page's first with any.
 fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now_us: u64, output: &mut Output<'_>) -> Result<(), ProtocolError> {
     for &page in showing {
-        if let Some(drawn) = engine.regis().take(page, shown_subpage(sent, page), now_us) {
+        let (regis, naplps) = engine.take_pictures(page, shown_subpage(sent, page), now_us);
+        if let Some(drawn) = regis {
             // RULE-66's hops: the repaint written, and the areas it holds.
             #[cfg(feature = "timed-test")]
             {
@@ -576,7 +588,7 @@ fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
             }
         }
         // A page drawn in NAPLPS is sent the same way (DEC-6407).
-        if let Some(drawn) = engine.naplps().take(page, shown_subpage(sent, page)) {
+        if let Some(drawn) = naplps {
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
             for picture in drawn.more {
                 write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture, pick: None })?;

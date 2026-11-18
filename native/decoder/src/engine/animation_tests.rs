@@ -203,6 +203,39 @@ fn a_regis_drawing_moved_by_an_animate_record_is_sent_as_its_damage() {
     assert_eq!((receiver.at(305, 310), receiver.at(15, 55)), (0, 3));
 }
 
+/// Renderer parity PAR-32 (decision 67): while a page is held its
+/// picture is not replaced, though its records are still read; its cursor
+/// and animation need no tick; at the release the latest is shown at once.
+#[test]
+fn a_held_pictures_records_are_read_and_shown_only_at_the_release() {
+    use protocol::decoder::View;
+    let mut engine = Engine::new();
+    let scene = format!("{}D(S1(X100,Y50,I1),C)", square(1, 3));
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, scene.as_bytes()));
+    let mut receiver = Receiver::default();
+    let take = |engine: &mut Engine, receiver: &mut Receiver| {
+        let (regis, _) = engine.take_pictures(PAGE, None, 0);
+        let Some(drawn) = regis else { return false };
+        receiver.lay(&drawn.picture);
+        drawn.more.iter().for_each(|part| receiver.lay(part));
+        true
+    };
+    assert!(take(&mut engine, &mut receiver));
+    assert_eq!(receiver.at(105, 55), 3);
+    engine.set_view(View { page: PAGE, hold: true, ..View::default() });
+    assert!(engine.held(PAGE));
+    engine.feed_whole(true, true, &regis(PAGE, 1, scene.len(), b"D(S1(X400,Y300),C)"));
+    engine.feed_whole(true, true, &animate(PAGE, &[on(1, OperationKind::Cycle { first: 0, last: 1, period: 4, once: false })]));
+    assert!(!take(&mut engine, &mut receiver), "held: the picture shown is not replaced");
+    assert_eq!(receiver.at(105, 55), 3, "it still shows the drawing where it was");
+    assert_eq!(engine.animation_due_us(&[PAGE], 0), None, "nothing of a held picture needs a tick");
+    let state = engine.animation_picture(PAGE).target(Target::object(1)).unwrap();
+    assert_eq!((state.x, state.y), (400, 300), "the records were read meanwhile");
+    engine.set_view(View { page: PAGE, ..View::default() });
+    assert!(take(&mut engine, &mut receiver), "released: the latest at once");
+    assert_eq!((receiver.at(105, 55), receiver.at(405, 305)), (0, 3));
+}
+
 /// RULE-26, ANIM-6 (REQ-6536): through the picture the rule table's host
 /// is given, a rule's actions hide, show and re-look a ReGIS drawing, and
 /// set its frame; its conditions read the state back; an operation on a
