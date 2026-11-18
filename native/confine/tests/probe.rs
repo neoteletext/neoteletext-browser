@@ -126,6 +126,21 @@ fn the_interface_reaches_its_display_and_no_bus() {
     }
 }
 
+/// DEC-6659 item 24: the interface makes POSIX shared memory in a
+/// `/dev/shm` of its own, empty and seen by no other process, so that its
+/// presenter shares its image with the X server rather than send the whole
+/// window through the X socket at every frame; no other role makes any.
+/// Before, the interface was refused too.
+#[test]
+fn only_the_interface_makes_shared_memory_and_in_its_own_folder() {
+    let line = probe("interface", &[]);
+    assert!(line.contains("shared-memory=made;"), "{line}");
+    for role in ["decoder", "network", "sound", "updater"] {
+        let line = probe(role, &[]);
+        assert!(line.contains("shared-memory=refused;"), "{role}: {line}");
+    }
+}
+
 /// Decision 86: the sound helper reaches its sound server and no bus.
 #[test]
 fn the_sound_helper_reaches_its_server_and_no_bus() {

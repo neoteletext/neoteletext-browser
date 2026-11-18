@@ -21,7 +21,8 @@ fn read_access(path: &Path, abi: ABI) -> landlock::BitFlags<AccessFs> {
 }
 
 /// Landlock: the readable paths, the sound devices for the sound helper,
-/// the core's settings folder or the updater's staging folder written, no
+/// the core's settings folder or the updater's staging folder written, the
+/// interface's own shared memory folder written, no
 /// TCP for a role without the network and one port for the updater, every
 /// one of them enforced or none (decision 58).
 pub(super) fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String> {
@@ -39,7 +40,9 @@ pub(super) fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String
     let written = match role {
         Role::Sound => Some(Path::new(SOUND_DEVICES)),
         Role::Core | Role::Updater { .. } => writable,
-        Role::Decoder | Role::Network | Role::Interface => None,
+        // Its own empty `/dev/shm`, which nothing else sees (`runtime`).
+        Role::Interface => Some(Path::new(super::runtime::SHARED_MEMORY)).filter(|folder| folder.is_dir()),
+        Role::Decoder | Role::Network => None,
     };
     if let Some(folder) = written
         && let Ok(fd) = PathFd::new(folder)

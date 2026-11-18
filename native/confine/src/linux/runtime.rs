@@ -5,7 +5,9 @@
 //! starts any program unconfined, the system bus or an agent's socket. In
 //! the mount namespace the helper made with its user namespace, `/run`,
 //! `/tmp` and the runtime folder are covered by empty private folders, and
-//! only the sockets the role needs are mounted back into them.
+//! only the sockets the role needs are mounted back into them. The
+//! interface also has an empty `/dev/shm` of its own, for the image it
+//! shares with the X server.
 
 #![expect(unsafe_code, reason = "mount, open_tree and move_mount, which the standard library does not offer (requirement 10.12, decision 86)")]
 
@@ -44,6 +46,11 @@ const PULSE_SOCKET: &str = "native";
 const PULSE_FOLDER: &str = "pulse";
 /// The prefix of a local socket in `PULSE_SERVER` (`pulse-client.conf(5)`).
 const PULSE_LOCAL: &str = "unix:";
+/// Where POSIX shared memory is made (`shm_open(3)`): softbuffer, the
+/// interface's presenter, makes the image it shares with the X server
+/// there (`MIT-SHM`), and with none it sends the whole window through the
+/// X socket at every frame (DEC-6659 item 24).
+pub(super) const SHARED_MEMORY: &str = "/dev/shm";
 /// The longest X display number read from `DISPLAY`.
 const MAX_DISPLAY_DIGITS: usize = 5;
 
@@ -187,6 +194,17 @@ pub(super) fn private_runtime(role: Role) -> Result<(), String> {
     for folder in &covered {
         mount("tmpfs", folder, "tmpfs", libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC, Some(&options))
             .map_err(|error| format!("cannot cover {}: {error}", folder.display()))?;
+    }
+    // The interface's own empty shared memory folder, which nothing else
+    // sees: the X server is handed the image's descriptor over its socket,
+    // never its name. Its size is the kernel's default for a tmpfs, half
+    // the machine's memory: it holds only what the interface could take as
+    // its own memory anyway, and a smaller cap would end the interface
+    // with a bus error on a large window rather than refuse.
+    if role == Role::Interface && Path::new(SHARED_MEMORY).is_dir() {
+        let options = format!("nr_inodes={PRIVATE_ENTRIES},mode={PRIVATE_MODE:o}");
+        mount("tmpfs", Path::new(SHARED_MEMORY), "tmpfs", libc::MS_NOSUID | libc::MS_NODEV | libc::MS_NOEXEC, Some(&options))
+            .map_err(|error| format!("cannot cover {SHARED_MEMORY}: {error}"))?;
     }
     for (path, tree) in &captured {
         if let Some(parent) = path.parent() {

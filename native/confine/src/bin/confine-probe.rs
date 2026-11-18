@@ -43,6 +43,10 @@ mod linux {
     /// The longest a probe that stands for a broker, or a helper of it,
     /// lives: far longer than the test that ends it takes.
     const LINGER: Duration = Duration::from_secs(30);
+    /// Where POSIX shared memory is made (`shm_open(3)`).
+    const SHARED_MEMORY: &str = "/dev/shm";
+    /// The size the probe gives the shared memory it makes: a page.
+    const SHARED_MEMORY_PROBE_BYTES: u64 = 4096;
     /// A descriptor every process has: its standard input.
     const STANDARD_INPUT: i32 = 0;
 
@@ -141,6 +145,18 @@ mod linux {
         let other_port = std::net::TcpStream::connect_timeout(&"127.0.0.1:10".parse().unwrap(), CONNECT_WAIT)
             .map_or_else(|error| if error.kind() == ErrorKind::PermissionDenied { "refused" } else { "no listener" }, |_| "connected");
         let own = writable.map_or("none", |folder| std::fs::write(folder.join("probe"), b"x").map_or("refused", |()| "wrote"));
+        // POSIX shared memory, as `shm_open(3)` makes it: the interface's
+        // presenter shares its image with the X server so (DEC-6659 item 24).
+        let shared = Path::new(SHARED_MEMORY).join(format!("neoteletext-confine-probe-{}", std::process::id()));
+        let shared_memory = match std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&shared) {
+            Ok(file) => {
+                let sized = file.set_len(SHARED_MEMORY_PROBE_BYTES);
+                let _ = std::fs::remove_file(&shared);
+                sized.map_or_else(|error| format!("made, not sized ({error})"), |()| String::from("made"))
+            }
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
+            Err(error) => format!("failed ({error})"),
+        };
         let bus = local(&runtime.join("bus"));
         let display = local(&runtime.join("wayland-0"));
         let sound = local(&runtime.join("pipewire-0"));
@@ -172,7 +188,7 @@ mod linux {
         println!(
             "PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
              bus={bus}; display={display}; sound={sound}; user-bus={user_bus}; system-bus={system_bus}; netlink-route={netlink_route}; \
-             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; x32={x32}; terminal={typed}; signal-parent={signal}; own-signal={own_signal}"
+             netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; shared-memory={shared_memory}; x32={x32}; terminal={typed}; signal-parent={signal}; own-signal={own_signal}"
         );
     }
 }
