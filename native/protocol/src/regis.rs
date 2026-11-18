@@ -728,3 +728,55 @@ pub(crate) fn read_font_checked(fields: &mut Fields<'_>) -> Result<(PictureLangu
     let reason = crate::raw_text(fields, interface_core::picture::MAX_STATUS, "reason too long")?;
     Ok((language, refused.then_some(reason)))
 }
+
+pub use interface_core::regis::PictureTarget;
+
+/// Writes a page's picture targets (renderer parity PAR-30), at most
+/// [`MAX_PICK_ORIGINS`], as many as its pick record names.
+///
+/// # Errors
+/// More targets than that, or a rectangle no picture has.
+pub(crate) fn push_targets(payload: &mut Vec<u8>, targets: &[PictureTarget]) -> Result<(), ProtocolError> {
+    crate::push_count(payload, targets.len(), MAX_PICK_ORIGINS, "too many picture targets")?;
+    for target in targets {
+        check_target(*target)?;
+        for field in [target.number, target.x, target.y, target.width, target.height] {
+            payload.extend_from_slice(&field.to_be_bytes());
+        }
+        push_flag(payload, target.link);
+    }
+    Ok(())
+}
+
+/// Reads what [`push_targets`] wrote.
+///
+/// # Errors
+/// When it is malformed or breaks a bound.
+pub(crate) fn read_targets(fields: &mut Fields<'_>) -> Result<Vec<PictureTarget>, ProtocolError> {
+    let count = fields.count_u16(MAX_PICK_ORIGINS, "too many picture targets")?;
+    (0..count)
+        .map(|_| {
+            let target = PictureTarget {
+                number: fields.u16()?,
+                x: fields.u16()?,
+                y: fields.u16()?,
+                width: fields.u16()?,
+                height: fields.u16()?,
+                link: fields.flag("a picture target's link")?,
+            };
+            check_target(target).map(|()| target)
+        })
+        .collect()
+}
+
+/// A target names a drawing and a rectangle of at least one pixel inside
+/// the widest and tallest picture.
+fn check_target(target: PictureTarget) -> Result<(), ProtocolError> {
+    let right = u32::from(target.x).saturating_add(u32::from(target.width));
+    let bottom = u32::from(target.y).saturating_add(u32::from(target.height));
+    let inside = right <= u32::from(interface_core::canvas::PICTURE_MAX_WIDTH) && bottom <= u32::from(interface_core::canvas::PICTURE_MAX_HEIGHT);
+    if target.number == 0 || target.width == 0 || target.height == 0 || !inside {
+        return Err(ProtocolError::BadValue("a picture target"));
+    }
+    Ok(())
+}

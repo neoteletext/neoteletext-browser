@@ -154,6 +154,8 @@ impl Core {
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             ToCore::RegisPointer(pointer) => self.regis_pointer(pointer)?,
+            ToCore::PictureFocus { key, target } => self.picture_focus(key, target)?,
+            ToCore::PictureFollow { key, target } => self.picture_follow(key, target)?,
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]

@@ -624,3 +624,117 @@ fn a_prompt_takes_no_look_and_keeps_its_link() {
     assert!(outputs.iter().any(|output| matches!(output, Output::Point(Some(cell)) if (cell.column, cell.row) == (12, 24))), "its destination is: {outputs:?}");
     assert_eq!(browser.cursor(), Cursor::Hand);
 }
+
+/// The first page open and drawn as a ReGIS picture with five targets,
+/// three links and two plain drawings, as the trusted core sends them in
+/// reading order; the picture's rectangle.
+fn picture_with_targets() -> (Browser, PageKey, Rect, Vec<PictureTarget>) {
+    let (mut browser, mut canvas, key, _) = opened();
+    browser.set_regis(key, 0, 1, crate::canvas::PictureLanguage::Regis);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    let target = |number: u16, x: u16, y: u16, link: bool| PictureTarget { number, x, y, width: 40, height: 20, link };
+    let targets = vec![target(4, 100, 10, true), target(2, 500, 10, false), target(9, 20, 200, true), target(1, 300, 200, false), target(3, 700, 400, true)];
+    browser.set_picture_targets(key, targets.clone());
+    let (_, language, picture) = browser.open_picture().unwrap();
+    assert_eq!(language, crate::canvas::PictureLanguage::Regis);
+    browser.take_outputs();
+    (browser, key, picture, targets)
+}
+
+fn picture_focus(outputs: &[Output]) -> Vec<u16> {
+    outputs.iter().filter_map(|output| if let Output::PictureFocus { target, .. } = output { Some(*target) } else { None }).collect()
+}
+
+/// Renderer parity PAR-30: Tab steps through a picture's links and
+/// detectable drawings in the order the trusted core gave, each once, then
+/// round again; Shift-Tab goes back; the trusted core is told each.
+#[test]
+fn tab_steps_through_a_pictures_targets_in_reading_order() {
+    let (mut browser, _, _, targets) = picture_with_targets();
+    let mut told = Vec::new();
+    for _ in 0..=targets.len() {
+        browser.key(Key::Tab, Modifiers::default(), OPEN);
+        told.extend(picture_focus(&browser.take_outputs()));
+    }
+    assert_eq!(told, [4, 2, 9, 1, 3, 4]);
+    browser.key(Key::Tab, Modifiers { shift: true, ..Modifiers::default() }, OPEN);
+    assert_eq!(picture_focus(&browser.take_outputs()), [3]);
+    browser.key(Key::Escape, Modifiers::default(), OPEN);
+    assert_eq!(picture_focus(&browser.take_outputs()), [0], "the focus left the picture");
+}
+
+/// PAR-30: Enter on a focused link asks the trusted core to follow it,
+/// which holds the dwell time; Space on a link does nothing.
+#[test]
+fn enter_follows_a_focused_picture_link() {
+    let (mut browser, key, _, _) = picture_with_targets();
+    browser.key(Key::Tab, Modifiers::default(), OPEN);
+    browser.take_outputs();
+    browser.key(Key::Text(" "), Modifiers::default(), OPEN);
+    assert!(!browser.take_outputs().iter().any(|output| matches!(output, Output::PictureFollow { .. } | Output::RegisPointer(_))), "Space on a link");
+    browser.key(Key::Enter, Modifiers::default(), OPEN);
+    assert_eq!(browser.take_outputs(), [Output::PictureFollow { key, target: 4 }]);
+}
+
+/// PAR-30, RULE-12: Space on a focused drawing that is not a link is a
+/// press and a release of the main button at the centre of its rectangle,
+/// as a pointer's there: the trusted core told that pixel first, then the
+/// page's channel the press, for its rule table, with no modifier.
+#[cfg(feature = "interaction")]
+#[test]
+fn space_on_a_plain_drawing_presses_its_centre_for_the_rule_table() {
+    use crate::browser::typing::TypingView;
+    use neoteletext_input::event::MouseAction;
+    let (mut browser, key, _, _) = picture_with_targets();
+    browser.set_typing(
+        TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false },
+        0,
+    );
+    browser.key(Key::Tab, Modifiers::default(), OPEN);
+    browser.key(Key::Tab, Modifiers::default(), OPEN);
+    browser.take_outputs();
+    browser.key(Key::Text(" "), Modifiers::default(), OPEN);
+    let outputs = browser.take_outputs();
+    let said: Vec<String> = outputs
+        .iter()
+        .filter_map(|output| match output {
+            Output::RegisPointer(pointer) => Some(format!("pointer {:?} {}", pointer.at, pointer.pressed)),
+            Output::Terminal { intent: crate::input::Intent::Mouse { action, button: 0, .. }, .. } if *action != MouseAction::Move => {
+                Some(format!("{action:?}"))
+            }
+            _ => None,
+        })
+        .collect();
+    // Drawing 2: 40 by 20 at (500, 10), its centre (520, 20).
+    assert_eq!(said[..4], ["pointer Some((520, 20)) true", "Press", "pointer Some((520, 20)) false", "Release"], "{said:?}");
+}
+
+/// PAR-30: a line two picture pixels high, in the link colour, beneath
+/// each linked target's rectangle and no other; the ring around the
+/// focused target.
+#[test]
+fn a_line_is_drawn_beneath_linked_targets_only() {
+    let (mut browser, _, picture, targets) = picture_with_targets();
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    let (across, down) = (picture.width() / 800.0, picture.height() / 480.0);
+    let beneath = |target: &PictureTarget| {
+        let bottom = picture.y0 + f64::from(target.y + target.height) * down;
+        let left = picture.x0 + f64::from(target.x) * across;
+        Rect::new(left, bottom, left + f64::from(target.width) * across, bottom + 2.0 * down)
+    };
+    let drawn = |rect: Rect| {
+        canvas
+            .fills
+            .iter()
+            .any(|(fill, colour)| *colour == LINK && (fill.x0 - rect.x0).abs() < 1e-6 && (fill.y0 - rect.y0).abs() < 1e-6 && (fill.y1 - rect.y1).abs() < 1e-6)
+    };
+    for target in &targets {
+        assert_eq!(drawn(beneath(target)), target.link, "{target:?}");
+    }
+    browser.key(Key::Tab, Modifiers::default(), OPEN);
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, OPEN);
+    let top = picture.y0 + 10.0 * down - FOCUS_RING;
+    assert!(canvas.fills.iter().any(|(fill, colour)| *colour == LINK && (fill.y0 - top).abs() < 1e-6), "the ring above the focused target");
+}

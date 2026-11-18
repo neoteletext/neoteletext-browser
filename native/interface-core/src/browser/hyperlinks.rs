@@ -14,6 +14,7 @@ use super::{Browser, Cursor, Key, Modifiers, Output};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::links::{self, Area, LinkCell, LinkKind, Lit, PageLinks, Pointing, Prompt, PromptButton};
+use crate::regis::PictureTarget;
 use crate::text::{border, centred, left_centred};
 use crate::theme::{ADDRESS, BUTTON, INSECURE, LINK, LINK_INK, POINTED_INK, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 use crate::wall::{CellClick, cell_in};
@@ -26,6 +27,9 @@ const PROMPT_BUTTON_WIDTH: f64 = 84.0;
 const PROMPT_BUTTON_GAP: f64 = 6.0;
 const PROMPT_BUTTON_INSET: f64 = 5.0;
 const FOCUS_RING: f64 = 2.0;
+/// The line beneath a picture link, in the picture's own pixels (renderer
+/// parity PAR-30).
+const PICTURE_UNDERLINE_PIXELS: f64 = 2.0;
 /// Space between the field's edge and its text.
 const FIELD_PADDING: f64 = 12.0;
 
@@ -57,6 +61,12 @@ pub(super) struct LinkUi {
     pressing: Option<Area>,
     /// The control the channel was last told the pointer is on (HOVER).
     hovered_control: Option<(PageKey, Area)>,
+    /// Each page's picture targets, as the trusted core sent them (renderer
+    /// parity PAR-30): after the page's links, the keyboard's focus moves
+    /// through them, its index counting on from the last link.
+    targets: BTreeMap<PageKey, Vec<PictureTarget>>,
+    /// The picture target the trusted core was last told the focus is on.
+    picture_sent: Option<(PageKey, u16)>,
     /// The control under a contact on a touch screen, which shows the
     /// pressed look while the contact is on it (REQ-1370, DEC-2385): the first
     /// contact's that lies on one, since a page has one look at a time.
@@ -80,6 +90,73 @@ impl Browser {
         self.lay_out_pictures();
         self.repoint();
     }
+
+    /// A page's picture targets, as the trusted core decided them from the
+    /// pick record it holds (renderer parity PAR-30). A focus beyond the
+    /// targets there now goes.
+    pub fn set_picture_targets(&mut self, key: PageKey, targets: Vec<PictureTarget>) {
+        self.links.targets.insert(key, targets);
+        self.links.targets.retain(|key, _| key.channel == self.channel.channel);
+        if self.links.focus.is_some_and(|focus| focus >= self.ring_length()) {
+            self.links.focus = None;
+        }
+        self.repoint();
+    }
+
+    /// The open page's picture targets, when it is drawn as a picture.
+    fn open_targets(&self) -> Option<(PageKey, &[PictureTarget])> {
+        let (key, _) = self.wall.open()?;
+        self.picture_language(key)?;
+        Some((key, self.links.targets.get(&key)?.as_slice()))
+    }
+
+    /// How many links of the open page the keyboard's focus steps through
+    /// before its picture's targets.
+    fn ring_links(&self) -> usize {
+        self.open_links().map_or(0, |(_, _, links)| links.runs.len())
+    }
+
+    /// How many places the keyboard's focus steps through on the open page:
+    /// its links, then its picture's targets (PAR-30).
+    fn ring_length(&self) -> usize {
+        self.ring_links().saturating_add(self.open_targets().map_or(0, |(_, targets)| targets.len()))
+    }
+
+    /// The picture target the keyboard's focus is on, if it is on one.
+    fn focused_target(&self) -> Option<(PageKey, PictureTarget)> {
+        let index = self.links.focus?.checked_sub(self.ring_links())?;
+        let (key, targets) = self.open_targets()?;
+        targets.get(index).map(|target| (key, *target))
+    }
+
+    /// Enter or Space on a focused picture target that is not a link
+    /// (PAR-30): a press and a release of the main button at the centre of
+    /// its rectangle, given to the page as a pointer's there would be, so to
+    /// its rule table (RULE-12) with no modifier, and only where a pointer's
+    /// would go. The pointer is then where it was.
+    #[cfg(feature = "interaction")]
+    fn press_picture_target(&mut self, key: PageKey, target: PictureTarget) {
+        use neoteletext_input::event::MouseAction;
+        let Some((_, language, picture)) = self.open_picture() else { return };
+        let (x, y) = target.centre();
+        let point = Point::new(
+            picture.x0 + (f64::from(x) + 0.5) * picture.width() / f64::from(language.width()),
+            picture.y0 + (f64::from(y) + 0.5) * picture.height() / f64::from(language.height()),
+        );
+        let pointer = core::mem::replace(&mut self.pointer, point);
+        self.regis_press_at(key, (x, y), true);
+        self.terminal_button(MouseAction::Press, 0);
+        self.regis_press_at(key, (x, y), false);
+        self.terminal_button(MouseAction::Release, 0);
+        self.pointer = pointer;
+        self.regis_pointed();
+        self.terminal_moved();
+    }
+
+    /// Without typing compiled in, no click goes to a channel.
+    #[cfg(not(feature = "interaction"))]
+    #[expect(clippy::unused_self, reason = "the same shape as with typing compiled in")]
+    fn press_picture_target(&mut self, _: PageKey, _: PictureTarget) {}
 
     /// What the trusted strip shows of the link the pointer or the focus is
     /// on, as the trusted core wrote it.
@@ -275,8 +352,18 @@ impl Browser {
             self.links.sent = cell;
             self.outputs.push(Output::Point(cell));
         }
+        // The picture target the focus is on, or none, for the strip
+        // (PAR-30).
+        let picture = self.focused_target().map(|(key, target)| (key, target.number));
+        let picture_changed = picture != self.links.picture_sent;
+        if picture_changed {
+            if let Some((key, number)) = picture.or(self.links.picture_sent) {
+                self.outputs.push(Output::PictureFocus { key, target: if picture.is_some() { number } else { 0 } });
+            }
+            self.links.picture_sent = picture;
+        }
         self.relight();
-        changed || !same_link
+        changed || !same_link || picture_changed
     }
 
     /// Whether two cells of the open page are in the same link.
@@ -353,8 +440,9 @@ impl Browser {
             };
         }
         match key {
+            // The page's links, then its picture's targets (PAR-30).
             Key::Tab => {
-                let count = self.open_links()?.2.runs.len();
+                let count = self.ring_length();
                 if count == 0 {
                     return None;
                 }
@@ -366,6 +454,23 @@ impl Browser {
                 };
                 self.links.focus = Some(next);
                 self.repoint();
+                Some(true)
+            }
+            // A focused picture link is followed, under the dwell rule the
+            // trusted core holds; a target that is not a link is pressed
+            // (PAR-30).
+            Key::Enter if !modifiers.repeat && self.focused_target().is_some() => {
+                let (key, target) = self.focused_target()?;
+                if target.link {
+                    self.outputs.push(Output::PictureFollow { key, target: target.number });
+                } else {
+                    self.press_picture_target(key, target);
+                }
+                Some(true)
+            }
+            Key::Text(" ") if !modifiers.repeat && self.focused_target().is_some_and(|(_, target)| !target.link) => {
+                let (key, target) = self.focused_target()?;
+                self.press_picture_target(key, target);
                 Some(true)
             }
             Key::Enter if !modifiers.repeat => {
@@ -398,10 +503,37 @@ impl Browser {
 
     /// Draws the open page's links (`hyperlinks.md` section 9.2).
     pub(super) fn draw_links<C: Canvas + ?Sized>(&mut self, canvas: &mut C) {
+        self.draw_picture_marks(canvas);
         let Some((_, rect, links)) = self.open_links() else { return };
         let runs = links.runs.clone();
         canvas.push_clip(self.wall.area());
         links::draw(canvas, rect, &runs, self.links.hovered, self.links.focus);
+        canvas.pop_clip();
+    }
+
+    /// The marks of the open page's picture (renderer parity PAR-30): a
+    /// line two picture pixels high beneath each linked target's rectangle,
+    /// in the colour of teletext link underlines, and the focus ring around
+    /// the target the keyboard is on, each scaled as the picture is drawn.
+    /// The browser has no setting that hides teletext link marks, so these
+    /// are always drawn, as those are.
+    fn draw_picture_marks<C: Canvas + ?Sized>(&self, canvas: &mut C) {
+        let Some((_, language, picture)) = self.open_picture() else { return };
+        let Some((_, targets)) = self.open_targets() else { return };
+        let (across, down) = (picture.width() / f64::from(language.width()), picture.height() / f64::from(language.height()));
+        let place = |target: &PictureTarget| {
+            let (x0, y0) = (picture.x0 + f64::from(target.x) * across, picture.y0 + f64::from(target.y) * down);
+            Rect::new(x0, y0, x0 + f64::from(target.width) * across, y0 + f64::from(target.height) * down)
+        };
+        canvas.push_clip(self.wall.area());
+        for target in targets.iter().filter(|target| target.link) {
+            let rect = place(target);
+            canvas.fill(Rect::new(rect.x0, rect.y1, rect.x1, rect.y1 + PICTURE_UNDERLINE_PIXELS * down), 0.0, LINK);
+        }
+        if let Some((_, target)) = self.focused_target() {
+            let rect = place(&target);
+            border(canvas, Rect::new(rect.x0 - FOCUS_RING, rect.y0 - FOCUS_RING, rect.x1 + FOCUS_RING, rect.y1 + FOCUS_RING), FOCUS_RING, LINK);
+        }
         canvas.pop_clip();
     }
 

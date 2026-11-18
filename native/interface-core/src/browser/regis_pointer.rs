@@ -6,8 +6,8 @@
 
 use super::Browser;
 use super::output::Output;
-use crate::canvas::{PageKey, picture_layout};
-use crate::geometry::Point;
+use crate::canvas::{PageKey, PictureLanguage, picture_layout};
+use crate::geometry::{Point, Rect};
 use crate::regis::{RegisPointer, pixel_under, span_of};
 
 /// The open page, the pixel of its picture under a point if any, and how
@@ -36,11 +36,28 @@ impl Browser {
     /// its pixel is the dot of the page image, in the cell the teletext
     /// page has there.
     fn regis_pixel(&self, point: Point) -> Option<PointedPixel> {
+        let (key, language, picture) = self.open_picture()?;
+        Some((key, pixel_under(language, picture, point), span_of(language, picture)))
+    }
+
+    /// The open page, if it is drawn as a picture, the picture's language,
+    /// and where the picture is drawn, by the fit in force (REQ-6363).
+    pub(super) fn open_picture(&self) -> Option<(PageKey, PictureLanguage, Rect)> {
         let (key, image) = self.wall.open()?;
         let language = self.picture_language(key)?;
         let keyed = self.regis_keyed().contains(&key);
-        let picture = picture_layout(language, image, self.regis_contained(), keyed).picture;
-        Some((key, pixel_under(language, picture, point), span_of(language, picture)))
+        Some((key, language, picture_layout(language, image, self.regis_contained(), keyed).picture))
+    }
+
+    /// The pointer pressed (`true`) or let go on `pixel` of the open page's
+    /// picture, as the keyboard does it on a focused picture target that is
+    /// not a link (renderer parity PAR-30): the trusted core is told that
+    /// pixel, one picture pixel across, as a pointer there would tell it.
+    #[cfg(feature = "interaction")]
+    pub(super) fn regis_press_at(&mut self, key: PageKey, pixel: (u16, u16), pressed: bool) {
+        let pointer = RegisPointer { key, at: Some(pixel), pressed, finger: false, span: 1 };
+        self.outputs.push(Output::RegisPointer(pointer));
+        self.regis_pointer.sent = Some(pointer);
     }
 
     /// Tells the trusted core where the pointer is on the open page's
@@ -135,10 +152,10 @@ mod tests {
         browser.toggle_wall(0);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (key, _) = browser.wall().shown().next().unwrap();
-        browser.set_regis(key, 0, 1, crate::canvas::PictureLanguage::Regis);
+        browser.set_regis(key, 0, 1, PictureLanguage::Regis);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, image) = browser.wall.open().unwrap();
-        let picture = picture_layout(crate::canvas::PictureLanguage::Regis, image, contain, false).picture;
+        let picture = picture_layout(PictureLanguage::Regis, image, contain, false).picture;
         let _ = browser.take_outputs();
         (browser, key, picture)
     }
@@ -168,7 +185,7 @@ mod tests {
             let (mut browser, _, picture) = open_picture(contain);
             browser.pointer_moved(picture.x0 + 0.25, picture.y0 + 0.25, 0);
             let spans: Vec<u8> = told_with_spans(&mut browser).iter().map(|pointer| pointer.span).collect();
-            assert_eq!(spans, [span_of(crate::canvas::PictureLanguage::Regis, picture)], "contain {contain}");
+            assert_eq!(spans, [span_of(PictureLanguage::Regis, picture)], "contain {contain}");
         }
     }
 
@@ -241,7 +258,7 @@ mod tests {
             browser.toggle_wall(0);
             browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
             let (key, _) = browser.wall().shown().next().unwrap();
-            browser.set_regis(key, 0, 1, crate::canvas::PictureLanguage::Naplps);
+            browser.set_regis(key, 0, 1, PictureLanguage::Naplps);
             browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
             let (_, image) = browser.wall.open().unwrap();
             let _ = browser.take_outputs();

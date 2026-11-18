@@ -92,6 +92,8 @@ impl App {
             #[cfg(feature = "links")]
             Output::Lit(lit) => ToCore::Lit(lit),
             Output::RegisPointer(pointer) => ToCore::RegisPointer(pointer),
+            Output::PictureFocus { key, target } => ToCore::PictureFocus { key, target },
+            Output::PictureFollow { key, target } => ToCore::PictureFollow { key, target },
             #[cfg(feature = "links")]
             Output::Typed { number, opened } => ToCore::Typed { number, opened },
             #[cfg(feature = "links")]

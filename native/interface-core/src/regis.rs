@@ -44,6 +44,38 @@ pub struct RegisPointer {
     pub span: u8,
 }
 
+/// A drawing of a ReGIS picture, or an object of a NAPLPS one, that the
+/// keyboard can reach (renderer parity PAR-30): one the pick record names,
+/// by its number, with its bounding rectangle in the picture's own pixels
+/// and whether it is a link, as the trusted core works it out from the pick
+/// record it alone holds. The interface is sent a page's targets in reading
+/// order: top edge, then left edge, then number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureTarget {
+    /// The drawing's or object's number, 1 to 65,535.
+    pub number: u16,
+    /// The left edge of its bounding rectangle.
+    pub x: u16,
+    /// Its top edge.
+    pub y: u16,
+    /// Its width, at least 1.
+    pub width: u16,
+    /// Its height, at least 1.
+    pub height: u16,
+    /// It is a link (REQ-6376, PAR-28): Enter follows it, and a line is
+    /// drawn beneath it.
+    pub link: bool,
+}
+
+impl PictureTarget {
+    /// The pixel at the middle of its rectangle, where Enter or Space
+    /// presses and releases a target that is not a link (PAR-30).
+    #[must_use]
+    pub const fn centre(self) -> (u16, u16) {
+        (self.x.saturating_add(self.width / 2), self.y.saturating_add(self.height / 2))
+    }
+}
+
 /// How many of the pixels of a picture drawn in `language` in `rect` one
 /// screen pixel covers, across or down, whichever is more, rounded up:
 /// 1 when it is shown at its own size or larger, and at most `u8::MAX`.

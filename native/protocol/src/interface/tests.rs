@@ -171,6 +171,13 @@ fn every_message_to_the_interface_round_trips() {
         ToInterface::Strip(strip()),
         ToInterface::Channel(channel()),
         ToInterface::PictureStatus(interface_core::picture::PictureStatus { converted: true, text: "Level 3.5: 31 colours".into() }),
+        ToInterface::PictureTargets {
+            key: PageKey { channel: 9, page: 0x100 },
+            targets: vec![
+                crate::regis::PictureTarget { number: 3, x: 0, y: 0, width: 800, height: 1, link: true },
+                crate::regis::PictureTarget { number: 1, x: 470, y: 490, width: 10, height: 10, link: false },
+            ],
+        },
         ToInterface::Page { channel: 9, page: 0x899, title: "Clock".into() },
         ToInterface::SubPageCount { channel: 9, page: 0x210, count: 8_190 },
         ToInterface::SubPageRows {
@@ -269,6 +276,10 @@ fn every_intent_round_trips() {
         ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: true, finger: false, span: 1 }),
         ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((0, 0)), pressed: false, finger: true, span: 1 }),
         ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: None, pressed: false, finger: false, span: 1 }),
+        // Renderer parity PAR-30: the keyboard on a picture's targets.
+        ToCore::PictureFocus { key: KEY, target: 12 },
+        ToCore::PictureFocus { key: KEY, target: 0 },
+        ToCore::PictureFollow { key: KEY, target: 65_535 },
         ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
         ToCore::SelectTab(3),
         ToCore::CloseTab(0),
@@ -520,4 +531,23 @@ fn whether_a_drawing_is_under_the_pointer_round_trips() {
         write_to_interface(&mut bytes, &message).unwrap();
         assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
     }
+}
+
+/// Renderer parity PAR-30: a picture target names a drawing and a
+/// rectangle of at least a pixel inside the largest picture; any other is
+/// refused when written.
+#[test]
+fn a_picture_target_is_held_to_the_picture() {
+    use crate::regis::PictureTarget;
+    let key = PageKey { channel: 9, page: 0x100 };
+    let good = PictureTarget { number: 1, x: 799, y: 0, width: 1, height: 500, link: false };
+    let write = |target: PictureTarget| write_to_interface(&mut Vec::new(), &ToInterface::PictureTargets { key, targets: vec![target] });
+    assert!(write(good).is_ok());
+    for bad in
+        [PictureTarget { number: 0, ..good }, PictureTarget { width: 0, ..good }, PictureTarget { width: 2, ..good }, PictureTarget { height: 501, ..good }]
+    {
+        assert!(write(bad).is_err(), "{bad:?}");
+    }
+    let many = vec![good; crate::regis::MAX_PICK_ORIGINS + 1];
+    assert!(write_to_interface(&mut Vec::new(), &ToInterface::PictureTargets { key, targets: many }).is_err());
 }

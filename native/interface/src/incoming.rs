@@ -91,6 +91,14 @@ pub enum Incoming {
         /// One is.
         over: bool,
     },
+    /// A page's picture targets, for the keyboard (renderer parity
+    /// PAR-30).
+    PictureTargets {
+        /// Which page.
+        key: PageKey,
+        /// The targets, in reading order.
+        targets: Vec<protocol::regis::PictureTarget>,
+    },
     /// A page image.
     Page {
         /// Which page.

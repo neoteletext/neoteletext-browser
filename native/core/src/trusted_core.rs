@@ -189,6 +189,12 @@ struct Core {
     regis: neoteletext::regis::PickRecords,
     /// The pointer on a ReGIS picture (`regis_pointer.rs`).
     regis_pointing: neoteletext::regis_pointer::Pointing,
+    /// Each page's picture targets as the interface was last told them
+    /// (renderer parity PAR-30), for the pages whose pick record is held.
+    picture_targets: BTreeMap<PageKey, Vec<protocol::regis::PictureTarget>>,
+    /// The picture target the keyboard's focus is on, as the interface
+    /// said, when it is one of the targets it was told.
+    picture_focus: Option<(PageKey, u16)>,
     /// The channel whose decoder was last told which pages are shown.
     showing: Option<u32>,
     /// What of each channel's sound reached the interface.
@@ -385,6 +391,8 @@ impl Core {
             frames: frames::Frames::default(),
             regis: neoteletext::regis::PickRecords::default(),
             regis_pointing: neoteletext::regis_pointer::Pointing::default(),
+            picture_targets: BTreeMap::new(),
+            picture_focus: None,
             showing: None,
             hearing: Hearing::default(),
             sleep: Sleep::default(),

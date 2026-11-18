@@ -186,6 +186,22 @@ pub enum Output {
     Window(WindowAction),
     /// Whether text input, including input methods, goes to the address field.
     TextInput(bool),
+    /// The keyboard's focus is on this drawing or object of the open page's
+    /// picture, or on none (0): the trusted strip shows where it leads if
+    /// it is a link (renderer parity PAR-30).
+    PictureFocus {
+        /// The open page.
+        key: PageKey,
+        /// The target's number, or 0.
+        target: u16,
+    },
+    /// Enter on the focused picture link (PAR-30).
+    PictureFollow {
+        /// The open page.
+        key: PageKey,
+        /// The link's number.
+        target: u16,
+    },
     /// The pointer or the keyboard's focus is on this cell of a link, or on
     /// no link: the trusted strip shows where it leads.
     #[cfg(feature = "links")]

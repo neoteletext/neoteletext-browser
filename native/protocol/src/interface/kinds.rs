@@ -139,6 +139,13 @@ pub(crate) const KIND_FRAME_PHASE: u8 = 192;
 /// in the next number free across every pipe on 19 November 2026, after
 /// the decoder's 202 for the same.
 pub(crate) const KIND_REDUCED_MOTION: u8 = 203;
+// Renderer parity PAR-30, in the next numbers free across every pipe on 19
+// November 2026: trusted core to interface, the open page's picture
+// targets; interface to trusted core, the picture target the keyboard's
+// focus is on, and Enter on a focused picture link.
+pub(crate) const KIND_PICTURE_TARGETS: u8 = 207;
+pub(crate) const KIND_PICTURE_FOCUS: u8 = 208;
+pub(crate) const KIND_PICTURE_FOLLOW: u8 = 209;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;

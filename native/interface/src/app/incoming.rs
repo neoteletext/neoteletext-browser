@@ -81,6 +81,15 @@ impl App {
                 // The pointer's shape follows at the next frame.
                 self.request_redraw();
             }
+            // The keyboard reaches a picture's targets with the links'
+            // focus ring, which hyperlinks bring (PAR-30).
+            #[cfg(feature = "links")]
+            Incoming::PictureTargets { key, targets } => {
+                self.view.browser.set_picture_targets(key, targets);
+                self.request_redraw();
+            }
+            #[cfg(not(feature = "links"))]
+            Incoming::PictureTargets { .. } => {}
             #[cfg(feature = "phone-keyboard")]
             Incoming::Phone(view) => {
                 self.show_phone(view);

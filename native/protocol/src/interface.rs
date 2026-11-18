@@ -111,6 +111,16 @@ pub enum ToInterface {
         /// A detectable drawing is under the pointer.
         over: bool,
     },
+    /// The drawings or objects of a page's picture the keyboard can reach,
+    /// in reading order, with their rectangles and whether each is a link
+    /// (renderer parity PAR-30), from the pick record the trusted core
+    /// alone holds. Sent when they change.
+    PictureTargets {
+        /// Which page.
+        key: PageKey,
+        /// The targets, at most [`crate::regis::MAX_PICK_ORIGINS`].
+        targets: Vec<crate::regis::PictureTarget>,
+    },
     /// The channels sounding now, muted or not, for the tabs' speakers;
     /// the sound helper says it and the trusted core passes it on
     /// (decision 55).
@@ -272,6 +282,23 @@ pub enum ToCore {
     /// Where the pointer is on the open page's ReGIS picture, and whether
     /// it is pressed (REQ-6377).
     RegisPointer(crate::regis::RegisPointer),
+    /// The drawing or object of the open page's picture the keyboard's
+    /// focus is on, or 0 for none (renderer parity PAR-30): the strip shows
+    /// where it leads if it is a link, as for the pointer.
+    PictureFocus {
+        /// The open page.
+        key: PageKey,
+        /// The target's number, or 0.
+        target: u16,
+    },
+    /// Enter on the focused picture link (PAR-30): followed under the
+    /// rules of a click on it, the dwell time included.
+    PictureFollow {
+        /// The open page.
+        key: PageKey,
+        /// The link's drawing or object.
+        target: u16,
+    },
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

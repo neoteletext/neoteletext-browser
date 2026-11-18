@@ -25,6 +25,10 @@ struct Held {
     pick: RegisPick,
 }
 
+/// A drawing's or object's number and its bounding rectangle in its
+/// picture's pixels: left, top, width and height.
+pub type Bounds = (u16, u16, u16, u16, u16);
+
 /// What lay under a dot of a page drawn in ReGIS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Under {
@@ -123,6 +127,43 @@ impl PickRecords {
         self.pages.get(&key).map_or(pixel, |held| crate::regis_pointer::chosen_pixel(&held.pick, held.language, pixel, span))
     }
 
+    /// The sub-code of the picture held for `key` and the drawings or
+    /// objects its pick record names, each with its bounding rectangle in
+    /// the picture's pixels, `(number, x, y, width, height)`, in reading
+    /// order: top edge, then left edge, then number (renderer parity
+    /// PAR-30). Found in one pass over the record's runs, a run that wraps
+    /// onto another row spanning the picture's width. At most as many as
+    /// the record names, which its reader bounds.
+    #[must_use]
+    pub fn targets(&self, key: PageKey) -> Option<(u16, Vec<Bounds>)> {
+        let held = self.pages.get(&key)?;
+        let width = usize::from(held.language.width());
+        // Each drawing's left, top, right and bottom pixels, inclusive.
+        let mut found: BTreeMap<u16, [usize; 4]> = BTreeMap::new();
+        let mut start = 0_usize;
+        for &(drawing, length) in &held.pick.runs {
+            let last = start.saturating_add(usize::from(length)).saturating_sub(1);
+            if drawing != 0 && length != 0 {
+                let (top, bottom) = (start.checked_div(width).unwrap_or(0), last.checked_div(width).unwrap_or(0));
+                let (left, right) =
+                    if top == bottom { (start.checked_rem(width).unwrap_or(0), last.checked_rem(width).unwrap_or(0)) } else { (0, width.saturating_sub(1)) };
+                let bounds = found.entry(drawing).or_insert([left, top, right, bottom]);
+                let [was_left, was_top, was_right, was_bottom] = *bounds;
+                *bounds = [was_left.min(left), was_top.min(top), was_right.max(right), was_bottom.max(bottom)];
+            }
+            start = start.saturating_add(usize::from(length));
+        }
+        let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
+        let mut targets: Vec<Bounds> = found
+            .into_iter()
+            .map(|(number, [left, top, right, bottom])| {
+                (number, narrow(left), narrow(top), narrow(right.saturating_sub(left).saturating_add(1)), narrow(bottom.saturating_sub(top).saturating_add(1)))
+            })
+            .collect();
+        targets.sort_by_key(|&(number, x, y, _, _)| (y, x, number));
+        Some((held.sub, targets))
+    }
+
     /// What lies under a pixel of the picture of `key`'s sub-page `sub`;
     /// `None` when the page is not drawn in ReGIS or the picture held is
     /// of another sub-page.
@@ -159,6 +200,28 @@ mod tests {
         assert_eq!(records.held(KEY), Some((0, 7)));
         records.forget(KEY.channel);
         assert!(!records.has(KEY));
+    }
+
+    /// Renderer parity PAR-30: each drawing's bounding rectangle from the
+    /// runs, in reading order (top, then left, then number), a run that
+    /// wraps onto the next row spanning the picture's width.
+    #[test]
+    fn a_pick_records_targets_are_its_drawings_rectangles_in_reading_order() {
+        let mut record = vec![0_u16; REGIS_PIXELS];
+        for row in 100..110 {
+            record[row * REGIS_WIDTH + 300..row * REGIS_WIDTH + 320].fill(4);
+            record[row * REGIS_WIDTH + 10..row * REGIS_WIDTH + 20].fill(9);
+        }
+        record[50 * REGIS_WIDTH + 700] = 2;
+        // Drawing 6 ends one row and begins the next.
+        record[(200 * REGIS_WIDTH) - 3..(200 * REGIS_WIDTH) + 2].fill(6);
+        let mut records = PickRecords::default();
+        assert_eq!(records.targets(KEY), None);
+        let origins = [(4, 0, 0), (9, 0, 0), (2, 0, 0), (6, 0, 0)];
+        records.hold(KEY, 3, 1, PictureLanguage::Regis, Some(RegisPick::of(&record, origins.into_iter(), PictureLanguage::Regis)));
+        let (sub, targets) = records.targets(KEY).unwrap();
+        assert_eq!(sub, 3);
+        assert_eq!(targets, [(2, 700, 50, 1, 1), (9, 10, 100, 10, 10), (4, 300, 100, 20, 10), (6, 0, 199, 800, 2)]);
     }
 
     /// REQ-6377: a drawing one pixel wide is under its own column and not

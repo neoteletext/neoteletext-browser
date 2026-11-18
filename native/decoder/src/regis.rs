@@ -584,7 +584,7 @@ impl RegisPages {
     }
 
     /// The drawing that is a sub-page's cursor, 0 for none.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "links"))]
     pub(crate) fn cursor(&self, page: u16, sub: u16) -> u16 {
         self.pages.get(&(page, sub)).map_or(0, |held| held.cursor)
     }

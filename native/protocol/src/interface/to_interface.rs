@@ -48,6 +48,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Frame { .. } => KIND_FRAME,
         ToInterface::Regis { .. } => KIND_REGIS_FRAME,
         ToInterface::RegisOver { .. } => KIND_REGIS_OVER,
+        ToInterface::PictureTargets { .. } => super::kinds::KIND_PICTURE_TARGETS,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
         ToInterface::Show(_) => KIND_SHOW,
         ToInterface::ShowWall(_) => KIND_SHOW_WALL,
@@ -103,6 +104,10 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::RegisOver { key, over } => {
             push_key(payload, *key);
             crate::push_flag(payload, *over);
+        }
+        ToInterface::PictureTargets { key, targets } => {
+            push_key(payload, *key);
+            crate::regis::push_targets(payload, targets)?;
         }
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
         ToInterface::Show(key) => push_key(payload, *key),
@@ -185,6 +190,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
             ToInterface::Regis { key, picture: crate::regis::read_picture(&mut fields)? }
         }
         KIND_REGIS_OVER => ToInterface::RegisOver { key: fields.key()?, over: fields.flag("a ReGIS pointer over a drawing")? },
+        super::kinds::KIND_PICTURE_TARGETS => ToInterface::PictureTargets { key: fields.key()?, targets: crate::regis::read_targets(&mut fields)? },
         KIND_TAB_SOUNDING => ToInterface::Sounding(read_channels(&mut fields)?),
         KIND_SHOW => ToInterface::Show(fields.key()?),
         KIND_SHOW_WALL => ToInterface::ShowWall(fields.u32()?),

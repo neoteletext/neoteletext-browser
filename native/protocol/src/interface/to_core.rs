@@ -79,6 +79,8 @@ fn kind_of(message: &ToCore) -> u8 {
         #[cfg(feature = "links")]
         ToCore::Lit(_) => KIND_LIT,
         ToCore::RegisPointer(_) => super::kinds::KIND_REGIS_POINTER,
+        ToCore::PictureFocus { .. } => super::kinds::KIND_PICTURE_FOCUS,
+        ToCore::PictureFollow { .. } => super::kinds::KIND_PICTURE_FOLLOW,
         #[cfg(feature = "links")]
         ToCore::Typed { .. } => KIND_TYPED,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -156,6 +158,10 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         #[cfg(feature = "links")]
         ToCore::Lit(lit) => crate::links::push_lit(payload, lit.as_ref()),
         ToCore::RegisPointer(pointer) => crate::regis::push_pointer(payload, pointer),
+        ToCore::PictureFocus { key, target } | ToCore::PictureFollow { key, target } => {
+            push_key(payload, *key);
+            payload.extend_from_slice(&target.to_be_bytes());
+        }
         #[cfg(feature = "links")]
         ToCore::Typed { number, opened } => push_typed(payload, *number, *opened)?,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -329,13 +335,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         }
         KIND_SELECT_TAB => ToCore::SelectTab(fields.u8()?),
         KIND_CLOSE_TAB => ToCore::CloseTab(fields.u8()?),
-        KIND_MOVE_TAB => {
-            let (from, to) = (fields.u8()?, fields.u8()?);
-            if usize::from(from) >= MAX_TABS || usize::from(to) >= MAX_TABS {
-                return Err(ProtocolError::BadValue("tab place"));
-            }
-            ToCore::MoveTab { from, to }
-        }
+        KIND_MOVE_TAB => read_move_tab(&mut fields)?,
         KIND_NEW_TAB => ToCore::NewTab,
         KIND_OPEN_FILE => {
             let kind = read_open_kind(&mut fields)?;
@@ -369,6 +369,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(crate::links::read_spot(&mut fields)?) }),
         super::kinds::KIND_REGIS_POINTER => ToCore::RegisPointer(crate::regis::read_pointer(&mut fields)?),
+        super::kinds::KIND_PICTURE_FOCUS | super::kinds::KIND_PICTURE_FOLLOW => read_picture_keyboard(kind, &mut fields)?,
         #[cfg(feature = "links")]
         KIND_LIT => ToCore::Lit(if payload.is_empty() { None } else { Some(crate::links::read_lit(&mut fields)?) }),
         #[cfg(feature = "links")]
@@ -416,6 +417,23 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
     };
     fields.end()?;
     Ok(Some(message))
+}
+
+/// A tab moved along the strip, both places within the tabs a window
+/// holds.
+fn read_move_tab(fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
+    let (from, to) = (fields.u8()?, fields.u8()?);
+    if usize::from(from) >= MAX_TABS || usize::from(to) >= MAX_TABS {
+        return Err(ProtocolError::BadValue("tab place"));
+    }
+    Ok(ToCore::MoveTab { from, to })
+}
+
+/// The keyboard on a picture's targets (renderer parity PAR-30): the
+/// target the focus is on, or Enter on a focused link.
+fn read_picture_keyboard(kind: u8, fields: &mut Fields<'_>) -> Result<ToCore, ProtocolError> {
+    let (key, target) = (fields.key()?, fields.u16()?);
+    Ok(if kind == super::kinds::KIND_PICTURE_FOLLOW { ToCore::PictureFollow { key, target } } else { ToCore::PictureFocus { key, target } })
 }
 
 /// One of the intents of updates (`installation-and-updates.md` section

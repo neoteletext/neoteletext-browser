@@ -73,6 +73,8 @@ impl Core {
                 let key = PageKey { channel, page };
                 self.regis.hold(key, sub, picture.commits, picture.language, pick);
                 self.send(&ToInterface::Regis { key, picture })?;
+                // The keyboard's targets follow the pick record (PAR-30).
+                self.send_picture_targets(key)?;
                 // What lies under a still pointer may have changed (REQ-6374 item 5).
                 self.regis_repoint()?;
             }
@@ -82,6 +84,8 @@ impl Core {
             FromDecoder::RegisLinks { page, sub, links } => {
                 let (key, now) = (PageKey { channel, page }, self.now());
                 self.with_channel(channel, |table, link_channel| table.found_drawings(key, sub, &links, link_channel, now));
+                // Which targets are links, and so marked, changed (PAR-30).
+                self.send_picture_targets(key)?;
                 self.regis_repoint()?;
             }
             #[cfg(feature = "links")]
