@@ -364,6 +364,8 @@ mod tests {
         let folder = std::env::temp_dir().join(format!("neoteletext-source-font-{}", std::process::id()));
         let _ = fs::remove_dir_all(&folder);
         fs::create_dir_all(&folder).unwrap();
+        // Read by its canonical path, as the broker reads a chosen file.
+        let folder = folder.canonicalize().unwrap();
         let places = Places::new(None, Vec::new());
         let (at_bound, over) = (folder.join("at.regisfont"), folder.join("over.regisfont"));
         fs::write(&at_bound, vec![b'#'; BOUND]).unwrap();
