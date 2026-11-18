@@ -29,6 +29,9 @@ use crate::links;
 use crate::voice_sink::Outbox;
 use crate::{Changed, FlashRates};
 
+mod animation;
+#[cfg(test)]
+mod animation_tests;
 mod feed;
 #[cfg(test)]
 mod font_tests;
@@ -210,6 +213,9 @@ pub struct Engine {
     input: InputRecords,
     /// Which pushed pages may be drawn, and how old each is (REQ-1558).
     cache: RefCell<PageCache>,
+    /// The atomic frames open, the teletext sprites and the animation
+    /// state the decoder composes with (animation.md ANIM-22).
+    animation: animation::Animated,
 }
 
 impl Default for Engine {
@@ -277,6 +283,7 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: InputRecords::default(),
             cache: RefCell::new(PageCache::default()),
+            animation: animation::Animated::default(),
         }
     }
 

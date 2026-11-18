@@ -16,11 +16,12 @@ use interface_core::canvas::PAGE_WIDTH;
 use interface_core::channel::{is_channel_page, page_index};
 use neoteletext_core::acq::StoredPage;
 use neoteletext_core::charset::{CharRef, CharSet, G2Set};
-use neoteletext_core::compose::compose_level;
+use neoteletext_core::compose::{compose_level, compose_sprites};
 use neoteletext_core::config::Config;
 #[cfg(feature = "links")]
 use neoteletext_core::consts::FASTEXT_COLOURS;
 use neoteletext_core::consts::{CLOCK_BYTES, G2_RIGHT_GUILLEMET, ROWS, SPACE, STATUS_COLUMNS};
+use neoteletext_core::controls::apply_animation;
 #[cfg(feature = "links")]
 use neoteletext_core::controls::{Control, Look, apply_look};
 use neoteletext_core::fsm::PageState;
@@ -110,7 +111,7 @@ impl Engine {
 
     /// The stored sub-page of `page` to draw: the one chosen, while the
     /// store has it, else the latest.
-    fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
+    pub(super) fn stored(&self, page: u16, subpage: Option<u16>) -> Option<&StoredPage> {
         let address = PageAddress::from_mpp(page)?;
         let store = self.decoder.store();
         // With none chosen, a page the channel pushed opens at its first
@@ -256,6 +257,17 @@ impl Engine {
             if let Some(cell) = grid.cell_mut(ROWS.saturating_sub(1), column) {
                 cell.glyph = Glyph::Char(CharRef::new(CharSet::G2(G2Set::Latin), G2_RIGHT_GUILLEMET));
             }
+        }
+        // The sub-page's sprites over the page, each with its animation
+        // state in force, and its controls as that state shows them
+        // (animation.md ANIM-8, ANIM-6): the engine core's per-tick
+        // sequence, from the placements on. The rows that then differ
+        // from the last frame are found by the page's change tracker, as
+        // for any other change.
+        if let Some(animated) = self.animation.teletext.get(page, stored.key.subcode.value()) {
+            let page_grid = grid;
+            let drawn = compose_sprites(&mut grid, &page_grid, stored, &magazine, &lookup, config, &options, &animated.placements());
+            apply_animation(&mut grid, &neoteletext_core::controls::controls(stored), &animated.animation, &drawn.cells);
         }
         grid
     }

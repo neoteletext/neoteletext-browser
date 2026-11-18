@@ -23,6 +23,7 @@
     clippy::unimplemented
 )]
 
+pub mod animation;
 mod changes;
 mod engine;
 mod flash;
