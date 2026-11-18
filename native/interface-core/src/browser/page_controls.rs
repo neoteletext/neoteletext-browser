@@ -25,8 +25,16 @@ impl Browser {
         self.page_controls.controls
     }
 
-    /// Asks for `control` on the open page.
+    /// Asks for `control` on the open page. Reveal and mix are of teletext
+    /// alone (DEC-6638 item 6): on a page drawn as a picture their keys and
+    /// the remote's buttons do nothing (renderer parity PAR-32), since what
+    /// they would change, the concealed text and the cells' backgrounds of
+    /// the teletext page beneath, is not what is shown.
     pub(super) fn ask_control(&mut self, control: PageControl) {
+        let teletext_only = matches!(control, PageControl::Reveal | PageControl::Mix);
+        if teletext_only && self.wall.zoomed().is_some_and(|key| self.picture_language(key).is_some()) {
+            return;
+        }
         self.outputs.push(Output::PageControl(control));
     }
 

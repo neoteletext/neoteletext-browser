@@ -58,3 +58,21 @@ fn the_viewers_keys_ask_for_the_controls() {
     single.key(Key::Right, Modifiers::default(), OPEN);
     assert!(single.take_outputs().is_empty(), "one sub-page: the arrow sizes the pages as before");
 }
+
+/// Renderer parity PAR-32 (DEC-6638 item 6): reveal and mix do not apply to
+/// a picture, so their keys ask for nothing on a page drawn in ReGIS or
+/// NAPLPS, while hold and the coloured keys still do.
+#[test]
+fn reveal_and_mix_do_nothing_on_a_picture_page() {
+    for language in [crate::canvas::PictureLanguage::Regis, crate::canvas::PictureLanguage::Naplps] {
+        let (mut browser, key) = opened(1);
+        browser.set_regis(key, 0, 1, language);
+        browser.take_outputs();
+        for text in ["?", "m"] {
+            browser.key(Key::Text(text), Modifiers::default(), OPEN);
+            assert!(!browser.take_outputs().iter().any(|output| matches!(output, Output::PageControl(_))), "{text} on {language:?}");
+        }
+        browser.key(Key::Text("H"), Modifiers::default(), OPEN);
+        assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Hold)], "hold applies to pictures");
+    }
+}
