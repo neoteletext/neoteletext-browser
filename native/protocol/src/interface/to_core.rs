@@ -69,6 +69,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::CloseWindow => KIND_CLOSE_WINDOW,
         ToCore::Drawn => KIND_DRAWN,
         ToCore::FramePhase(_) => super::kinds::KIND_FRAME_PHASE,
+        ToCore::ReducedMotion(_) => super::kinds::KIND_REDUCED_MOTION,
         ToCore::InstallUpdate => KIND_INSTALL_UPDATE,
         ToCore::ChangeSetting(_) => KIND_CHANGE_SETTING,
         ToCore::Console(_) => KIND_CONSOLE,
@@ -148,7 +149,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::CloseWindow | ToCore::Drawn | ToCore::InstallUpdate => {}
         ToCore::FramePhase(phase) => crate::rules::push_frame_phase(payload, *phase)?,
         ToCore::ChangeSetting(change) => settings::push_change(payload, change)?,
-        ToCore::Console(open) => payload.push(u8::from(*open)),
+        ToCore::Console(open) | ToCore::ReducedMotion(open) => payload.push(u8::from(*open)),
         ToCore::Recording(request) => payload.push(crate::console::request_byte(*request)),
         #[cfg(feature = "links")]
         ToCore::Point(spot) => crate::links::push_spot(payload, spot.as_ref()),
@@ -355,6 +356,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         super::kinds::KIND_FRAME_PHASE => ToCore::FramePhase(crate::rules::read_frame_phase(&mut fields)?),
         KIND_CHANGE_SETTING => ToCore::ChangeSetting(settings::read_change(&mut fields)?),
         KIND_CONSOLE => ToCore::Console(fields.flag("flag")?),
+        super::kinds::KIND_REDUCED_MOTION => ToCore::ReducedMotion(fields.flag("reduced motion")?),
         super::kinds::KIND_RECORDING => ToCore::Recording(crate::console::read_request(&mut fields)?),
         #[cfg(feature = "links")]
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(crate::links::read_spot(&mut fields)?) }),

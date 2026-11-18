@@ -209,6 +209,9 @@ pub struct Engine {
     views: BTreeMap<u16, View>,
     /// Held pages, as they stood when held (the engine's REQ-NAV-006).
     held: BTreeMap<u16, Box<StoredPage>>,
+    /// The platform asks for reduced motion (REQ-754, renderer parity
+    /// PAR-33): flash shows its characters steadily in the on phase.
+    reduced_motion: bool,
     /// The area of a page under the pointer and whether it is pressed:
     /// drawn in its look (DOC-1947).
     #[cfg(feature = "links")]
@@ -300,6 +303,7 @@ impl Engine {
             trackers: RefCell::new(BTreeMap::new()),
             views: BTreeMap::new(),
             held: BTreeMap::new(),
+            reduced_motion: false,
             #[cfg(feature = "links")]
             looks: BTreeMap::new(),
             #[cfg(feature = "interaction")]

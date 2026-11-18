@@ -347,6 +347,15 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 engine.set_paint_gradually(gradual);
                 Vec::new()
             }
+            // Every page on screen is drawn again: its flash stops or
+            // starts (renderer parity PAR-33).
+            ToDecoder::ReducedMotion(reduced) => {
+                engine.set_reduced_motion(reduced);
+                let pages = showing.clone();
+                draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+                draw_regis(&mut engine, &showing, &sent, now, &mut output)?;
+                continue;
+            }
             // The viewer's input for the open page's rule table, its
             // metered values and a state query (RULE-52, RULE-33,
             // RULE-47): each waits for the next tick.

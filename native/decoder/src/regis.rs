@@ -94,6 +94,9 @@ struct Motion {
     painting: bool,
     /// Its animation state changed since its picture was last taken.
     animated: bool,
+    /// The platform asks for reduced motion (REQ-754, renderer parity
+    /// PAR-33): the cursor shows steadily and frame cycles do not advance.
+    steady: bool,
 }
 
 /// A picture's pick record and origins, and the pick built from them.
@@ -171,7 +174,7 @@ impl Page {
     /// Whether the cursor blinks: keys go to the channel and the sub-page
     /// has a cursor drawing.
     const fn blinks(&self) -> bool {
-        self.viewer.typing && self.cursor != 0
+        !self.motion.steady && self.viewer.typing && self.cursor != 0
     }
 
     /// Gives the renderer the viewer state as it stands at `now_us`: the
@@ -310,7 +313,9 @@ impl Page {
     /// gradually" off, every drawing is whole at once.
     fn advance(&mut self, tick: u32, at_once: bool) {
         let mut due = Vec::new();
-        self.animation.advance(tick, &mut |target| due.push(target.number));
+        // Under reduced motion a frame cycle shows its first frame, the
+        // frame in force before it starts, and does not advance (PAR-33).
+        self.animation.advance(if self.motion.steady { 0 } else { tick }, &mut |target| due.push(target.number));
         for number in due {
             self.give(number);
         }
@@ -331,6 +336,10 @@ impl Page {
     fn next_tick(&self, tick: u32) -> Option<u32> {
         if self.motion.painting {
             return Some(tick.saturating_add(1));
+        }
+        // Under reduced motion no cycle advances (PAR-33).
+        if self.motion.steady {
+            return None;
         }
         next_cycle_tick(self.animation.entries(), tick)
     }
@@ -419,6 +428,10 @@ pub struct RegisPages {
     /// Every drawing is painted whole at once: the viewer's setting
     /// "Paint drawings gradually" is off (animation.md ANIM-15).
     at_once: bool,
+    /// The platform asks for reduced motion (REQ-754, renderer parity
+    /// PAR-33): every drawing is whole at once as well, cursors show
+    /// steadily and frame cycles do not advance.
+    reduced: bool,
     /// Each sub-page's sheet (ANIM-17): the stream of hidden drawings fed
     /// to its renderer before its own stream. A sub-page is a page
     /// (page-rules.md RULE-112): no sheet is fed to another sub-code.
@@ -464,6 +477,7 @@ impl RegisPages {
             let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor)).unwrap_or_default();
             let mut page = Page::new(record.generation, viewer);
             page.cursor = cursor;
+            page.motion.steady = self.reduced;
             // The page's sheet goes first (ANIM-17): the stream names its
             // hidden drawings as sources, looks and frames.
             if let Some(sheet) = self.sheets.get(&key).filter(|sheet| !sheet.bytes.is_empty()) {
@@ -489,7 +503,7 @@ impl RegisPages {
             page.resynchronise();
             // A drawing given a paint rate starts painting (ANIM-15); with
             // the viewer's setting off it is whole at once.
-            page.motion.painting = page.terminal.advance_ticks(if self.at_once { u32::MAX } else { 0 });
+            page.motion.painting = page.terminal.advance_ticks(if self.at_once || self.reduced { u32::MAX } else { 0 });
         }
         page.changed |= committed | page.screen.take_changed();
         // The channel moves the cursor by a commit after each key: it is
@@ -657,7 +671,7 @@ impl RegisPages {
     /// `tick`: its cycles' frames and its drawings' painting (ANIM-14,
     /// ANIM-15).
     pub fn advance(&mut self, page: u16, sub: Option<u16>, tick: u32) {
-        let at_once = self.at_once;
+        let at_once = self.at_once || self.reduced;
         if let Some(held) = self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)) {
             held.advance(tick, at_once);
         }
@@ -682,6 +696,22 @@ impl RegisPages {
     /// (ANIM-16, RULE-48).
     pub fn take_counters(&mut self, page: u16, sub: Option<u16>) -> Counters {
         self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)).map(|held| core::mem::take(&mut held.counters)).unwrap_or_default()
+    }
+
+    /// The platform's preference for reduced motion (REQ-754, renderer
+    /// parity PAR-33): on, the paint rate draws at once (ANIM-15), a frame
+    /// cycle shows its first frame and does not advance (ANIM-14), and the
+    /// cursor drawing shows steadily (REQ-6378); the channel's commits and
+    /// the rules' state changes still apply.
+    pub fn set_reduced(&mut self, reduced: bool) {
+        self.reduced = reduced;
+        for held in self.pages.values_mut() {
+            held.motion.steady = reduced;
+            if reduced {
+                held.motion.painting = held.terminal.advance_ticks(u32::MAX);
+            }
+            held.changed = true;
+        }
     }
 
     /// The viewer's setting "Paint drawings gradually" (ANIM-15): off,

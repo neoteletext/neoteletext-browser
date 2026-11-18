@@ -301,6 +301,20 @@ impl Engine {
         self.naplps.set_gradual(gradual);
     }
 
+    /// The platform's preference for reduced motion (REQ-754, renderer
+    /// parity PAR-33): on, the receiver moves nothing only it moves.
+    /// Teletext flash shows its on phase, cursors show steadily, NAPLPS
+    /// BLINK shows its first colour and WAIT is not waited for, frame
+    /// cycles show their first frame, and ReGIS paint rates draw at once;
+    /// rule tables, timers, the server's timelines and animation commands
+    /// still apply, as state changes.
+    pub fn set_reduced_motion(&mut self, reduced: bool) {
+        self.reduced_motion = reduced;
+        self.regis.set_reduced(reduced);
+        self.naplps.set_reduced(reduced);
+        self.animation.teletext.set_reduced(reduced);
+    }
+
     /// What the animation of the sub-page of `page` on screen has cost
     /// since it was last asked (ANIM-16): the repaints held back for the
     /// budget, each of which the rule table's host reports as

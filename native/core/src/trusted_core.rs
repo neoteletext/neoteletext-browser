@@ -229,6 +229,10 @@ struct Core {
     /// refresh period, one composition and when the interface told it, on
     /// this process's clock.
     frame_phase: Option<frame_phase::Compositions>,
+    /// The platform asks for reduced motion, as the interface last said
+    /// (REQ-754): every decoder is told, a new one as it starts, so that it
+    /// moves nothing only the receiver moves (renderer parity PAR-33).
+    reduced_motion: bool,
     /// The frame each decoder last sent of each page it shows, its
     /// palette, screen colour and dots: what a changed rectangle is laid
     /// over (animation.md ANIM-5).
@@ -394,6 +398,7 @@ impl Core {
             watching: BTreeMap::new(),
             page_cost: page_cost::PageCost::default(),
             frame_phase: None,
+            reduced_motion: false,
             decoded: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             wall_fill: wall_fill::WallFill::default(),

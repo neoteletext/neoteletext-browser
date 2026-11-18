@@ -272,7 +272,7 @@ impl App {
         self.windows.insert(window.id(), self.window);
         self.view.wheel_pointers = wheel_pointers(event_loop, window.scale_factor());
         self.view.graphics = Some(Graphics { window, surface, _context: context, asked: false });
-        self.follow_reduced_motion();
+        self.follow_reduced_motion(event_loop);
         self.show_tabs();
         self.report_window(event_loop);
     }

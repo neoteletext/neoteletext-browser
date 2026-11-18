@@ -159,6 +159,7 @@ fn is_strip_input(intent: &ToCore) -> bool {
         | ToCore::MuteAll(_)
         | ToCore::Drawn
         | ToCore::FramePhase(_)
+        | ToCore::ReducedMotion(_)
         | ToCore::Console(_)
         | ToCore::Recording(_)
         | ToCore::Suggest(_)

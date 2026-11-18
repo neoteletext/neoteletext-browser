@@ -104,3 +104,7 @@ pub(super) const KIND_FRAME_AREA: u8 = 193;
 // 200 and of what other work in flight on 19 November 2026 may take
 // below it.
 pub(super) const KIND_PICTURE_TITLE: u8 = 201;
+// Trusted core to decoder: the platform asks for reduced motion (renderer
+// parity PAR-33), in the next number free across every pipe on 19
+// November 2026.
+pub(super) const KIND_REDUCED_MOTION: u8 = 202;

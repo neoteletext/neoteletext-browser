@@ -2,6 +2,9 @@
 //! to a channel. And the platform's preference for reduced motion, the
 //! other setting of the system's the window follows.
 
+use protocol::ToCore;
+use winit::event_loop::ActiveEventLoop;
+
 use super::App;
 
 /// macOS's accessibility setting, "Reduce motion", through `dock-menu`.
@@ -35,7 +38,7 @@ fn reduced_by_broker(value: Option<&std::ffi::OsStr>) -> bool {
 impl App {
     /// The window's moves follow the platform's preference for reduced
     /// motion (REQ-754), asked whenever a window opens or gains the focus.
-    pub(super) fn follow_reduced_motion(&mut self) {
+    pub(super) fn follow_reduced_motion(&mut self, event_loop: &ActiveEventLoop) {
         let reduced = system_reduced_motion();
         if reduced != self.view.browser.wall().reduced_motion() {
             // Under the frame trace, what the system answered the confined
@@ -45,6 +48,9 @@ impl App {
                 eprintln!("neoteletext-interface: reduced motion {}, as the system says", if reduced { "on" } else { "off" });
             }
             self.view.browser.wall_mut().set_reduced_motion(reduced);
+            // The decoders move nothing only the receiver moves either
+            // (renderer parity PAR-33): the trusted core tells them.
+            self.send(event_loop, &ToCore::ReducedMotion(reduced));
             self.request_redraw();
         }
     }

@@ -386,7 +386,10 @@ impl Engine {
         let subcode = stored.key.subcode.value();
         let reveal = self.views.get(&page).is_some_and(|view| view.reveal);
         let config = self.decoder.config();
-        let phase = FlashPhase::at_tick(neoteletext_core::consts::presentation_tick_at_us(now_us), config);
+        // Under reduced motion flash shows its characters steadily in the
+        // on phase (renderer parity PAR-33, REQ-754).
+        let phase =
+            if self.reduced_motion { FlashPhase::STEADY } else { FlashPhase::at_tick(neoteletext_core::consts::presentation_tick_at_us(now_us), config) };
         let render = RenderOptions::resolved(config, reveal, phase).with_underline(false);
         let changed = self.trackers.borrow_mut().entry(page).or_default().changed_rows(&grid, render);
         indices.clear();
@@ -416,7 +419,7 @@ impl Engine {
             palette,
             screen: grid.screen_colour,
             indices,
-            flash: (!rates.is_empty()).then_some((phase, rates)),
+            flash: (!rates.is_empty() && !self.reduced_motion).then_some((phase, rates)),
             #[cfg(feature = "links")]
             links,
             subpages: self.subpage_step(page, subcode),

@@ -588,6 +588,146 @@ fn a_naplps_blink_changes_the_colours_every_thirty_ticks() {
     assert_ne!(first[3], last[3]);
 }
 
+/// Renderer parity PAR-33 (REQ-754): with reduced motion on, a NAPLPS
+/// WAIT is not waited for and a BLINK shows its first colour steadily,
+/// waking the decoder for neither; off, both play on the clock.
+#[test]
+fn reduced_motion_waits_for_no_naplps_wait_and_shows_a_blinks_first_colour() {
+    let mut animated = rectangle(3, 0, 0, 32, 16);
+    animated.extend(WAIT);
+    animated.push(0x40 | 5);
+    animated.extend(rectangle(6, 128, 100, 32, 16));
+    animated.extend([0x3E, 0x40]);
+    let mut engine = Engine::new();
+    engine.set_reduced_motion(true);
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, &animated));
+    let mut receiver = Receiver::default();
+    assert!(receiver.naplps(&mut engine));
+    assert!(receiver.count(3) > 1000 && receiver.count(6) > 1000, "nothing waits");
+
+    let mut blinking = rectangle(3, 0, 0, 32, 16);
+    blinking.extend([0x3F, 0x40 | (7 << 2), 0x45, 0x45, 0x40]);
+    blinking.extend([0x3E, 0x40 | (3 << 2)]);
+    let palettes = |reduced: bool| {
+        let mut engine = Engine::new();
+        engine.set_reduced_motion(reduced);
+        engine.feed_whole(true, true, &naplps(PAGE, 1, 0, &blinking));
+        engine.animation_step(&[PAGE], due_at(1000));
+        let first = engine.naplps().take(PAGE, None).unwrap().picture.palette;
+        let due = engine.animation_due_us(&[PAGE], due_at(1000));
+        engine.animation_step(&[PAGE], due_at(1030));
+        let later = engine.naplps().take(PAGE, None).map(|drawn| drawn.picture.palette);
+        (first, due, later)
+    };
+    let (first, due, later) = palettes(false);
+    assert!(due.is_some() && later.is_some_and(|later| later[3] != first[3]), "off: it blinks");
+    let (steady, due, later) = palettes(true);
+    assert_eq!((due, later), (None, None), "on: nothing changes and nothing wakes");
+    assert_eq!(steady[3], first[3], "its first colour");
+}
+
+/// Renderer parity PAR-33 (REQ-754): with reduced motion on, a ReGIS
+/// drawing's frame cycle shows its first frame and does not advance, a
+/// paint rate draws at once, and the cursor drawing shows steadily while
+/// keys go to the channel; the channel's commits still apply.
+#[test]
+fn reduced_motion_stills_regis_cycles_paint_rates_and_the_cursor() {
+    // A cycle from frame 1 to 0 shows frame 1, colour 7, and stays.
+    let mut engine = Engine::new();
+    // Frames 0, 1 and 2 of drawing 5 are drawings 3, 4 and 6, in colours
+    // 6, 7 and 5; a cycle of frames 1 and 2 shows frame 1 and stays.
+    let scene = format!("{}{}{}D(S5(X300,Y50,G2,F(3,4,6)),S3(V0),S4(V0),S6(V0),C)", square(3, 6), square(4, 7), square(6, 5));
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, scene.as_bytes()));
+    engine.set_reduced_motion(true);
+    let mut receiver = Receiver::default();
+    assert!(receiver.regis(&mut engine, 0));
+    engine.feed_whole(true, true, &animate(PAGE, &[on(5, OperationKind::Cycle { first: 1, last: 2, period: 6, once: false })]));
+    for tick in [10, 16, 22, 100] {
+        engine.animation_step(&[PAGE], due_at(tick));
+        let _ = receiver.regis(&mut engine, due_at(tick));
+        assert_eq!(receiver.at(305, 55), 7, "tick {tick}: its first frame");
+    }
+    assert_eq!(engine.animation_due_us(&[PAGE], due_at(100)), None, "no wake for a cycle");
+    // A commit still applies.
+    engine.feed_whole(true, true, &regis(PAGE, 1, scene.len(), b"D(S5(X400),C)"));
+    let _ = receiver.regis(&mut engine, due_at(100));
+    assert_eq!((receiver.at(305, 55), receiver.at(405, 55)), (0, 7), "the commit moved it");
+
+    // A paint rate draws at once.
+    let lines = (0..100).fold(String::new(), |mut all, row| {
+        let _ = write!(all, "P[0,{}]V[699,{}]", row * 4, row * 4);
+        all
+    });
+    let mut engine = Engine::new();
+    engine.set_reduced_motion(true);
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, format!("D(B1)W(I3){lines}D(E)D(S1(X10,Y10,T1),C)").as_bytes()));
+    engine.animation_step(&[PAGE], due_at(1000));
+    let mut receiver = Receiver::default();
+    assert!(receiver.regis(&mut engine, due_at(1000)));
+    assert_eq!(receiver.count(3), 70_000, "whole at once");
+
+    // The cursor drawing shows steadily while keys go to the channel.
+    let mut pages = crate::regis::RegisPages::default();
+    pages.set_reduced(true);
+    let cursor_scene = "D(B1)W(I7)T'Hi'D(E)D(B2)W(I3)V[0,0][8,0]D(E)D(S1(X60,Y200),S2(X78,Y200),C)";
+    pages.read(&stream(PAGE, 0, 1, 0, cursor_scene.as_bytes()));
+    pages.set_cursor(PAGE, 0, 2);
+    pages.set_viewer(PAGE, 0, protocol::regis::RegisViewer { hovered: 0, pressed: 0, typing: true });
+    let _ = pages.take(PAGE, Some(0), 0);
+    let half = neoteletext_core::consts::presentation_tick_due_us(interface_core::regis::BLINK_HALF_TICKS);
+    assert!(pages.take(PAGE, Some(0), half + 1).is_none(), "not hidden for the second half period");
+    assert_eq!(pages.owed_us(PAGE, Some(0), half + 1), None, "no wake for a blink");
+}
+
+/// Renderer parity PAR-33 (REQ-754): with reduced motion on, a NAPLPS
+/// sub-page's cursor object shows steadily while keys go to the channel,
+/// and a frame cycle shows its first frame and does not advance.
+#[test]
+fn reduced_motion_stills_the_naplps_cursor_and_cycles() {
+    let mut bytes = vec![DEF_MACRO, 0x20];
+    bytes.extend(rectangle(3, 0, 0, 32, 32));
+    bytes.push(END);
+    bytes.extend([DEF_MACRO, 0x21]);
+    bytes.extend(rectangle(6, 0, 0, 32, 32));
+    bytes.push(END);
+    bytes.extend([DEF_MACRO, 0x22]);
+    bytes.extend(rectangle(9, 0, 0, 32, 32));
+    bytes.push(END);
+    bytes.extend([0x3E, 0x40]);
+    let mut engine = Engine::new();
+    engine.set_reduced_motion(true);
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, &bytes));
+    let mut packets = Vec::new();
+    let objects = [object(1, ObjectKind::Macro, (100, 100), &[0x20, 0x21, 0x22])];
+    neoteletext_web::records::naplps_objects::encode((address(PAGE), SubCode::new(0), 1), &objects, 0, 0, &mut |packet| {
+        packets.extend_from_slice(&packet.bytes);
+    })
+    .unwrap();
+    engine.feed_whole(true, true, &packets);
+    let mut receiver = Receiver::default();
+    assert!(receiver.naplps(&mut engine));
+    let at = |receiver: &Receiver| {
+        let (x, y) = raster(110, 110);
+        receiver.at(x, y)
+    };
+    // Frames 1 and 2, colours 6 and 9: frame 1 shows, and stays.
+    engine.feed_whole(true, true, &animate(PAGE, &[on(1, OperationKind::Cycle { first: 1, last: 2, period: 4, once: false })]));
+    for tick in [10, 14, 18, 100] {
+        engine.animation_step(&[PAGE], due_at(tick));
+        let _ = receiver.naplps(&mut engine);
+        assert_eq!(at(&receiver), 6, "tick {tick}: its first frame");
+    }
+    // The cursor: object 1, with keys going to the channel.
+    engine.naplps().set_cursor(PAGE, 0, 1);
+    engine.naplps().set_viewer(PAGE, 0, protocol::regis::RegisViewer { hovered: 0, pressed: 0, typing: true });
+    for tick in [200, 232, 264, 296] {
+        engine.animation_step(&[PAGE], due_at(tick));
+        let _ = receiver.naplps(&mut engine);
+        assert_eq!(at(&receiver), 6, "tick {tick}: shown steadily");
+    }
+    assert_eq!(engine.animation_due_us(&[PAGE], due_at(296)), None, "no wake for a blink or a cycle");
+}
+
 /// The dot of the teletext raster a NAPLPS picture is carried as (REQ-5819)
 /// that shows the pixel (`x`, `y`) of the 640 by 480 picture objects are
 /// placed in: its canvas of 480 by 462 lies on lines 19 to 480.

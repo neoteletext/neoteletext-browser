@@ -48,6 +48,22 @@ impl Core {
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
 
+    /// The interface said whether the platform asks for reduced motion
+    /// (REQ-754): each decoder is told when it changes (renderer parity
+    /// PAR-33). The interface's word is taken as it stands: at worst it
+    /// stops or starts the receiver's own motion, which is the viewer's
+    /// own preference to state.
+    pub(super) fn reduced_motion(&mut self, reduced: bool) {
+        if reduced == self.reduced_motion {
+            return;
+        }
+        self.reduced_motion = reduced;
+        let channels: Vec<u32> = self.decoders.keys().copied().collect();
+        for channel in channels {
+            self.tell(channel, ToDecoder::ReducedMotion(reduced));
+        }
+    }
+
     /// The interface told its frames, read from its pipe at `read_at`:
     /// kept, and passed to every decoder, each of which paints its pages
     /// on screen just before a composition (RULE-65) and locks its open

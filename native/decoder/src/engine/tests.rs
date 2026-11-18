@@ -948,6 +948,30 @@ fn arrivals_compare_only_the_pages_that_completed() {
     assert_eq!(engine.take_updated(), [0x101]);
 }
 
+/// Renderer parity PAR-33 (REQ-754): with reduced motion on, a flashing
+/// page shows its characters steadily in the on phase, in the hidden part
+/// of the flash's period too, and never wakes the decoder for flash; off,
+/// it flashes again.
+#[test]
+fn reduced_motion_shows_flash_steadily_in_its_on_phase() {
+    use neoteletext_core::consts::{FLASH_HIDDEN_TICKS, FLASH_SHOWN_TICKS, presentation_tick_due_us};
+    let config = Config::default();
+    let mut engine = Engine::new();
+    engine.feed_whole(false, false, b"PN,10100\nSC,0000\nPS,8000\nOL,1,\x1b\x48Flashing\n\n");
+    let first = 3 * (FLASH_SHOWN_TICKS + FLASH_HIDDEN_TICKS);
+    let (shown, hidden) = (presentation_tick_due_us(first), presentation_tick_due_us(first + FLASH_SHOWN_TICKS));
+    let on = engine.render_at(0x101, shown).unwrap();
+    assert_ne!(engine.render_at(0x101, hidden).unwrap().indices, on.indices, "it flashes");
+    engine.set_reduced_motion(true);
+    let steady = engine.render_at(0x101, hidden).unwrap();
+    assert_eq!(steady.indices, on.indices, "the on phase, while it would be hidden");
+    let mut flashing = Flashing::default();
+    flashing.drawn(0x101, &steady);
+    assert_eq!(flashing.next_us(hidden, &config), None, "no wake for flash");
+    engine.set_reduced_motion(false);
+    assert_ne!(engine.render_at(0x101, hidden).unwrap().indices, on.indices, "off: it flashes again");
+}
+
 /// The engine's decisions E.12 and E.48 on the presentation clock
 /// (animation.md ANIM-1): the Level 1 Flash code is shown for 57 ticks and
 /// hidden for 19 at every level, the SAA5050's three to one, and the

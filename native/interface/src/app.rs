@@ -371,7 +371,7 @@ impl ApplicationHandler<Incoming> for App {
             self.focused = id;
             self.show_tabs();
             // The viewer may have changed it while away (REQ-754).
-            self.follow_reduced_motion();
+            self.follow_reduced_motion(event_loop);
         }
         if matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }) {
             self.view.window_frame.set(None);

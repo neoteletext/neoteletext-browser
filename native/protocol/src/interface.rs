@@ -331,6 +331,11 @@ pub enum ToCore {
     /// composition (page-rules.md RULE-98 item 1): the trusted core passes
     /// it to each decoder, which paints and ticks just before it.
     FramePhase(crate::rules::FramePhase),
+    /// The platform's preference for reduced motion (REQ-754), as the
+    /// interface reads it when a window opens or gains the focus: the
+    /// trusted core tells every decoder, which then moves nothing only the
+    /// receiver moves (renderer parity PAR-33).
+    ReducedMotion(bool),
     /// Strip input: install the version the settings panel offers
     /// (section 3.4).
     InstallUpdate,

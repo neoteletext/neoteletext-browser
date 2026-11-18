@@ -394,7 +394,10 @@ impl Page {
     /// colours alone.
     fn palette(&self) -> [[u8; 3]; REGIS_COLOURS] {
         let mut palette = [[0_u8; 3]; REGIS_COLOURS];
-        for (colour, entry) in palette.iter_mut().zip(self.player.colours(&self.terminal)) {
+        // Under reduced motion a BLINK shows its first colour steadily
+        // (PAR-33): the colour map as it stands before any blink.
+        let colours = if self.cursor.steady { self.terminal.palette().at(0) } else { self.player.colours(&self.terminal) };
+        for (colour, entry) in palette.iter_mut().zip(colours) {
             *colour = entry;
         }
         palette
@@ -492,13 +495,16 @@ impl Page {
         }
         self.told = Some(tick);
         if passed > 0 {
-            let colours = self.player.colours(&self.terminal);
+            // The colours as shown, which reduced motion keeps steady.
+            let colours = self.palette();
             let held = self.player.held_bytes();
             let _ = self.player.advance(&mut self.terminal, &mut self.canvas, passed);
-            self.changed |= self.player.held_bytes() != held || self.player.colours(&self.terminal) != colours;
+            self.changed |= self.player.held_bytes() != held || self.palette() != colours;
         }
         let mut due = Vec::new();
-        self.animation.advance(tick, &mut |target| due.push(target.number));
+        // Under reduced motion a frame cycle shows its first frame, the
+        // frame in force before it starts, and does not advance (PAR-33).
+        self.animation.advance(if self.cursor.steady { 0 } else { tick }, &mut |target| due.push(target.number));
         for number in due {
             self.give(number);
         }
@@ -511,6 +517,11 @@ impl Page {
     fn next_tick(&self, tick: u32) -> Option<u32> {
         let player = self.player.ticks_to_next(&self.terminal).map(|ticks| tick.saturating_add(ticks.max(1)));
         let waiting = self.motion.slowed.then(|| tick.saturating_add(1));
+        // Under reduced motion nothing waits and nothing blinks or cycles:
+        // only a repaint held for the budget needs a tick (PAR-33).
+        if self.cursor.steady {
+            return waiting;
+        }
         // A blink begun, or begun again, waits for the tick that begins it.
         let cursor = if !self.blinks() {
             None
@@ -687,7 +698,7 @@ impl NaplpsPages {
             // So does the object that is its cursor (PAR-27), as for ReGIS:
             // it is not the stream's to change.
             let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor.number)).unwrap_or_default();
-            let Some(mut page) = Page::new(record.generation, sheet, self.at_once) else { return };
+            let Some(mut page) = Page::new(record.generation, sheet, self.at_once || self.reduced) else { return };
             page.viewer = viewer;
             page.cursor.number = cursor;
             page.cursor.steady = self.reduced;
@@ -863,12 +874,34 @@ impl NaplpsPages {
         }
     }
 
+    /// The platform's preference for reduced motion (REQ-754, renderer
+    /// parity PAR-33): on, no WAIT is waited for, a BLINK shows its first
+    /// colour, a frame cycle its first frame, and the cursor object shows
+    /// steadily; the channel's and the rules' state changes still apply.
+    pub fn set_reduced(&mut self, reduced: bool) {
+        self.reduced = reduced;
+        let gradual = !self.at_once;
+        for held in self.pages.values_mut() {
+            held.cursor.steady = reduced;
+            if reduced && held.cursor.hidden {
+                held.cursor.hidden = false;
+                held.give(held.cursor.number);
+            }
+            held.player.set_delays(gradual && !reduced);
+            // What a WAIT held is drawn at once; the colours and frames
+            // change to their steady ones.
+            let _ = held.player.advance(&mut held.terminal, &mut held.canvas, 0);
+            held.changed = true;
+        }
+    }
+
     /// The viewer's setting "Paint drawings gradually" (ANIM-15, ANIM-20):
     /// off, no WAIT delays anything, and a WAIT being played ends.
     pub fn set_gradual(&mut self, gradual: bool) {
         self.at_once = !gradual;
+        let reduced = self.reduced;
         for held in self.pages.values_mut() {
-            held.player.set_delays(gradual);
+            held.player.set_delays(gradual && !reduced);
             if !gradual {
                 // What the wait held is drawn at once.
                 let _ = held.player.advance(&mut held.terminal, &mut held.canvas, 0);

@@ -106,6 +106,11 @@ impl Core {
                 if !self.settings.paint_gradually {
                     let _ = decoder.tell(&ToDecoder::PaintGradually(false));
                 }
+                // And whether the platform asks for reduced motion, when it
+                // does (renderer parity PAR-33).
+                if self.reduced_motion {
+                    let _ = decoder.tell(&ToDecoder::ReducedMotion(true));
+                }
                 self.rules_decoder_gone(*id);
                 // A new decoder has sent no frame: a rectangle is laid only
                 // over one it sent (ANIM-5).

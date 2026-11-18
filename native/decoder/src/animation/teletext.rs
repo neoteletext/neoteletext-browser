@@ -80,6 +80,8 @@ impl SubPage {
 pub struct Teletext {
     pages: BTreeMap<(u16, u16), SubPage>,
     changes: u64,
+    /// The platform asks for reduced motion (PAR-33).
+    reduced: bool,
 }
 
 impl Teletext {
@@ -148,16 +150,27 @@ impl Teletext {
 
     /// Advances a sub-page's cycles to presentation tick `tick` (ANIM-14).
     pub fn advance(&mut self, page: u16, sub: u16, tick: u32) {
+        // Under reduced motion a frame cycle shows its first frame, the
+        // frame in force before it starts, and does not advance (PAR-33).
+        let tick = if self.reduced { 0 } else { tick };
         if let Some(held) = self.pages.get_mut(&(page, sub)) {
             held.changed |= held.animation.advance(tick);
         }
     }
 
     /// The next tick after `tick` a cycle of the sub-page changes a frame
-    /// at (ANIM-1).
+    /// at (ANIM-1); none under reduced motion.
     #[must_use]
     pub fn next_tick(&self, page: u16, sub: u16, tick: u32) -> Option<u32> {
+        if self.reduced {
+            return None;
+        }
         self.get(page, sub)?.animation.next_frame_tick(tick)
+    }
+
+    /// The platform's preference for reduced motion (PAR-33).
+    pub const fn set_reduced(&mut self, reduced: bool) {
+        self.reduced = reduced;
     }
 
     /// Whether the sub-page is to be drawn again for its animation, asked

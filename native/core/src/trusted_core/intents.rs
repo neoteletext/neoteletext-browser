@@ -149,6 +149,7 @@ impl Core {
             | ToCore::NewPrivateTab => self.library_intent(intent)?,
             ToCore::Window(window) => self.window_reported(window),
             ToCore::FramePhase(phase) => self.frame_phase(phase, std::time::Instant::now()),
+            ToCore::ReducedMotion(reduced) => self.reduced_motion(reduced),
             ToCore::Known(request) => self.known_request(request)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,

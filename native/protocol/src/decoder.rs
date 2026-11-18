@@ -183,6 +183,11 @@ pub enum ToDecoder {
     /// appears at that rate and a NAPLPS WAIT delays what follows it;
     /// off, everything appears at once. A decoder begins with it on.
     PaintGradually(bool),
+    /// The platform asks for reduced motion (REQ-754, renderer parity
+    /// PAR-33): on, nothing only the receiver moves moves, while every
+    /// state change the channel or the page's rules make still applies. A
+    /// decoder begins with it off.
+    ReducedMotion(bool),
     /// A state query the channel sent for a page (RULE-47): answered once
     /// by [`FromDecoder::PageState`] when that page is the open page.
     RulesQuery {
@@ -519,6 +524,10 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
             payload.push(u8::from(*gradual));
             kinds::KIND_PAINT_GRADUALLY
         }
+        ToDecoder::ReducedMotion(reduced) => {
+            payload.push(u8::from(*reduced));
+            kinds::KIND_REDUCED_MOTION
+        }
     };
     write_frame(out, kind, &payload)
 }
@@ -719,6 +728,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         | kinds::KIND_CUE_HEARD
         | kinds::KIND_FRAME_PHASE => read_rules_to_decoder(kind, &mut fields)?,
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
+        kinds::KIND_REDUCED_MOTION => ToDecoder::ReducedMotion(fields.flag("reduced motion")?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

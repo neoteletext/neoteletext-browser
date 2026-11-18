@@ -135,6 +135,10 @@ pub(crate) const KIND_KNOWN: u8 = 177;
 // The interface's frames (page-rules.md RULE-98 item 1), in the number
 // RULE-98 kept for it beside the decoder's 189 to 191.
 pub(crate) const KIND_FRAME_PHASE: u8 = 192;
+/// The platform's preference for reduced motion (renderer parity PAR-33),
+/// in the next number free across every pipe on 19 November 2026, after
+/// the decoder's 202 for the same.
+pub(crate) const KIND_REDUCED_MOTION: u8 = 203;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;
