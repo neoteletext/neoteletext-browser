@@ -54,7 +54,6 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use confine::broker::{Broker, Helper};
-#[cfg(feature = "interaction")]
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;
 use neoteletext::console::Console;
@@ -303,8 +302,8 @@ impl Core {
 
     /// Microseconds since the trusted core started: typing's clock, since
     /// the pointer's period of 1000/60 ms is no whole number of
-    /// milliseconds (`neoteletext_input::pace`).
-    #[cfg(feature = "interaction")]
+    /// milliseconds (`neoteletext_input::pace`); also the clock of the
+    /// sound's and the page cost's seconds (REQ-6626), which every build has.
     fn now_us(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
     }

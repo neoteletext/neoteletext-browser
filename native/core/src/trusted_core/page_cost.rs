@@ -214,6 +214,7 @@ impl Core {
 
     /// The rule table's counts of a view's open page, which its decoder
     /// tells once a second (RULE-72, REQ-6626 item 2).
+    #[cfg(feature = "interaction")]
     pub(super) fn rule_counted(&mut self, channel: u32, counters: RuleCounters) {
         let cost = self.page_cost.tabs.entry(channel).or_default();
         // Another page or sub-code counts from its own opening.
@@ -263,6 +264,7 @@ impl Core {
     }
 
     /// A view's decoder ended: what it counted goes.
+    #[cfg(feature = "interaction")]
     pub(super) fn page_cost_gone(&mut self, channel: u32) {
         self.page_cost.tabs.remove(&channel);
         self.console.set_page_cost(channel, Vec::new());
