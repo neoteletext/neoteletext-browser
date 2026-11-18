@@ -51,6 +51,7 @@ use protocol::audio::{Audio, MAX_WATCH_SLOTS, Sound, WatchSlot};
 use local::{LocalVoice, Locals, VOICES};
 use names::{Name, Names};
 
+pub mod buffer;
 mod device;
 mod local;
 #[cfg(test)]
@@ -113,6 +114,9 @@ pub enum Told {
         /// The cue's number.
         number: u8,
     },
+    /// The device reported an underrun, or a buffer took longer to fill
+    /// than its own time (page-rules.md RULE-97 item 3).
+    DeviceTrouble,
     /// The time spent rendering one view's sounds since it was last told
     /// (REQ-6626 item 1 b).
     Spent {
@@ -205,6 +209,19 @@ impl Mixers {
             told: None,
             wake: None,
         }
+    }
+
+    /// The views with a local sound open, paused or not (RULE-97: a paused
+    /// page's kept instrument counts as open).
+    #[must_use]
+    pub fn views_with_locals(&self) -> Vec<u32> {
+        self.channels.iter().filter(|(_, channel)| channel.locals.voices.iter().flatten().any(|voice| !voice.ended)).map(|(&number, _)| number).collect()
+    }
+
+    /// The local sounds open in every view.
+    #[must_use]
+    pub fn locals_open(&self) -> usize {
+        self.channels.values().map(|channel| channel.locals.voices.iter().flatten().filter(|voice| !voice.ended).count()).sum()
     }
 
     /// Gives the audio thread where to tell what it metered and stopped.
@@ -626,6 +643,7 @@ impl Channel {
                         // released as it ramps out.
                         if let Some(local) = locals.voices.get_mut(usize::from(voice)).and_then(Option::as_mut).filter(|local| local.key != key) {
                             local.release();
+                            local.ended = true;
                         }
                         mixer.start(usize::from(voice), Start { key, gain, fade_ms, looped, duck_percent, after_current });
                     }
@@ -634,6 +652,7 @@ impl Channel {
                 Audio::Stop { channel: voice, fade_ms } => {
                     if let Some(local) = locals.voices.get_mut(usize::from(voice)).and_then(Option::as_mut) {
                         local.release();
+                        local.ended = true;
                     }
                     mixer.stop(usize::from(voice), fade_ms);
                 }

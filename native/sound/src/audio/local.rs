@@ -46,6 +46,9 @@ pub(super) struct LocalVoice {
     /// Every note is to be released before the next block: the sound was
     /// stopped or replaced.
     release: bool,
+    /// It was stopped, or replaced on its audio channel: its notes ring
+    /// out, and it is no longer an open local sound (RULE-97).
+    pub(super) ended: bool,
 }
 
 /// The sound's banks, as its instrument reads them: no allocation.
@@ -64,8 +67,17 @@ impl LocalVoice {
     /// before the mixers' lock is taken.
     pub(super) fn new(key: SoundKey, start: &LocalStart, banks: Vec<Vec<u8>>) -> Option<Box<Self>> {
         let instrument = Local::new(start.family, start.variant, start.option, start.split)?;
-        let mut voice =
-            Box::new(Self { key, instrument, banks, queue: [(0, 0, 0); LOCAL_MIDI_QUEUE], queue_head: 0, queue_length: 0, dropped: 0, release: false });
+        let mut voice = Box::new(Self {
+            key,
+            instrument,
+            banks,
+            queue: [(0, 0, 0); LOCAL_MIDI_QUEUE],
+            queue_head: 0,
+            queue_length: 0,
+            dropped: 0,
+            release: false,
+            ended: false,
+        });
         let Self { instrument, banks, .. } = &mut *voice;
         instrument.start_with(&banks_of(banks), &start.setup);
         Some(voice)
