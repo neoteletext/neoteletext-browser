@@ -565,6 +565,28 @@ fn a_groups_animate_is_applied_as_the_record_is() {
     assert_eq!(receiver.at(105, 55), 5, "the group's ANIMATE showed it");
 }
 
+/// Renderer parity PAR-20, PAR-44: the shared wire vectors' table whose rule
+/// `open` runs a group of a NAPLPS picture's links and cursor, sent as its
+/// RULES record row for the open NAPLPS sub-page 101/0001, makes object
+/// 301 the cursor and a link to 302 when the page opens, as the
+/// `drawing_links` and `regis_cursor` rows sent directly do.
+#[test]
+fn the_shared_picture_links_group_applies_its_links_and_cursor() {
+    use crate::engine::wire_vectors_tests::{picture_stream, records_row};
+    /// The object the vectors' group names.
+    const OBJECT: u16 = 301;
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &picture_stream(PAGE, SUB, true, b"A"));
+    engine.feed_whole(true, true, &records_row("rules_picture_links_group"));
+    assert_eq!(engine.naplps().cursor(PAGE, SUB), 0, "no cursor before the page opens");
+    set_open(&mut engine, Some(OPEN), T0);
+    run(&mut engine, T0);
+    run(&mut engine, after(1));
+    assert_eq!(engine.naplps().cursor(PAGE, SUB), OBJECT, "the group's cursor");
+    #[cfg(feature = "links")]
+    assert_eq!(engine.regis().take_links(), [(PAGE, SUB, vec![(OBJECT, "302".to_owned())])], "the group's link, for the trusted core");
+}
+
 /// Renderer parity PAR-20, RULE-119 (TODO-6794 step 3): a group's
 /// `DRAWING_LINKS`, one whole sending, and its `REGIS_CURSOR` are applied as
 /// the records the server sends directly are: a key's group makes a ReGIS

@@ -134,6 +134,41 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
     assert_eq!(items(&typing.input_intent(&key('a'), 6)), [KEY_A]);
 }
 
+/// Renderer parity PAR-1, PAR-44: the browser offers every capability of
+/// the shared HELLO `hello_pictures` (both picture languages among them),
+/// and the shared WELCOME `welcome_pictures`, read from its packet, starts
+/// the session as any WELCOME does.
+#[test]
+fn the_shared_hello_and_welcome_of_the_picture_languages_hold() {
+    use neoteletext_web::wire_vectors::{bytes_of, vectors};
+    let row = |kind: &str, name: &str| {
+        let value = vectors().find(|row| row.kind == kind && row.name == name).unwrap().value;
+        let (bytes, length) = bytes_of(value).unwrap();
+        bytes[..length].to_vec()
+    };
+    let mut caps = None;
+    read_message(&row("input", "hello_pictures"), &mut |item| {
+        if let Item::Event(Event::Hello { caps: offered, .. }) = item {
+            caps = Some(offered);
+        }
+    })
+    .unwrap();
+    let caps = caps.unwrap();
+    assert_eq!(caps & (REGIS_CAP | NAPLPS_CAP), REGIS_CAP | NAPLPS_CAP);
+    assert_eq!(caps & !OFFERED, 0, "the browser offers every bit the shared HELLO offers");
+    let packet = neoteletext_core::packet::Packet { bytes: row("record", "welcome_pictures").try_into().unwrap() };
+    let mut buffer = [0_u8; neoteletext_input::control::FRAGMENT_DATA];
+    let welcome = neoteletext_input::control::from_packet(&packet, &mut buffer).unwrap().unwrap();
+    assert!(matches!(welcome, Control::Welcome { caps: agreed, resume: None, .. } if agreed == caps));
+    let mut body = [0_u8; neoteletext_input::control::MAX_BODY];
+    let length = neoteletext_input::control::write_body(&welcome, &mut body).unwrap();
+    let mut typing = Typing::default();
+    typing.input(PAGE.channel, true, true, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    let welcomed = typing.control(PAGE.channel, &body[..length], 5);
+    assert_eq!(items(&welcomed), ["Event(Resize { columns: 40, rows: 25, width: 0, height: 0 })", SELECT_PAGE]);
+}
+
 #[test]
 fn a_channel_that_does_not_answer_is_refused_and_the_strip_says_so() {
     let mut typing = Typing::default();
