@@ -164,6 +164,9 @@ pub struct Browser {
     /// The page row the viewer last clicked, by page index, which the list
     /// does not scroll to (REQ-6364); none once the choice moved another way.
     clicked_row: Option<usize>,
+    /// The page row last brought into view, by page index, put in view
+    /// again in the list as the next frame lays it out (TODO-6757).
+    list_reveal: Option<usize>,
     /// The list at the left that has the keys, if one has.
     list_focus: Option<list_focus::ListFocus>,
     /// A trackpad's movement outside the page area not yet spent on a step.
@@ -289,6 +292,7 @@ impl Browser {
             hovered_bank: None,
             subpages: subpage_list::SubPages::default(),
             clicked_row: None,
+            list_reveal: None,
             window_maximised: false,
             list_focus: None,
             wheel_step_carry: 0.0,

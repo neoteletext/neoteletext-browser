@@ -73,6 +73,9 @@ impl Browser {
         // Only now can a row be put in view: the regions are cleared at the
         // start of each draw, so the list has no height before this.
         self.follow_single();
+        if let Some(index) = self.list_reveal.take() {
+            self.scroll_to_row(index);
+        }
         #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
         let content = pages.len() as f64 * ROW_HEIGHT;
         let max_scroll = (content - area.height()).max(0.0);
@@ -361,5 +364,41 @@ mod tests {
             browser.key(Key::Down, Modifiers::default(), 30);
         }
         assert!(browser.list_scroll > scrolled, "a key brings the row it moved to into view");
+    }
+
+    /// REQ-1758 item 7 and TODO-6757: a page opened by its address before
+    /// the window's first frame, as a fast server's answer comes, has its
+    /// row in view once the list is drawn, and so does one opened while the
+    /// list's last layout was another height. Before, the row was brought
+    /// into view against the list as last laid out, none at first, which
+    /// put it exactly one row above the list's top: `/naplps/218` showed
+    /// the list from 219.
+    #[test]
+    fn a_page_opened_by_its_address_before_the_first_frame_has_its_row_in_view() {
+        use crate::browser::{Browser, Frame};
+        use crate::canvas::PageKey;
+        use crate::channel::page_index;
+        for page in [0x200_u16, 0x218, 0x107] {
+            let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
+            browser.set_channel(crate::browser::fixture::channel());
+            let index = page_index(page).unwrap();
+            assert!(matches!(browser.channel.pages.get(index), Some(Some(_))), "page {page:X} is listed");
+            browser.show(PageKey { channel: 7, page }, 0);
+            let mut canvas = Recorder::new();
+            browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
+            let list = browser.regions.list;
+            let row = browser.regions.rows.iter().find(|&&(_, shown)| shown == index).map(|&(row, _)| row);
+            assert!(row.is_some_and(|row| row.y0 >= list.y0 && row.y1 <= list.y1), "page {page:X}'s row {row:?} is whole inside the list {list:?}");
+        }
+        // Opened while the list was last laid out in a taller window: the
+        // row is put in view in the list as it is drawn now.
+        let (mut browser, mut canvas) = browser();
+        browser.draw(&mut canvas, WIDTH, HEIGHT * 2.0, 0);
+        let index = page_index(0x230).unwrap();
+        browser.show(PageKey { channel: 7, page: 0x230 }, 10);
+        browser.draw(&mut canvas, WIDTH, HEIGHT, 20);
+        let list = browser.regions.list;
+        let row = browser.regions.rows.iter().find(|&&(_, shown)| shown == index).map(|&(row, _)| row);
+        assert!(row.is_some_and(|row| row.y0 >= list.y0 && row.y1 <= list.y1), "row {row:?} inside the list {list:?} after a resize");
     }
 }

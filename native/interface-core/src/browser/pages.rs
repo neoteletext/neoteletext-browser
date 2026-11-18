@@ -170,6 +170,7 @@ impl Browser {
         self.bank = bank;
         self.selected = None;
         self.clicked_row = None;
+        self.list_reveal = None;
         self.list_scroll = 0.0;
         self.wall.to_top();
     }
@@ -184,11 +185,25 @@ impl Browser {
             return;
         }
         self.clicked_row = None;
+        // The list as last laid out may be another height than the next
+        // frame's, or none before the first: its row is put in view again
+        // there (`draw_list`), once the list's height is known (TODO-6757).
+        self.list_reveal = Some(index);
+        self.scroll_to_row(index);
+    }
+
+    /// Scrolls the list as last laid out so that page `index`'s row is in
+    /// view; nothing while it has no height, since every row would then
+    /// be out of view and the row would be put a row above the list's top.
+    pub(super) fn scroll_to_row(&mut self, index: usize) {
+        let view = self.regions.list.height();
+        if view <= 0.0 {
+            return;
+        }
         let position = self.bank_pages().iter().position(|&candidate| candidate == index);
         let Some(position) = position else { return };
         #[allow(clippy::cast_precision_loss, reason = "at most 100 rows")]
         let top = position as f64 * ROW_HEIGHT;
-        let view = self.regions.list.height();
         if top < self.list_scroll {
             self.list_scroll = top;
         } else if top + ROW_HEIGHT > self.list_scroll + view {
