@@ -42,7 +42,14 @@ pub fn run() -> Result<(), String> {
         let mut input = BufReader::new(io::stdin().lock());
         loop {
             let wake = match read_to_sound(&mut input) {
-                Ok(Some(message)) => Wake::Core(Some(message)),
+                Ok(Some(message)) => {
+                    // RULE-66's hops: when the helper read a LocalMidi.
+                    #[cfg(feature = "timed-test")]
+                    if let ToSound::Audio { audio: protocol::audio::Audio::LocalMidi { status, data1, .. }, .. } = &message {
+                        protocol::timed_test::mark("sound", "local-midi-read", Instant::now(), format_args!("{status:02X} {data1}"));
+                    }
+                    Wake::Core(Some(message))
+                }
                 Ok(None) => Wake::Core(None),
                 Err(error) => Wake::Broken(error.to_string()),
             };

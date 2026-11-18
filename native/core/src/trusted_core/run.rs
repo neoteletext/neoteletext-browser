@@ -260,7 +260,10 @@ fn event_loop(core: &mut Core, incoming: &mpsc::Receiver<Event>) -> Result<(), S
         };
         // Timed work falls due while events are handled too: a feed that
         // just started, a notice that expired, the sleep check.
-        match handle(core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go)) {
+        let handled = handle(core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go));
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::flushed("core");
+        match handled {
             Ok(true) => {}
             Ok(false) => break Ok(()),
             Err(error) => break Err(error),

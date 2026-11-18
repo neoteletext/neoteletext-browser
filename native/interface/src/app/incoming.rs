@@ -159,6 +159,9 @@ impl App {
             eprintln!("neoteletext-interface: at {now} ms: picture {} of page {:03X} of channel {}", picture.commits, key.page, key.channel);
         }
         let area = picture.area;
+        // RULE-66's hops: when the window's thread took the repaint.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "regis-taken", std::time::Instant::now(), format_args!("{},{},{},{}", area.x, area.y, area.width, area.height));
         let part = draw_vello::RegisPart { number: picture.number, base: picture.base, x: area.x, y: area.y, width: area.width, height: area.height };
         if let Err(error) = self.view.painter.set_regis(key, &picture.palette, part, &picture.packed) {
             self.exit = Some(format!("bad ReGIS picture from the trusted core: {error:?}"));

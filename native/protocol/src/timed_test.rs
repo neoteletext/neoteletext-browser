@@ -55,9 +55,30 @@ pub fn monotonic_us(at: Instant) -> Option<u64> {
 /// happened, the monotonic clock's reading at `at` in microseconds, and
 /// what more the test matches it by.
 pub fn mark(process: &str, what: &str, at: Instant, detail: core::fmt::Arguments<'_>) {
-    match monotonic_us(at) {
-        Some(us) => eprintln!("neoteletext-timed {process} {what} {us} {detail}"),
-        None => eprintln!("neoteletext-timed {process} {what} unreadable-clock {detail}"),
+    use std::io::Write as _;
+    let line = match monotonic_us(at) {
+        Some(us) => format!("neoteletext-timed {process} {what} {us} {detail}\n"),
+        None => format!("neoteletext-timed {process} {what} unreadable-clock {detail}\n"),
+    };
+    // One write for the whole line: the processes share one log, and a
+    // line written in pieces is interleaved with another's.
+    let _ = std::io::stderr().lock().write_all(line.as_bytes());
+}
+
+/// A message the test times was written and waits for its flush.
+static FLUSH_OWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Says a message the test times was written: the next [`flushed`] marks
+/// when it left the process.
+pub fn owe_flush() {
+    FLUSH_OWED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Marks `process`'s flush, when a message the test times was written
+/// since the last.
+pub fn flushed(process: &str) {
+    if FLUSH_OWED.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        mark(process, "flushed", Instant::now(), format_args!(""));
     }
 }
 

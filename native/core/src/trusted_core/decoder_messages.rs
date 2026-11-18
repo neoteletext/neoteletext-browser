@@ -11,6 +11,8 @@ use super::Core;
 
 impl Core {
     pub(super) fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
+        #[cfg(feature = "timed-test")]
+        timed_marks(&message);
         let active = self.active_channel();
         match message {
             // Its first message: an end from now on is not a failure to
@@ -210,6 +212,25 @@ fn lay_area(dots: &mut [u8], area: protocol::decoder::PageArea, indices: &[u8]) 
         if let Some(place) = dots.get_mut(start..start.saturating_add(across)) {
             place.copy_from_slice(line);
         }
+    }
+}
+
+/// RULE-66's hops (page-rules.md): when the trusted core's thread took a
+/// repaint or a `LocalMidi`, whose flush is then marked.
+#[cfg(feature = "timed-test")]
+fn timed_marks(message: &FromDecoder) {
+    let now = std::time::Instant::now();
+    match message {
+        FromDecoder::Regis { picture, .. } => {
+            let area = picture.area;
+            protocol::timed_test::mark("core", "regis-read", now, format_args!("{},{},{},{}", area.x, area.y, area.width, area.height));
+            protocol::timed_test::owe_flush();
+        }
+        FromDecoder::Audio(protocol::audio::Audio::LocalMidi { status, data1, .. }) => {
+            protocol::timed_test::mark("core", "local-midi-read", now, format_args!("{status:02X} {data1}"));
+            protocol::timed_test::owe_flush();
+        }
+        _ => {}
     }
 }
 

@@ -24,7 +24,12 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::SubPageRows { channel, page, request, rows })) => Incoming::SubPageRows { channel, page, request, rows },
             Ok(Some(ToInterface::Updated { channel, page })) => Incoming::Updated { channel, page },
             Ok(Some(ToInterface::Frame { key, version, image })) => Incoming::Page { key, version, image },
-            Ok(Some(ToInterface::Regis { key, picture })) => Incoming::Regis { key, picture },
+            Ok(Some(ToInterface::Regis { key, picture })) => {
+                // RULE-66's hops: when the interface read the repaint.
+                #[cfg(feature = "timed-test")]
+                protocol::timed_test::mark("interface", "regis-read", std::time::Instant::now(), format_args!(""));
+                Incoming::Regis { key, picture }
+            }
             Ok(Some(ToInterface::RegisOver { key, over })) => Incoming::RegisOver { key, over },
             Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),
             Ok(Some(ToInterface::Show(key))) => Incoming::Show(key),

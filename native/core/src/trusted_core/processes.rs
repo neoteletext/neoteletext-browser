@@ -204,6 +204,8 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
     let mut child = spawn(broker, Program::Decoder, &[String::from("--store-pages"), store_pages.to_string()], false)?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
+    #[cfg(feature = "timed-test")]
+    let read_from_decoder = timed_read_from_decoder;
     relay(
         output,
         read_from_decoder,
@@ -359,8 +361,38 @@ pub(super) fn start_fetcher(
 
 pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the interface has no output")?;
+    #[cfg(feature = "timed-test")]
+    let read_from_interface = timed_read_from_interface;
     relay(output, read_from_interface, events, Event::Intent, Event::InterfaceEnded);
     Ok(())
+}
+
+/// The timed test's hops (page-rules.md RULE-66): when the reader of the
+/// decoder's pipe read a repaint or a `LocalMidi`, before the core's
+/// thread takes it.
+#[cfg(feature = "timed-test")]
+fn timed_read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, ProtocolError> {
+    let message = read_from_decoder(input);
+    match &message {
+        Ok(Some(FromDecoder::Regis { .. })) => protocol::timed_test::mark("core", "regis-arrived", std::time::Instant::now(), format_args!("")),
+        Ok(Some(FromDecoder::Audio(protocol::audio::Audio::LocalMidi { .. }))) => {
+            protocol::timed_test::mark("core", "local-midi-arrived", std::time::Instant::now(), format_args!(""));
+        }
+        _ => {}
+    }
+    message
+}
+
+/// The timed test's hops: when the reader of the interface's pipe read an
+/// input event.
+#[cfg(feature = "timed-test")]
+fn timed_read_from_interface(input: &mut dyn Read) -> Result<Option<protocol::ToCore>, ProtocolError> {
+    let message = read_from_interface(input);
+    #[cfg(feature = "interaction")]
+    if let Ok(Some(protocol::ToCore::Input(_))) = &message {
+        protocol::timed_test::mark("core", "input-arrived", std::time::Instant::now(), format_args!(""));
+    }
+    message
 }
 
 /// A reader that counts the bytes read through it: a message's length on

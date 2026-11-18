@@ -3,13 +3,19 @@
 //!
 //! The test runs the browser on a private X display, which composes
 //! nothing and has no refresh: the interface presents each frame the
-//! moment it draws it, and the platform gives it no frame times, so a
-//! shipped interface there sends no `FramePhase` (RULE-98 item 1). For the
+//! moment it draws it, and the platform gives it no frame times. For the
 //! lock's figures the test needs a display that composes at a refresh
-//! rate: this one composes at 60 hertz on the interface's own clock. A
-//! frame asked for is drawn and presented at the next composition, as a
-//! compositor would show it, and the interface tells its phase as RULE-98
-//! says a platform's frame times are told.
+//! rate: this one composes at 60 hertz on the interface's own clock, as a
+//! compositor does on the platforms the interface ships for (`frame.rs`):
+//! the interface draws and presents a frame when it is asked for, and the
+//! display shows it at its first composition after the present finished.
+//! The time the test records for a frame is that composition's.
+//!
+//! An earlier form drew a frame asked for only at the next composition,
+//! and recorded the end of its present: that put the interface's whole
+//! drawing after the composition it was meant for, which no platform does,
+//! and missed a composition whenever the event loop woke more than a
+//! millisecond after one (DEC-6659 item 23).
 
 use std::time::{Duration, Instant};
 
@@ -23,42 +29,26 @@ const PERIOD_MICROSECONDS: u32 = 16_667;
 /// stale while the window is open.
 const TELL_EVERY: Duration = Duration::from_millis(protocol::rules::PHASE_STALE_MILLISECONDS / 2);
 
-/// The display's compositions and what waits for the next.
+/// The display's compositions.
 #[derive(Debug)]
 pub(super) struct TestDisplay {
     epoch: Instant,
-    /// A frame was asked for and waits for the next composition.
-    pub(super) owed: bool,
-    /// The composition at hand is being drawn: a frame asked for now is
-    /// drawn in it.
-    pub(super) composing: bool,
     /// When the phase was last told.
     told: Option<Instant>,
 }
 
 impl TestDisplay {
     pub(super) fn new() -> Self {
-        Self { epoch: Instant::now(), owed: false, composing: false, told: None }
+        Self { epoch: Instant::now(), told: None }
     }
 
-    fn period() -> Duration {
-        Duration::from_micros(u64::from(PERIOD_MICROSECONDS))
-    }
-
-    /// The first composition at or after `now`.
+    /// The first composition at or after `now`: the one that shows a frame
+    /// whose present finished at `now`.
     pub(super) fn next_composition(&self, now: Instant) -> Instant {
         let since = u64::try_from(now.saturating_duration_since(self.epoch).as_micros()).unwrap_or(u64::MAX);
         let period = u64::from(PERIOD_MICROSECONDS);
         let compositions = since.div_ceil(period);
         self.epoch.checked_add(Duration::from_micros(compositions.saturating_mul(period))).unwrap_or(now)
-    }
-
-    /// Whether `now` is a composition's moment: within a millisecond after
-    /// one, the loop's own lateness in waking.
-    pub(super) fn composes_at(&self, now: Instant) -> bool {
-        let previous = self.next_composition(now.checked_sub(Self::period()).unwrap_or(now));
-        let lateness = Duration::from_millis(1);
-        now.saturating_duration_since(previous) <= lateness || self.next_composition(now) == now
     }
 
     /// The phase to tell now, when it is due again.
@@ -71,11 +61,10 @@ impl TestDisplay {
         FramePhase::at(PERIOD_MICROSECONDS, u64::try_from(next_in.as_micros()).unwrap_or(0), 0)
     }
 
-    /// When the loop must wake for the display: the next composition when
-    /// a frame is owed, and the next telling of the phase.
+    /// When the loop must wake for the display: the next telling of the
+    /// phase.
     pub(super) fn wake(&self, now: Instant) -> Instant {
-        let tell = self.told.and_then(|told| told.checked_add(TELL_EVERY)).unwrap_or(now);
-        if self.owed { tell.min(self.next_composition(now)) } else { tell }
+        self.told.and_then(|told| told.checked_add(TELL_EVERY)).unwrap_or(now)
     }
 }
 
@@ -84,15 +73,20 @@ impl TestDisplay {
 mod tests {
     use super::*;
 
-    /// RULE-66: compositions every 16,667 microseconds, and the phase told
-    /// is the time to the next.
+    fn period() -> Duration {
+        Duration::from_micros(u64::from(PERIOD_MICROSECONDS))
+    }
+
+    /// RULE-66: compositions every 16,667 microseconds; a frame presented
+    /// between two is shown at the second; the phase told is the time to
+    /// the next.
     #[test]
     fn the_test_display_composes_at_sixty_hertz() {
         let mut display = TestDisplay::new();
         let at = display.epoch + Duration::from_micros(5_000);
-        assert_eq!(display.next_composition(at), display.epoch + TestDisplay::period());
-        assert!(display.composes_at(display.epoch + TestDisplay::period() + Duration::from_micros(300)));
-        assert!(!display.composes_at(at));
+        assert_eq!(display.next_composition(at), display.epoch + period());
+        assert_eq!(display.next_composition(display.epoch + period()), display.epoch + period(), "a present that ends on a composition is in it");
+        assert_eq!(display.next_composition(display.epoch + period() + Duration::from_micros(1)), display.epoch + period() * 2);
         let phase = display.phase_due(at).unwrap();
         assert_eq!(phase.period_us, PERIOD_MICROSECONDS);
         assert_eq!(phase.next_in_us, PERIOD_MICROSECONDS - 5_000);

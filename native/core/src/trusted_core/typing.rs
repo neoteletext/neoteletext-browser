@@ -62,6 +62,9 @@ impl Core {
     pub(super) fn input_intent(&mut self, intent: ToCore) -> Result<(), String> {
         match intent {
             ToCore::Input(intent) => {
+                // RULE-66's hops: when the trusted core took the input.
+                #[cfg(feature = "timed-test")]
+                protocol::timed_test::mark("core", "input-read", std::time::Instant::now(), format_args!(""));
                 // A HOVER names a control of the page's latest image, or
                 // goes nowhere (REQ-INT-121).
                 #[cfg(feature = "links")]
@@ -147,6 +150,12 @@ impl Core {
                 // An input event for the open page's decoder, whose table
                 // asked for its class (RULE-52 item 1).
                 Send::Decoder { channel, page, sequence, input, .. } => {
+                    // RULE-66's hops: when the event was given the decoder's pipe.
+                    #[cfg(feature = "timed-test")]
+                    {
+                        protocol::timed_test::mark("core", "input-told", std::time::Instant::now(), format_args!("{sequence}"));
+                        protocol::timed_test::owe_flush();
+                    }
                     self.tell(channel, protocol::decoder::ToDecoder::RuleInput { page, sequence, input });
                 }
                 // The open page for its table, or the pause (RULE-111 case

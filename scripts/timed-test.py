@@ -25,6 +25,14 @@ which Python's time.monotonic also reads):
   interface phase     the interface told its frames; decoder phase, the
                       decoder read them: both "PERIOD NEXT_IN"
 
+and the hops between them (DEC-6659 item 23): the interface's key-sent;
+the core's input-arrived (its reader), input-told (written for the
+decoder), regis-read and local-midi-read; the decoder's input-read, paint
+and regis (a repaint written); the sound helper's local-midi-read; the
+interface's regis-taken (on the window's thread) and presented. The
+"composed" time is the test display's composition that shows the frame:
+the first at or after its present.
+
 From them it prints, for the key's LocalMidi, its first sample, the frame
 that shows the key's changed rectangle (KEY_RECT, in the display's pixels)
 and the frame that shows the meter's lowest segment (METER_RECT), the
@@ -45,9 +53,14 @@ import time
 # device buffer.
 LEAST_KEYS = 200
 # How long a key is held, and the silence after it, so that the next note
-# begins from silence and its first sample is the note's own.
+# begins from silence and its first sample is the note's own, and the
+# meter's lowest segment is dark again: its last change came 537
+# milliseconds after the key in the median and 590 at most (19 November
+# 2026, 200 keys), so a rest of 450 after a hold of 100 often left it
+# falling when the next key came, and the key then found no frame that
+# lit it. 800 leaves 310 milliseconds beyond the longest fall seen.
 HOLD_SECONDS = 0.1
-REST_SECONDS = 0.45
+REST_SECONDS = 0.8
 # The random part of the gap: longer than a tick and a device buffer.
 JITTER_SECONDS = 0.05
 # How long after the key a mark may come and still be the key's.
@@ -104,6 +117,54 @@ def figures(name, values):
     return f"{name}: n {len(values)}, least {min(values):.1f} ms, median {statistics.median(values):.1f} ms, greatest {max(values):.1f} ms"
 
 
+# The hops of a key's way to the sound helper and to the picture, in
+# order.
+MIDI_HOPS = [("interface", "key-sent"), ("core", "input-arrived"), ("core", "input-told"), ("decoder", "input-read"), ("decoder", "local-midi"),
+             ("core", "local-midi-read"), ("sound", "local-midi-read")]
+PICTURE_HOPS = [("decoder", "regis"), ("core", "regis-read"), ("interface", "regis-taken"), ("interface", "presented")]
+
+
+def hops(found, keys, picture_at):
+    """Each hop's least, median and greatest from the one before it, in
+    milliseconds: the sound's way for every key, and the picture's from
+    the repaint written last before the frame that showed the key."""
+    lines = []
+    for name, chain, frames in (("LocalMidi", MIDI_HOPS, None), ("picture", PICTURE_HOPS, picture_at)):
+        gaps = {hop: [] for hop in chain}
+        for key in keys:
+            if frames is not None and key not in frames:
+                continue
+            until = key + WINDOW_US if frames is None else frames[key]
+            after = [mark for mark in found if key < mark[0] < until]
+            if frames is not None:
+                written = [mark[0] for mark in after if mark[1:3] == chain[0]]
+                if not written:
+                    continue
+                at = written[-1]
+                hop_chain = chain[1:]
+                gaps[chain[0]].append((at - key) / MICROSECONDS_PER_MILLISECOND)
+            else:
+                at, hop_chain = key, chain
+            # Each hop is the first of its kind after the start: a process
+            # may mark what it read before the one that wrote it has marked
+            # its writing, so the order of two marks a few microseconds
+            # apart is not the order of the hops.
+            start = at
+            for hop in hop_chain:
+                nxt = next((mark[0] for mark in after if mark[0] >= start and mark[1:3] == hop), None)
+                if nxt is None:
+                    break
+                gaps[hop].append((nxt - at) / MICROSECONDS_PER_MILLISECOND)
+                at = nxt
+            if frames is not None:
+                gaps.setdefault(("interface", "composed"), []).append((frames[key] - at) / MICROSECONDS_PER_MILLISECOND)
+        before = "key"
+        for hop, values in gaps.items():
+            lines.append("    " + figures(f"{name} hop to {hop[0]} {hop[1]} (from {before})", values))
+            before = f"{hop[0]} {hop[1]}"
+    return lines
+
+
 def press_keys(display, count):
     x11, xtst = ctypes.CDLL("libX11.so.6"), ctypes.CDLL("libXtst.so.6")
     x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -146,6 +207,7 @@ def main():
     found = [mark for mark in marks(log) if mark[0] >= started]
     keys = [at for at, process, what, _ in found if (process, what) == ("interface", "key")]
     midi, sound, picture, meter, buffers = [], [], [], [], set()
+    picture_at = {}
     for index, key in enumerate(keys):
         until = min(keys[index + 1] if index + 1 < len(keys) else key + WINDOW_US, key + WINDOW_US)
         after = [mark for mark in found if key < mark[0] < until]
@@ -161,6 +223,7 @@ def main():
         for at, process, what, detail in after:
             if (process, what) == ("interface", "composed") and meets(detail, key_rect):
                 picture.append((at - key) / MICROSECONDS_PER_MILLISECOND)
+                picture_at[key] = at
                 break
         for at, process, what, detail in after:
             if (process, what) == ("interface", "composed") and meets(detail, meter_rect):
@@ -186,6 +249,9 @@ def main():
     print("  " + figures("key to the frame composed with the key's changed rectangle", picture))
     print("  " + figures("key to the frame composed with the meter's lowest segment", meter))
     print("  " + figures("FramePhase's error through the pipes, interface to decoder", errors))
+    print("  the hops:")
+    for line in hops(found, keys, picture_at):
+        print(line)
     if not check:
         return
     failures = []

@@ -428,6 +428,14 @@ impl Engine {
         self.lock.next_paint_us(self.real_us())
     }
 
+    /// The paint point at or before now on the engine's own clock, for the
+    /// timed test's hops (page-rules.md RULE-66).
+    #[cfg(feature = "timed-test")]
+    #[must_use]
+    pub fn paint_point_real_us(&self) -> Option<u64> {
+        self.lock.paint_point_at_or_before(self.real_us())
+    }
+
     /// The decoder painted, from `began_real_us` on the engine's own clock
     /// to now: its paint point is spent, and a frame finished after its
     /// composition is counted (RULE-98 item 5).

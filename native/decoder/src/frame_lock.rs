@@ -184,7 +184,7 @@ impl FrameLock {
     /// interface's compositions while a phase is in force; at the timed
     /// test's unlocked setting, the presentation tick. `None` with no
     /// phase in force: the decoder paints at once.
-    fn paint_point_at_or_before(&self, real_us: u64) -> Option<u64> {
+    pub(crate) fn paint_point_at_or_before(&self, real_us: u64) -> Option<u64> {
         if !self.in_force(real_us) {
             return None;
         }

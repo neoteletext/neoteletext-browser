@@ -165,6 +165,8 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     loop {
         // What the last message or deadline produced goes before waiting.
         output.flush()?;
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::flushed("decoder");
         if let Some(began) = painting.take() {
             engine.painted(began);
         }
@@ -178,6 +180,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             Woken::Deadline => None,
             Woken::Ended => return Ok(()),
         };
+        // RULE-66's hops: how late the loop woke for its deadline.
+        #[cfg(feature = "timed-test")]
+        let woke_late_us = if received.is_none() { deadline.map(|deadline| engine.now_us().saturating_sub(deadline)) } else { None };
         #[cfg(feature = "timed-test")]
         let received = held.hold(&engine, received);
         let received = take_rule_message(&mut engine, received, &mut output)?;
@@ -192,10 +197,26 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         let paint = engine.paint_due();
         if paint {
             painting = Some(engine.real_us());
+            // RULE-66's hops: the paint, how long after its paint point,
+            // and how late the loop woke.
+            #[cfg(feature = "timed-test")]
+            if let Some(point) = engine.paint_point_real_us() {
+                let real = engine.real_us();
+                protocol::timed_test::mark(
+                    "decoder",
+                    "paint",
+                    std::time::Instant::now(),
+                    format_args!("after-point {} woke-late {}", real.saturating_sub(point), woke_late_us.map_or(-1, |late| i64::try_from(late).unwrap_or(-1))),
+                );
+            }
             // The animation of the pages on screen, after the rules ran
             // (animation.md ANIM-22, page-rules.md RULE-65).
             let animated = animate(&mut engine, &showing, now, &mut output)?;
+            #[cfg(feature = "timed-test")]
+            protocol::timed_test::mark("decoder", "animated", std::time::Instant::now(), format_args!(""));
             draw(&engine, &animated, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
+            #[cfg(feature = "timed-test")]
+            protocol::timed_test::mark("decoder", "drawn", std::time::Instant::now(), format_args!("{}", animated.len()));
         }
         let Some(message) = received else {
             // A deadline: the sounds' clock, and the flashing pages whose
@@ -472,6 +493,15 @@ fn regis_owed(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
 fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendered>, now_us: u64, output: &mut Output<'_>) -> Result<(), ProtocolError> {
     for &page in showing {
         if let Some(drawn) = engine.regis().take(page, shown_subpage(sent, page), now_us) {
+            // RULE-66's hops: the repaint written, and the areas it holds.
+            #[cfg(feature = "timed-test")]
+            {
+                let area =
+                    |picture: &protocol::regis::RegisPicture| format!("{},{},{},{}", picture.area.x, picture.area.y, picture.area.width, picture.area.height);
+                let areas: Vec<String> = core::iter::once(&drawn.picture).chain(&drawn.more).map(area).collect();
+                protocol::timed_test::mark("decoder", "regis", std::time::Instant::now(), format_args!("{}", areas.join(";")));
+                protocol::timed_test::owe_flush();
+            }
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
             // The other areas of the same repaint, each a part of the one before (REQ-6399).
             for picture in drawn.more {
@@ -522,6 +552,11 @@ fn read_messages() -> Receiver<Received> {
         let mut input = BufReader::new(io::stdin().lock());
         loop {
             let message = read_from_core(&mut input);
+            // RULE-66's hops: when the input event was read from the pipe.
+            #[cfg(feature = "timed-test")]
+            if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &message {
+                protocol::timed_test::mark("decoder", "input-read", std::time::Instant::now(), format_args!("{sequence}"));
+            }
             let last = !matches!(message, Ok(Some(_)));
             if messages.send(message).is_err() || last {
                 return;

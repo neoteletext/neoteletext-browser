@@ -569,8 +569,13 @@ impl RegisPages {
         if !held.changed {
             return None;
         }
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("decoder", "compose-begin", std::time::Instant::now(), format_args!(""));
         held.earn(now_us);
         if !held.budget.may_repaint() {
+            // RULE-66's hops: a repaint the budget held back.
+            #[cfg(feature = "timed-test")]
+            protocol::timed_test::mark("decoder", "regis-held", std::time::Instant::now(), format_args!("{}", held.budget.milliseconds_until_repaint()));
             // Over the budget the animation slows and nothing else does
             // (ANIM-16): the state has changed already, the painting
             // waits, and the damage of every change meanwhile is painted
@@ -583,6 +588,8 @@ impl RegisPages {
         held.changed = false;
         held.motion.animated = false;
         held.terminal.compose(&held.screen, &mut held.picture);
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("decoder", "composed", std::time::Instant::now(), format_args!("{}", held.picture.work()));
         held.budget.spend(held.picture.work());
         let pixels = held.picture.canvas().pixels();
         let palette = held.terminal.palette().colours();

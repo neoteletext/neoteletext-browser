@@ -43,47 +43,28 @@ impl App {
     pub(super) fn request_redraw(&mut self) {
         if let Some(graphics) = &mut self.view.graphics {
             graphics.asked = true;
-            // The timed test's display draws a frame asked for at its next
-            // composition (RULE-66).
-            #[cfg(feature = "timed-test")]
-            if !self.test_display.composing {
-                self.test_display.owed = true;
-                return;
-            }
             graphics.window.request_redraw();
         }
     }
 
-    /// The timed test's display (RULE-66): at a composition, the frame
-    /// owed is drawn; its phase is told the trusted core as a platform's
-    /// frame times are (RULE-98 item 1). When the loop is to wake for it.
+    /// The timed test's display (RULE-66): its phase is told the trusted
+    /// core as a platform's frame times are (RULE-98 item 1). When the
+    /// loop is to wake for it.
     #[cfg(feature = "timed-test")]
-    pub(super) fn compose_test_display(&mut self, event_loop: &ActiveEventLoop) -> Instant {
+    pub(super) fn tell_test_display(&mut self, event_loop: &ActiveEventLoop) -> Instant {
         let now = Instant::now();
         if let Some(phase) = self.test_display.phase_due(now) {
             protocol::timed_test::mark("interface", "phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
             self.send(event_loop, &ToCore::FramePhase(phase));
             let _ = self.output.handled();
         }
-        if self.test_display.owed && self.test_display.composes_at(now) {
-            self.test_display.owed = false;
-            self.test_display.composing = true;
-            let here = self.window;
-            for id in self.window_ids() {
-                self.switch_view(id);
-                if let Some(graphics) = &mut self.view.graphics
-                    && graphics.asked
-                {
-                    graphics.window.request_redraw();
-                }
-            }
-            self.switch_view(here);
-            self.test_display.composing = false;
-        }
         self.test_display.wake(Instant::now())
     }
 
     pub(super) fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+        // RULE-66's hops: when the window's thread began the frame.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "redraw", Instant::now(), format_args!(""));
         let now = self.now();
         let Some(graphics) = self.view.graphics.as_mut() else { return };
         let size = graphics.window.inner_size();
@@ -114,7 +95,11 @@ impl App {
         }
         // Only what changed since the last frame is drawn; a frame that
         // changed nothing is not presented, and the window keeps the last.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "scene", Instant::now(), format_args!(""));
         let damage = self.view.painter.render();
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "rendered", Instant::now(), format_args!(""));
         // A frame that changed nothing delays no frame after it
         // (REQ-RCH-001).
         self.view.pace.drawn(now, !damage.is_empty());
@@ -130,6 +115,8 @@ impl App {
         let age = buffer.age();
         self.view.painter.copy_to(&mut buffer, &damage, age);
         let copied = started.elapsed();
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "copied", Instant::now(), format_args!(""));
         graphics.window.pre_present_notify();
         let rects: Vec<softbuffer::Rect> = damage
             .boxes()
@@ -140,11 +127,14 @@ impl App {
             })
             .collect();
         let presented = buffer.present_with_damage(&rects).is_ok();
-        // RULE-66: when the frame was composed, and what it changed.
+        // RULE-66: when the frame was presented, the composition of the
+        // test's display that shows it, and what it changed.
         #[cfg(feature = "timed-test")]
         {
             let boxes: Vec<String> = damage.boxes().iter().map(|area| format!("{},{},{},{}", area.x0, area.y0, area.x1, area.y1)).collect();
-            protocol::timed_test::mark("interface", "composed", Instant::now(), format_args!("{}", boxes.join(";")));
+            let presented_at = Instant::now();
+            protocol::timed_test::mark("interface", "presented", presented_at, format_args!(""));
+            protocol::timed_test::mark("interface", "composed", self.test_display.next_composition(presented_at), format_args!("{}", boxes.join(";")));
         }
         // The first frame on the screen is a part of the version's health
         // (`installation-and-updates.md` section 3.2), said once.
