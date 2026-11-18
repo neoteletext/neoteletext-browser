@@ -92,12 +92,22 @@ impl RegisPart {
     }
 }
 
+/// The bits of a ReGIS pixel that index its sixteen colours: a pixel is
+/// one of the two halves of a packed byte.
+const INDEX_MASK: u8 = 0x0F;
+const _: () = assert!(INDEX_MASK as usize + 1 == REGIS_COLOURS, "a pixel's index reaches every colour and no further");
+
+/// Each of the sixteen colours as an opaque pixel, looked up by index.
+fn colour_table(palette: &[[u8; 3]; REGIS_COLOURS]) -> [[u8; RGBA_BYTES]; REGIS_COLOURS] {
+    palette.map(|[red, green, blue]| [red, green, blue, OPAQUE])
+}
+
 /// A picture's pixels in colour: each index's colour of `palette`, opaque.
 fn coloured(indices: &[u8], palette: &[[u8; 3]; REGIS_COLOURS]) -> Vec<u8> {
+    let table = colour_table(palette);
     let mut rgba = Vec::with_capacity(indices.len().saturating_mul(RGBA_BYTES));
     for &index in indices {
-        let [red, green, blue] = palette.get(usize::from(index)).copied().unwrap_or_default();
-        rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
+        rgba.extend_from_slice(&table.get(usize::from(index & INDEX_MASK)).copied().unwrap_or_default());
     }
     rgba
 }
@@ -189,7 +199,6 @@ impl Painter {
         if !fits || across % 2 != 0 || packed.len() != across.saturating_mul(down) / 2 || (whole && part != RegisPart::whole(part.number)) {
             return Err(PageError::RegisSize);
         }
-        let colour = |index: u8| palette.get(usize::from(index)).copied().unwrap_or_default();
         let [[red, green, blue], ..] = *palette;
         let background = Colour { red, green, blue };
         if !whole {
@@ -208,6 +217,7 @@ impl Painter {
                 if packed.is_empty() {
                     return Ok(());
                 }
+                let table = colour_table(palette);
                 let data = Arc::make_mut(&mut held.pixmap).data_as_u8_slice_mut();
                 let row_bytes = across.saturating_mul(RGBA_BYTES);
                 for row in 0..down {
@@ -219,8 +229,7 @@ impl Painter {
                         return Err(PageError::RegisSize);
                     };
                     for (pixel, &index) in place.as_chunks_mut::<RGBA_BYTES>().0.iter_mut().zip(line) {
-                        let [red, green, blue] = colour(index);
-                        *pixel = [red, green, blue, OPAQUE];
+                        *pixel = table.get(usize::from(index & INDEX_MASK)).copied().unwrap_or_default();
                     }
                 }
             } else {
