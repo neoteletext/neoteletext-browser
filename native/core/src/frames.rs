@@ -1,7 +1,7 @@
 //! Frame handling in the trusted core (`architecture.md` section 10, steps
 //! 2, 3 and 6): only frames of pages the interface shows are passed on, a
 //! frame identical to the last one sent for its page is never resent, a
-//! page's frames are sent at most once a field on each of its clocks, and
+//! page's frames are sent at most once a tick on each of its clocks, and
 //! each frame sent is encoded in `protocol::frame`'s smallest form,
 //! against the last one sent for its page, which the interface holds
 //! (decision 61).
@@ -12,26 +12,25 @@
 //! it. With one clock the channel's answer waited behind the frame of a
 //! pressed look, or of the header's clock, sent a few milliseconds before
 //! it; with three, a frame of one kind never waits for a frame of another,
-//! and each kind still goes at most once a field.
+//! and each kind still goes at most once a tick.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use interface_core::canvas::{CELL_HEIGHT, CELL_WIDTH, COLUMNS, PAGE_WIDTH, PageKey, ROWS};
-use neoteletext_core::consts::FIELD_PERIOD_US;
 use protocol::frame;
 
 /// The least time between two frames of one page on each of its clocks
-/// (finding F-11): one field of the 50 a second a teletext display shows
-/// (the engine's `FIELD_PERIOD_US`). No rendering legitimately changes
-/// faster: the fastest flash phase lasts a twelfth of a second (the
-/// engine's decision E.48), and a page answering keys is pushed twenty
-/// times a second (`interaction.md` section 2). A decoder sending faster
-/// has its frames held, the newest kept, so it cannot fill the interface's
-/// queue: at most [`CLOCKS`] frames of a page a field.
-pub const MIN_FRAME_INTERVAL: Duration = Duration::from_micros(FIELD_PERIOD_US);
+/// (finding F-11): one tick of the presentation clock, a sixtieth of a
+/// second (neoteletext-common's `docs/animation.md` ANIM-1, the engine's
+/// `presentation_tick_due_us`). No rendering legitimately changes faster:
+/// a decoder composes animation, paints a rule's change and answers input
+/// once a tick, and flash is timed in ticks. A decoder sending faster has
+/// its frames held, the newest kept, so it cannot fill the interface's
+/// queue: at most [`CLOCKS`] frames of a page a tick.
+pub const MIN_FRAME_INTERVAL: Duration = Duration::from_micros(neoteletext_core::consts::presentation_tick_due_us(1));
 
-/// The clocks of a page, each letting one frame go a field: its content,
+/// The clocks of a page, each letting one frame go a tick: its content,
 /// the look under the pointer, and the answer to an input.
 pub const CLOCKS: u32 = 3;
 
@@ -148,7 +147,7 @@ impl Frames {
     /// the looks asked for is the look's. The cells are kept while the
     /// page is visible, so a look's frame that comes after the next look
     /// is asked for is still the look's; a change of content that falls
-    /// only within them is then paced as a look, still once a field.
+    /// only within them is then paced as a look, still once a tick.
     #[cfg(feature = "links")]
     pub fn looked(&mut self, key: PageKey, area: Option<interface_core::links::Area>) {
         let (Some(area), true) = (area, self.visible.contains(&key)) else { return };
@@ -429,7 +428,7 @@ mod tests {
         assert!(frames.accept(KEY, palette.clone(), 0, pressed.clone(), pressed_at).is_some(), "the pressed look goes at once");
         // The channel's answer, a line of text elsewhere on the page.
         let answer = painted(&pressed, 10, 5, 1);
-        assert!(frames.accept(KEY, palette, 0, answer, pressed_at + MILLISECOND).is_some(), "the answer goes at once, not a field after the look");
+        assert!(frames.accept(KEY, palette, 0, answer, pressed_at + MILLISECOND).is_some(), "the answer goes at once, not a tick after the look");
         assert_eq!(frames.next_due(), None, "nothing held");
     }
 
