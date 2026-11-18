@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use neoteletext_core::packet::{Packet, PacketMeta};
 use neoteletext_core::sprites::{FrameRef, Sprite};
-use neoteletext_core::types::PageAddress;
+use neoteletext_core::types::{PageAddress, SubCode};
 use neoteletext_rules::animate::Operation;
 use neoteletext_web::records::frame::{FrameChange, FrameRecord, OpenFrames};
 use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind};
@@ -211,18 +211,18 @@ impl Taken {
 }
 
 impl Held {
-    /// The page it changes; `None` for a packet, whose page its magazine's
-    /// last header named.
+    /// The page and sub-code it changes; `None` for a packet, whose page
+    /// its magazine's last header named.
     #[must_use]
-    pub const fn page(&self) -> Option<u16> {
+    pub const fn key(&self) -> Option<(u16, u16)> {
         match self {
             Self::Packet(..) => None,
-            Self::Stream { page, .. }
-            | Self::Cursor { page, .. }
-            | Self::Animate { page, .. }
-            | Self::Sprites { page, .. }
-            | Self::Objects { page, .. }
-            | Self::Sheet { page, .. } => Some(*page),
+            Self::Stream { page, sub, .. }
+            | Self::Cursor { page, sub, .. }
+            | Self::Animate { page, sub, .. }
+            | Self::Sprites { page, sub, .. }
+            | Self::Objects { page, sub, .. }
+            | Self::Sheet { page, sub, .. } => Some((*page, *sub)),
         }
     }
 
@@ -240,16 +240,23 @@ impl Held {
     }
 }
 
-/// The frames open in a decoder and what each holds.
+/// The frames open in a decoder and what each holds, each of one page
+/// number and sub-code together (RULE-112, DEC-6599: a sub-page is a page).
 #[derive(Default)]
 pub struct Frames {
     open: OpenFrames,
-    held: BTreeMap<u16, Vec<Held>>,
-    /// For each magazine, the page its last header started, as `0xMPP`:
-    /// the page a packet that is not a header belongs to.
-    receiving: [Option<u16>; neoteletext_core::consts::MAGAZINES],
+    held: BTreeMap<(u16, u16), Vec<Held>>,
+    /// For each magazine, the page and sub-code its last header started,
+    /// as `0xMPP` and the sub-code: the page a packet that is not a header
+    /// belongs to.
+    receiving: [Option<(u16, u16)>; neoteletext_core::consts::MAGAZINES],
     /// The presentation tick the open frames were last aged to.
     aged: Option<u32>,
+}
+
+/// A page number and sub-code as the engine's open frames name them.
+fn address(page: u16, sub: u16) -> Option<(PageAddress, SubCode)> {
+    Some((PageAddress::from_mpp(page)?, SubCode::new(sub)))
 }
 
 impl Frames {
@@ -260,56 +267,56 @@ impl Frames {
         self.open.count() > 0
     }
 
-    /// Whether `page` has a frame open.
+    /// Whether `page` and `sub` have a frame open.
     #[must_use]
-    pub fn is_open(&self, page: u16) -> bool {
-        PageAddress::from_mpp(page).is_some_and(|page| self.open.is_open(page))
+    pub fn is_open(&self, page: u16, sub: u16) -> bool {
+        address(page, sub).is_some_and(|(page, sub)| self.open.is_open(page, sub))
     }
 
     /// Takes a FRAME record: what its page's frame held, when the record
     /// ended one, to be applied now, in order.
     pub fn mark(&mut self, record: &FrameRecord) -> Vec<Held> {
         match self.open.record(record) {
-            FrameChange::Ended(_) | FrameChange::Reopened => self.held.remove(&record.page.mpp()).unwrap_or_default(),
+            FrameChange::Ended(_) | FrameChange::Reopened => self.held.remove(&(record.page.mpp(), record.subcode.value())).unwrap_or_default(),
             FrameChange::Opened | FrameChange::Nothing => Vec::new(),
         }
     }
 
-    /// Takes something that changes what `page` shows. It is held when the
-    /// page has a frame open, and nothing is given back; otherwise it is
-    /// given back to be applied now, after what a frame that this filled
-    /// (ANIM-2: the limit of bytes) had held.
-    pub fn take(&mut self, page: u16, item: Held) -> Vec<Held> {
-        let Some(address) = PageAddress::from_mpp(page) else { return vec![item] };
-        match self.open.hold(address, item.bytes()) {
+    /// Takes something that changes what `page` and `sub` show. It is held
+    /// when they have a frame open, and nothing is given back; otherwise it
+    /// is given back to be applied now, after what a frame that this
+    /// filled (ANIM-2: the limit of bytes) had held.
+    pub fn take(&mut self, page: u16, sub: u16, item: Held) -> Vec<Held> {
+        let Some((address, subcode)) = address(page, sub) else { return vec![item] };
+        match self.open.hold(address, subcode, item.bytes()) {
             None => vec![item],
             Some(None) => {
-                self.held.entry(page).or_default().push(item);
+                self.held.entry((page, sub)).or_default().push(item);
                 Vec::new()
             }
             Some(Some(_full)) => {
-                let mut released = self.held.remove(&page).unwrap_or_default();
+                let mut released = self.held.remove(&(page, sub)).unwrap_or_default();
                 released.push(item);
                 released
             }
         }
     }
 
-    /// Takes a teletext packet: `header` is the page it starts when it is
-    /// a page header, and `magazine` its magazine's index. `Err` gives the
-    /// packet back when its page has no frame open, to go on as it
-    /// arrives; `Ok` is what is to be applied now in its place: nothing
-    /// while it is held.
+    /// Takes a teletext packet: `header` is the page and sub-code it
+    /// starts when it is a page header, and `magazine` its magazine's
+    /// index. `Err` gives the packet back when its page has no frame open,
+    /// to go on as it arrives; `Ok` is what is to be applied now in its
+    /// place: nothing while it is held.
     ///
     /// # Errors
     /// The packet itself, when it is not held.
-    pub fn packet(&mut self, magazine: usize, header: Option<u16>, packet: Packet, meta: PacketMeta) -> Result<Vec<Held>, (Packet, PacketMeta)> {
-        if let (Some(page), Some(slot)) = (header, self.receiving.get_mut(magazine)) {
-            *slot = Some(page);
+    pub fn packet(&mut self, magazine: usize, header: Option<(u16, u16)>, packet: Packet, meta: PacketMeta) -> Result<Vec<Held>, (Packet, PacketMeta)> {
+        if let (Some(key), Some(slot)) = (header, self.receiving.get_mut(magazine)) {
+            *slot = Some(key);
         }
-        let page = self.receiving.get(magazine).copied().flatten();
-        match page.filter(|page| self.is_open(*page)) {
-            Some(page) => Ok(self.take(page, Held::Packet(packet, meta))),
+        let key = self.receiving.get(magazine).copied().flatten();
+        match key.filter(|&(page, sub)| self.is_open(page, sub)) {
+            Some((page, sub)) => Ok(self.take(page, sub, Held::Packet(packet, meta))),
             None => Err((packet, meta)),
         }
     }
@@ -322,28 +329,30 @@ impl Frames {
         self.aged = Some(tick);
         let mut late = Vec::new();
         for _ in 0..passed {
-            self.open.tick(&mut |page, _| late.push(page.mpp()));
+            self.open.tick(&mut |page, sub, _| late.push((page.mpp(), sub.value())));
         }
-        late.into_iter().flat_map(|page| self.held.remove(&page).unwrap_or_default()).collect()
+        late.into_iter().flat_map(|key| self.held.remove(&key).unwrap_or_default()).collect()
     }
 
     /// The pages shown are now `shown`: what the frames of the others
-    /// held, to be applied now (ANIM-2: the page stops being shown).
+    /// held, to be applied now (ANIM-2: the page stops being shown). The
+    /// trusted core names the pages shown by number; every sub-page of a
+    /// page no longer shown is closed.
     pub fn keep(&mut self, shown: &[u16]) -> Vec<Held> {
-        let closed: Vec<u16> = self.held.keys().copied().filter(|page| !shown.contains(page)).collect();
+        let closed: Vec<(u16, u16)> = self.held.keys().copied().filter(|(page, _)| !shown.contains(page)).collect();
         let mut released = Vec::new();
-        for page in closed {
-            if let Some(address) = PageAddress::from_mpp(page) {
-                self.open.close(address);
+        for (page, sub) in closed {
+            if let Some((address, subcode)) = address(page, sub) {
+                self.open.close(address, subcode);
             }
-            released.extend(self.held.remove(&page).unwrap_or_default());
+            released.extend(self.held.remove(&(page, sub)).unwrap_or_default());
         }
         released
     }
 
     /// The connection ended: everything held, to be applied now.
     pub fn end(&mut self) -> Vec<Held> {
-        self.open.close_all(&mut |_, _| {});
+        self.open.close_all(&mut |_, _, _| {});
         core::mem::take(&mut self.held).into_values().flatten().collect()
     }
 }

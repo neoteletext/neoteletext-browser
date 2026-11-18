@@ -168,8 +168,8 @@ impl Engine {
     pub(super) fn take_animation(&mut self, taken: Taken) {
         let released = match taken {
             Taken::Mark(mark) => self.animation.frames.mark(&mark),
-            Taken::Change(item) => match item.page() {
-                Some(page) => self.animation.frames.take(page, item),
+            Taken::Change(item) => match item.key() {
+                Some((page, sub)) => self.animation.frames.take(page, sub, item),
                 None => vec![item],
             },
         };
@@ -178,7 +178,7 @@ impl Engine {
 
     /// Takes a pushed teletext packet for its page's open frame (ANIM-2);
     /// false when its page has none, and the packet goes on as it arrives.
-    pub(super) fn hold_packet(&mut self, packet: &Packet, meta: &PacketMeta, header: Option<u16>) -> bool {
+    pub(super) fn hold_packet(&mut self, packet: &Packet, meta: &PacketMeta, header: Option<(u16, u16)>) -> bool {
         // Only a page's own packets are held: the audio profile's and the
         // records' packets, numbered 31, pass (ANIM-2: "sound records and
         // other pages' packets pass as they arrive").

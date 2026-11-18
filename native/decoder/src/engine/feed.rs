@@ -130,7 +130,7 @@ impl Engine {
             // engine's decoder with the rest below.
             let mut kept = Vec::with_capacity(items.len());
             for (packet, meta) in &items {
-                let held = self.hold_packet(packet, meta, header_page(packet));
+                let held = self.hold_packet(packet, meta, header_key(packet));
                 kept.push(!held);
                 if let Some(key) = header_key(packet) {
                     self.pushed.insert(key.0);

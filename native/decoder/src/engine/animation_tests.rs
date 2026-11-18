@@ -77,10 +77,15 @@ fn animate(page: u16, operations: &[Operation]) -> Vec<u8> {
     packets
 }
 
-/// A FRAME record.
+/// A FRAME record for sub-page 0.
 fn frame(page: u16, mark: FrameMark, identifier: u16) -> Vec<u8> {
+    frame_of(page, 0, mark, identifier)
+}
+
+/// A FRAME record for one page number and sub-code.
+fn frame_of(page: u16, sub: u16, mark: FrameMark, identifier: u16) -> Vec<u8> {
     let mut packets = Vec::new();
-    let record = FrameRecord { page: address(page), subcode: SubCode::new(0), mark, identifier };
+    let record = FrameRecord { page: address(page), subcode: SubCode::new(sub), mark, identifier };
     neoteletext_web::records::frame::encode(record, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
     packets
 }
@@ -377,6 +382,22 @@ fn a_frame_holds_what_changes_its_page_until_its_end() {
     assert!(engine.render(PAGE).is_some());
     assert!(receiver.regis(&mut engine, 0));
     assert_eq!((receiver.at(105, 55), receiver.at(405, 305)), (0, 5), "and its new picture with it");
+}
+
+/// RULE-112, DEC-6599 (TODO-6681 defect 1): a frame is of one page number
+/// and sub-code together. A frame open for sub-page 1 holds sub-page 1's
+/// rows, and sub-page 0 of the same page passes as it arrives. Before, the
+/// decoder keyed a frame on the page number alone, and held both.
+#[test]
+fn a_frame_holds_only_its_own_sub_page() {
+    let mut engine = Engine::new();
+    assert_eq!(engine.feed_whole(true, true, &frame_of(PAGE, 1, FrameMark::Begin, 3)), []);
+    let other = engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,SUB ZERO\n"));
+    assert_eq!(other.iter().map(|(page, _)| *page).collect::<Vec<_>>(), [PAGE], "sub-page 0 passes as it arrives");
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10001\nSC,0001\nPS,C000\nOL,1,SUB ONE\n")), [], "sub-page 1 is held");
+    assert!(!engine.subpage_changes(&[PAGE]).contains(&(PAGE, 2)), "and not stored while its frame is open");
+    let _ = engine.feed_whole(true, true, &frame_of(PAGE, 1, FrameMark::End, 3));
+    assert_eq!(engine.subpage_changes(&[PAGE]), [(PAGE, 2)], "it is stored at its frame's end");
 }
 
 /// ANIM-2 (REQ-6536): a frame also ends, and what it held is applied at
