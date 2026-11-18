@@ -48,7 +48,7 @@ use vello_cpu::color::{AlphaColor, Srgb};
 use vello_cpu::kurbo::{self, Point};
 use vello_cpu::{Pixmap, RenderContext, Resources};
 
-use crate::pages::{PageImage, RegisImage};
+use crate::pages::{PageImage, RegisImage, Still};
 use crate::record::Frame;
 use crate::text::StyleKey;
 
@@ -110,6 +110,9 @@ pub struct Painter {
     /// The pages drawn in ReGIS that show their row of coloured-key
     /// prompts beneath the picture (REQ-6379).
     regis_keyed: Vec<PageKey>,
+    /// The stills of the tab filmstrip, by their numbers (REQ-6640 item
+    /// 3), at most [`interface_core::canvas::MAX_STILLS`].
+    stills: HashMap<u32, Still>,
     /// The number the next new page image takes.
     next_image: u64,
     /// The dots of each page that changed since the last frame was drawn,
@@ -170,6 +173,7 @@ impl Painter {
             regis: HashMap::new(),
             regis_contain: true,
             regis_keyed: Vec::new(),
+            stills: HashMap::new(),
             next_image: 0,
             changed: HashMap::new(),
             regis_changed: HashMap::new(),

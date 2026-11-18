@@ -302,4 +302,42 @@ pub trait Canvas {
     fn device_scale(&self) -> f64 {
         1.0
     }
+    /// Keeps a still of a page under the number `still` (the tab
+    /// filmstrip's, REQ-6640 item 3): the page with its screen as
+    /// [`draw_page_on_screen`] draws it, or its ReGIS or NAPLPS picture as
+    /// the page area lays it, made now from the page's latest image at
+    /// [`STILL_WIDTH`] by [`STILL_HEIGHT`] pixels and never changed by a
+    /// later image. A still kept before under the number is replaced.
+    /// Returns false, keeping nothing, when the back end holds no image
+    /// of the page. A back end without the memory for stills (a
+    /// microcontroller's) keeps none, and the filmstrip shows stand-ins.
+    fn keep_still(&mut self, still: u32, key: PageKey) -> bool {
+        let _ = (still, key);
+        false
+    }
+    /// Draws the still kept under `still`, scaled to fill `rect`; false
+    /// when none is kept.
+    fn still(&mut self, still: u32, rect: Rect) -> bool {
+        let _ = (still, rect);
+        false
+    }
+    /// Forgets the still kept under `still`, if one is.
+    fn forget_still(&mut self, still: u32) {
+        let _ = still;
+    }
 }
+
+/// A still's width in pixels (REQ-6640 item 3): a page with its screen
+/// shown about a fifth of a large window wide, 256 points on a window of
+/// 1,280, is drawn from it at about one and a half of a display's pixels
+/// for each of the still's on a display of two for each point.
+pub const STILL_WIDTH: u16 = 384;
+/// A still's height in pixels: the page-with-screen's own shape, 480 dots
+/// to 500 lines (its screen is as wide in proportion both ways).
+pub const STILL_HEIGHT: u16 = 400;
+const _: () = assert!(STILL_WIDTH as u32 * PAGE_HEIGHT as u32 == STILL_HEIGHT as u32 * PAGE_WIDTH as u32, "a still is the page's shape");
+/// The most stills held, one for each of as many tabs (REQ-6640 item 3):
+/// 24 of 384 by 400 pixels of four bytes is about 15 megabytes, against a
+/// window's 64 tabs at most (the protocol's `MAX_TABS`). The tabs left
+/// longest ago lose theirs first and show a stand-in.
+pub const MAX_STILLS: usize = 24;

@@ -34,6 +34,7 @@ impl Painter {
                 Command::Gradient { area, radius, stops } => self.draw_gradient(*area, *radius, stops),
                 Command::Page { key, area, .. } => self.draw_page(*key, *area),
                 Command::Text { area, text, style, paint } => self.draw_text(*area, text, *style, *paint),
+                Command::Still { still, area, .. } => self.draw_still(*still, *area),
             }
         }
         self.context.flush();
@@ -58,7 +59,7 @@ impl Painter {
 
 /// The calls as `vello_cpu` draws them, into the damaged box.
 impl Painter {
-    fn draw_fill(&mut self, area: Rect, radius: f64, paint: Colour) {
+    pub(crate) fn draw_fill(&mut self, area: Rect, radius: f64, paint: Colour) {
         self.context.set_transform(self.base());
         self.context.set_paint(colour(paint));
         if radius > 0.0 {

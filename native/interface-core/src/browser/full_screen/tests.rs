@@ -181,7 +181,7 @@ fn the_strip_in_full_screen_is_drawn_over_the_page() {
                 .rev()
                 .find_map(|(index, painted)| match *painted {
                     Painted::Page(_, image) => Some((index, image)),
-                    Painted::Fill(..) => None,
+                    Painted::Fill(..) | Painted::Still(..) => None,
                 })
                 .expect("the page is drawn");
             // The page's screen colour fills the window around it.

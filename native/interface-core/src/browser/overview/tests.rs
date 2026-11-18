@@ -93,7 +93,7 @@ fn the_whole_preview_stays_below_the_strip_with_the_bar_shown_or_hidden() {
             let Painted::Page(_, image) = preview[1] else { panic!("{case}: {preview:?}") };
             assert!(screen.x0 < image.x0 && screen.y0 < image.y0 && screen.x1 > image.x1 && screen.y1 > image.y1, "{case}: the screen around the image");
             for painted in preview {
-                let (Painted::Fill(rect, _) | Painted::Page(_, rect)) = *painted;
+                let (Painted::Fill(rect, _) | Painted::Page(_, rect) | Painted::Still(_, rect)) = *painted;
                 assert!(rect.y0 >= page_top - ROUNDING, "{case}: {painted:?} reaches above the page area's top {page_top}");
             }
             let &(shadow, _) = canvas.dims.last().expect("the preview's shadow");

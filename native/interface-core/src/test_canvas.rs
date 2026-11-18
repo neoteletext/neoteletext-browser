@@ -12,6 +12,8 @@ use crate::theme::Colour;
 pub enum Painted {
     Page(PageKey, Rect),
     Fill(Rect, Colour),
+    /// A still drawn, by its number.
+    Still(u32, Rect),
 }
 
 pub struct Recorder {
@@ -30,6 +32,13 @@ pub struct Recorder {
     pub scale: f64,
     /// What every page's screen colour is; none before a page has arrived.
     pub screen: Option<Colour>,
+    /// Each still kept, by its number, with the page it was made from,
+    /// as the canvas holds them now.
+    pub stills: Vec<(u32, PageKey)>,
+    /// Every still taken, in order, kept or not.
+    pub taken: Vec<(u32, PageKey)>,
+    /// Whether a still can be made: as a page's image is held.
+    pub has_images: bool,
 }
 
 impl Recorder {
@@ -44,6 +53,9 @@ impl Recorder {
             inks: Vec::new(),
             scale: 2.0,
             screen: Some(crate::theme::BLACK),
+            stills: Vec::new(),
+            taken: Vec::new(),
+            has_images: true,
         }
     }
 
@@ -88,5 +100,23 @@ impl Canvas for Recorder {
     }
     fn line_height(&mut self, style: Style) -> f64 {
         f64::from(style.size)
+    }
+    fn keep_still(&mut self, still: u32, key: PageKey) -> bool {
+        self.taken.push((still, key));
+        self.stills.retain(|&(kept, _)| kept != still);
+        if self.has_images {
+            self.stills.push((still, key));
+        }
+        self.has_images
+    }
+    fn still(&mut self, still: u32, rect: Rect) -> bool {
+        let kept = self.stills.iter().any(|&(kept, _)| kept == still);
+        if kept {
+            self.painted.push(Painted::Still(still, rect));
+        }
+        kept
+    }
+    fn forget_still(&mut self, still: u32) {
+        self.stills.retain(|&(kept, _)| kept != still);
     }
 }
