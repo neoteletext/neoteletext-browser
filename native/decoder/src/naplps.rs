@@ -53,7 +53,7 @@ use neoteletext_rules::limits::MAX_POINTER_OBJECTS;
 use neoteletext_rules::table::{Target, TargetKind};
 use neoteletext_web::records::naplps_objects::{PICTURE_HEIGHT, PICTURE_WIDTH};
 use neoteletext_web::records::regis::RegisRecord;
-use protocol::regis::{REGIS_COLOURS, RegisPick};
+use protocol::regis::{REGIS_COLOURS, RegisPick, RegisViewer};
 
 use crate::animation::{Counters, next_cycle_tick};
 use crate::parts::{Figures, Sent, parts_to_send};
@@ -245,6 +245,10 @@ struct Page {
     /// Whether it is owed a repaint for its animation.
     motion: Motion,
     counters: Counters,
+    /// What the viewer's pointer is doing to its objects, as the trusted
+    /// core said (REQ-6374, DEC-6638 item 2): the hovered object is drawn
+    /// with its hover look and the pressed one with its pressed look.
+    viewer: RegisViewer,
 }
 
 /// What a sub-page's animation is owed.
@@ -299,6 +303,7 @@ impl Page {
             painted: 0,
             motion: Motion::default(),
             counters: Counters::default(),
+            viewer: RegisViewer::default(),
         })
     }
 
@@ -324,6 +329,8 @@ impl Page {
             return false;
         }
         self.objects = objects;
+        // The renderer forgets every pointer look with the objects it had.
+        self.point_again();
         true
     }
 
@@ -337,7 +344,44 @@ impl Page {
             Some(held) => *held = object,
             None => self.objects.push(object),
         }
+        // The renderer forgets the redefined object's pointer look.
+        self.point_again();
         true
+    }
+
+    /// The look the viewer's pointer gives object `number`: pressed while
+    /// a button is held on it, else hover while the pointer is over it.
+    const fn look_of(viewer: RegisViewer, number: u16) -> Look {
+        if number == 0 {
+            Look::Normal
+        } else if viewer.pressed == number {
+            Look::Pressed
+        } else if viewer.hovered == number {
+            Look::Hover
+        } else {
+            Look::Normal
+        }
+    }
+
+    /// Takes what the viewer's pointer is doing to the objects (REQ-6374):
+    /// each object whose look it changes is given its new look, and the
+    /// picture is repainted where it changed. A viewer that changes no
+    /// object's look changes nothing.
+    fn point(&mut self, viewer: RegisViewer) {
+        let before = core::mem::replace(&mut self.viewer, viewer);
+        for number in [before.hovered, before.pressed, viewer.hovered, viewer.pressed] {
+            let look = Self::look_of(viewer, number);
+            if look != Self::look_of(before, number) && self.terminal.set_pointer_look(number, look) {
+                self.changed = true;
+            }
+        }
+    }
+
+    /// Gives the hovered and pressed objects their looks again, after the
+    /// renderer forgot them with the objects it was given.
+    fn point_again(&mut self) {
+        let viewer = core::mem::take(&mut self.viewer);
+        self.point(viewer);
     }
 
     /// The object of `number` as the channel defined it.
@@ -570,7 +614,10 @@ impl NaplpsPages {
                 }
             }
             let sheet = self.sheets.get(&key).map(|(_, bytes, _)| bytes.as_slice());
+            // What the pointer is doing stays with the sub-page, as for ReGIS.
+            let viewer = self.pages.get(&key).map(|page| page.viewer).unwrap_or_default();
             let Some(mut page) = Page::new(record.generation, sheet, self.at_once) else { return };
+            page.viewer = viewer;
             // The objects sent ahead of this generation are its own; those
             // of any other are dropped (ANIM-11).
             if let Some(waiting) = self.waiting.remove(&key).filter(|waiting| waiting.generation == record.generation) {
@@ -647,6 +694,18 @@ impl NaplpsPages {
                     None => waiting.objects.push(object),
                 }
             }
+        }
+    }
+
+    /// The trusted core said what the viewer's pointer is doing to a
+    /// sub-page's picture (REQ-6374; DEC-6638 item 2: NAPLPS objects are
+    /// controls as ReGIS drawings are): the hovered object is drawn with
+    /// its hover look, the pressed one with its pressed look, and one no
+    /// longer either with its frame again. A sub-page with no NAPLPS has
+    /// no objects for it to change.
+    pub fn set_viewer(&mut self, page: u16, sub: u16, viewer: RegisViewer) {
+        if let Some(held) = self.pages.get_mut(&(page, sub)) {
+            held.point(viewer);
         }
     }
 
@@ -984,6 +1043,101 @@ mod tests {
         assert_eq!(found[0], 7);
         assert_eq!(pages.objects_at(0x100, Some(0), 310, 250, &mut found), 0);
         assert_eq!(pages.objects_at(0x100, Some(0), 330, 480, &mut found), 0, "past the picture's bottom: the border lines");
+    }
+
+    /// A filled rectangle of colour-map entry `entry` over the bottom left
+    /// eighth of the unit screen across and up (32/256 on each axis, three
+    /// bytes of the default domain, 4/0 6/4 4/0), as a macro's drawing:
+    /// SELECT COLOR, POINT SET absolute at the origin, RECTANGLE filled
+    /// (ANSI X3.110-1983 sections 5.3.2.5, 5.3.3.1 and 5.3.3.4), each
+    /// coordinate three bytes of the default domain.
+    fn filled(entry: u8) -> Vec<u8> {
+        let mut bytes = vec![0x0E, 0x3E, 0x40 | (entry << 2), 0x24, 0x40, 0x40, 0x40, 0x31, 0x40, 0x64, 0x40];
+        bytes.push(0x0F);
+        bytes
+    }
+
+    /// Lays the picture of page 100 sub-page 0, if it changed, as a
+    /// receiver holds it: a whole one, then each part laid over it where
+    /// it changed; false when nothing changed.
+    fn lay(pages: &mut NaplpsPages, picture: &mut Vec<u8>) -> bool {
+        let Some(drawn) = pages.take(0x100, Some(0)) else { return false };
+        for part in core::iter::once(&drawn.picture).chain(&drawn.more) {
+            let pixels = unpack(&part.packed);
+            if part.whole() {
+                *picture = pixels;
+                continue;
+            }
+            let (left, across) = (usize::from(part.area.x), usize::from(part.area.width));
+            for (row, line) in pixels.chunks_exact(across.max(1)).enumerate().take(usize::from(part.area.height)) {
+                let start = (usize::from(part.area.y) + row) * 480 + left;
+                picture[start..start + across].copy_from_slice(line);
+            }
+        }
+        true
+    }
+
+    /// TODO-6747, REQ-6374, DEC-6638 item 2: the trusted core's viewer
+    /// draws a NAPLPS object's hover look while the pointer is over it and
+    /// its pressed look while it is pressed, exactly as the same object
+    /// with that look's macro as its frame is drawn; and the object's
+    /// frame again when neither. The look is given again after the
+    /// object is redefined, and to a new stream of the sub-page.
+    #[test]
+    fn the_viewer_draws_a_naplps_objects_hover_and_pressed_looks() {
+        // Macros 2/1, 2/2 and 2/3 fill in entries 3, 6 and 9 (DEF MACRO
+        // 8/0 and END 8/5 in their eight-bit forms, section 6.2).
+        let mut stream = Vec::new();
+        for (name, entry) in [(0x21, 3), (0x22, 6), (0x23, 9)] {
+            stream.extend([0x80, name]);
+            stream.extend(filled(entry));
+            stream.push(0x85);
+        }
+        let button = |frame: u8| Object {
+            kind: naplps::ObjectKind::Macro,
+            layer: 2,
+            origin_y: 420,
+            frames: vec![frame],
+            cover: 0,
+            hover: 0x22,
+            pressed: 0x23,
+            ..square(5, "Hide")
+        };
+        let drawn_with = |frame: u8| {
+            let mut pages = NaplpsPages::default();
+            pages.read(&record(0x100, 1, 0, &stream));
+            pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![button(frame)]);
+            unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed)
+        };
+        let (normal, hover, pressed) = (drawn_with(0x21), drawn_with(0x22), drawn_with(0x23));
+        assert!(normal != hover && hover != pressed && normal != pressed, "the three looks differ");
+
+        let mut picture = Vec::new();
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, &stream));
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![button(0x21)]);
+        assert!(lay(&mut pages, &mut picture));
+        let mut follow = |pages: &mut NaplpsPages, viewer: RegisViewer| -> Vec<u8> {
+            pages.set_viewer(0x100, 0, viewer);
+            lay(pages, &mut picture);
+            picture.clone()
+        };
+        let hovered = RegisViewer { hovered: 5, pressed: 0, typing: true };
+        assert!(follow(&mut pages, RegisViewer::default()) == normal, "its frame");
+        assert!(follow(&mut pages, hovered) == hover, "hovered");
+        pages.set_viewer(0x100, 0, hovered);
+        assert!(pages.take(0x100, Some(0)).is_none(), "the same viewer again changes nothing");
+        assert!(follow(&mut pages, RegisViewer { hovered: 5, pressed: 5, typing: true }) == pressed, "pressed over hovered");
+        assert!(follow(&mut pages, RegisViewer { hovered: 0, pressed: 5, typing: true }) == pressed, "pressed, the pointer off it");
+        assert!(follow(&mut pages, RegisViewer::default()) == normal, "neither: its frame again");
+        assert!(follow(&mut pages, hovered) == hover, "hovered again");
+        pages.set_objects(0x100, 0, 1, Scope::One, None, vec![button(0x21)]);
+        assert!(follow(&mut pages, hovered) == hover, "kept over the object's redefinition");
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![button(0x21)]);
+        assert!(follow(&mut pages, hovered) == hover, "kept over the objects given again");
+        pages.read(&record(0x100, 2, 0, &stream));
+        pages.set_objects(0x100, 0, 2, Scope::Whole, None, vec![button(0x21)]);
+        assert!(lay(&mut pages, &mut picture) && picture == hover, "kept for a new stream of the sub-page");
     }
 
     /// REQ-6668, DEC-6669: every NAPLPS terminal has the engine's 55 sets,

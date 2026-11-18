@@ -277,11 +277,13 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 write_to_core(&mut output, &FromDecoder::SubPageRows { page, rows: engine.subpage_rows(page, range) })?;
                 continue;
             }
-            // What the viewer's pointer is doing to a ReGIS picture
-            // changed (REQ-6374): repainted at once if on screen and its
-            // budget allows.
+            // What the viewer's pointer is doing to a ReGIS or NAPLPS
+            // picture changed (REQ-6374; DEC-6638 item 2): repainted at
+            // once if on screen and its budget allows. Only one of the two
+            // holds the sub-page.
             ToDecoder::RegisViewer { page, sub, viewer } => {
                 engine.regis().set_viewer(page, sub, viewer);
+                engine.naplps().set_viewer(page, sub, viewer);
                 // Nothing arrived; what is owed is drawn below, as after data.
                 Vec::new()
             }
