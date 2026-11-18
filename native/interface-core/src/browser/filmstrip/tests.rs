@@ -141,7 +141,7 @@ fn stills_are_taken_when_a_tab_is_left_and_when_the_filmstrip_opens() {
 fn a_picture_page_not_yet_drawn_stands_in_black_in_its_shape() {
     let (mut browser, mut canvas) = browser_of(2);
     let shown = browser.wall.shown().next().map(|(key, _)| key).unwrap();
-    browser.set_regis(shown, 1, 1);
+    browser.set_regis(shown, 1, 1, crate::canvas::PictureLanguage::Regis);
     canvas.has_images = false;
     browser.set_tabs(tabs(2), 1);
     browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
@@ -151,6 +151,29 @@ fn a_picture_page_not_yet_drawn_stands_in_black_in_its_shape() {
     let inside = |rect: Rect| left.rect.contains(Point::new(rect.x0, rect.y0)) && left.rect.contains(Point::new(rect.x1 - 0.5, rect.y1 - 0.5));
     let black = canvas.fills.iter().find(|&&(rect, colour)| colour == BLACK && inside(rect)).map(|&(rect, _)| rect).unwrap();
     assert!((black.height() / black.width() - REGIS_HEIGHT_PER_WIDTH).abs() < 1e-6, "the picture's shape: {black:?}");
+}
+
+/// REQ-5819, DEC-6667: a page known to be a NAPLPS picture is the
+/// teletext raster, so it stands in black in the teletext page's shape,
+/// not a ReGIS picture's.
+#[test]
+fn a_naplps_page_not_yet_drawn_stands_in_in_the_teletext_pages_shape() {
+    let (mut browser, mut canvas) = browser_of(2);
+    let shown = browser.wall.shown().next().map(|(key, _)| key).unwrap();
+    browser.set_regis(shown, 1, 1, crate::canvas::PictureLanguage::Naplps);
+    canvas.has_images = false;
+    browser.set_tabs(tabs(2), 1);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
+    canvas.fills.clear();
+    open(&mut browser, &mut canvas, 100);
+    let left = browser.filmstrip.pictures.iter().find(|picture| picture.index == 0).unwrap();
+    let inside = |rect: Rect| left.rect.contains(Point::new(rect.x0, rect.y0)) && left.rect.contains(Point::new(rect.x1 - 0.5, rect.y1 - 0.5));
+    let black = canvas.fills.iter().find(|&&(rect, colour)| colour == BLACK && inside(rect)).map(|&(rect, _)| rect).unwrap();
+    // The teletext page's image within its screen: 480 dots by 500 lines,
+    // drawn wider by at most the aspect correction (DEC-2049).
+    let teletext = f64::from(crate::canvas::PAGE_HEIGHT) / f64::from(crate::canvas::PAGE_WIDTH);
+    let shape = black.height() / black.width();
+    assert!(shape <= teletext + 1e-6 && shape >= teletext * 13.0 / 16.0 - 1e-6, "the teletext page's shape: {black:?}");
 }
 
 /// REQ-6640 item 4: each picture is captioned above it with its tab's

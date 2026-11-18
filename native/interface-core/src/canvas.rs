@@ -57,6 +57,80 @@ pub const REGIS_LINES: u16 = 288;
 /// centred down the image.
 pub const REGIS_TOP_LINE: u16 = (PAGE_HEIGHT - REGIS_LINES) / 2;
 
+/// The lines of the teletext raster a NAPLPS page's display area is drawn
+/// on (the NAPLPS renderer's REQ-5819, DEC-6667): 480 by 462 pixels, which
+/// on the raster's pixels, 16/13 as wide as they are high (DEC-2049), keep
+/// the NAPLPS display's shape of 1.28 to 1.
+pub const NAPLPS_DISPLAY_LINES: u16 = 462;
+/// The raster's line a NAPLPS display area's top row is drawn on: the 38
+/// lines left over are shared equally above and below it (REQ-5819).
+pub const NAPLPS_TOP_LINE: u16 = (PAGE_HEIGHT - NAPLPS_DISPLAY_LINES) / 2;
+const _: () = assert!(NAPLPS_TOP_LINE == 19 && NAPLPS_TOP_LINE * 2 + NAPLPS_DISPLAY_LINES == PAGE_HEIGHT, "REQ-5819: 19 border lines above and below");
+
+/// The language a page's picture is drawn in, which says its size: which
+/// renderer made it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PictureLanguage {
+    /// ReGIS (DEC-6335): 800 by 480 pixels, the VT340's screen.
+    #[default]
+    Regis,
+    /// NAPLPS, ANSI X3.110-1983 (the NAPLPS renderer's REQ-6408): the
+    /// teletext raster itself, 480 by 500, the page's display area on
+    /// lines 19 to 480 and the lines above and below it in the page's
+    /// background colour (REQ-5819, DEC-6667).
+    Naplps,
+}
+
+impl PictureLanguage {
+    /// The picture's width in pixels.
+    #[must_use]
+    pub const fn width(self) -> u16 {
+        match self {
+            Self::Regis => REGIS_WIDTH,
+            Self::Naplps => PAGE_WIDTH,
+        }
+    }
+
+    /// The picture's height in pixels.
+    #[must_use]
+    pub const fn height(self) -> u16 {
+        match self {
+            Self::Regis => REGIS_HEIGHT,
+            Self::Naplps => PAGE_HEIGHT,
+        }
+    }
+
+    /// The picture's pixels.
+    #[must_use]
+    pub const fn pixels(self) -> usize {
+        (self.width() as usize).saturating_mul(self.height() as usize)
+    }
+}
+
+/// The widest picture of any language: what a pointer's pixel is below
+/// before the picture it is on is known.
+pub const PICTURE_MAX_WIDTH: u16 = if REGIS_WIDTH > PAGE_WIDTH { REGIS_WIDTH } else { PAGE_WIDTH };
+/// The tallest picture of any language.
+pub const PICTURE_MAX_HEIGHT: u16 = if REGIS_HEIGHT > PAGE_HEIGHT { REGIS_HEIGHT } else { PAGE_HEIGHT };
+
+/// Where the parts of a page drawn as a picture in `language` sit in its
+/// image drawn in `image`. A NAPLPS picture is the teletext raster
+/// (REQ-5819), so it fills the image as a teletext page does, whatever the
+/// fit, and the row of coloured-key prompts, when shown, is row 24 where
+/// the teletext page has it; a ReGIS picture is laid out by
+/// [`regis_layout`].
+#[must_use]
+pub fn picture_layout(language: PictureLanguage, image: Rect, contain: bool, keyed: bool) -> RegisLayout {
+    match language {
+        PictureLanguage::Regis => regis_layout(image, contain, keyed),
+        PictureLanguage::Naplps => {
+            let row = image.height() / f64::from(ROWS);
+            let keys = keyed.then(|| Rect::new(image.x0, image.y1 - row, image.x1, image.y1));
+            RegisLayout { picture: image, keys, stacked: false }
+        }
+    }
+}
+
 /// Where a ReGIS picture sits in a page's image drawn in `image`.
 #[must_use]
 pub fn regis_within(image: Rect) -> Rect {

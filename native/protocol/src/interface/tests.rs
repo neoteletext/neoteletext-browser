@@ -194,7 +194,7 @@ fn every_message_to_the_interface_round_trips() {
                 palette: [[9; 3]; crate::regis::REGIS_COLOURS],
                 number: 4,
                 base: 0,
-                area: crate::regis::RegisArea::WHOLE,
+                area: crate::regis::RegisArea::whole(crate::regis::PictureLanguage::Regis),
                 packed: vec![0x3A; crate::regis::REGIS_PACKED],
             },
         },
@@ -476,8 +476,9 @@ fn the_phone_panel_carries_a_request_for_a_pin_and_nothing_more() {
     assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "kind {KIND_PHONE_PANEL} with a value it does not have");
 }
 
-/// REQ-6377 item 2: the interface is not trusted to say a pixel the picture
-/// has not, nor a flag the pointer has not.
+/// REQ-6377 item 2: the interface is not trusted to say a pixel no picture
+/// has, nor a flag the pointer has not. Line 499 is a NAPLPS picture's
+/// (REQ-5819), which the trusted core holds to the picture of the page.
 #[test]
 fn a_regis_pointer_outside_the_picture_is_refused() {
     let written = |pointer: crate::regis::RegisPointer| {
@@ -487,7 +488,8 @@ fn a_regis_pointer_outside_the_picture_is_refused() {
     };
     let good = crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: false, finger: false };
     assert!(read_from_interface(&mut written(good).as_slice()).is_ok());
-    for at in [(800, 0), (0, 480), (u16::MAX, u16::MAX)] {
+    assert!(read_from_interface(&mut written(crate::regis::RegisPointer { at: Some((479, 499)), ..good }).as_slice()).is_ok());
+    for at in [(800, 0), (0, 500), (u16::MAX, u16::MAX)] {
         let bytes = written(crate::regis::RegisPointer { at: Some(at), ..good });
         assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "{at:?}");
     }

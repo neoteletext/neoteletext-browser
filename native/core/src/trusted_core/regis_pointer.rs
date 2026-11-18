@@ -11,8 +11,10 @@ use protocol::regis::RegisPointer;
 use super::Core;
 
 impl Core {
-    /// The interface said where the pointer is on a ReGIS picture.
-    pub(super) fn regis_pointer(&mut self, pointer: RegisPointer) -> Result<(), String> {
+    /// The interface said where the pointer is on a ReGIS or NAPLPS
+    /// picture. A pixel the picture held for the page has not is off it.
+    pub(super) fn regis_pointer(&mut self, mut pointer: RegisPointer) -> Result<(), String> {
+        pointer.at = pointer.at.filter(|at| self.regis.has_pixel(pointer.key, *at));
         self.regis_pointing.pointer(pointer, &self.regis);
         self.regis_repoint()
     }

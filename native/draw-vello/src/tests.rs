@@ -7,7 +7,7 @@ use crate::text::small_capitals;
 
 use decoder::Engine;
 use interface_core::browser::{Browser, Frame as WindowFrame, TabInfo};
-use interface_core::canvas::Canvas;
+use interface_core::canvas::{Canvas, PictureLanguage};
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
 use interface_core::library::BarView;
 use interface_core::settings::{ProxyView, SettingsView};
@@ -448,13 +448,14 @@ fn a_regis_picture_whose_pixels_changed_redraws_only_them_and_matches_a_whole_fr
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
-    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(None)).unwrap();
     frame(&mut painter, &mut browser, SETTLED);
     frame(&mut painter, &mut browser, SETTLED);
     let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
     // A few pixels near the picture's top, which this small window shows.
-    let change =
-        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(2), &regis_packed(Some((300, 5, 12)))).unwrap();
+    let change = |painter: &mut Painter, _: &mut Browser| {
+        painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(2, PictureLanguage::Regis), &regis_packed(Some((300, 5, 12)))).unwrap();
+    };
     change(&mut painter, &mut browser);
     let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
     assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the pixels that changed: {damage:?}");
@@ -472,18 +473,19 @@ fn a_part_of_new_colours_alone_recolours_the_picture() {
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
-    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some((300, 5, 12)))).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(Some((300, 5, 12)))).unwrap();
     frame(&mut painter, &mut browser, SETTLED);
     frame(&mut painter, &mut browser, SETTLED);
     let mut blinked = regis_palette();
     blinked[7] = [255, 0, 0];
-    let part = RegisPart { number: 2, base: 1, x: 0, y: 0, width: 0, height: 0 };
+    let part = RegisPart { language: PictureLanguage::Regis, number: 2, base: 1, x: 0, y: 0, width: 0, height: 0 };
     painter.set_regis(FRONT, &blinked, part, &[]).unwrap();
     let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
     let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
     assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the pixels whose colour changed: {damage:?}");
-    let whole_picture =
-        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &blinked, RegisPart::whole(2), &regis_packed(Some((300, 5, 12)))).unwrap();
+    let whole_picture = |painter: &mut Painter, _: &mut Browser| {
+        painter.set_regis(FRONT, &blinked, RegisPart::whole(2, PictureLanguage::Regis), &regis_packed(Some((300, 5, 12)))).unwrap();
+    };
     assert_eq!(differing(&words, &fresh(&pages, SETTLED, whole_picture)), 0, "the same as the whole picture in its new colours");
 }
 
@@ -494,7 +496,7 @@ fn regis_alone(size: (u16, u16), area: Rect, lit: (usize, usize, usize)) -> Vec<
     // A picture is drawn in the place of its page, which is held too.
     let pages = pages();
     painter.set_page(FRONT, &pages[0].palette, pages[0].screen, &pages[0].indices).unwrap();
-    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some(lit))).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(Some(lit))).unwrap();
     painter.begin(size.0, size.1, 1.0);
     painter.page(FRONT, area);
     let damage = painter.render();
@@ -526,6 +528,46 @@ fn a_regis_picture_at_a_whole_multiple_is_drawn_without_smoothing() {
     let words = regis_alone(size, Rect::new(10.0, 10.0, 1_210.0, 730.0), (100, 50, 1));
     let greys = words.iter().filter(|&&word| !matches!(word & WHITE_WORD, 0 | WHITE_WORD)).count();
     assert!(greys > 0, "sampled smoothly between whole multiples");
+}
+
+/// REQ-5819, DEC-6667: a NAPLPS picture is the teletext raster, so drawn
+/// in a page's place at twice the raster's size it covers the whole page
+/// image, its dot (x, y) a block of two by two display pixels at (2x, 2y)
+/// from the image's corner, line 499 included, and no ReGIS band or bar
+/// is left of the teletext page beneath; a ReGIS-sized whole is refused.
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+#[test]
+fn a_naplps_picture_covers_the_whole_page_image_dot_for_dot() {
+    const WHITE_WORD: u32 = 0x00FF_FFFF;
+    let (width, height) = (usize::from(PAGE_WIDTH), usize::from(PAGE_HEIGHT));
+    let mut pixels = vec![0_u8; width * height];
+    // Colour 7 at the raster's first dot, at dot (13, 250), and along line 499.
+    pixels[0] = 7;
+    pixels[250 * width + 13] = 7;
+    pixels[499 * width..].fill(7);
+    let packed: Vec<u8> = pixels.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right).collect();
+    let mut painter = Painter::new(Family::Roboto);
+    let pages = pages();
+    painter.set_page(FRONT, &pages[0].palette, pages[0].screen, &pages[0].indices).unwrap();
+    assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Naplps), &regis_packed(None)).is_err(), "a ReGIS picture's pixels");
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Naplps), &packed).unwrap();
+    let size = (1_000_u16, 1_040_u16);
+    painter.begin(size.0, size.1, 1.0);
+    let (left, top) = (20_usize, 20_usize);
+    painter.page(FRONT, Rect::new(20.0, 20.0, 20.0 + 2.0 * f64::from(PAGE_WIDTH), 20.0 + 2.0 * f64::from(PAGE_HEIGHT)));
+    let damage = painter.render();
+    let mut words = vec![0; usize::from(size.0) * usize::from(size.1)];
+    painter.copy_to(&mut words, &damage, 0);
+    let across = usize::from(size.0);
+    let at = |x: usize, y: usize| words[(top + y) * across + left + x] & WHITE_WORD;
+    for (x, y) in [(0, 0), (13, 250), (0, 499), (479, 499)] {
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            assert_eq!(at(2 * x + dx, 2 * y + dy), WHITE_WORD, "dot {x}, {y} at +{dx}, +{dy}");
+        }
+    }
+    for (x, y) in [(1, 0), (12, 250), (14, 250), (13, 249), (479, 498)] {
+        assert_eq!(at(2 * x, 2 * y), 0, "dot {x}, {y} is colour 0, the picture's own");
+    }
 }
 
 /// REQ-6401 item 2: a teletext page at exactly twice its size has every
@@ -568,27 +610,40 @@ fn a_part_of_a_regis_picture_is_laid_over_it_and_drawn_only_there() {
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
-    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(None)).unwrap();
     frame(&mut painter, &mut browser, SETTLED);
     frame(&mut painter, &mut browser, SETTLED);
     let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
     // Twelve pixels of colour 7 on row 5, six bytes, as a part of picture 1.
-    let part = RegisPart { number: 2, base: 1, x: 300, y: 5, width: 12, height: 1 };
+    let part = RegisPart { language: PictureLanguage::Regis, number: 2, base: 1, x: 300, y: 5, width: 12, height: 1 };
     painter.set_regis(FRONT, &regis_palette(), part, &[0x77; 6]).unwrap();
     let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
     assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the part: {damage:?}");
-    let lit =
-        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some((300, 5, 12)))).unwrap();
+    let lit = |painter: &mut Painter, _: &mut Browser| {
+        painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(Some((300, 5, 12)))).unwrap();
+    };
     assert_eq!(differing(&words, &fresh(&pages, SETTLED, lit)), 0, "as the whole picture would be drawn");
     // A part of picture 7, which is not the one held, changes nothing.
-    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 9, base: 7, x: 0, y: 0, width: 12, height: 1 }, &[0x77; 6]).unwrap();
+    painter
+        .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 9, base: 7, x: 0, y: 0, width: 12, height: 1 }, &[0x77; 6])
+        .unwrap();
     assert_eq!(frame(&mut painter, &mut browser, SETTLED).0, [], "dropped");
     // The next part of the picture held is still taken.
-    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 3, base: 2, x: 300, y: 5, width: 12, height: 1 }, &[0x00; 6]).unwrap();
+    painter
+        .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 3, base: 2, x: 300, y: 5, width: 12, height: 1 }, &[0x00; 6])
+        .unwrap();
     assert_ne!(frame(&mut painter, &mut browser, SETTLED).0, [], "taken");
     // A part that does not fit, or is not its pixels, is refused.
-    assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 796, y: 0, width: 12, height: 1 }, &[0; 6]).is_err());
-    assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 0, y: 0, width: 12, height: 1 }, &[0; 5]).is_err());
+    assert!(
+        painter
+            .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 4, base: 3, x: 796, y: 0, width: 12, height: 1 }, &[0; 6])
+            .is_err()
+    );
+    assert!(
+        painter
+            .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 4, base: 3, x: 0, y: 0, width: 12, height: 1 }, &[0; 5])
+            .is_err()
+    );
 }
 
 /// RULE-65: two parts of one repaint that lie far apart, as a key pressed
@@ -600,12 +655,16 @@ fn two_parts_far_apart_draw_two_boxes() {
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
-    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &regis_packed(None)).unwrap();
     frame(&mut painter, &mut browser, SETTLED);
     frame(&mut painter, &mut browser, SETTLED);
     // Twelve pixels on row 5 at the left, and twelve at the right.
-    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 2, base: 1, x: 20, y: 5, width: 12, height: 1 }, &[0x77; 6]).unwrap();
-    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 3, base: 2, x: 700, y: 5, width: 12, height: 1 }, &[0x77; 6]).unwrap();
+    painter
+        .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 2, base: 1, x: 20, y: 5, width: 12, height: 1 }, &[0x77; 6])
+        .unwrap();
+    painter
+        .set_regis(FRONT, &regis_palette(), RegisPart { language: PictureLanguage::Regis, number: 3, base: 2, x: 700, y: 5, width: 12, height: 1 }, &[0x77; 6])
+        .unwrap();
     let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
     assert_eq!(damage.len(), 2, "a box for each part: {damage:?}");
     let joined = damage.iter().fold(DeviceBox::default(), |joined, area| joined.union(*area));
@@ -616,7 +675,7 @@ fn two_parts_far_apart_draw_two_boxes() {
         for (byte, other) in packed.iter_mut().zip(lit) {
             *byte |= other;
         }
-        painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &packed).unwrap();
+        painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1, PictureLanguage::Regis), &packed).unwrap();
     };
     assert_eq!(differing(&words, &fresh(&pages, SETTLED, both)), 0, "as the whole picture would be drawn");
 }
@@ -704,7 +763,7 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
     // As a new window shows it: the page alone, no overview (decision 126).
     browser.toggle_overview_shown();
     browser.wall_mut().toggle_single(0);
-    browser.set_regis(FRONT, 1, 825_754);
+    browser.set_regis(FRONT, 1, 825_754, PictureLanguage::Regis);
     let mut palette = regis_palette();
     for (index, colour) in palette.iter_mut().enumerate() {
         let shade = u8::try_from(index * 16).unwrap();
@@ -715,7 +774,7 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
     for (index, byte) in packed.iter_mut().enumerate() {
         *byte = u8::try_from((index / 400) % 16).unwrap() * 0x11;
     }
-    painter.set_regis(FRONT, &palette, RegisPart::whole(1), &packed).unwrap();
+    painter.set_regis(FRONT, &palette, RegisPart::whole(1, PictureLanguage::Regis), &packed).unwrap();
     sized_frame(&mut painter, &mut browser, WINDOW, SETTLED);
     let mut surface = sized_frame(&mut painter, &mut browser, WINDOW, SETTLED).1;
     let (mut taken, mut drawn) = (Vec::<Duration>::new(), Vec::<Duration>::new());
@@ -724,13 +783,13 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
         let ink = if frame % 2 == 0 { 0x55 } else { 0xAA };
         let started = Instant::now();
         for (x, width) in [(72, 64), (700, 56)] {
-            let part = RegisPart { number: number + 1, base: number, x, y: 201, width, height: 227 };
+            let part = RegisPart { language: PictureLanguage::Regis, number: number + 1, base: number, x, y: 201, width, height: 227 };
             painter.set_regis(FRONT, &palette, part, &vec![ink; usize::from(width) * 227 / 2]).unwrap();
             number += 1;
         }
         // The cost line above the picture shows what the repaint cost, as
         // the interface tells it with every picture (DEC-6335 item 4).
-        browser.set_regis(FRONT, number, 52_706 + u64::try_from(frame % 7).unwrap() * 6_436);
+        browser.set_regis(FRONT, number, 52_706 + u64::try_from(frame % 7).unwrap() * 6_436, PictureLanguage::Regis);
         let between = Instant::now();
         // As the interface draws a frame: the scene, its damage drawn, and
         // that copied to a surface that holds the last frame.

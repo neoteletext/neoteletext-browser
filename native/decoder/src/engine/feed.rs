@@ -323,7 +323,16 @@ impl Engine {
         self.updated.sort_unstable();
         self.updated.dedup();
         fresh.sort_unstable();
-        fresh.into_iter().map(|page| (page, self.grid(page).map(|(grid, _)| title(&grid)).unwrap_or_default())).collect()
+        // A NAPLPS picture's title names its page when it has one (DEC-6638
+        // item 3); the program's index, when it names the page, still wins
+        // in the trusted core.
+        fresh
+            .into_iter()
+            .map(|page| {
+                let named = self.naplps.title(page).map(String::from);
+                (page, named.unwrap_or_else(|| self.grid(page).map(|(grid, _)| title(&grid)).unwrap_or_default()))
+            })
+            .collect()
     }
 }
 

@@ -49,6 +49,7 @@ impl Core {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported a converted picture, which it may not; ignored");
             }
             FromDecoder::Arrived { page, title } => self.arrived(channel, page, &title)?,
+            FromDecoder::PictureTitle { page, title } => self.picture_titled(channel, page, &title)?,
             FromDecoder::Updated { page } => {
                 let at = self.now();
                 self.console.page(channel, false);
@@ -68,7 +69,7 @@ impl Core {
             // it in the page's place.
             FromDecoder::Regis { page, sub, picture, pick } => {
                 let key = PageKey { channel, page };
-                self.regis.hold(key, sub, picture.commits, pick);
+                self.regis.hold(key, sub, picture.commits, picture.language, pick);
                 self.send(&ToInterface::Regis { key, picture })?;
                 // What lies under a still pointer may have changed (REQ-6374 item 5).
                 self.regis_repoint()?;
@@ -157,6 +158,21 @@ impl Core {
             // A number on a page shown becomes a link once its page exists.
             #[cfg(feature = "links")]
             self.redecide_channel(channel)?;
+        }
+        Ok(())
+    }
+
+    /// A page that has arrived has a picture's title (DEC-6638 item 3,
+    /// TODO-6748): it names the page in the page list in place of a title
+    /// from its rows, never in place of the program's index's.
+    fn picture_titled(&mut self, channel: u32, page: u16, title: &str) -> Result<(), String> {
+        let active = self.active_channel();
+        let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
+        let Some(title) = tab.channel.picture_titled(page, title) else { return Ok(()) };
+        let at = self.now();
+        self.console.add(channel, ConsoleTab::Pages, at, &format!("page {page:03X} is titled: {title}"));
+        if active == Some(channel) {
+            self.send(&ToInterface::Page { channel, page, title })?;
         }
         Ok(())
     }

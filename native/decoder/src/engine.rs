@@ -43,6 +43,7 @@ mod sprite_pixel_tests;
 mod tests;
 
 use feed::ReceiverRow;
+pub(crate) use render::GLYPHS;
 
 /// A log line the channel wrote for its author.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -159,6 +160,9 @@ pub struct Engine {
     started: Clock,
     /// Pages already reported whose content has since changed.
     updated: Vec<u16>,
+    /// Pages already reported whose NAPLPS picture has since been given a
+    /// title, or a new one, with that title (TODO-6748).
+    retitled: Vec<(u16, String)>,
     /// What the engine's events said changed since it was last asked.
     changes: Changes,
     /// The pages and sub-pages the store has room for.
@@ -277,6 +281,7 @@ impl Engine {
             reported: vec![None; PAGES],
             started: Clock::now(),
             updated: Vec::new(),
+            retitled: Vec::new(),
             changes: Changes::default(),
             store_pages,
             started_pages: BTreeSet::new(),
@@ -468,5 +473,25 @@ impl Engine {
     /// The pages whose content changed since they were reported, once each.
     pub fn take_updated(&mut self) -> Vec<u16> {
         core::mem::take(&mut self.updated)
+    }
+
+    /// The pages already reported as arrived whose NAPLPS picture was
+    /// given a title since, or a new one, each with its latest title
+    /// (DEC-6638 item 3, TODO-6748): a page reported later arrives with
+    /// its title, so it is not here.
+    pub fn take_retitled(&mut self) -> Vec<(u16, String)> {
+        core::mem::take(&mut self.retitled)
+    }
+
+    /// Notes a page's NAPLPS title if it is not `before`, what it was
+    /// before a record was applied, and the page has been reported.
+    fn note_title(&mut self, page: u16, before: Option<&str>) {
+        let Some(title) = self.naplps.title(page).filter(|title| Some(*title) != before) else { return };
+        let reported = interface_core::channel::page_index(page).and_then(|index| self.reported.get(index)).is_some_and(Option::is_some);
+        if reported {
+            let title = String::from(title);
+            self.retitled.retain(|(held, _)| *held != page);
+            self.retitled.push((page, title));
+        }
     }
 }

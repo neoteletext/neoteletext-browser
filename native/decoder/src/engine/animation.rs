@@ -144,18 +144,27 @@ impl Engine {
         for item in items {
             match item {
                 Held::Packet(packet, meta) => self.animation.released.push((packet, meta)),
-                Held::Stream { language, page, sub, generation, offset, data } => {
-                    let Some((page, subcode)) = place(page, sub) else { continue };
+                Held::Stream { language, page: number, sub, generation, offset, data } => {
+                    let Some((page, subcode)) = place(number, sub) else { continue };
                     let record = RegisRecord { page, subcode, generation, offset, data: &data };
                     match language {
                         Language::Regis => self.regis.read(&record),
-                        Language::Naplps => self.naplps.read(&record),
+                        Language::Naplps => {
+                            // A new stream takes the title kept for it.
+                            let before = self.naplps.title(number).map(String::from);
+                            self.naplps.read(&record);
+                            self.note_title(number, before.as_deref());
+                        }
                     }
                 }
                 Held::Cursor { page, sub, drawing } => self.regis.set_cursor(page, sub, drawing),
                 Held::Animate { page, sub, operations } => self.animate_record(page, sub, &operations),
                 Held::Sprites { page, sub, sprites } => self.animation.teletext.set_sprites(page, sub, &sprites),
-                Held::Objects { page, sub, generation, objects } => self.naplps.set_objects(page, sub, generation, objects),
+                Held::Objects { page, sub, generation, scope, title, objects } => {
+                    let before = self.naplps.title(page).map(String::from);
+                    self.naplps.set_objects(page, sub, generation, scope, title, objects);
+                    self.note_title(page, before.as_deref());
+                }
                 Held::Sheet { language: Language::Regis, page, sub, generation, offset, data } => self.regis.read_sheet(page, sub, generation, offset, &data),
                 Held::Sheet { language: Language::Naplps, page, sub, generation, offset, data } => self.naplps.read_sheet(page, sub, generation, offset, &data),
             }

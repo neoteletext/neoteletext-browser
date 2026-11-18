@@ -175,8 +175,9 @@ impl Browser {
 }
 
 /// A tab's still in `picture`, or its stand-in (REQ-6640 item 3): black in
-/// the picture's shape for a page drawn in ReGIS or NAPLPS, else a blank
-/// page with its screen, as the wall stands in for a page not yet drawn.
+/// the picture's shape for a page drawn in ReGIS, else a blank page with
+/// its screen, as the wall stands in for a page not yet drawn; a page drawn
+/// in NAPLPS has the teletext page's shape (REQ-5819).
 fn draw_still<C: Canvas + ?Sized>(canvas: &mut C, channel: u32, still: Option<Still>, picture: Rect) {
     if still.is_some_and(|still| still.kept) && canvas.still(channel, picture) {
         return;

@@ -74,6 +74,9 @@ pub struct ChannelState {
     /// Each page's title, by page index: from the contents file, or else
     /// from the page itself when it arrives.
     pub titles: Vec<Option<String>>,
+    /// The pages whose title is the contents file's, the channel's own
+    /// word, which no picture's title replaces (TODO-6748).
+    indexed: Vec<bool>,
     /// The pages that have arrived.
     pub loaded: Vec<bool>,
     /// Each page's count of sub-pages as its decoder last said, and the
@@ -189,6 +192,7 @@ impl ChannelState {
             name: None,
             banks: vec![String::new(); BANKS],
             titles: vec![None; PAGES],
+            indexed: vec![false; PAGES],
             loaded: vec![false; PAGES],
             subpages: neoteletext::subpages::SubPages::default(),
             source,
@@ -236,6 +240,7 @@ impl ChannelState {
         // page it no longer lists goes (DOC-1955).
         if self.live {
             self.titles.fill(None);
+            self.indexed.fill(false);
             self.banks.fill(String::new());
         }
         let mut section = String::new();
@@ -248,6 +253,9 @@ impl ChannelState {
                     declared.push((*page, *subpages));
                     if let Some(slot) = self.titles.get_mut(index) {
                         *slot = Some(clean(title, MAX_PAGE_TITLE));
+                    }
+                    if let Some(indexed) = self.indexed.get_mut(index) {
+                        *indexed = true;
                     }
                     if let Some(bank) = self.banks.get_mut(index / PAGES_PER_BANK)
                         && bank.is_empty()
@@ -286,6 +294,26 @@ impl ChannelState {
         }
         *loaded = true;
         let title = self.titles.get_mut(index)?.get_or_insert_with(|| clean(title, MAX_PAGE_TITLE)).clone();
+        Some(title)
+    }
+
+    /// A page that has arrived has a picture's title, untrusted text from
+    /// its decoder (DEC-6638 item 3, TODO-6748): cleaned and cut as every
+    /// title is, it replaces the title the page's rows gave; a page the
+    /// contents file names keeps that title. Returns the new title when
+    /// it changed. A page not yet arrived takes its picture's title with
+    /// its arrival.
+    pub fn picture_titled(&mut self, page: u16, title: &str) -> Option<String> {
+        let index = page_index(page)?;
+        if !self.loaded.get(index).copied().unwrap_or(false) || self.indexed.get(index).copied().unwrap_or(true) {
+            return None;
+        }
+        let title = clean(title, MAX_PAGE_TITLE);
+        let slot = self.titles.get_mut(index)?;
+        if title.trim().is_empty() || slot.as_deref() == Some(title.as_str()) {
+            return None;
+        }
+        *slot = Some(title.clone());
         Some(title)
     }
 

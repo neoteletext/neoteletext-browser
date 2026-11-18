@@ -105,8 +105,8 @@ regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", r
 regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "993ee9115c310e627ee7b1d0db48e5303dd021ae" }
 # MIT (the owner's own): the NAPLPS renderer, which the decoder draws a
 # channel's NAPLPS pages with, and its font (DEC-6407).
-naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a" }
-naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a" }
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe" }
+naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

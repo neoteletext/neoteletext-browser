@@ -29,11 +29,11 @@ fn regis_picture() -> crate::regis::RegisPicture {
     crate::regis::RegisPicture {
         commits: 7,
         work: 709_728,
-        language: crate::regis::PictureLanguage::Naplps,
+        language: crate::regis::PictureLanguage::Regis,
         palette,
         number: 1,
         base: 0,
-        area: crate::regis::RegisArea::WHOLE,
+        area: crate::regis::RegisArea::whole(crate::regis::PictureLanguage::Regis),
         packed,
     }
 }
@@ -66,7 +66,7 @@ fn a_regis_part_that_does_not_fit_is_refused() {
 fn regis_pick() -> crate::regis::RegisPick {
     let mut record = vec![0_u16; crate::regis::REGIS_PIXELS];
     record[..20].fill(12);
-    crate::regis::RegisPick::of(&record, [(12, -5, 3)].into_iter())
+    crate::regis::RegisPick::of(&record, [(12, -5, 3)].into_iter(), crate::regis::PictureLanguage::Regis)
 }
 
 /// DEC-6335: a decoder cannot send a ReGIS picture of the wrong size, a
@@ -96,6 +96,32 @@ fn a_regis_picture_out_of_bounds_is_refused() {
     let mut small = regis_picture();
     small.packed.pop();
     assert!(write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x123, sub: 0, picture: small, pick: Some(regis_pick()) }).is_err());
+}
+
+/// REQ-5819, DEC-6667: a NAPLPS picture of the teletext raster, 480 by
+/// 500, with a pick record covering it, goes from the decoder to the
+/// trusted core whole; a pick record of a ReGIS picture's size with it is
+/// refused.
+#[test]
+fn a_naplps_picture_of_the_raster_and_its_pick_record_go_to_the_core() {
+    use crate::regis::{PictureLanguage, RegisArea, RegisPick, RegisPicture};
+    let picture = RegisPicture {
+        language: PictureLanguage::Naplps,
+        area: RegisArea::whole(PictureLanguage::Naplps),
+        packed: vec![0x12; PictureLanguage::Naplps.pixels() / 2],
+        ..regis_picture()
+    };
+    let mut record = vec![0_u16; PictureLanguage::Naplps.pixels()];
+    record[19 * 480..20 * 480].fill(4);
+    let pick = RegisPick::of(&record, [(4, 0, 19)].into_iter(), PictureLanguage::Naplps);
+    let good = FromDecoder::Regis { page: 0x200, sub: 0, picture: picture.clone(), pick: Some(pick) };
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &good).unwrap();
+    assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), good);
+    assert!(
+        write_to_core(&mut Vec::new(), &FromDecoder::Regis { page: 0x200, sub: 0, picture, pick: Some(regis_pick()) }).is_err(),
+        "a ReGIS-sized pick record"
+    );
 }
 
 #[test]
@@ -128,6 +154,8 @@ fn every_kind_round_trips() {
     indices[7] = 1;
     for message in [
         FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
+        // TODO-6748: a picture's title after its page arrived.
+        FromDecoder::PictureTitle { page: 0x104, title: "Weather map".into() },
         FromDecoder::Updated { page: 0x302 },
         FromDecoder::Confined,
         FromDecoder::AudioReceiver(AudioReceiver { store_bytes: 4_194_304, objects: 256, records_in_flight: 8 }),

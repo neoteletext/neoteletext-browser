@@ -17,7 +17,7 @@ use neoteletext_core::sprites::{FrameRef, Sprite};
 use neoteletext_core::types::{PageAddress, SubCode};
 use neoteletext_rules::animate::Operation;
 use neoteletext_web::records::frame::{FrameChange, FrameRecord, OpenFrames};
-use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind};
+use neoteletext_web::records::naplps_objects::{LabelledObject, ObjectKind, Scope};
 use neoteletext_web::records::sheet::SheetKind;
 use neoteletext_web::records::{ChannelRecord, Read};
 
@@ -88,7 +88,11 @@ pub enum Held {
         sub: u16,
         /// The stream generation they belong to.
         generation: u16,
-        /// Its objects, all of them.
+        /// All its objects, or one redefined (DEC-6638 item 3).
+        scope: crate::naplps::Scope,
+        /// The picture's title, with all its objects; `None` for none.
+        title: Option<String>,
+        /// Its objects, with their labels, or the one redefined.
         objects: Vec<naplps::Object>,
     },
     /// Bytes of a page's sprite sheet (ANIM-17).
@@ -134,8 +138,10 @@ fn sprite(record: &neoteletext_web::records::sprites::Sprite<'_>) -> Option<Spri
     Some(made)
 }
 
-/// An object of the NAPLPS renderer from a `NAPLPS_OBJECTS` record's.
-fn object(record: &NaplpsObject<'_>) -> naplps::Object {
+/// An object of the NAPLPS renderer from a `NAPLPS_OBJECTS` record's,
+/// with its label for the screen-reader tree (DEC-6638 item 6).
+fn object(labelled: &LabelledObject<'_>) -> naplps::Object {
+    let record = &labelled.object;
     let [hover, pressed, alternative] = record.looks;
     naplps::Object {
         number: record.number,
@@ -158,6 +164,7 @@ fn object(record: &NaplpsObject<'_>) -> naplps::Object {
         pressed,
         alternative,
         frames: record.frames.to_vec(),
+        label: labelled.label.into(),
     }
 }
 
@@ -192,7 +199,12 @@ impl Taken {
                 page: record.page.mpp(),
                 sub: record.subcode.value(),
                 generation: record.generation,
-                objects: record.objects().map(|each| object(&each)).collect(),
+                scope: match record.scope {
+                    Scope::Whole => crate::naplps::Scope::Whole,
+                    Scope::One => crate::naplps::Scope::One,
+                },
+                title: record.title.map(Into::into),
+                objects: record.labelled_objects().map(|each| object(&each)).collect(),
             },
             ChannelRecord::Sheet(record) => Held::Sheet {
                 language: match record.kind {

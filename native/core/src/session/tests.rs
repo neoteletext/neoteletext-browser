@@ -118,6 +118,27 @@ fn a_page_is_recorded_once_with_its_title_cleaned() {
     assert_eq!(channel.view().counts(), (1, 1));
 }
 
+/// TODO-6748, DEC-6638 item 3: a picture's title that comes after its page
+/// arrived names the page in place of its rows' title, cleaned; the same
+/// title again changes nothing; a page the contents file names keeps the
+/// file's title; a page not yet arrived takes its title with its arrival.
+#[test]
+fn a_pictures_title_after_its_page_arrived_names_the_page_unless_the_index_does() {
+    let mut session = Session::new(Bookmarks::default());
+    session.open("news.invalid").unwrap();
+    let channel = &mut session.tabs[0].channel;
+    channel.set_contents(&[Entry::Page { page: 0x101, title: "Headlines".into(), subpages: 0 }]);
+    assert_eq!(channel.picture_titled(0x104, "Weather map"), None, "not yet arrived");
+    assert_eq!(channel.arrived(0x104, "ROW TEXT").as_deref(), Some("ROW TEXT"));
+    assert_eq!(channel.picture_titled(0x104, "Weather\u{202E} map").as_deref(), Some("Weather map"));
+    assert_eq!(channel.page_title(0x104), Some("Weather map"));
+    assert_eq!(channel.picture_titled(0x104, "Weather map"), None, "the same again");
+    assert_eq!(channel.picture_titled(0x104, "  "), None, "nothing left of it");
+    assert_eq!(channel.arrived(0x101, "Something else").as_deref(), Some("Headlines"));
+    assert_eq!(channel.picture_titled(0x101, "Picture"), None, "the index's title is the channel's word");
+    assert_eq!(channel.page_title(0x101), Some("Headlines"));
+}
+
 /// Decision 111 and decision 112 item 4: a page's count of sub-pages is
 /// kept, to the standard's 8,190, and told again only when it changes.
 #[test]

@@ -8,7 +8,7 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::browser::Browser;
-use crate::canvas::{Canvas, PageKey, ROWS, Style};
+use crate::canvas::{Canvas, PageKey, PictureLanguage, ROWS, Style};
 use crate::geometry::Rect;
 use crate::theme::{GREY, ROW_TITLE};
 
@@ -39,10 +39,20 @@ pub(super) fn grouped(number: u64) -> String {
 }
 
 impl Browser {
-    /// The trusted core sent the picture of a page drawn in ReGIS: what it
-    /// cost replaces what the last one did.
-    pub fn set_regis(&mut self, key: PageKey, commits: u32, work: u64) {
+    /// The trusted core sent the picture of a page drawn in ReGIS or
+    /// NAPLPS: what it cost replaces what the last one did, and its
+    /// language says how it is laid out. A NAPLPS picture is the teletext
+    /// raster (REQ-5819, DEC-6667): its page keeps the teletext page's
+    /// shape and fit, and its line above counts records and bytes, which
+    /// is what a NAPLPS stream has, where a ReGIS picture has commits and
+    /// work.
+    pub fn set_regis(&mut self, key: PageKey, commits: u32, work: u64, language: PictureLanguage) {
         self.regis.insert(key, (commits, work));
+        if language == PictureLanguage::Naplps {
+            self.naplps.insert(key);
+        } else {
+            self.naplps.remove(&key);
+        }
         // Only the pages of channels still shown are kept.
         let wall = &self.wall;
         self.regis.retain(|held, _| *held == key || wall.shown().any(|(shown, _)| shown.channel == held.channel));
@@ -51,29 +61,27 @@ impl Browser {
         self.lay_out_pictures();
     }
 
-    /// Whether a page's picture is drawn in NAPLPS, not ReGIS (DEC-6407),
-    /// as the trusted core's picture says: the line above the picture
-    /// then counts its records and bytes, which is what a NAPLPS stream
-    /// has, where a ReGIS picture has commits and work.
-    pub fn set_naplps(&mut self, key: PageKey, naplps: bool) {
-        if naplps {
-            self.naplps.insert(key);
-        } else {
-            self.naplps.remove(&key);
-        }
+    /// The language a page's picture is drawn in, if it is drawn as one.
+    #[must_use]
+    pub fn picture_language(&self, key: PageKey) -> Option<PictureLanguage> {
+        self.regis.contains_key(&key).then(|| if self.naplps.contains(&key) { PictureLanguage::Naplps } else { PictureLanguage::Regis })
     }
 
     /// Tells the wall which open pages take the picture's shape: those
     /// drawn in ReGIS, while the setting contains pictures in the page
     /// area; none while it contains them to the teletext page (REQ-6363).
+    /// A NAPLPS picture has the teletext page's shape, so never takes
+    /// another (REQ-5819).
     pub(super) fn lay_out_pictures(&mut self) {
         let contain = self.regis_contained();
-        let pictures: alloc::vec::Vec<PageKey> = if contain { self.regis.keys().copied().collect() } else { alloc::vec::Vec::new() };
+        let naplps = &self.naplps;
+        let pictures: alloc::vec::Vec<PageKey> =
+            if contain { self.regis.keys().copied().filter(|key| !naplps.contains(key)).collect() } else { alloc::vec::Vec::new() };
         self.wall.set_pictures(pictures.into_iter());
         let keyed = self.regis_keyed();
         self.wall.set_keyed(keyed.into_iter());
         let regis: alloc::vec::Vec<PageKey> = self.regis.keys().copied().collect();
-        self.wall.set_regis_pages(regis.into_iter());
+        self.wall.set_regis_pages(regis.into_iter(), self.naplps.iter().copied());
     }
 
     /// The words for the multiple of its actual size a page is held at.
@@ -140,6 +148,7 @@ impl Browser {
 #[cfg(test)]
 mod tests {
     use super::grouped;
+    use crate::canvas::PictureLanguage;
 
     #[test]
     fn long_numbers_are_grouped_in_threes() {
@@ -164,7 +173,7 @@ mod tests {
         let (key, teletext) = browser.wall().shown().next().unwrap();
         let shape = |rect: crate::geometry::Rect| rect.height() / rect.width();
         assert!(shape(teletext) > 1.0, "a teletext page is taller than it is wide: {teletext:?}");
-        browser.set_regis(key, 0, 1);
+        browser.set_regis(key, 0, 1, PictureLanguage::Regis);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (_, contained) = browser.wall().shown().next().unwrap();
         assert!((shape(contained) - REGIS_HEIGHT_PER_WIDTH).abs() < 1e-9, "five to three: {contained:?}");
@@ -229,16 +238,16 @@ mod tests {
         browser.toggle_wall(0);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
         let (key, _) = browser.wall().shown().next().unwrap();
-        browser.set_regis(key, 3, 1_234);
+        browser.set_regis(key, 3, 1_234, PictureLanguage::Regis);
         let texts = |browser: &mut crate::browser::Browser| {
             let mut canvas = crate::test_canvas::Recorder::new();
             browser.draw(&mut canvas, WIDTH, HEIGHT, 0);
             canvas.texts.into_iter().map(|(_, text)| text).collect::<alloc::vec::Vec<_>>()
         };
         assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
-        browser.set_naplps(key, true);
+        browser.set_regis(key, 3, 1_234, PictureLanguage::Naplps);
         assert!(texts(&mut browser).contains(&"NAPLPS  record 3  1,234 bytes".into()));
-        browser.set_naplps(key, false);
+        browser.set_regis(key, 3, 1_234, PictureLanguage::Regis);
         assert!(texts(&mut browser).contains(&"ReGIS  commit 3  1,234 work units".into()));
     }
 

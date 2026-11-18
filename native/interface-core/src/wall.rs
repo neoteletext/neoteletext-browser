@@ -110,9 +110,13 @@ pub struct Wall {
     /// Those of them that show the row of coloured-key prompts beneath
     /// their picture (REQ-6379).
     keyed: Vec<PageKey>,
-    /// Every page drawn in ReGIS, whichever way its picture is fitted: its
-    /// actual size is the picture's, not the teletext page's (REQ-6387).
+    /// Every page drawn as a picture, whichever way it is fitted: one not
+    /// yet drawn stands in black in its picture's place.
     regis_pages: Vec<PageKey>,
+    /// Those of them drawn in NAPLPS, whose picture is the teletext raster
+    /// (REQ-5819): their actual size is the teletext page's. Every other
+    /// picture's actual size is its own (REQ-6387).
+    naplps_pages: Vec<PageKey>,
     /// The display's physical pixels for each unit drawn in, as the canvas
     /// last drawn on said.
     device_scale: f64,
@@ -200,6 +204,7 @@ impl Wall {
             pictures: Vec::new(),
             keyed: Vec::new(),
             regis_pages: Vec::new(),
+            naplps_pages: Vec::new(),
             device_scale: 1.0,
             held: None,
             width_before_zoom: None,
@@ -281,10 +286,18 @@ impl Wall {
         self.keyed.extend(keyed);
     }
 
-    /// Every page drawn in ReGIS, whose actual size is its picture's.
-    pub fn set_regis_pages(&mut self, pages: impl Iterator<Item = PageKey>) {
+    /// Every page drawn as a picture, and those of them drawn in NAPLPS.
+    pub fn set_regis_pages(&mut self, pages: impl Iterator<Item = PageKey>, naplps: impl Iterator<Item = PageKey>) {
         self.regis_pages.clear();
         self.regis_pages.extend(pages);
+        self.naplps_pages.clear();
+        self.naplps_pages.extend(naplps);
+    }
+
+    /// The language a page is drawn in as a picture, if it is one.
+    pub(crate) fn picture_language(&self, key: PageKey) -> Option<crate::canvas::PictureLanguage> {
+        use crate::canvas::PictureLanguage;
+        self.regis_pages.contains(&key).then(|| if self.naplps_pages.contains(&key) { PictureLanguage::Naplps } else { PictureLanguage::Regis })
     }
 
     /// The width a page open alone is drawn at, with its screen, when its
@@ -296,7 +309,8 @@ impl Wall {
         use crate::canvas::{PAGE_WIDTH, REGIS_WIDTH, SCREEN_SCALE, sticky_width};
         // A teletext page drawn wider by the correction has no whole
         // number of pixels across; held, its height is the whole multiple.
-        let actual = if key.is_some_and(|key| self.regis_pages.contains(&key)) { f64::from(REGIS_WIDTH) } else { f64::from(PAGE_WIDTH) * self.shape.stretch() };
+        let regis = key.and_then(|key| self.picture_language(key)) == Some(crate::canvas::PictureLanguage::Regis);
+        let actual = if regis { f64::from(REGIS_WIDTH) } else { f64::from(PAGE_WIDTH) * self.shape.stretch() };
         let (image, held) = sticky_width(width / SCREEN_SCALE, actual, self.device_scale);
         (if held.is_some() { image * SCREEN_SCALE } else { width }, held)
     }

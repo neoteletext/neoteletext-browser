@@ -26,7 +26,7 @@ use neoteletext_web::records::frame::{FrameMark, FrameRecord};
 use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind};
 use neoteletext_web::records::regis::RegisRecord;
 use neoteletext_web::records::sheet::{SheetKind, SheetRecord};
-use protocol::regis::{REGIS_HEIGHT, REGIS_WIDTH, RegisPicture, unpack};
+use protocol::regis::{PictureLanguage, REGIS_HEIGHT, REGIS_WIDTH, RegisPicture, unpack};
 use std::fmt::Write as _;
 
 const PAGE: u16 = 0x100;
@@ -99,6 +99,8 @@ fn on(number: u16, kind: OperationKind) -> Operation {
 #[derive(Default)]
 pub(crate) struct Receiver {
     pixels: Vec<u8>,
+    /// The picture's width: a ReGIS picture's 800, a NAPLPS picture's 480.
+    width: usize,
     /// The pixels of the parts taken since it was last asked.
     sent: usize,
     /// Whether a whole picture was taken since it was last asked.
@@ -111,11 +113,12 @@ impl Receiver {
         let part = unpack(&picture.packed);
         if picture.whole() {
             self.pixels = part;
+            self.width = usize::from(picture.language.width());
             self.whole = true;
         } else {
             let (left, across) = (usize::from(area.x), usize::from(area.width));
             for (row, line) in part.chunks_exact(across.max(1)).enumerate().take(usize::from(area.height)) {
-                let start = (usize::from(area.y) + row) * REGIS_WIDTH + left;
+                let start = (usize::from(area.y) + row) * self.width + left;
                 self.pixels[start..start + across].copy_from_slice(line);
             }
             self.sent += area.pixels();
@@ -144,7 +147,7 @@ impl Receiver {
     }
 
     pub(crate) fn at(&self, x: usize, y: usize) -> u8 {
-        self.pixels[y * REGIS_WIDTH + x]
+        self.pixels[y * self.width + x]
     }
 
     fn count(&self, colour: u8) -> usize {
@@ -552,9 +555,12 @@ fn a_naplps_blink_changes_the_colours_every_thirty_ticks() {
     assert_ne!(first[3], last[3]);
 }
 
-/// The columns to the left of the NAPLPS canvas, which lies in the middle
-/// of the wider picture carried.
-const LEFT: usize = (REGIS_WIDTH - 640) / 2;
+/// The dot of the teletext raster a NAPLPS picture is carried as (REQ-5819)
+/// that shows the pixel (`x`, `y`) of the 640 by 480 picture objects are
+/// placed in: its canvas of 480 by 462 lies on lines 19 to 480.
+fn raster(x: usize, y: usize) -> (usize, usize) {
+    ((x * 480 + 320) / 640, (y * 462 + 240) / 480 + 19)
+}
 
 /// A NAPLPS object as its record holds it.
 fn object(number: u16, kind: ObjectKind, (x, y): (i16, i16), frames: &[u8]) -> NaplpsObject<'_> {
@@ -610,11 +616,21 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     let pick = drawn.pick.clone().unwrap();
     receiver.lay(&drawn.picture);
     assert!(receiver.take_sent().1, "the first picture is whole");
-    assert_eq!(receiver.at(LEFT + 110, 110), 3, "the macro object's frame 0, at its place");
-    assert_eq!(pick.at(LEFT + 110, 110).drawing, 1, "the object can be picked");
-    assert_eq!(pick.at(LEFT + 330, 110).drawing, 2, "and the region");
-    assert_eq!(pick.at(LEFT + 10, 10).drawing, 0, "nothing else of a NAPLPS picture");
-    assert_ne!(receiver.at(LEFT + 330, 110), 5, "a shown region changes nothing");
+    let (at, picked) = (
+        |x, y| {
+            let (x, y) = raster(x, y);
+            receiver.at(x, y)
+        },
+        |x, y| {
+            let (x, y) = raster(x, y);
+            pick.at(PictureLanguage::Naplps, x, y).drawing
+        },
+    );
+    assert_eq!(at(110, 110), 3, "the macro object's frame 0, at its place");
+    assert_eq!(picked(110, 110), 1, "the object can be picked");
+    assert_eq!(picked(330, 110), 2, "and the region");
+    assert_eq!(pick.at(PictureLanguage::Naplps, 10, 10).drawing, 0, "nothing else of a NAPLPS picture");
+    assert_ne!(at(330, 110), 5, "a shown region changes nothing");
 
     let mut found = [0; MAX_POINTER_OBJECTS];
     let picture = engine.animation_picture(PAGE);
@@ -633,15 +649,19 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     ];
     engine.feed_whole(true, true, &animate(PAGE, &operations));
     assert!(receiver.naplps(&mut engine));
-    assert_eq!(receiver.at(LEFT + 330, 110), 5, "the hidden region is its cover");
-    assert_eq!((receiver.at(LEFT + 110, 110), receiver.at(LEFT + 410, 310)), (0, 3), "the object moved");
+    let at = |receiver: &Receiver, x, y| {
+        let (x, y) = raster(x, y);
+        receiver.at(x, y)
+    };
+    assert_eq!(at(&receiver, 330, 110), 5, "the hidden region is its cover");
+    assert_eq!((at(&receiver, 110, 110), at(&receiver, 410, 310)), (0, 3), "the object moved");
     assert!(!receiver.take_sent().1, "only what changed was sent");
     assert_eq!(engine.animation_picture(PAGE).objects_at(330, 110, &mut found), 0, "a hidden region takes no pointer");
     // The cycle starts at the tick after the one its record was applied in.
     let start = engine.naplps().next_tick(PAGE, None, 0).unwrap();
     engine.animation_step(&[PAGE], due_at(start + 4));
     assert!(receiver.naplps(&mut engine));
-    assert_eq!(receiver.at(LEFT + 410, 310), 6, "its cycle's next frame");
+    assert_eq!(at(&receiver, 410, 310), 6, "its cycle's next frame");
 
     // New objects replace them all, and forget their animation state.
     let mut packets = Vec::new();
@@ -654,6 +674,75 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     assert_eq!((state.x, state.y, state.cycling), (100, 100, false));
     assert!(engine.animation_picture(PAGE).target(Target::object(2)).is_none());
     assert_eq!(REGIS_HEIGHT, 480);
+}
+
+/// DEC-6638 item 3, TODO-6694 step 3: a `NAPLPS_OBJECTS` record's labels
+/// and title, read from the channel's pushed message, reach the renderer;
+/// a record of one object, sent after, redefines that object alone and
+/// keeps the other and the title.
+#[test]
+fn a_naplps_objects_records_labels_title_and_one_object_reach_the_renderer() {
+    use neoteletext_web::records::naplps_objects::{Contents, LabelledObject, encode_contents};
+    let mut bytes = vec![DEF_MACRO, 0x20];
+    bytes.extend(rectangle(3, 0, 0, 32, 32));
+    bytes.extend([END, 0x3E, 0x40]);
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, &bytes));
+    let send = |engine: &mut Engine, contents: &Contents<'_>| {
+        let mut packets = Vec::new();
+        encode_contents((address(PAGE), SubCode::new(0), 1), contents, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        engine.feed_whole(true, true, &packets);
+    };
+    let objects = [
+        LabelledObject { object: object(1, ObjectKind::Macro, (100, 100), &[0x20]), label: "Sun" },
+        LabelledObject { object: object(2, ObjectKind::Region, (320, 100), &[]), label: "Cloud" },
+    ];
+    send(&mut engine, &Contents::Whole { objects: &objects, title: Some("Weather") });
+    assert_eq!(engine.naplps().title(PAGE), Some("Weather"));
+    assert_eq!(engine.naplps().labels(PAGE, 0), [(1, "Sun"), (2, "Cloud")]);
+    send(&mut engine, &Contents::One(LabelledObject { object: object(1, ObjectKind::Macro, (200, 300), &[0x20]), label: "Moon" }));
+    assert_eq!(engine.naplps().labels(PAGE, 0), [(1, "Moon"), (2, "Cloud")], "one object redefined, the other kept");
+    assert_eq!(engine.naplps().title(PAGE), Some("Weather"), "and the title");
+    let state = engine.animation_picture(PAGE).target(Target::object(1)).unwrap();
+    assert_eq!((state.x, state.y), (200, 300), "at its new definition");
+    assert!(engine.animation_picture(PAGE).target(Target::object(2)).is_some());
+    // The page arrives: its title for the page list is the picture's,
+    // not the text of its rows (DEC-6638 item 3).
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "Weather".to_owned())]);
+}
+
+/// TODO-6748, DEC-6638 item 3: a NAPLPS title that comes after its page
+/// has arrived, or a new one, is reported for the page list with the
+/// latest title; one that comes before arrives with the page and is not
+/// reported again, and the same title again is not reported.
+#[test]
+fn a_naplps_title_after_its_page_arrived_is_reported() {
+    use neoteletext_web::records::naplps_objects::{Contents, LabelledObject, encode_contents};
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, b"A"));
+    let send = |engine: &mut Engine, title: &str| {
+        let mut packets = Vec::new();
+        let objects = [LabelledObject { object: object(2, ObjectKind::Region, (320, 100), &[]), label: "" }];
+        let contents = Contents::Whole { objects: &objects, title: Some(title) };
+        encode_contents((address(PAGE), SubCode::new(0), 1), &contents, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        engine.feed_whole(true, true, &packets);
+    };
+    send(&mut engine, "Early");
+    assert_eq!(engine.take_retitled(), [], "a page not yet arrived arrives with its title");
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "Early".to_owned())]);
+    send(&mut engine, "Early");
+    assert_eq!(engine.take_retitled(), [], "the same title again");
+    send(&mut engine, "Weather map");
+    send(&mut engine, "Weather maps");
+    assert_eq!(engine.take_retitled(), [(PAGE, "Weather maps".to_owned())], "the latest title, once");
+    assert_eq!(engine.take_retitled(), []);
+
+    // A page that arrived before its picture had a title.
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, b"A"));
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "ROW TEXT".to_owned())]);
+    send(&mut engine, "Weather map");
+    assert_eq!(engine.take_retitled(), [(PAGE, "Weather map".to_owned())]);
 }
 
 /// ANIM-7, ANIM-6, ANIM-13 (REQ-6536): a teletext sub-page's SPRITES
