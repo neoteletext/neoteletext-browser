@@ -131,6 +131,13 @@ impl Page {
         if let Ok(font) = Font::parse(regis_fonts::VT340) {
             terminal.set_font(font);
         }
+        // Renderer parity PAR-12, PAR-13 and PAR-36 item 4: the engine's 55
+        // provided sets as alphabets 100 to 154, with the joining data of
+        // the plain Arabic-script sets (DEC-6669: a picture's text is drawn
+        // in these and no other).
+        for (number, set) in (0_u8..).zip(crate::provided::regis_sets()) {
+            let _ = terminal.set_provided_set(number, set.clone());
+        }
         Self {
             generation,
             next: 0,
@@ -791,6 +798,35 @@ mod tests {
         assert!(pages.take(0x100, Some(0), 0).is_none(), "nothing changed since");
         pages.show_again(0x100);
         assert!(pages.take(0x100, None, 0).is_some(), "sent again when the page comes on screen");
+    }
+
+    /// Renderer parity PAR-36 item 4 (PAR-12): every ReGIS terminal has the
+    /// engine's 55 provided sets, so alphabet 117, set 17 (Greek), draws the
+    /// engine's Noto Teletext capital delta for its code 4/4, exactly as a
+    /// terminal given that glyph alone draws it, and not the built-in D.
+    #[test]
+    fn alphabet_117_draws_the_engines_greek_glyphs() {
+        // In a numbered drawing, so that the picture composed holds it.
+        let text = |alphabet: u8| format!("D(B1)W(I7)T(A{alphabet})'D'D(E)D(S1(X100,Y100),C)");
+        let drawn = |bytes: &str| {
+            let mut pages = RegisPages::default();
+            pages.read(&record(0x100, 1, 0, bytes.as_bytes()));
+            let _ = pages.take(0x100, Some(0), 0).unwrap();
+            pages.pages.get(&(0x100, 0)).unwrap().picture.canvas().pixels().to_vec()
+        };
+        let greek = drawn(&text(117));
+        let delta = *crate::engine::GLYPHS.lookup('\u{0394}').unwrap();
+        let mut set = regis::ProvidedSet::new(12, 20).unwrap();
+        set.set_glyph(0x44, &delta).unwrap();
+        let mut terminal = Terminal::new();
+        terminal.set_provided_set(17, set).unwrap();
+        let mut screen = Screen::new();
+        let _ = terminal.feed_regis(&mut screen, text(117).as_bytes());
+        let mut picture = Picture::new();
+        terminal.compose(&screen, &mut picture);
+        assert!(picture.canvas().pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
+        assert!(greek == picture.canvas().pixels(), "the engine's Greek glyph, as the renderer draws it");
+        assert!(greek != drawn(&text(0)), "not the built-in alphabet's D");
     }
 
     /// A record lost shows nothing more of its generation; the next

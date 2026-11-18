@@ -25,7 +25,8 @@
 //! The decoder gives every terminal the glyphs of the engine's 55 teletext
 //! character sets, from the Noto Teletext glyphs it has compiled in, so
 //! that a page's private designation of any of them draws (REQ-6668; the
-//! owner's DEC-6669: only the provided sets).
+//! owner's DEC-6669: only the provided sets), with the joining data of the
+//! plain Arabic-script sets (renderer parity PAR-14, [`crate::provided`]).
 //!
 //! The decoder is the compositor of its animation (neoteletext-common's
 //! `docs/animation.md`, ANIM-22). WAIT (ANSI X3.110-1983 section 5.3.2.8)
@@ -39,14 +40,9 @@
 
 use std::collections::BTreeMap;
 
-use std::sync::OnceLock;
-
 use interface_core::canvas::{NAPLPS_DISPLAY_LINES, NAPLPS_TOP_LINE, PAGE_HEIGHT, PAGE_WIDTH, PictureLanguage};
 use naplps::limits::{MAX_ANIMATED_OBJECTS, MAX_ANIMATION_PIXELS_PER_TICK, MAX_CYCLING_OBJECTS, OBJECT_PICTURE_HEIGHT, OBJECT_PICTURE_WIDTH};
-use naplps::{Animation, BitmapSet, Canvas, Look, Object, Player, StrokeFont, TELETEXT_SET_COUNT, Terminal};
-use neoteletext_core::charset::CharRef;
-use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
-use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
+use naplps::{Animation, Canvas, Look, Object, Player, StrokeFont, Terminal};
 use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
 use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::limits::MAX_POINTER_OBJECTS;
@@ -101,9 +97,6 @@ const _: () = assert!(
         && CANVAS_WIDTH <= DESIGN_WIDTH
         && CANVAS_HEIGHT <= DESIGN_HEIGHT
 );
-// REQ-6668: the engine's sets are the renderer's, one for one, and each
-// glyph is the engine's cell.
-const _: () = assert!(FONT_SET_COUNT == TELETEXT_SET_COUNT);
 
 /// `value`, a length or place along a side of `from` pixels, along the
 /// same side of `to` pixels, to the nearest pixel (halves away from the
@@ -169,38 +162,6 @@ pub(crate) fn design_point(x: u16, y: u16) -> (u16, u16) {
     };
     (u16::try_from(across).unwrap_or(u16::MAX), u16::try_from(down).unwrap_or(u16::MAX))
 }
-
-/// The engine's 55 teletext character sets as the renderer takes them
-/// (REQ-6668): for each, in the order of the engine's `FONT_SETS`, which is
-/// the renderer's `TELETEXT_SETS`, the glyph the teletext renderer draws
-/// for each code 2/0 to 7/15 from the Noto Teletext glyphs compiled in
-/// (DEC-6669: the provided sets only), a G2 set's marks as their spacing
-/// forms and the letters of the Arabic-script sets in their isolated forms.
-/// Made once, and copied into each terminal.
-fn teletext_sets() -> &'static [BitmapSet] {
-    static SETS: OnceLock<Vec<BitmapSet>> = OnceLock::new();
-    SETS.get_or_init(|| {
-        let (Ok(width), Ok(height)) = (u8::try_from(CELL_WIDTH), u8::try_from(CELL_HEIGHT)) else { return Vec::new() };
-        FONT_SETS
-            .iter()
-            .filter_map(|(_, set)| {
-                let mut bitmap = BitmapSet::new(width, height).ok()?;
-                for code in FIRST_SET_CODE..=LAST_SET_CODE {
-                    // A glyph of the engine's own cell always fits; one that
-                    // did not would leave its code blank.
-                    let _ = bitmap.set_glyph(code, &crate::engine::GLYPHS.glyph(CharRef::new(*set, code)));
-                }
-                Some(bitmap)
-            })
-            .collect()
-    })
-}
-
-/// The first and last codes of a set: 2/0 and 7/15.
-const FIRST_SET_CODE: u8 = 0x20;
-/// See [`FIRST_SET_CODE`].
-const LAST_SET_CODE: u8 = 0x7F;
-const _: () = assert!((LAST_SET_CODE - FIRST_SET_CODE + 1) as usize == naplps::bitmap::BITMAP_SET_CODES);
 
 /// One sub-page's NAPLPS.
 struct Page {
@@ -272,7 +233,7 @@ impl Page {
             terminal.set_font(font);
         }
         // REQ-6668: every provided set, by its number.
-        for (number, set) in (0_u8..).zip(teletext_sets()) {
+        for (number, set) in (0_u8..).zip(crate::provided::naplps_sets()) {
             let _ = terminal.set_teletext_set(number, set.clone());
         }
         let (width, height) = (u32::try_from(WIDTH).ok()?, u32::try_from(HEIGHT).ok()?);
@@ -1148,7 +1109,10 @@ mod tests {
     /// nothing, nor the primary set's D.
     #[test]
     fn a_page_designating_greek_draws_the_engines_greek_glyphs() {
-        assert_eq!(teletext_sets().len(), TELETEXT_SET_COUNT);
+        use naplps::BitmapSet;
+        use neoteletext_core::glyphs::conformance::FONT_SETS;
+        let teletext_sets = crate::provided::naplps_sets;
+        assert_eq!(teletext_sets().len(), naplps::TELETEXT_SET_COUNT);
         for (number, (engine, renderer)) in FONT_SETS.iter().zip(naplps::TELETEXT_SETS).enumerate() {
             assert_eq!(engine.0, renderer, "set {number}");
         }

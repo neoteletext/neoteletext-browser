@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use interface_core::canvas::PageKey;
 use neoteletext_core::limits::SUBCODE_ANY;
 use neoteletext_input::MAX_CONTACTS;
-use neoteletext_input::caps::{CURSOR_CAP, SELECT_CAP, TOUCH_CAP};
+use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP, REGIS_CAP, SELECT_CAP, TOUCH_CAP};
 use neoteletext_input::contacts::Contacts;
 use neoteletext_input::cursor::{BLOCK, Cursor};
 use neoteletext_input::event::{self, Event, Item, Point, Select, Stamp};
@@ -45,8 +45,12 @@ use protocol::interaction::{CursorState, InputIntent, Intent, Typing as TypingSt
 /// which page or sub-page each view selects with SELECT (REQ-INT-140,
 /// decision 128). It echoes
 /// nothing: what is typed shows only as the channel draws it (the owner,
-/// 28 October 2026).
-const OFFERED: u32 = CURSOR_CAP | TOUCH_CAP | SELECT_CAP;
+/// 28 October 2026). It draws both picture languages, ReGIS and NAPLPS,
+/// with their links and cursors (neoteletext-common's
+/// `docs/renderer-parity.md` PAR-1 and PAR-36 item 3): every decoder has
+/// both renderers, so both bits are offered whatever the build, and a
+/// server that agrees neither sends the mosaic fallback (PAR-24).
+const OFFERED: u32 = CURSOR_CAP | TOUCH_CAP | SELECT_CAP | REGIS_CAP | NAPLPS_CAP;
 /// A teletext page's text area, in cells (DOC-1942's RESIZE): 40
 /// columns; the drawn size goes as 0, unknown, as it changes with the
 /// window.

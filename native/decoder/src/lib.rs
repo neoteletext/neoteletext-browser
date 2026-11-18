@@ -38,6 +38,7 @@ mod page_cache;
 mod parts;
 mod picture;
 pub mod process;
+mod provided;
 pub mod regis;
 pub mod rules;
 pub mod sample;

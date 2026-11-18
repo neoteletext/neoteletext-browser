@@ -118,6 +118,8 @@ fn a_session_starts_with_hello_and_waits_for_welcome() {
     let opened = typing.input(PAGE.channel, true, true, 0);
     let offered = OFFERED | RESUME_CAP;
     assert_eq!(items(&opened), [format!("Event(Hello {{ version: {VERSION}, caps: {offered}, agent: None }})")]);
+    // Renderer parity PAR-36 item 3 (PAR-1): both picture languages are offered.
+    assert_eq!(offered & (REGIS_CAP | NAPLPS_CAP), (1 << 23) | (1 << 24));
     typing.opened(Some(PAGE.channel), Some(PAGE), 0);
     assert_eq!(items(&typing.input_intent(&key('a'), 0)), [] as [String; 0], "nothing before WELCOME");
     let welcomed = typing.control(PAGE.channel, &welcome(SELECT_CAP | CURSOR_CAP), 5);
