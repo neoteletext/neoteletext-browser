@@ -256,8 +256,8 @@ impl Engine {
             let read = reader.push(packet);
             if let Some(Taken::Change(held @ (Held::Stream { .. } | Held::Objects { .. } | Held::Cursor { .. } | Held::Sheet { .. }))) = Taken::of(&read) {
                 self.apply_held(vec![held]);
-                continue;
             }
+            // Drawing links are no change the animation takes.
             #[cfg(feature = "links")]
             if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) = read
                 && let Some((page, sub, links)) = self.regis.read_links(&record)
