@@ -5,11 +5,11 @@
 use super::grid::{SCROLL_BAR_WIDTH, WALL_PADDING};
 use super::size_control::CONTROLS_HEIGHT;
 use super::{Drawn, MAX_WALL_TILES, Wall, WallPage};
-use crate::canvas::{Canvas, PageKey, draw_page_on_screen};
+use crate::canvas::{Canvas, PageKey, draw_page_on_screen, image_within, regis_layout};
 use crate::geometry::Rect;
 use crate::size::{Layout, clamp_width, max_width_for_window};
 use crate::text::outline;
-use crate::theme::{PANEL, RULE, WINDOW};
+use crate::theme::{BLACK, PANEL, RULE, WINDOW};
 
 impl Wall {
     /// Draws the panel in `panel`, with `pages` on the wall and `selected`
@@ -89,8 +89,19 @@ impl Wall {
 
     /// Draws a page with its screen around it; returns where its image is.
     pub(super) fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect) -> Rect {
-        // With no image yet a dark frame stands in, and the page still
-        // counts as visible, so that the trusted core renders it.
+        // With no image yet something stands in, and the page still counts
+        // as visible, so that the trusted core renders it. For a page known
+        // to be drawn as a picture (ReGIS or NAPLPS) it is black, in the
+        // place and shape its picture will take, so nothing changes shape
+        // when the picture comes (the owner's request of 18 November 2026);
+        // for a teletext page, a dark frame of the page with its screen.
+        if self.regis_pages.contains(&key) && canvas.screen(key).is_none() {
+            let image = image_within(rect);
+            let picture = regis_layout(image, self.pictures.contains(&key), self.keyed.contains(&key)).picture;
+            canvas.fill(picture, 0.0, BLACK);
+            self.drawn.push(Drawn { key, rect, image });
+            return image;
+        }
         let image = draw_page_on_screen(canvas, key, rect, WINDOW);
         self.drawn.push(Drawn { key, rect, image });
         image

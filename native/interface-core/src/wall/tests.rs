@@ -605,3 +605,33 @@ fn the_held_label_lasts_from_the_moment_the_page_is_held() {
     wall.draw(&mut canvas, held, &pages, None, 6_000);
     assert_eq!(wall.held_label(6_000), Some((1, 6_000 + STICK_LABEL_MILLISECONDS)), "held anew");
 }
+
+/// The owner's request of 18 November 2026 (REQ-740, DEC-953: a page is
+/// laid out in its own shape): before a page known to be drawn as a picture
+/// has any image, what stands in for it is black, in the place and shape its
+/// picture will take, not the teletext page's dark frame, so nothing changes
+/// shape when the picture comes. A teletext page keeps its frame.
+#[test]
+fn a_picture_page_without_its_picture_stands_in_black_in_the_pictures_place() {
+    use crate::canvas::{REGIS_HEIGHT_PER_WIDTH, regis_within};
+    use crate::theme::{BLACK, WINDOW};
+    let pages = pages(2);
+    let (picture, teletext) = (pages[0].key, pages[1].key);
+    for contained in [false, true] {
+        let mut wall = on_wall();
+        wall.set_regis_pages(core::iter::once(picture));
+        if contained {
+            wall.set_pictures(core::iter::once(picture));
+        }
+        let mut canvas = Recorder::new();
+        canvas.screen = None;
+        wall.draw(&mut canvas, PANEL, &pages, None, 10_000);
+        let place = |key| wall.drawn.iter().find(|drawn| drawn.key == key).map(|drawn| (drawn.rect, drawn.image)).unwrap();
+        let (rect, image) = place(picture);
+        let expected = if contained { crate::canvas::regis_contained(image) } else { regis_within(image) };
+        assert!(same(expected.height() / expected.width(), REGIS_HEIGHT_PER_WIDTH), "the picture's own shape: {expected:?}");
+        assert!(canvas.fills.contains(&(expected, BLACK)), "black in the picture's place, contained {contained}: {:?}", canvas.fills);
+        assert!(!canvas.fills.contains(&(rect, WINDOW)), "no teletext-shaped frame for the picture page");
+        assert!(canvas.fills.contains(&(place(teletext).0, WINDOW)), "a teletext page keeps its frame");
+    }
+}
