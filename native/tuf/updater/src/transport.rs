@@ -175,8 +175,7 @@ pub fn read_response(stream: &mut impl Read, limit: usize, deadline: Instant) ->
             break;
         }
     }
-    let parsed = parse_head(head.get(..collector.len()).unwrap_or_default(), &mut |_| {})
-        .map_err(|error| format!("a response the update host may not send: {error:?}"))?;
+    let parsed = parse_head(head.get(..collector.len()).unwrap_or_default()).map_err(|error| format!("a response the update host may not send: {error:?}"))?;
     if parsed.status == STATUS_NOT_FOUND {
         return Ok(None);
     }

@@ -138,7 +138,7 @@ impl Counts {
 pub struct Console {
     channels: BTreeMap<u32, Log>,
     /// The browser's own log lines, about no one channel: how each process
-    /// was confined, the settings, the cookie file's key. Every channel's
+    /// was confined, the settings, the viewer key file. Every channel's
     /// Log tab shows them among its own (decision 70).
     browser: VecDeque<(u64, ConsoleEntry)>,
     /// The number the next entry takes.

@@ -8,7 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::wire::{Exit, Reply, Request, decode_reply, encode_request};
-use super::{COOKIE_KEY_BYTES, Channel, ChooseKind, MAX_UPDATE_STATE, Program};
+use super::{Channel, ChooseKind, MAX_UPDATE_STATE, Program, SEALING_KEY_BYTES};
 use crate::{LocalTime, Process, Report};
 
 /// The core's connection to its broker.
@@ -175,12 +175,13 @@ impl Broker {
         }
     }
 
-    /// The cookie file's key, from the platform's secret store.
+    /// The viewer key file's sealing key, from the platform's secret store
+    /// (VS-108).
     ///
     /// # Errors
     /// Why it could not be had: no secret store, or one that refused.
-    pub fn cookie_key(&self) -> Result<[u8; COOKIE_KEY_BYTES], String> {
-        match self.ask(&Request::CookieKey).map_err(|error| error.to_string())? {
+    pub fn viewer_keys_key(&self) -> Result<[u8; SEALING_KEY_BYTES], String> {
+        match self.ask(&Request::ViewerKeysKey).map_err(|error| error.to_string())? {
             (Reply::Key(key), _) => key.try_into().map_err(|_| String::from("a key of the wrong length")),
             (Reply::Failed(reason), _) => Err(reason),
             _ => Err(String::from("an unexpected reply")),

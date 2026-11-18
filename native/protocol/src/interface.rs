@@ -24,7 +24,7 @@ use crate::interaction;
 use crate::keyboard;
 #[cfg(feature = "links")]
 use crate::links;
-use crate::{console, cookies, library, settings};
+use crate::{console, library, settings, viewer_state};
 
 pub use strip::{problem_code, problem_of};
 pub(crate) use tabs::{push_channels, read_channels};
@@ -170,8 +170,8 @@ pub enum ToInterface {
     /// The window's place and size, restored from the last session
     /// (requirement 20.22).
     Window(library::WindowGeometry),
-    /// The cookies panel (requirement 21.6).
-    Cookies(cookies::CookiesView),
+    /// The list "Channels that know you" (VS-112).
+    Known(viewer_state::KnownView),
     /// The open page's controls (`page-controls.md`, decision 67).
     PageControls(interface_core::controls::PageControls),
     /// Where the remote control is, as kept (`remote-control.md`, decision
@@ -372,8 +372,9 @@ pub enum ToCore {
     /// The window moved, was resized, or was maximised or restored, for
     /// the session (requirement 20.21).
     Window(library::WindowGeometry),
-    /// Strip input from the cookies panel (requirement 21.6).
-    Cookies(cookies::CookiesRequest),
+    /// Strip input from the viewer's controls of viewer state (VS-109,
+    /// VS-112).
+    Known(viewer_state::KnownRequest),
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(interface_core::controls::PageControl),
     /// The sub-page list asks for the rows of a page of the active

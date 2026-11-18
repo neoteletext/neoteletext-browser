@@ -14,7 +14,8 @@ pub(super) const HISTORY_REMOVE: u8 = 4;
 // 5 was "Forget this channel", removed by decision 65; never reused.
 pub(super) const HISTORY_CLEAR: u8 = 6;
 const HISTORY_REOPEN: u8 = 7;
-const HISTORY_CLEAR_COOKIES: u8 = 8;
+// 8 was "Clear cookies", removed with cookies (DEC-6471); never reused.
+const HISTORY_FORGET_CHANNELS: u8 = 11;
 const HISTORY_MORE_FROM_SITE: u8 = 9;
 const HISTORY_REMOVE_BOOKMARK: u8 = 10;
 
@@ -94,7 +95,7 @@ pub(crate) fn push_history_request(payload: &mut Vec<u8>, request: &HistoryReque
             payload.extend_from_slice(&number.to_be_bytes());
         }
         HistoryRequest::Clear(range) => payload.extend_from_slice(&[HISTORY_CLEAR, push_range(*range)]),
-        HistoryRequest::ClearCookies(range) => payload.extend_from_slice(&[HISTORY_CLEAR_COOKIES, push_range(*range)]),
+        HistoryRequest::ForgetChannels(range) => payload.extend_from_slice(&[HISTORY_FORGET_CHANNELS, push_range(*range)]),
         HistoryRequest::Reopen(number) => {
             payload.push(HISTORY_REOPEN);
             if let Some(number) = number {
@@ -114,7 +115,7 @@ pub(crate) fn read_history_request(fields: &mut Fields<'_>) -> Result<HistoryReq
         HISTORY_MORE_FROM_SITE => HistoryRequest::MoreFromSite(fields.u32()?),
         HISTORY_REMOVE_BOOKMARK => HistoryRequest::RemoveBookmark(fields.u32()?),
         HISTORY_CLEAR => HistoryRequest::Clear(read_range(fields)?),
-        HISTORY_CLEAR_COOKIES => HistoryRequest::ClearCookies(read_range(fields)?),
+        HISTORY_FORGET_CHANNELS => HistoryRequest::ForgetChannels(read_range(fields)?),
         HISTORY_REOPEN => HistoryRequest::Reopen(if fields.is_empty() { None } else { Some(fields.u32()?) }),
         _ => return Err(ProtocolError::BadValue("history request")),
     })

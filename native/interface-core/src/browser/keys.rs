@@ -85,7 +85,7 @@ impl Browser {
         if let Some(changed) = self.history_key(key, modifiers) {
             return changed;
         }
-        if let Some(changed) = self.cookies_key(key, modifiers) {
+        if let Some(changed) = self.known_key(key, modifiers) {
             return changed;
         }
         if let Some(changed) = self.console_key(key, modifiers) {

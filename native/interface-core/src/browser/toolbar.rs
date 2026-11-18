@@ -85,6 +85,13 @@ impl Browser {
             border(canvas, field, 2.0, SELECTED);
         }
         // The strip's question takes the whole field: no address, no star.
+        // Remembering is asked first, by the viewer's own choice or the
+        // channel's offer (VS-109, VS-208).
+        if self.draw_remember_prompt(canvas, field) {
+            self.regions.star = Rect::ZERO;
+            self.regions.field_text = Rect::ZERO;
+            return;
+        }
         #[cfg(feature = "links")]
         if self.draw_prompt(canvas, field) {
             self.regions.star = Rect::ZERO;
@@ -128,6 +135,9 @@ impl Browser {
             left_centred(canvas, Rect::new(text_left, field.y0, field.x1, field.y1), 0.0, warning, ROW_STATUS, ink(INSECURE));
             text_left += canvas.text_width(warning, ROW_STATUS) + LOCK_GAP;
         }
+        // Whether the channel knows this browser (VS-114), after the
+        // security prefix, which it never replaces (VS-115).
+        let text_left = self.draw_known_mark(canvas, field, text_left);
         self.regions.star = Rect::new(field.x1 - TOOL_SIZE, field.y0, field.x1, field.y1);
         star(canvas, Point::new(f64::midpoint(self.regions.star.x0, self.regions.star.x1), middle), if self.strip.bookmarked { STAR_ON } else { FIELD_INK });
         let text = Rect::new(text_left, field.y0, self.regions.star.x0, field.y1);

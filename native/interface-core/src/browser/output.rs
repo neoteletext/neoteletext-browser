@@ -108,8 +108,9 @@ pub enum Output {
     },
     /// Strip input: what the history panel asks for (requirement 20.4).
     History(crate::library::HistoryRequest),
-    /// Strip input: what the cookies panel asks for (requirement 21.6).
-    Cookies(crate::cookies::CookiesRequest),
+    /// Strip input: what the viewer's controls of viewer state ask for
+    /// (VS-109, VS-112).
+    Known(crate::viewer_state::KnownRequest),
     /// Strip input: what the bookmarks manager asks for (requirement 20.17).
     Bookmarks(crate::library::BookmarkRequest),
     /// Strip input: what the star's popover asks for (requirement 20.16).

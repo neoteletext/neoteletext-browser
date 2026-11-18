@@ -54,7 +54,16 @@ impl Browser {
         }
         let controls = &self.settings.controls;
         if controls.close.contains(point) {
-            self.toggle_settings();
+            // The list's close button goes back to the settings.
+            if self.known_open() {
+                self.set_known_open(false);
+            } else {
+                self.toggle_settings();
+            }
+            return true;
+        }
+        if self.known_open() {
+            self.known_press(point);
             return true;
         }
         if let Some(&(field, _)) = controls.fields.iter().find(|(_, rect)| rect.contains(point)) {
@@ -78,10 +87,12 @@ impl Browser {
             Some(SettingChange::RegisContain(true))
         } else if controls.regis_teletext.contains(point) {
             Some(SettingChange::RegisContain(false))
-        } else if let Some(&(mode, _)) = controls.cookie_modes.iter().find(|(_, rect)| rect.contains(point)) {
-            Some(SettingChange::Cookies(mode))
-        } else if controls.manage_cookies.contains(point) {
-            self.manage_cookies();
+        } else if controls.know_allow.contains(point) {
+            Some(SettingChange::ChannelsMayKnow(true))
+        } else if controls.know_never.contains(point) {
+            Some(SettingChange::ChannelsMayKnow(false))
+        } else if controls.manage_known.contains(point) {
+            self.manage_known();
             return true;
         } else if controls.copy_exemption.contains(point) {
             if let Some(command) = view.as_ref().and_then(|view| view.loopback_exemption.clone()) {

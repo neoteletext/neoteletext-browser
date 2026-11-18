@@ -194,7 +194,7 @@ impl Core {
         if !into_new && !self.session.window_ids().contains(&window) {
             return Ok(());
         }
-        // A tab keeps to its kind of window: a private tab's cookies,
+        // A tab keeps to its kind of window: a private tab's viewer keys,
         // history and session are kept apart from an ordinary one's
         // (finding F-83).
         if !into_new && self.session.others.iter().find(|other| other.id == window).is_some_and(|other| other.private != self.session.private_window) {
@@ -396,7 +396,7 @@ mod tests {
     }
 
     /// Finding F-83: a tab does not move between a private window and an
-    /// ordinary one, either way: its cookies, history and kept session
+    /// ordinary one, either way: its viewer keys, history and kept session
     /// are its window's kind's.
     #[test]
     fn a_tab_stays_in_its_kind_of_window() {

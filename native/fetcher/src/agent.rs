@@ -10,9 +10,6 @@ use neoteletext_web::agent::UserAgent;
 #[cfg(feature = "links")]
 use protocol::fetcher::FromFetcher;
 
-#[cfg(feature = "links")]
-use crate::process::{COOKIE_BYTES, COOKIE_SLOTS};
-
 /// Randomness for the agent (WebSocket masks), from the operating system's
 /// per-process random keys, which `RandomState` draws.
 pub(crate) struct Random {
@@ -57,7 +54,7 @@ pub(crate) fn product() -> Option<neoteletext_web::user_agent::Product> {
 /// written: untrusted, for the trusted core to parse. Aliases of numbers
 /// that are not display pages are left out.
 #[cfg(feature = "links")]
-pub(crate) fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -> Option<FromFetcher> {
+pub(crate) fn descriptor_links(agent: &UserAgent<'_, Random>) -> Option<FromFetcher> {
     use protocol::links::{Alias, MAX_ALIASES, MAX_SERVICES, Service};
     let descriptor = agent.descriptor()?;
     let aliases: Vec<Alias> = descriptor

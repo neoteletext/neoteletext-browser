@@ -96,7 +96,7 @@ mod tests {
         bounded(crate::settings::Settings::read(&broken(crate::settings::VERSION_LINE)).1);
         bounded(crate::session_file::Saved::read(&broken(crate::session_file::VERSION_LINE)).1);
         bounded(crate::bookmarks::Bookmarks::read(&broken(crate::bookmarks::VERSION_LINE)).1);
-        let cookies = format!("{}\n", broken(crate::cookies::FILE_VERSION).replace("\n\n", "\n"));
-        bounded(crate::cookies::Store::new().import(cookies.as_bytes(), 0));
+        let keys = broken("neoteletext-viewer-keys 1").replace("\n\n", "\n");
+        bounded(crate::viewer_keys::Store::default().import(keys.as_bytes(), 0));
     }
 }

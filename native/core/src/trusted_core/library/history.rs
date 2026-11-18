@@ -55,7 +55,7 @@ impl Core {
                 self.library.history_notice = notice(&format!("{} removed from history", removed.len()));
             }
             HistoryRequest::Clear(range) => self.clear_history(range)?,
-            HistoryRequest::ClearCookies(range) => self.clear_cookies_in(range)?,
+            HistoryRequest::ForgetChannels(range) => self.forget_channels_in(range)?,
             HistoryRequest::Reopen(number) => self.reopen_closed_tab(number)?,
         }
         self.send_history()
@@ -102,16 +102,14 @@ impl Core {
         Ok(())
     }
 
-    /// The cookies set in the time `range` cleared, and every ordinary tab
-    /// reopened, so that no connection goes on with them (DEC-1730 item 8).
-    fn clear_cookies_in(&mut self, range: ClearRange) -> Result<(), String> {
+    /// The channels that came to know this browser in the time `range`
+    /// forgotten (VS-112): each one's connections are told (VS-113).
+    fn forget_channels_in(&mut self, range: ClearRange) -> Result<(), String> {
         let since = cleared_since(range, self.local_time().utc);
-        let removed = self.clear_cookies_since(since);
-        self.library.history_notice = notice(&format!("Cookies cleared: {removed} removed"));
-        if removed > 0 && self.session.reconnect_ordinary_tabs() {
-            self.send_all()?;
-        }
-        self.send_cookies()
+        let removed = self.forget_made_since(since);
+        self.library.history_notice = notice(&format!("Channels forgotten: {removed}"));
+        self.send(&ToInterface::Strip(self.strip()))?;
+        self.send_known()
     }
 
     /// A closed tab reopened: the most recent, or the row `number`, if

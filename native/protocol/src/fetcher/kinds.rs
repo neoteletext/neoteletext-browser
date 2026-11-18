@@ -11,16 +11,12 @@ pub(super) const KIND_INPUT: u8 = 84;
 pub(super) const KIND_PUSHING: u8 = 85;
 pub(super) const KIND_EXCHANGE: u8 = 86;
 pub(super) const KIND_PROXY_FAILED: u8 = 87;
-pub(super) const KIND_COOKIE_QUESTION: u8 = 88;
-pub(super) const KIND_REACHED_QUESTION: u8 = 89;
-pub(super) const KIND_COOKIE_SET: u8 = 90;
-pub(super) const KIND_CLEAR_SITE_DATA: u8 = 91;
+// 88 to 91, 97 and 98 were the cookie messages, removed with cookies
+// (DEC-6471); never reused.
 pub(super) const KIND_CERTIFICATE_REFUSED: u8 = 92;
 pub(super) const KIND_CONFINED: u8 = 93;
 #[cfg(feature = "interaction")]
 pub(super) const KIND_SEND: u8 = 96;
-pub(super) const KIND_COOKIE_ANSWER: u8 = 97;
-pub(super) const KIND_REACHED_ANSWER: u8 = 98;
 // A part of a page's list of sub-pages, `NNN/P.sub` (REQ-1888, decision
 // 112), in the first numbers free across every pipe after the decoder's.
 pub(super) const KIND_SUBPAGES: u8 = 105;
@@ -72,3 +68,12 @@ pub(super) const KIND_FETCH_CONTENTS: u8 = 151;
 // A connection whose opening ran out of its deadline (TODO-1277), in the
 // next number.
 pub(super) const KIND_TIMED_OUT: u8 = 145;
+// Viewer state (neoteletext-common's `docs/viewer-state.md` VS-119), in
+// numbers clear of those other work in flight on 18 November 2026 may take
+// next: the fetcher's, then the trusted core's.
+pub(super) const KIND_STATE_CHALLENGED: u8 = 170;
+pub(super) const KIND_STATE_END_RECEIVED: u8 = 171;
+pub(super) const KIND_STATE_KEEP_OFFERED: u8 = 172;
+pub(super) const KIND_STATE_ANSWER: u8 = 173;
+pub(super) const KIND_STATE_SEND_OFFER: u8 = 174;
+pub(super) const KIND_STATE_SEND_NONE: u8 = 175;

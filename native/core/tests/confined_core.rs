@@ -28,7 +28,7 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
     eprintln!("started: {}", core.report);
     let refuse_read = |_: &Path| Err(String::from("this test reads nothing"));
     let refuse_web = |_: &str| Err(String::from("this test opens nothing"));
-    let refuse_key = || Err(String::from("this test keeps no cookies"));
+    let refuse_key = || Err(String::from("this test remembers no channel"));
     let refuse_health = || Err(String::from("this test has no launcher"));
     let refuse_state = || Err(String::from("this test has no launcher"));
     let refuse_updater = |_: &[String]| Err(String::from("this test has no launcher"));
@@ -36,7 +36,7 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
         read_source: &refuse_read,
         open_web: &refuse_web,
         environment: &confine::environment,
-        cookie_key: &refuse_key,
+        viewer_keys_key: &refuse_key,
         healthy: &refuse_health,
         update_state: &refuse_state,
         updater: &refuse_updater,

@@ -184,7 +184,7 @@ impl Browser {
     pub(super) fn strip_has_keys(&self) -> bool {
         self.settings_open()
             || self.history_open()
-            || self.cookies_editing()
+            || self.known_editing()
             || self.console_searching()
             || self.bookmarks_open()
             || self.star_open()

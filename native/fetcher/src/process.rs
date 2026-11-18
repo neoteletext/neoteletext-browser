@@ -15,9 +15,7 @@ use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_transport::web_address;
-#[cfg(feature = "interaction")]
-use neoteletext_web::agent::InputMessage;
-use neoteletext_web::agent::{Config, Event, Failure, Input, Output, Source, Storage, Subscription, UserAgent};
+use neoteletext_web::agent::{Config, Event, Failure, Input, InputMessage, Output, Source, Storage, Subscription, UserAgent};
 use neoteletext_web::channel::{BUNDLE_FILE, SETTINGS_FILE};
 use neoteletext_web::consts::{ALLOWED_LOCAL, STATUS_GONE, STATUS_NOT_FOUND};
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
@@ -32,19 +30,17 @@ use protocol::subpages::SubPageRows;
 #[cfg(feature = "links")]
 use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
-use crate::cookies;
 use crate::live::{LiveIndex, Noted, SubPageLists};
+use crate::state::State;
 use crate::transport::Tcp;
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
 const _: () = assert!(protocol::fetcher::MAX_REFRESH_SECONDS == neoteletext_web::descriptor::MAX_REFRESH_SECONDS, "the engine's longest refresh");
 
-/// The agent's own cookie jar holds nothing: the trusted core keeps the
-/// cookies (decision 62).
-pub(crate) const COOKIE_SLOTS: usize = 0;
-pub(crate) const COOKIE_BYTES: usize = 0;
-const _: () = assert!(size_of::<cookies::UnusedJar>() == size_of::<neoteletext_web::cookie::CookieJar<COOKIE_SLOTS, COOKIE_BYTES>>());
+/// The fetcher's standard output, or a test's pipe in its place, shared by
+/// its loop and its viewer state.
+pub(crate) type CorePipe = Rc<RefCell<BufWriter<Box<dyn Write>>>>;
 /// What the console is told when a name led only to addresses the channel
 /// may not reach.
 const LOCAL_REFUSED: &str = "Blocked: the server's name leads to this computer or the local network, which this channel may not reach";
@@ -121,6 +117,9 @@ enum Wake {
     /// The trusted core asks for the contents file, a page, a part of a
     /// page's list of sub-pages, or one sub-page (REQ-703, decision 112).
     Fetch(ToFetcher),
+    /// The trusted core asks for an unprompted `STATE_OFFER` or `STATE_NONE`
+    /// (VS-111, VS-113).
+    State(ToFetcher),
     /// A socket has bytes, or has ended.
     Network,
     /// The trusted core closed standard input.
@@ -167,6 +166,9 @@ enum Action {
     Tell(FromFetcher),
     /// The push connection opened or was lost.
     Push(bool),
+    /// The push connection carried a `STATE_CHALLENGE` (VS-204), answered
+    /// before anything else this turn sends.
+    Challenge(neoteletext_web::records::state::StateChallenge),
     /// A part of a live channel's index: its magazine, the magazine's
     /// name, its pages, and the sending's generation.
     Index {
@@ -287,6 +289,10 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         exchanged(method, url, status, bytes, elapsed_us, actions);
         return;
     }
+    if let Some(action) = state_action(&output) {
+        actions.push(action);
+        return;
+    }
     // It ended for good and is not tried again (DOC-1920).
     if let Output::Event(Event::PushStopped(stop)) = output {
         eprintln!("neoteletext-fetcher: the push connection stopped ({stop:?}); it is not tried again");
@@ -361,6 +367,33 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         Output::Event(event) => list_action(&event).unwrap_or_else(|| Action::Tell(FromFetcher::Notice(format!("{event:?}")))),
         _ => return,
     });
+}
+
+/// Viewer state's records (VS-204), for the trusted core as typed, fixed
+/// fields, and never in a notice or a log line (VS-209).
+const fn state_action(output: &Output<'_>) -> Option<Action> {
+    Some(match output {
+        Output::Event(Event::StateChallenge(challenge)) => Action::Challenge(*challenge),
+        Output::Event(Event::StateEnd(end)) => Action::Tell(FromFetcher::StateEndReceived { key_id: end.key_id }),
+        Output::Event(Event::StateKeepOffer) => Action::Tell(FromFetcher::StateKeepOffered),
+        _ => return None,
+    })
+}
+
+/// Writes a viewer state message on the push connection, as the input
+/// protocol's event, straight to the agent (VS-204).
+fn send_state(agent: &mut Agent<'_>, now: Instant, bytes: &[u8], actions: &mut Vec<Action>) {
+    agent.handle(now, Input::Send(InputMessage::alone(bytes)), &mut |out| collect(out, actions));
+}
+
+/// When the loop next wakes of itself: the agent's timer, or the held
+/// unprompted state message's turn, whichever is first.
+fn wake_at(next_tick: Option<Instant>, state_due: Option<Clock>, now: Instant) -> Option<Instant> {
+    let due = state_due.map(|due| Instant(now.0.saturating_add(u64::try_from(due.saturating_duration_since(Clock::now()).as_micros()).unwrap_or(u64::MAX))));
+    match (next_tick, due) {
+        (Some(tick), Some(due)) => Some(tick.min(due)),
+        (tick, due) => tick.or(due),
+    }
 }
 
 /// An exchange, for the developer console (the engine's REQ-WEB-033), and
@@ -443,7 +476,7 @@ impl Parts {
 
 /// Sends part `part` of `page`'s list to the trusted core, or that it could
 /// not be used.
-fn send_part(output: &cookies::Output, page: PageAddress, part: PartNumber, bytes: Option<&[u8]>) -> Result<(), String> {
+fn send_part(output: &CorePipe, page: PageAddress, part: PartNumber, bytes: Option<&[u8]>) -> Result<(), String> {
     match bytes.and_then(|bytes| list_part(part, bytes)) {
         Some((version, rows)) => send(output, &FromFetcher::SubPages { page: page.mpp(), version, part: rows }),
         None => send(output, &FromFetcher::SubPagesFailed { page: page.mpp(), part: part.number() }),
@@ -492,17 +525,17 @@ fn run_with(
     // Before anything of the channel, so the trusted core can tell a
     // fetcher that could not start from one its server ended (finding
     // F-12).
-    let output: cookies::Output = Rc::new(RefCell::new(BufWriter::new(output)));
+    let output: CorePipe = Rc::new(RefCell::new(BufWriter::new(output)));
     send(&output, &FromFetcher::Confined)?;
     output.borrow_mut().flush().map_err(|error| error.to_string())?;
     let mut storage = Box::new(Storage::default());
     let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
-    // The trusted core's answers to the cookie questions, read by the same
-    // thread that reads its input messages.
+    // The trusted core's answers to viewer state's challenges, read by the
+    // same thread that reads its input messages.
     let (answers, answered) = mpsc::channel();
-    let mut store = cookies::CoreCookies::new(Rc::clone(&output), answered);
-    let mut agent: Box<Agent<'_>> = Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut store));
+    let mut state = State::new(answered);
+    let mut agent: Box<Agent<'_>> = Box::new(UserAgent::new(config, storage.buffers(), random));
     let network = wakes.clone();
     let mut pump = Pump::new(transport(Arc::new(move || {
         let _ = network.send(Wake::Network);
@@ -521,10 +554,9 @@ fn run_with(
 
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only what `ToFetcher` holds (REQ-1381 version 2):
-    // input messages, the round trip's switch, the answers about a
-    // cookie and whether a host was reached securely, and requests for
-    // pages, lists of sub-pages and sub-pages; anything else ends the
-    // fetcher too.
+    // input messages, the round trip's switch, viewer state's answers and
+    // unprompted messages, and requests for pages, lists of sub-pages and
+    // sub-pages; anything else ends the fetcher too.
     std::thread::spawn(move || {
         read_commands(&mut io::BufReader::new(input), &wakes, &answers);
         let _ = wakes.send(Wake::Ended);
@@ -561,7 +593,10 @@ fn run_with(
                 // for it again when its page next opens.
                 Action::SubPagesCurrent(page, part) => send_part(&output, page, part, parts.get(page, part))?,
                 Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
-                Action::Push(open) => push_changed(&agent, &output, open)?,
+                Action::Push(open) => push_changed(&agent, &output, open, &mut state)?,
+                // Answered now, before the input messages the trusted core
+                // sent meanwhile, which wait in the wakes below (VS-202).
+                Action::Challenge(challenge) => send_state(&mut agent, clock(), &state.challenged(&output, challenge), &mut actions),
                 action @ (Action::Index { .. } | Action::IndexComplete(_) | Action::SubPageList(_)) => live_record(action, &mut live, &output)?,
                 Action::Tell(message) => {
                     last_status = if let FromFetcher::Exchange { status, .. } = message { Some(status) } else { last_status };
@@ -576,9 +611,13 @@ fn run_with(
             busy = true;
             agent.handle(clock(), Input::Tick, &mut |out| collect(out, &mut actions));
         }
+        if let Some(bytes) = state.due(Clock::now()) {
+            busy = true;
+            send_state(&mut agent, clock(), &bytes, &mut actions);
+        }
         // What this turn produced goes before waiting.
         output.borrow_mut().flush().map_err(|error| error.to_string())?;
-        let first = wait_for_wake(&woken, busy, next_tick, clock());
+        let first = wait_for_wake(&woken, busy, wake_at(next_tick, state.next_due(), clock()), clock());
         // Every wake already here, so the input messages read at the same
         // moment are known to follow one another (REQ-RCH-010).
         let mut woke: VecDeque<Wake> = first.into_iter().chain(std::iter::from_fn(|| woken.try_recv().ok())).collect();
@@ -593,6 +632,8 @@ fn run_with(
                 #[cfg(feature = "interaction")]
                 Wake::RoundTrip(on) => agent.handle(clock(), Input::MeasureRoundTrip(on), &mut |out| collect(out, &mut actions)),
                 Wake::Fetch(asked) => fetch(&mut agent, &clock, &asked, &mut actions),
+                // Sent once the interval allows, at the top of the loop.
+                Wake::State(message) => state.hold(&message),
                 // The sockets are looked at on the next turn.
                 Wake::Network => {}
                 Wake::Ended => ended = true,
@@ -632,7 +673,7 @@ struct Live {
 /// A live channel's index record or SUBPAGES record: held until whole,
 /// then sent on as the contents and the catalogue a channel served as files
 /// gives.
-fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Result<(), String> {
+fn live_record(action: Action, live: &mut Live, output: &CorePipe) -> Result<(), String> {
     match action {
         Action::Index { magazine, name, pages, generation } => {
             live.index.note(magazine, &name, &pages, generation);
@@ -658,11 +699,11 @@ fn live_record(action: Action, live: &mut Live, output: &cookies::Output) -> Res
     }
 }
 
-/// The agent with the cookie jar it keeps: none of its own.
-type Agent<'a> = UserAgent<'a, Random, COOKIE_SLOTS, COOKIE_BYTES>;
+/// The agent, with the fetcher's randomness.
+type Agent<'a> = UserAgent<'a, Random>;
 
 /// Writes `message` to the trusted core.
-fn send(output: &cookies::Output, message: &FromFetcher) -> Result<(), String> {
+fn send(output: &CorePipe, message: &FromFetcher) -> Result<(), String> {
     write_to_core(&mut *output.borrow_mut(), message).map_err(|error| error.to_string())
 }
 
@@ -680,7 +721,7 @@ fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, 
 }
 
 /// Tells the trusted core what the open channel's descriptor says.
-fn service_ready(agent: &Agent<'_>, output: &cookies::Output, page: u16, region: Option<u8>) -> Result<(), String> {
+fn service_ready(agent: &Agent<'_>, output: &CorePipe, page: u16, region: Option<u8>) -> Result<(), String> {
     // Before any page, so that none is read in another group.
     send(output, &FromFetcher::Region(region))?;
     send(output, &FromFetcher::InitialPage(page))?;
@@ -709,7 +750,10 @@ fn ask_for_channel(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: 
 /// The push connection opened or closed. Keys may go to the channel while
 /// its WebSocket is open, if its descriptor says it takes them
 /// (`interaction.md`).
-fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Result<(), String> {
+fn push_changed(agent: &Agent<'_>, output: &CorePipe, open: bool, state: &mut State) -> Result<(), String> {
+    if !open {
+        state.lost();
+    }
     // The trusted core keeps a sleeping tab's fetcher while it holds a
     // push connection (decision 47).
     send(output, &FromFetcher::Pushing(open))?;
@@ -726,7 +770,7 @@ fn push_changed(agent: &Agent<'_>, output: &cookies::Output, open: bool) -> Resu
 /// Tells the trusted core what the transport refused since it was last
 /// asked: a proxy's failure, a certificate, an opening out of time, a local
 /// address.
-fn tell_failures(transport: &mut Tcp, output: &cookies::Output) -> Result<(), String> {
+fn tell_failures(transport: &mut Tcp, output: &CorePipe) -> Result<(), String> {
     let send = |message: FromFetcher| write_to_core(&mut *output.borrow_mut(), &message).map_err(|error| error.to_string());
     if transport.take_proxy_failure() {
         send(FromFetcher::ProxyFailed)?;
@@ -785,8 +829,8 @@ fn hand_moment(commands: &mpsc::Sender<Wake>, moment: &mut Vec<Record>) -> bool 
 }
 
 /// Reads the trusted core's messages until its pipe closes or breaks the
-/// protocol: input messages and requests wake the loop, and cookie answers
-/// go to the store waiting for them. An input message the trusted core
+/// protocol: input messages and requests wake the loop, and viewer state's
+/// answers go to the loop waiting for them. An input message the trusted core
 /// says more follow at once waits here for them (REQ-RCH-010): it writes
 /// a moment's messages in one write, so they are already on the pipe; any
 /// other message, the bound [`MOMENT_MESSAGES`] or the pipe's end hands on
@@ -807,7 +851,8 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
             }
             #[cfg(feature = "interaction")]
             ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
-            answer @ (ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. }) => answers.send(answer).is_ok(),
+            answer @ ToFetcher::StateAnswer { .. } => answers.send(answer).is_ok(),
+            unprompted @ (ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_)) => commands.send(Wake::State(unprompted)).is_ok(),
             asked @ (ToFetcher::FetchContents | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
                 commands.send(Wake::Fetch(asked)).is_ok()
             }
@@ -926,60 +971,6 @@ mod tests {
         }
         assert!(kept.get(page, PartNumber::FIRST).is_none(), "the oldest forgotten");
         assert!(kept.get(page, second).is_some());
-    }
-
-    /// Decision 62: the agent the fetcher builds asks its store for each
-    /// request's cookies, which it does only with the engine's `cookies`
-    /// feature compiled in; without it no cookie is ever kept or sent.
-    #[test]
-    fn the_agent_asks_for_each_requests_cookies() {
-        #[derive(Debug, Default)]
-        struct Asked(Vec<String>);
-        impl neoteletext_web::cookie::Cookies for Asked {
-            fn header_for(
-                &mut self,
-                host: &str,
-                path: &str,
-                _: Option<&str>,
-                _: bool,
-                _: neoteletext_web::cookie::Site,
-                _: u64,
-                _: &mut neoteletext_web::bytes::Writer<'_>,
-            ) -> (usize, bool) {
-                self.0.push(format!("{host}{path}"));
-                (0, false)
-            }
-            fn store_within(
-                &mut self,
-                _: &[u8],
-                _: &str,
-                _: &str,
-                _: Option<&str>,
-                _: bool,
-                _: u64,
-                _: bool,
-            ) -> Result<(), neoteletext_web::cookie::CookieRejected> {
-                Ok(())
-            }
-            fn reached_securely(&self, _: &str, _: u64) -> bool {
-                false
-            }
-            fn clear_site_data(&mut self, _: &str, _: Option<&str>) {}
-            fn wipe(&mut self) {}
-        }
-        let mut storage = Box::new(Storage::default());
-        let mut asked = Asked::default();
-        let config = Config { tls_available: true, redirects_within_channel: true, ..Config::default() };
-        let random = Random::new();
-        let mut agent: Box<UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>> =
-            Box::new(UserAgent::with_cookies(config, storage.buffers(), random, &mut asked));
-        let mut actions = Vec::new();
-        agent.handle(Instant(0), Input::OpenChannel("http://a.example/tt/"), &mut |out| collect(out, &mut actions));
-        let connected = neoteletext_web::port::NetInput::Connected(ConnectionId::Fetch, neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]));
-        agent.handle(Instant(0), Input::Net(connected), &mut |out| collect(out, &mut actions));
-        drop(agent);
-        assert_eq!(asked.0, [format!("a.example/tt/{SETTINGS_FILE}")]);
-        assert_eq!(SETTINGS_FILE, "channel.ttx", "DEC-1726: documents and channels name the file literally");
     }
 
     /// DOC-1960: a REDIRECT record is told as it is, for the
@@ -1366,14 +1357,9 @@ mod tests {
         let mut from_fetcher = BufReader::new(core_reads);
         let mut until = |core_writes: &mut io::PipeWriter, wanted: &dyn Fn(&FromFetcher) -> bool| loop {
             let message = protocol::fetcher::read_from_fetcher(&mut from_fetcher).unwrap().expect("the fetcher ended");
-            match &message {
-                FromFetcher::CookieQuestion { id, .. } => {
-                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::CookieAnswer { id: *id, header: Vec::new() }).unwrap();
-                }
-                FromFetcher::ReachedQuestion { id, .. } => {
-                    protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::ReachedAnswer { id: *id, reached: false }).unwrap();
-                }
-                _ => {}
+            if let FromFetcher::StateChallenged { request, .. } = &message {
+                let reply = protocol::fetcher::StateReply::None(protocol::fetcher::NoneReason::NoKey);
+                protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::StateAnswer { request: *request, reply }).unwrap();
             }
             if wanted(&message) {
                 return message;

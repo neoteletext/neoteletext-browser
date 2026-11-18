@@ -14,13 +14,15 @@ default = ["links", "interaction", "phone-keyboard"]
 links = ["interface-core/links"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
-interaction = ["dep:neoteletext-input", "interface-core/interaction"]
+interaction = ["interface-core/interaction"]
 # The phone keyboard (`interaction.md` section 9), which types as the
 # interface's own keyboard does.
 phone-keyboard = ["interaction", "interface-core/phone-keyboard"]
 
 [dependencies]
-neoteletext-input = { workspace = true, optional = true }
+# The input protocol's limits, and viewer state's algorithm, lifetime and
+# reasons, which the fetcher's state messages carry (VS-119).
+neoteletext-input.workspace = true
 interface-core.workspace = true
 # The audio profile's bounds: channels, gains, fades, rates.
 neoteletext-audio.workspace = true

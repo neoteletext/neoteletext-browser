@@ -2,7 +2,7 @@
 //! process not confined. It starts the trusted core confined and serves
 //! its requests: it reads file channels for it, only teletext and never
 //! from the user's dot-folders, applications' data or the browser's own
-//! folders (decision 88); opens web pages; holds the cookie file's key; tells the
+//! folders (decision 88); opens web pages; holds the viewer key file's sealing key; tells the
 //! launcher it started (decision 93) and that the version is healthy, reads the launcher's state for the
 //! core, and gives the updater its staging folder and its one port
 //! (`installation-and-updates.md` sections 3 and 5).
@@ -43,8 +43,6 @@ pub(crate) const CORE_FLAG: &str = "--core";
 /// reads it from the signed file (`installation-and-updates.md` section 5).
 static VERSION_MARK: &str = update::version_mark!(env!("NEOTELETEXT_VERSION"));
 
-/// What the cookie file's key is kept under in the platform's secret store
-/// (`cookies.md` section 7): a name a person reading the store recognises.
 /// The single-instance socket's name in the broker's folder.
 const INSTANCE: &str = "instance";
 /// The longest path a local-domain socket takes on macOS: `sun_path`'s 104
@@ -52,8 +50,13 @@ const INSTANCE: &str = "instance";
 const MOST_SOCKET_PATH: usize = 103;
 // Every address, and every link from outside that wraps one, passes a request.
 const _: () = assert!(address::OUTSIDE_SCHEME.len() + protocol::MAX_ADDRESS <= MAX_TEXT, "an address fits a request");
-const KEY_SERVICE: &str = "NeoTeletext cookie file";
-const KEY_ACCOUNT: &str = "cookies.bin";
+/// What the viewer key file's sealing key is kept under in the platform's
+/// secret store (VS-108): a name a person reading the store recognises.
+const KEY_SERVICE: &str = "NeoTeletext viewer keys";
+const KEY_ACCOUNT: &str = "viewer-keys.bin";
+/// The cookie file's key's entry, deleted once (VS-603): nothing reads it.
+const OLD_COOKIE_SERVICE: &str = "NeoTeletext cookie file";
+const OLD_COOKIE_ACCOUNT: &str = "cookies.bin";
 
 /// The exit status of a broker that ended because its launcher had gone,
 /// which nothing reads: the launcher that would is gone. Not success, so a
@@ -147,7 +150,7 @@ pub(crate) fn broker() -> Result<(), String> {
         read_source: &read_source,
         open_web: &open_web,
         environment: &environment,
-        cookie_key: &cookie_key,
+        viewer_keys_key: &viewer_keys_key,
         healthy: &tell_launcher_healthy,
         update_state: &launcher_state,
         updater: &updater_grant,
@@ -161,16 +164,21 @@ pub(crate) fn broker() -> Result<(), String> {
     if exit.success { Ok(()) } else { Err(format!("the trusted core ended abnormally ({exit})")) }
 }
 
-/// The cookie file's key, read by the broker from the platform's secret
-/// store, or made there the first time from the system's random source
-/// (requirement 21.4). The trusted core cannot reach the store.
-fn cookie_key() -> Result<Vec<u8>, String> {
+/// The viewer key file's sealing key, read by the broker from the
+/// platform's secret store, or made there the first time from the system's
+/// random source (VS-108). The trusted core cannot reach the store. The
+/// cookie file's key is deleted, if it is there: cookies are gone (VS-603).
+fn viewer_keys_key() -> Result<Vec<u8>, String> {
+    if let Ok(old) = keyring::Entry::new(OLD_COOKIE_SERVICE, OLD_COOKIE_ACCOUNT) {
+        // Gone already, or a store that refuses: nothing reads it either way.
+        let _ = old.delete_credential();
+    }
     let entry = keyring::Entry::new(KEY_SERVICE, KEY_ACCOUNT).map_err(|error| format!("no secret store: {error}"))?;
     match entry.get_secret() {
         Ok(key) => Ok(key),
         Err(keyring::Error::NoEntry) => {
             use ring::rand::SecureRandom as _;
-            let mut key = vec![0_u8; confine::broker::COOKIE_KEY_BYTES];
+            let mut key = vec![0_u8; confine::broker::SEALING_KEY_BYTES];
             ring::rand::SystemRandom::new().fill(&mut key).map_err(|_| String::from("no random source"))?;
             entry.set_secret(&key).map_err(|error| format!("the secret store refused the key: {error}"))?;
             Ok(key)

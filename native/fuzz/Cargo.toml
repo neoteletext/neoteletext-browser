@@ -21,8 +21,8 @@ web-opener = { path = "../web-opener" }
 confine = { path = "../confine" }
 update = { path = "../update" }
 icon = { path = "../icon", package = "neoteletext-icon" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "dd0421c623b522271c4f027369698bb34d1b9787" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "dd0421c623b522271c4f027369698bb34d1b9787" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02adbf14f6735a3f8cecbf1cc8bcab280d2e3a34" }
 
 [workspace]
 members = ["."]
@@ -205,8 +205,15 @@ doc = false
 bench = false
 
 [[bin]]
-name = "cookie_file"
-path = "fuzz_targets/cookie_file.rs"
+name = "viewer_key_file"
+path = "fuzz_targets/viewer_key_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "state_messages"
+path = "fuzz_targets/state_messages.rs"
 test = false
 doc = false
 bench = false

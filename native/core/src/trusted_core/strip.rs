@@ -41,6 +41,7 @@ impl Core {
         }
         strip.denied = self.denial_shown();
         strip.failed = self.failure_shown();
+        self.viewer_strip(&mut strip);
         strip
     }
 

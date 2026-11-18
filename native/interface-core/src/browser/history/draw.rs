@@ -94,8 +94,8 @@ impl Browser {
             left_centred(canvas, Rect::new(left, y, left + RANGE_BUTTON, y + CONTROL_HEIGHT), 0.0, "Clear", CAPTION, MUTED);
             controls.with_history = Rect::new(left + RANGE_BUTTON, y, left + RANGE_BUTTON * 2.0, y + CONTROL_HEIGHT);
             button(canvas, controls.with_history, "History", self.history.clears.history);
-            controls.with_cookies = Rect::new(controls.with_history.x1 + GAP, y, controls.with_history.x1 + GAP + RANGE_BUTTON, y + CONTROL_HEIGHT);
-            button(canvas, controls.with_cookies, "Cookies", self.history.clears.cookies);
+            controls.with_channels = Rect::new(controls.with_history.x1 + GAP, y, controls.with_history.x1 + GAP + RANGE_BUTTON * 2.0, y + CONTROL_HEIGHT);
+            button(canvas, controls.with_channels, "Channels that know you", self.history.clears.channels);
             y += CONTROL_HEIGHT + GAP;
             // The ranges and Cancel, onto further lines in a panel too
             // narrow for them on one (decision 127).

@@ -85,11 +85,8 @@ impl Core {
             FromFetcher::ProxyFailed => self.proxy_failed(channel)?,
             FromFetcher::TimedOut => self.timed_out(channel)?,
             FromFetcher::Exchange { .. } => {}
-            message @ (FromFetcher::CookieQuestion { .. }
-            | FromFetcher::ReachedQuestion { .. }
-            | FromFetcher::CookieSet { .. }
-            | FromFetcher::ClearSiteData(_)) => {
-                self.cookie_message(channel, message)?;
+            message @ (FromFetcher::StateChallenged { .. } | FromFetcher::StateEndReceived { .. } | FromFetcher::StateKeepOffered) => {
+                self.state_message(channel, &message)?;
             }
             FromFetcher::Pushing(open) => {
                 self.sleep.set_pushing(channel, open);

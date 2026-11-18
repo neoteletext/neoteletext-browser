@@ -115,16 +115,16 @@ impl Browser {
             self.history.clearing = false;
         } else if controls.with_history.contains(point) {
             self.history.clears.history = !self.history.clears.history;
-        } else if controls.with_cookies.contains(point) {
-            self.history.clears.cookies = !self.history.clears.cookies;
+        } else if controls.with_channels.contains(point) {
+            self.history.clears.channels = !self.history.clears.channels;
         } else if let Some(&(range, _)) = controls.ranges.iter().find(|(_, rect)| rect.contains(point)) {
             self.history.clearing = false;
             self.history.selected.clear();
             if self.history.clears.history {
                 self.outputs.push(Output::History(HistoryRequest::Clear(range)));
             }
-            if self.history.clears.cookies {
-                self.outputs.push(Output::History(HistoryRequest::ClearCookies(range)));
+            if self.history.clears.channels {
+                self.outputs.push(Output::History(HistoryRequest::ForgetChannels(range)));
             }
         } else if controls.remove_selected.contains(point) {
             let numbers: Vec<u32> = self.history.selected.iter().copied().take(MAX_VIEW_ROWS).collect();

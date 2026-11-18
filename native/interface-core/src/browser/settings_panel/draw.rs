@@ -13,7 +13,7 @@ use crate::browser::Browser;
 use crate::browser::widgets::{RADIUS, button, field, panel, panel_rect};
 use crate::canvas::Canvas;
 use crate::geometry::Rect;
-use crate::settings::{CookieMode, SettingsView};
+use crate::settings::SettingsView;
 use crate::text::{border, centred, left_centred};
 use crate::theme::{BUTTON, HEADING, INSECURE, MUTED, ROW_STATUS, ROW_TITLE, RULE, WHITE};
 
@@ -42,9 +42,19 @@ impl Browser {
         let left = panel.x0 + PADDING;
         let right = panel.x1 - PADDING;
         let heading = Rect::new(left, panel.y0 + PADDING, right, panel.y0 + PADDING + HEADING_HEIGHT);
-        left_centred(canvas, heading, 0.0, "Settings", HEADING, WHITE);
         controls.close = Rect::new(right - SMALL_BUTTON, heading.y0, right, heading.y0 + SMALL_BUTTON);
         button(canvas, controls.close, "\u{00D7}", false);
+        if !self.known_open() {
+            left_centred(canvas, heading, 0.0, "Settings", HEADING, WHITE);
+        }
+        // The list "Channels that know you" takes the panel while it is
+        // shown; the close button goes back to the settings (VS-112).
+        if self.known_open() {
+            left_centred(canvas, heading, 0.0, "Channels that know you", HEADING, WHITE);
+            self.settings.controls = controls;
+            self.draw_known(canvas, Rect::new(left, heading.y1 + ROW_GAP, right, panel.y1 - PADDING));
+            return;
+        }
         let view = self.settings.view.clone();
         let mut y = heading.y1 + ROW_GAP;
         let field_left = left + LABEL_WIDTH;
@@ -56,7 +66,7 @@ impl Browser {
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
-        y = draw_settings_cookies(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_known(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_updates(canvas, &mut controls, row(y), field_left);
         y = self.draw_settings_local(canvas, view.as_ref(), &mut controls, row(y), field_left);
         // Below the local network it concerns, across the panel's whole
@@ -254,21 +264,19 @@ fn draw_settings_regis<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Setting
     y + ROW + ROW_GAP
 }
 
-/// What is kept of cookies, and their panel (requirement 21.7), in `line`.
+/// Whether channels may ask to know the viewer, Allow or Never, and the
+/// list of the channels that do (VS-112, open question Q16), in `line`.
 /// Returns where the next row starts.
-fn draw_settings_cookies<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+fn draw_settings_known<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
     let (right, y) = (line.x1, line.y0);
-    let cookies = view.map_or(CookieMode::Keep, |view| view.cookies);
-    left_centred(canvas, line, 0.0, "Cookies", ROW_TITLE, WHITE);
-    let mut x = field_left;
-    for (mode, word) in [(CookieMode::Keep, "Keep"), (CookieMode::Close, "On close"), (CookieMode::Block, "Block")] {
-        let rect = Rect::new(x, y, x + BUTTON_WIDTH * 1.2, y + ROW);
-        button(canvas, rect, word, cookies == mode);
-        controls.cookie_modes.push((mode, rect));
-        x = rect.x1 + GAP;
-    }
-    controls.manage_cookies = Rect::new(right - WIDE_BUTTON, y, right, y + ROW);
-    button(canvas, controls.manage_cookies, "Manage\u{2026}", false);
+    let allowed = view.is_none_or(|view| view.channels_may_know);
+    left_centred(canvas, line, 0.0, "Channels may know you", ROW_TITLE, WHITE);
+    controls.know_allow = Rect::new(field_left + GAP * 4.0, y, field_left + GAP * 4.0 + BUTTON_WIDTH, y + ROW);
+    controls.know_never = Rect::new(controls.know_allow.x1 + GAP, y, controls.know_allow.x1 + GAP + BUTTON_WIDTH, y + ROW);
+    button(canvas, controls.know_allow, "Allow", allowed);
+    button(canvas, controls.know_never, "Never", !allowed);
+    controls.manage_known = Rect::new(right - WIDE_BUTTON, y, right, y + ROW);
+    button(canvas, controls.manage_known, "Which\u{2026}", false);
     y + ROW + ROW_GAP
 }
 

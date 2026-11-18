@@ -56,6 +56,9 @@ impl Core {
                 if sends.iter().any(|send| matches!(send, neoteletext::typing::Send::Fetcher { .. })) {
                     self.frames.input(intent.key);
                     if intent.intent.is_activation() {
+                        // The viewer acted: a channel may now ask to know
+                        // them (VS-104, VS-212).
+                        self.viewer_gesture(intent.key.channel);
                         self.session.viewer_input(intent.key.channel);
                     }
                 }

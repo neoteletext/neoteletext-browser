@@ -87,11 +87,16 @@ impl Tab {
         std::thread::spawn(move || {
             let mut output = BufReader::new(output);
             while let Ok(Some(message)) = read_from_fetcher(&mut output) {
-                // The channel sets no cookie: the trusted core's answers are
-                // empty (decision 62).
+                // The reference channel asks no state: a challenge, were one
+                // to come, is answered as a stateless client answers
+                // (VS-204).
                 match message {
-                    FromFetcher::CookieQuestion { id, .. } => send(&answering, &ToFetcher::CookieAnswer { id, header: Vec::new() }),
-                    FromFetcher::ReachedQuestion { id, .. } => send(&answering, &ToFetcher::ReachedAnswer { id, reached: false }),
+                    FromFetcher::StateChallenged { request, .. } => {
+                        send(
+                            &answering,
+                            &ToFetcher::StateAnswer { request, reply: protocol::fetcher::StateReply::None(protocol::fetcher::NoneReason::Stateless) },
+                        );
+                    }
                     message => {
                         if sender.send((Instant::now(), message)).is_err() {
                             return;

@@ -58,7 +58,7 @@ impl Core {
         if let Some((_, _, still)) = self.window_moved {
             next = next.map(|at| at.min(still));
         }
-        if let Some(due) = self.cookies.due {
+        if let Some(due) = self.viewer_state.due {
             next = next.map(|at| at.min(due));
         }
         if let Some(due) = self.updates.due() {
@@ -109,8 +109,8 @@ impl Core {
         if self.window_moved.is_some_and(|(_, _, still)| now >= still) {
             self.keep_window();
         }
-        if self.cookies.due.is_some_and(|due| now >= due) {
-            self.keep_cookies();
+        if self.viewer_state.due.is_some_and(|due| now >= due) {
+            self.keep_viewer_keys();
         }
         if self.updates.due().is_some_and(|due| now >= due) {
             self.updates.tick(self.broker.as_deref(), now);

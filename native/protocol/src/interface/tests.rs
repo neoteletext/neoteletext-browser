@@ -32,6 +32,9 @@ fn strip() -> StripState {
         denied: Some(interface_core::browser::Denied::NotFound),
         failed: Some(interface_core::browser::Failed::Page(Some(500))),
         redirecting: "https://elsewhere.invalid/teletext/".into(),
+        known: interface_core::viewer_state::Known::Visit,
+        can_remember: true,
+        keep_offer: true,
     }
 }
 
@@ -74,10 +77,24 @@ fn a_certificate_problem_is_held_to_its_codes() {
     assert_eq!(problem_of(8), None);
     let mut bytes = Vec::new();
     write_to_interface(&mut bytes, &ToInterface::Strip(strip())).unwrap();
-    // The high byte of the status the strip ends with, out of bounds.
-    let high = bytes.len() - 2;
+    // The high byte of the failed tab's status, before the viewer state
+    // byte the strip ends with, out of bounds.
+    let high = bytes.len() - 3;
     bytes[high] = 0xFF;
     assert!(read_from_core(&mut bytes.as_slice()).is_err());
+}
+
+/// VS-114: the strip's viewer state byte names what the channel knows and
+/// two flags; any other bit is a broken message.
+#[test]
+fn the_strips_viewer_state_is_held_to_its_bits() {
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::Strip(strip())).unwrap();
+    let last = bytes.len() - 1;
+    for bad in [3, 0x10, 0x80] {
+        bytes[last] = bad;
+        assert!(read_from_core(&mut bytes.as_slice()).is_err(), "{bad:#x}");
+    }
 }
 
 fn channel() -> Channel {
@@ -179,7 +196,7 @@ fn every_message_to_the_interface_round_trips() {
             proxy: settings::ProxyView::None,
             local: Vec::new(),
             restore_session: true,
-            cookies: settings::CookieMode::Close,
+            channels_may_know: true,
             aspect: false,
             wheel_inverted: true,
             regis_contain: true,
@@ -187,7 +204,7 @@ fn every_message_to_the_interface_round_trips() {
             loopback_exemption: None,
         }),
         ToInterface::Update(settings::UpdateView { version: "0.1.0".into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true }),
-        ToInterface::Cookies(cookies::CookiesView { query: "news".into(), total: 0, ..cookies::CookiesView::default() }),
+        ToInterface::Known(viewer_state::KnownView { query: "news".into(), total: 0, ..viewer_state::KnownView::default() }),
         ToInterface::PageControls(interface_core::controls::PageControls {
             channel: 9,
             page: Some(0x302),
@@ -285,7 +302,8 @@ fn every_intent_round_trips() {
         ToCore::GoTo { forward: true, steps: 15 },
         ToCore::NewPrivateTab,
         ToCore::Window(library::WindowGeometry { x: 10, y: 20, width: 1440, height: 900, maximised: false }),
-        ToCore::Cookies(cookies::CookiesRequest::Block { number: 3, blocked: true }),
+        ToCore::Known(viewer_state::KnownRequest::Block { number: 3, blocked: true }),
+        ToCore::Known(viewer_state::KnownRequest::RememberActive(true)),
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();

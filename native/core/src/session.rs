@@ -299,6 +299,8 @@ impl Session {
             redirecting: tab.channel.redirecting.as_ref().map(|redirect| clean(&redirect.address.text, MAX_ADDRESS)).unwrap_or_default(),
             denied: None,
             failed: None,
+            // The trusted core's viewer state says these (VS-114).
+            ..StripState::default()
         }
     }
 }

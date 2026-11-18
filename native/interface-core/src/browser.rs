@@ -25,7 +25,6 @@ mod bookmarks;
 mod bookmarks_bar;
 mod certificate_refused;
 mod console_panel;
-mod cookies_tab;
 mod denied;
 mod divider;
 mod field_mouse;
@@ -42,8 +41,11 @@ mod hyperlinks;
 #[cfg(feature = "interaction")]
 mod input_trace;
 mod keys;
+mod known_channels;
 mod list_focus;
 mod menu;
+mod remember;
+pub use remember::REMEMBERED_DAYS;
 mod output;
 mod overview;
 mod page_controls;
@@ -200,8 +202,8 @@ pub struct Browser {
     console: console_panel::ConsoleUi,
     /// The history panel (requirement 20.4).
     history: history::HistoryUi,
-    /// The cookies panel (requirement 21.6).
-    cookies: cookies_tab::CookiesUi,
+    /// The list "Channels that know you" (VS-112).
+    known: known_channels::KnownUi,
     /// What each control is, shown when the pointer rests on it.
     tips: tips::TipsUi,
     /// The open page's controls (decision 67).
@@ -222,6 +224,9 @@ pub struct Browser {
     bar: bookmarks_bar::BarUi,
     /// The menu button's menu.
     menu: menu::MenuUi,
+    /// The strip's part of viewer state: its mark and its question
+    /// (VS-109, VS-114).
+    remember: remember::RememberUi,
     /// Back's and Forward's lists.
     tab_lists: tab_lists::TabListUi,
     /// The address field's suggestions.
@@ -301,7 +306,7 @@ impl Browser {
             picture: picture_panel::PictureUi::default(),
             console: console_panel::ConsoleUi::default(),
             history: history::HistoryUi::default(),
-            cookies: cookies_tab::CookiesUi::default(),
+            known: known_channels::KnownUi::default(),
             tips: tips::TipsUi::default(),
             page_controls: page_controls::ControlsUi::default(),
             remote: remote::RemoteUi::default(),
@@ -312,6 +317,7 @@ impl Browser {
             star: star::StarUi::default(),
             bar: bookmarks_bar::BarUi::default(),
             menu: menu::MenuUi::default(),
+            remember: remember::RememberUi::default(),
             tab_lists: tab_lists::TabListUi::default(),
             suggestions: suggestions::SuggestionsUi::default(),
             press_new_tab: false,
@@ -339,6 +345,9 @@ impl Browser {
 
     /// What the trusted strip shows, as the trusted core decides it.
     pub fn set_strip(&mut self, strip: StripState) {
+        if strip.address != self.strip.address || strip.private != self.strip.private {
+            self.remember_tab_changed();
+        }
         self.strip = strip;
     }
 

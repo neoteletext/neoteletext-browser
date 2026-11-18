@@ -274,7 +274,7 @@ impl Server {
                 Ok(time) => Reply::Time(time),
                 Err(error) => Reply::Failed(error.to_string()),
             },
-            Request::CookieKey => Reply::Failed(String::from("a test has no secret store")),
+            Request::ViewerKeysKey => Reply::Failed(String::from("a test has no secret store")),
             Request::UpdateState => Reply::Failed(String::from("no launcher started this broker")),
             Request::Openings => Reply::Failed(String::from("a test opens nothing from outside")),
             Request::ReadPicture(_) | Request::Save { .. } => Reply::Failed(String::from("a test has no pictures")),

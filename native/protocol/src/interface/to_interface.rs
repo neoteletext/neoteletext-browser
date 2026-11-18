@@ -6,10 +6,10 @@ use std::io::{Read, Write};
 
 use super::ToInterface;
 use super::kinds::{
-    KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_COOKIES_VIEW, KIND_FRAME,
-    KIND_HISTORY_VIEW, KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REGIS_FRAME, KIND_REGIS_OVER, KIND_REMOTE,
-    KIND_SETTINGS, KIND_SHOW, KIND_SHOW_CONTENTS, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS,
-    KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING, KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
+    KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_FRAME, KIND_HISTORY_VIEW, KIND_KNOWN_VIEW,
+    KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REGIS_FRAME, KIND_REGIS_OVER, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW,
+    KIND_SHOW_CONTENTS, KIND_SHOW_WALL, KIND_STAR_VIEW, KIND_STRIP, KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_SUGGESTIONS, KIND_TAB_LIST_VIEW, KIND_TAB_SOUNDING,
+    KIND_TABS, KIND_TARGET, KIND_UPDATE_VIEW, KIND_UPDATED, KIND_WINDOW_VIEW,
 };
 use super::pages::{
     FRAME_FIXED_BYTES, push_channel, push_frame, push_page, push_subpage_count, push_subpage_rows, push_updated, read_channel, read_frame_head, read_page,
@@ -22,7 +22,7 @@ use super::windows::{push_open_window, read_open_window, window_number};
 use crate::interaction::{KIND_INPUT_TRACE, KIND_TYPING};
 #[cfg(feature = "phone-keyboard")]
 use crate::keyboard::{KIND_PHONE, KIND_PHONE_KEY};
-use crate::{Fields, ProtocolError, console, controls, cookies, library, push_key, read_frame, settings, tail, write_frame};
+use crate::{Fields, ProtocolError, console, controls, library, push_key, read_frame, settings, tail, write_frame};
 
 /// Writes a message to the interface.
 ///
@@ -75,7 +75,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Star(_) => KIND_STAR_VIEW,
         ToInterface::Bar(_) => KIND_BAR_VIEW,
         ToInterface::Window(_) => KIND_WINDOW_VIEW,
-        ToInterface::Cookies(_) => KIND_COOKIES_VIEW,
+        ToInterface::Known(_) => KIND_KNOWN_VIEW,
         ToInterface::PageControls(_) => KIND_PAGE_CONTROLS,
         ToInterface::Remote(_) => KIND_REMOTE,
         ToInterface::Target(_) => KIND_TARGET,
@@ -130,7 +130,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
         ToInterface::Star(view) => library::push_star_view(payload, view)?,
         ToInterface::Bar(view) => library::push_bar_view(payload, view)?,
         ToInterface::Window(window) => library::push_window(payload, window)?,
-        ToInterface::Cookies(view) => cookies::push_view(payload, view)?,
+        ToInterface::Known(view) => crate::viewer_state::push_view(payload, view)?,
         ToInterface::PageControls(view) => controls::push_controls(payload, view)?,
         ToInterface::Remote(place) => settings::push_remote(payload, *place)?,
         ToInterface::Target(window) => payload.extend_from_slice(&window.to_be_bytes()),
@@ -212,7 +212,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         KIND_STAR_VIEW => ToInterface::Star(library::read_star_view(&mut fields)?),
         KIND_BAR_VIEW => ToInterface::Bar(library::read_bar_view(&mut fields)?),
         KIND_WINDOW_VIEW => ToInterface::Window(library::read_window(&mut fields)?),
-        KIND_COOKIES_VIEW => ToInterface::Cookies(cookies::read_view(&mut fields)?),
+        KIND_KNOWN_VIEW => ToInterface::Known(crate::viewer_state::read_view(&mut fields)?),
         KIND_PAGE_CONTROLS => ToInterface::PageControls(controls::read_controls(&mut fields)?),
         KIND_REMOTE => ToInterface::Remote(settings::read_remote(&mut fields)?),
         KIND_TARGET => ToInterface::Target(window_number(&mut fields)?),

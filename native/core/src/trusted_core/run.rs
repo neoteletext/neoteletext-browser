@@ -130,14 +130,14 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     for (level, text) in log {
         core.log(level, None, &text);
     }
-    core.cookies.no_keychain = no_keychain;
+    core.viewer_state.no_keychain = no_keychain;
     #[cfg(feature = "interaction")]
     if input_trace {
         core.input_trace = Some(neoteletext::input_trace::InputTrace::default());
     }
     #[cfg(not(feature = "interaction"))]
     let _ = input_trace;
-    core.cookies_at_start();
+    core.viewer_state_at_start();
     core.keep_session();
     core.start_sound();
     // Updates: the launcher's state, then the updater, when the settings
@@ -165,13 +165,14 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     ended(result, &status)
 }
 
-/// The flag that leaves the platform's secret store alone: cookies are
-/// kept for the run only, and the cookie file is neither read nor written
-/// (decision 113).
+/// The flag that leaves the platform's secret store alone: "Remember me"
+/// is unavailable, every viewer key is a visit key, and the viewer key file
+/// is neither read nor written (decision 113, VS-108, open question Q15).
 pub(crate) const NO_KEYCHAIN: &str = "--no-keychain";
 
 /// The flag that uses the platform's secret store where it is off by
-/// default: the cookie file's key is read from it, or made there.
+/// default: the viewer key file's sealing key is read from it, or made
+/// there.
 pub(crate) const KEYCHAIN: &str = "--keychain";
 
 /// Whether the secret store is used when neither flag is given. Off on
@@ -264,11 +265,11 @@ fn event_loop(core: &mut Core, incoming: &mpsc::Receiver<Event>) -> Result<(), S
 }
 
 /// Ends every helper but the interface, which is told to close: a move not
-/// yet kept, and cookies not yet written or to remove, are kept first. The
+/// yet kept, and remembered channels not yet written, are kept first. The
 /// core goes with it, before the interface is waited for.
 pub(super) fn shut_down(mut core: Core) {
     core.keep_window();
-    core.cookies_at_exit();
+    core.viewer_state_at_exit();
     for id in core.fetchers.keys().copied().collect::<Vec<_>>() {
         core.stop_fetcher(id);
     }

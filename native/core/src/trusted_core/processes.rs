@@ -33,7 +33,7 @@ pub(super) struct Fetcher {
     /// As [`Decoder::generation`].
     generation: u64,
     /// What a fetcher is given: input messages (REQ-INT-133), and the
-    /// answers to its cookie questions (decision 62).
+    /// answers to its viewer state challenges (VS-119).
     input: Option<Outbox>,
     /// As [`Decoder::heard`].
     heard: bool,
@@ -114,7 +114,8 @@ impl Fetcher {
         &self.child.report
     }
 
-    /// Its input: input messages and the answers to its cookie questions.
+    /// Its input: input messages and the answers to its viewer state
+    /// challenges.
     pub(super) fn input(&mut self) -> Option<&mut Outbox> {
         self.input.as_mut()
     }

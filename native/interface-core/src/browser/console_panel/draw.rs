@@ -1,5 +1,5 @@
 //! The console drawn: its tabs and buttons, the Log tab's levels and
-//! search, the cookies' tab or the entries, none of them while it is
+//! search, or the entries, none of them while it is
 //! minimised to its tab bar; and its tips.
 
 use crate::browser::page_list::{SCROLL_BAR_ROOM, draw_scroll_bar};
@@ -25,7 +25,7 @@ use crate::theme::{BUTTON, DIM, HEADING, MUTED, PANEL, ROW_STATUS, ROW_TITLE, RU
 const STAT_LABEL_WIDTH: f64 = 230.0;
 
 impl Browser {
-    /// The console's tabs and buttons, and the cookies' controls.
+    /// The console's tabs and buttons.
     pub(in crate::browser) fn console_tips(&self, tips: &mut Vec<(Rect, alloc::string::String)>) {
         if !self.console.open {
             return;
@@ -37,7 +37,6 @@ impl Browser {
                 Tab::Entries(ConsoleTab::Pages) => "The pages the decoder holds",
                 Tab::Entries(ConsoleTab::Log) => "The browser's log: each process's errors, warnings and notices, and how it was confined",
                 Tab::Stats => "What this channel has sent and received since it opened: bytes, packets, sound, input events and pages",
-                Tab::Cookies => "Cookies kept for each site and channel: delete or block them",
             };
             tips.push((rect, words.into()));
         }
@@ -49,9 +48,7 @@ impl Browser {
             format!("Close the console; {} opens it again ({})", self.keys_named("the View menu", "the menu"), self.keys_named("Option+Cmd+I", "Ctrl+Shift+I"));
         tips.push((self.console.close, close));
         self.recording_tips(tips);
-        if self.console.tab == Tab::Cookies {
-            self.cookies_tips(tips);
-        } else if self.console.tab != Tab::Stats {
+        if self.console.tab != Tab::Stats {
             tips.push((
                 self.console.pause,
                 if self.console.paused { "Scroll again, with what arrived meanwhile" } else { "Stop scrolling; what arrives waits" }.into(),
@@ -89,14 +86,13 @@ impl Browser {
             let label = match tab {
                 Tab::Entries(tab) => format!("{} {}", tab.label(), self.console.entries.get(tab.index()).map_or(0, VecDeque::len)),
                 Tab::Stats => "Stats".into(),
-                Tab::Cookies => "Cookies".into(),
             };
             centred(canvas, rect, &label, ROW_STATUS, WHITE);
             self.console.tabs.push((tab, rect));
             x = rect.x1 + GAP;
         }
         self.draw_console_window_buttons(canvas, bar);
-        // Pause and Clear are the entries'; the cookies' tab has its own controls, the figures none.
+        // Pause and Clear are the entries'; the figures have none.
         let entries_shown = matches!(self.console.tab, Tab::Entries(_));
         let (clear, pause) = if entries_shown {
             let clear = Rect::new(self.console.minimise.x0 - GAP - BUTTON_WIDTH, bar.y0, self.console.minimise.x0 - GAP, bar.y1);
@@ -172,17 +168,13 @@ impl Browser {
         close_glyph(canvas, close, WHITE);
     }
 
-    /// The tab's entries in `list`, the newest at the foot, or the
-    /// cookies' tab.
+    /// The tab's entries in `list`, the newest at the foot.
     fn draw_console_entries<C: Canvas + ?Sized>(&mut self, canvas: &mut C, list: Rect) {
         if self.console.tab == Tab::Stats {
             self.draw_console_stats(canvas, list);
             return;
         }
-        let Some(entries) = self.console.shown() else {
-            self.draw_cookies(canvas, list);
-            return;
-        };
+        let Some(entries) = self.console.shown() else { return };
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a panel's lines")]
         let rows = libm::floor(list.height() / LINE).max(0.0) as usize;
         let end = entries.len().saturating_sub(self.console.back);

@@ -20,8 +20,8 @@ fn settings_round_trip_through_their_file() {
         regis_contain: false,
         restore: false,
         check_updates: false,
-        cookies: crate::cookies::Mode::Close,
-        cookie_block: vec!["https://news.example/teletext/".into()],
+        channels_may_know: false,
+        state_block: vec!["https://news.example/teletext/".into()],
         remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
     };
     let (read, dropped) = Settings::read(&settings.text());

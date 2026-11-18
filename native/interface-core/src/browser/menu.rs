@@ -30,6 +30,7 @@ enum Item {
     Wall,
     Aspect,
     BookmarkPage,
+    Remember,
     #[cfg(feature = "phone-keyboard")]
     Phone,
     Console,
@@ -54,6 +55,7 @@ impl Item {
         Self::Wall,
         Self::Aspect,
         Self::BookmarkPage,
+        Self::Remember,
         #[cfg(feature = "phone-keyboard")]
         Self::Phone,
         Self::Console,
@@ -87,6 +89,9 @@ impl Item {
             Self::Aspect if browser.aspect_corrected() => ("Turn off aspect correction", "Shift+Cmd+A", "Ctrl+Shift+A"),
             Self::Aspect => ("Turn on aspect correction", "Shift+Cmd+A", "Ctrl+Shift+A"),
             Self::BookmarkPage => ("Bookmark this page", "Cmd+D", "Ctrl+D"),
+            // The active tab's channel, remembered or not (VS-109); shown
+            // only where it applies.
+            Self::Remember => (browser.remember_menu_words().unwrap_or(""), "", ""),
             #[cfg(feature = "phone-keyboard")]
             Self::Phone => ("Phone keyboard", "", ""),
             Self::Console => ("Developer console", "Option+Cmd+I", "Ctrl+Shift+I"),
@@ -169,6 +174,7 @@ impl Browser {
             }
             Item::Aspect => self.toggle_aspect(),
             Item::BookmarkPage => self.outputs.push(Output::Bookmark),
+            Item::Remember => self.remember_chosen(),
             #[cfg(feature = "phone-keyboard")]
             Item::Phone => self.toggle_phone_panel(),
             Item::Console => self.toggle_console(),
@@ -199,12 +205,15 @@ impl Browser {
             return;
         }
         let anchor = self.regions.menu;
+        // "Remember me here…" only where the active tab's channel may be
+        // remembered, or is (VS-109).
+        let shown: Vec<Item> = Item::ALL.iter().copied().filter(|item| *item != Item::Remember || self.remember_menu_words().is_some()).collect();
         #[allow(clippy::cast_precision_loss, reason = "under twenty items")]
-        let area = Rect::new(anchor.x1 - MENU_WIDTH, anchor.y1 + HAIRLINE, anchor.x1, anchor.y1 + HAIRLINE + ROW * Item::ALL.len() as f64);
+        let area = Rect::new(anchor.x1 - MENU_WIDTH, anchor.y1 + HAIRLINE, anchor.x1, anchor.y1 + HAIRLINE + ROW * shown.len() as f64);
         canvas.fill(area, 0.0, BLACK);
         border(canvas, area, HAIRLINE, RULE);
         let mut y = area.y0;
-        for &item in Item::ALL {
+        for item in shown {
             let rect = Rect::new(area.x0, y, area.x1, y + ROW);
             if rect.contains(self.pointer) {
                 canvas.fill(rect, 0.0, SELECTED);

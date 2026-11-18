@@ -212,7 +212,7 @@ impl Browser {
             || self.history_open()
             || self.bookmarks_open()
             || self.star_open()
-            || self.cookies_open()
+            || self.known_open()
             || self.console.open()
             || phone
             || question

@@ -1,7 +1,7 @@
 //! The fetcher process's logic, for its binary: the loop that holds one
 //! channel's network connections through the engine's web module, the
-//! sockets and the proxy, the cookie questions to the trusted core, and the
-//! arguments it starts with. `main.rs` confines the process and calls
+//! sockets and the proxy, viewer state's challenges asked of the trusted
+//! core, and the arguments it starts with. `main.rs` confines the process and calls
 //! [`run`].
 
 // No panicking constructs: this crate reads input from outside the
@@ -21,9 +21,9 @@
 
 mod agent;
 mod arguments;
-mod cookies;
 mod live;
 mod process;
+mod state;
 mod transport;
 
 pub use arguments::{Arguments, arguments};

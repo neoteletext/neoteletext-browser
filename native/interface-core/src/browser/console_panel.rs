@@ -2,9 +2,8 @@
 //! requirement 19.8): a panel docked at the bottom of the window, in place
 //! of the overview, opened by Command-Option-I on macOS and Control-Shift-I
 //! elsewhere, with a tab each for the active channel's network exchanges,
-//! packets, pages and notices, and one for managing cookies
-//! (`cookies_tab.rs`), and a Stats tab of what the active channel has sent
-//! and received. What it shows is the trusted core's cleaned text, drawn
+//! packets, pages and notices, and a Stats tab of what the active channel
+//! has sent and received. What it shows is the trusted core's cleaned text, drawn
 //! as text and never interpreted. It can pause, which stops it scrolling,
 //! and clear; its grabber makes it taller or shorter, and its minimise and
 //! maximise buttons fold it to its tab bar or give it all the room the
@@ -157,12 +156,11 @@ const fn level_colour(level: Level) -> crate::theme::Colour {
     }
 }
 
-/// The tab shown: one of the trusted core's entries, the figures, or the cookies.
+/// The tab shown: one of the trusted core's entries, or the figures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Tab {
     Entries(ConsoleTab),
     Stats,
-    Cookies,
 }
 
 impl Default for Tab {
@@ -172,14 +170,8 @@ impl Default for Tab {
 }
 
 /// Every tab, in the order the console shows them.
-const TABS: [Tab; ConsoleTab::ALL.len() + 2] = [
-    Tab::Entries(ConsoleTab::ALL[0]),
-    Tab::Entries(ConsoleTab::ALL[1]),
-    Tab::Entries(ConsoleTab::ALL[2]),
-    Tab::Entries(ConsoleTab::ALL[3]),
-    Tab::Stats,
-    Tab::Cookies,
-];
+const TABS: [Tab; ConsoleTab::ALL.len() + 1] =
+    [Tab::Entries(ConsoleTab::ALL[0]), Tab::Entries(ConsoleTab::ALL[1]), Tab::Entries(ConsoleTab::ALL[2]), Tab::Entries(ConsoleTab::ALL[3]), Tab::Stats];
 
 impl ConsoleUi {
     pub(in crate::browser) const fn open(&self) -> bool {
@@ -207,7 +199,7 @@ impl ConsoleUi {
     }
 
     /// The entries of the tab shown, those the Log tab's levels and search
-    /// let through; none on the Stats or the cookies' tab.
+    /// let through; none on the Stats tab.
     fn shown(&self) -> Option<Vec<&ConsoleEntry>> {
         let Tab::Entries(tab) = self.tab else { return None };
         let entries = self.entries.get(tab.index())?;
@@ -267,24 +259,11 @@ impl Browser {
     pub(in crate::browser) fn toggle_console(&mut self) {
         self.console.open = !self.console.open;
         self.outputs.push(Output::Console(self.console.open));
-        if self.console.tab == Tab::Cookies {
-            self.set_cookies_open(self.console.open);
-        }
-    }
-
-    /// The console, open at its cookies' tab, from the settings panel.
-    pub(in crate::browser) fn manage_cookies(&mut self) {
-        self.close_panels();
-        if !self.console.open {
-            self.toggle_console();
-        }
-        self.choose_console_tab(Tab::Cookies);
     }
 
     fn choose_console_tab(&mut self, tab: Tab) {
         self.console.tab = tab;
         self.console.back = 0;
-        self.set_cookies_open(tab == Tab::Cookies);
     }
 
     fn set_paused(&mut self, paused: bool) {

@@ -30,7 +30,7 @@ pub const MAX_UPDATE_STATUS: usize = 200;
 /// The longest version as text.
 pub const MAX_VERSION: usize = 17;
 
-pub use interface_core::settings::{CookieMode, MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView, UpdateView};
+pub use interface_core::settings::{MAX_REMOTE_PLACE, ProxyView, RemoteMode, RemotePlace, SettingChange, SettingsView, UpdateView};
 
 const PROXY_NONE: u8 = 0;
 const PROXY_HTTP: u8 = 1;
@@ -44,7 +44,9 @@ const CHANGE_ADD_LOCAL: u8 = 6;
 const CHANGE_REMOVE_LOCAL: u8 = 7;
 // 8 was "Remember history", removed by decision 65; never reused.
 const CHANGE_RESTORE_SESSION: u8 = 9;
-const CHANGE_COOKIES: u8 = 10;
+// 10 was cookies' Keep, Close and Block, removed with cookies (DEC-6471);
+// never reused.
+const CHANGE_CHANNELS_MAY_KNOW: u8 = 15;
 const CHANGE_REMOTE: u8 = 11;
 const CHANGE_ASPECT: u8 = 12;
 const CHANGE_WHEEL_INVERTED: u8 = 13;
@@ -55,23 +57,6 @@ const CHANGE_CHECK_UPDATES: u8 = 40;
 const REMOTE_HIDDEN: u8 = 0;
 const REMOTE_DOCKED: u8 = 1;
 const REMOTE_FLOATING: u8 = 2;
-fn push_mode(mode: CookieMode) -> u8 {
-    match mode {
-        CookieMode::Keep => 0,
-        CookieMode::Close => 1,
-        CookieMode::Block => 2,
-    }
-}
-
-fn read_mode(fields: &mut Fields<'_>) -> Result<CookieMode, ProtocolError> {
-    Ok(match fields.u8()? {
-        0 => CookieMode::Keep,
-        1 => CookieMode::Close,
-        2 => CookieMode::Block,
-        _ => return Err(ProtocolError::BadValue("cookie mode")),
-    })
-}
-
 fn push_proxy(payload: &mut Vec<u8>, proxy: &ProxyView) -> Result<(), ProtocolError> {
     match proxy {
         ProxyView::None => payload.push(PROXY_NONE),
@@ -111,7 +96,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
         push_text(payload, address, MAX_LOCAL_TEXT)?;
     }
     push_flag(payload, view.restore_session);
-    payload.push(push_mode(view.cookies));
+    push_flag(payload, view.channels_may_know);
     push_flag(payload, view.aspect);
     push_flag(payload, view.wheel_inverted);
     push_flag(payload, view.regis_contain);
@@ -140,13 +125,26 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let count = fields.count_u8(MAX_LOCAL, "too many local addresses")?;
     let local = (0..count).map(|_| fields.text(MAX_LOCAL_TEXT)).collect::<Result<Vec<_>, _>>()?;
     let restore_session = fields.flag("flag")?;
-    let cookies = read_mode(fields)?;
+    let channels_may_know = fields.flag("flag")?;
     let aspect = fields.flag("flag")?;
     let wheel_inverted = fields.flag("flag")?;
     let regis_contain = fields.flag("flag")?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
     let loopback_exemption = if fields.flag("flag")? { Some(fields.text(MAX_LOOPBACK_EXEMPTION)?) } else { None };
-    Ok(SettingsView { home, sound, volume, proxy, local, restore_session, cookies, aspect, wheel_inverted, regis_contain, refusal, loopback_exemption })
+    Ok(SettingsView {
+        home,
+        sound,
+        volume,
+        proxy,
+        local,
+        restore_session,
+        channels_may_know,
+        aspect,
+        wheel_inverted,
+        regis_contain,
+        refusal,
+        loopback_exemption,
+    })
 }
 
 pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Result<(), ProtocolError> {
@@ -179,7 +177,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_RESTORE_SESSION);
             push_flag(payload, *on);
         }
-        SettingChange::Cookies(mode) => payload.extend_from_slice(&[CHANGE_COOKIES, push_mode(*mode)]),
+        SettingChange::ChannelsMayKnow(allowed) => {
+            payload.push(CHANGE_CHANNELS_MAY_KNOW);
+            push_flag(payload, *allowed);
+        }
         SettingChange::Remote(place) => {
             payload.push(CHANGE_REMOTE);
             push_remote(payload, *place)?;
@@ -236,7 +237,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_ADD_LOCAL => SettingChange::AddLocal(fields.text(MAX_LOCAL_TEXT)?),
         CHANGE_REMOVE_LOCAL => SettingChange::RemoveLocal(fields.u8()?),
         CHANGE_RESTORE_SESSION => SettingChange::RestoreSession(fields.flag("flag")?),
-        CHANGE_COOKIES => SettingChange::Cookies(read_mode(fields)?),
+        CHANGE_CHANNELS_MAY_KNOW => SettingChange::ChannelsMayKnow(fields.flag("flag")?),
         CHANGE_REMOTE => SettingChange::Remote(read_remote(fields)?),
         CHANGE_CHECK_UPDATES => SettingChange::CheckUpdates(fields.flag("flag")?),
         CHANGE_ASPECT => SettingChange::Aspect(fields.flag("flag")?),
