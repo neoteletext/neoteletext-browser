@@ -1276,6 +1276,9 @@ mod tests {
     /// secure connection, and writes an input message the trusted core
     /// gives it to the channel over `wss`. No test opened a `wss`
     /// connection before; its parts were each tested over plain WebSocket.
+    /// VS-202 and VS-204: the channel's `STATE_CHALLENGE`, pushed before its
+    /// page, is asked of the trusted core, and the core's proof reaches the
+    /// channel before the input message the core sent while it was asked.
     #[cfg(feature = "interaction")]
     #[test]
     #[allow(clippy::too_many_lines, reason = "one server and one exchange, read in order")]
@@ -1321,6 +1324,14 @@ mod tests {
                                 std::str::from_utf8(&accept).unwrap()
                             );
                             writer.write_all(upgrade.as_bytes()).unwrap();
+                            // The challenge first, as a server sends it after
+                            // WELCOME (VS-202), in a frame of its own.
+                            let mut challenge = Vec::new();
+                            let state = neoteletext_web::records::state::StateChallenge { challenge: [7; 32], create: true };
+                            neoteletext_web::records::state::encode_challenge(state, 0, 1, &mut |packet| challenge.extend_from_slice(&packet.bytes)).unwrap();
+                            let mut frame = vec![0x80 | neoteletext_web::consts::OPCODE_BINARY, u8::try_from(challenge.len()).unwrap()];
+                            frame.extend_from_slice(&challenge);
+                            writer.write_all(&frame).unwrap();
                             // One binary frame, unmasked as a server's is.
                             let mut frame = vec![0x80 | neoteletext_web::consts::OPCODE_BINARY, u8::try_from(pushed.len()).unwrap()];
                             frame.extend_from_slice(&pushed);
@@ -1357,8 +1368,17 @@ mod tests {
         let mut from_fetcher = BufReader::new(core_reads);
         let mut until = |core_writes: &mut io::PipeWriter, wanted: &dyn Fn(&FromFetcher) -> bool| loop {
             let message = protocol::fetcher::read_from_fetcher(&mut from_fetcher).unwrap().expect("the fetcher ended");
-            if let FromFetcher::StateChallenged { request, .. } = &message {
-                let reply = protocol::fetcher::StateReply::None(protocol::fetcher::NoneReason::NoKey);
+            // An input message first, as SELECT would be sent while the
+            // core is asked, then the proof, which must still go first.
+            if let FromFetcher::StateChallenged { request, challenge, create: true } = &message {
+                assert_eq!(*challenge, [7; 32]);
+                protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();
+                let reply = protocol::fetcher::StateReply::Proof {
+                    algorithm: protocol::fetcher::Algorithm::Ed25519,
+                    lifetime: protocol::fetcher::Lifetime::Visit,
+                    public_key: [1; 32],
+                    signature: [2; 64],
+                };
                 protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::StateAnswer { request: *request, reply }).unwrap();
             }
             if wanted(&message) {
@@ -1368,13 +1388,18 @@ mod tests {
         // The handshake: the connection is open, and said secure.
         let input = until(&mut core_writes, &|message| matches!(message, FromFetcher::Input { .. }));
         assert_eq!(input, FromFetcher::Input { open: true, secure: true, wheel: false }, "keys go over a secure connection");
-        let page_message = until(&mut core_writes, &|message| matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, .. }));
+        // The challenge's own frame is passed on as pushed too, as every
+        // record is, for the decoder; the page is the next frame's.
+        let page_message =
+            until(&mut core_writes, &|message| matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, bytes } if bytes.len() == page.len()));
         assert_eq!(page_message, FromFetcher::Page { origin: Origin::PushedPackets, bytes: page }, "pushed over wss");
-        protocol::fetcher::write_to_fetcher(&mut core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();
-        // A ceiling, not a wait: the key arrives as soon as it is written.
+        // A ceiling, not a wait: each arrives as soon as it is written.
         let deadline = Duration::from_secs(10);
+        let proof = hearing.recv_timeout(deadline).expect("the proof reached the channel");
+        assert_eq!(proof[..5], [0xFF, 0x48, 98, 1, 0], "STATE_PROOF, Ed25519, a visit key, first");
+        assert_eq!(proof.len(), 3 + 98);
         let key = hearing.recv_timeout(deadline).expect("the input message reached the channel");
-        assert_eq!(key, KEY, "written over wss");
+        assert_eq!(key, KEY, "written over wss, after the proof");
     }
 
     /// REQ-814: the push WebSocket has the engine's heartbeat in the
