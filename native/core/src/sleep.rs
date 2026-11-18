@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use protocol::decoder::ToDecoder;
 
 /// How long a tab stays awake after it was last shown.
-pub const SLEEP_AFTER: Duration = Duration::from_secs(15 * 60);
+pub const SLEEP_AFTER: Duration = Duration::from_mins(15);
 /// The most kept of one channel's data for its next decoder. A channel whose
 /// data grows beyond it stays awake, rather than lose what it showed.
 pub const MAX_KEPT_BYTES: usize = 8 * 1024 * 1024;
@@ -173,8 +173,8 @@ mod tests {
         assert_eq!(sleep.kept(3), [ToDecoder::Data(vec![3])]);
         assert_eq!(sleep.kept(4), [ToDecoder::Data(vec![4])]);
         sleep.set_pushing(3, true);
-        assert!(sleep.awake(3, None, start + Duration::from_secs(86_400)), "the pushing tab");
-        assert!(!sleep.awake(4, None, start + Duration::from_secs(86_400)), "the other tab sleeps");
+        assert!(sleep.awake(3, None, start + Duration::from_hours(24)), "the pushing tab");
+        assert!(!sleep.awake(4, None, start + Duration::from_hours(24)), "the other tab sleeps");
         sleep.forget(3);
         assert_eq!(sleep.kept(4), [ToDecoder::Data(vec![4])], "forgetting one leaves the other");
     }

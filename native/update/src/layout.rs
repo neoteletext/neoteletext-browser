@@ -126,7 +126,7 @@ const _: () = assert!(
 /// assessment of a program it has not run before, measured at over 3
 /// seconds on a loaded machine; an antivirus scan on Windows), which have
 /// no bound of their own; 5 minutes, the security review's bound.
-pub const START_DEADLINE: Duration = Duration::from_secs(5 * 60);
+pub const START_DEADLINE: Duration = Duration::from_mins(5);
 
 /// The user's settings folder (requirement 19.1), which the trusted core
 /// keeps and the uninstaller offers to remove (requirement 13.20):

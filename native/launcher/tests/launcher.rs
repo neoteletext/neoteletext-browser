@@ -34,7 +34,7 @@ const SHORT_DEADLINE: Duration = Duration::from_secs(15);
 /// A deadline no test waits out: a version that is not to hang is given
 /// this long, so a loaded machine starting it slowly is not taken for one
 /// that hangs.
-const NO_DEADLINE_NEEDED: Duration = Duration::from_secs(5 * 60);
+const NO_DEADLINE_NEEDED: Duration = Duration::from_mins(5);
 /// The start deadline a test gives a version that never says it started.
 const TEST_START_DEADLINE: Duration = Duration::from_secs(2);
 /// The health deadline the slow version's test gives: shorter than its

@@ -41,7 +41,7 @@ const TIMEOUT: Duration = Duration::from_micros(DEFAULT_CONNECT_TIMEOUT_US);
 /// How long one request may take in all: its connection, handshake and
 /// every read (finding F-81). A release file at the manifest's bound,
 /// 64 MiB, at 1 Mbit/s takes about 9 minutes.
-pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10 * 60);
+pub const REQUEST_DEADLINE: Duration = Duration::from_mins(10);
 /// The port of TLS, which the `Host` header leaves unsaid (RFC 9110
 /// section 4.2.2).
 const HTTPS_PORT: u16 = 443;

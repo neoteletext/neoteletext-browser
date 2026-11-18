@@ -23,7 +23,7 @@ use super::processes::{end, end_aside, relay};
 use super::{Core, Event};
 
 /// How often the updater looks while the browser runs (section 3.4).
-pub const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+pub const CHECK_INTERVAL: Duration = Duration::from_hours(24);
 /// The time a version has to show it is healthy (section 3.2), and how
 /// long after its first frame its helpers are given to fail: defined once
 /// in `update::layout` for the core and the launcher, whose health
