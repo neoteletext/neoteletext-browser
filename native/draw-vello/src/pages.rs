@@ -240,8 +240,7 @@ impl Painter {
             held.number = self.next_image;
             self.next_image = self.next_image.wrapping_add(1);
             if !changed.is_empty() {
-                let since = self.regis_changed.get(&key).copied().unwrap_or_default();
-                self.regis_changed.insert(key, since.union(changed));
+                self.regis_changed.entry(key).or_default().add(changed);
             }
             return Ok(());
         }
@@ -261,8 +260,7 @@ impl Painter {
                     held.indices = indices;
                     return Ok(());
                 }
-                let since = self.regis_changed.get(&key).copied().unwrap_or_default();
-                self.regis_changed.insert(key, since.union(pixels));
+                self.regis_changed.entry(key).or_default().add(pixels);
             }
             None => {
                 self.changed.insert(key, DeviceBox::whole(PAGE_WIDTH, PAGE_HEIGHT));

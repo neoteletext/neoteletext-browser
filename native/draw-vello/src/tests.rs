@@ -591,6 +591,36 @@ fn a_part_of_a_regis_picture_is_laid_over_it_and_drawn_only_there() {
     assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 0, y: 0, width: 12, height: 1 }, &[0; 5]).is_err());
 }
 
+/// RULE-65: two parts of one repaint that lie far apart, as a key pressed
+/// and a meter lit are, draw two small boxes, not the one box that holds
+/// both, and the window is what a whole frame of the new picture gives.
+#[test]
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+fn two_parts_far_apart_draw_two_boxes() {
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(None)).unwrap();
+    frame(&mut painter, &mut browser, SETTLED);
+    frame(&mut painter, &mut browser, SETTLED);
+    // Twelve pixels on row 5 at the left, and twelve at the right.
+    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 2, base: 1, x: 20, y: 5, width: 12, height: 1 }, &[0x77; 6]).unwrap();
+    painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 3, base: 2, x: 700, y: 5, width: 12, height: 1 }, &[0x77; 6]).unwrap();
+    let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
+    assert_eq!(damage.len(), 2, "a box for each part: {damage:?}");
+    let joined = damage.iter().fold(DeviceBox::default(), |joined, area| joined.union(*area));
+    assert!(covered(&damage) * 10 < joined.area(), "far less than the box that holds both: {damage:?}");
+    let both = |painter: &mut Painter, _: &mut Browser| {
+        let mut packed = regis_packed(Some((20, 5, 12)));
+        let lit = regis_packed(Some((700, 5, 12)));
+        for (byte, other) in packed.iter_mut().zip(lit) {
+            *byte |= other;
+        }
+        painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &packed).unwrap();
+    };
+    assert_eq!(differing(&words, &fresh(&pages, SETTLED, both)), 0, "as the whole picture would be drawn");
+}
+
 /// REQ-6640 item 3: a still is the page with its screen as a frame draws
 /// it, made at the still's size, and a later image of the page does not
 /// change it; with no image held there is none.

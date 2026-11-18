@@ -119,8 +119,11 @@ pub struct Painter {
     /// in the page's own dots.
     changed: HashMap<PageKey, DeviceBox>,
     /// The pixels of each ReGIS picture that changed since the last frame
-    /// was drawn, in the picture's own pixels (REQ-6399).
-    regis_changed: HashMap<PageKey, DeviceBox>,
+    /// was drawn, in the picture's own pixels (REQ-6399): a box for each
+    /// part apart from the others, so that two changes far apart (a key
+    /// pressed and a meter lit) draw two small boxes, not the one that
+    /// holds both (RULE-65).
+    regis_changed: HashMap<PageKey, Damage>,
     /// The frame being drawn, and the last one drawn.
     frame: Frame,
     last: Frame,

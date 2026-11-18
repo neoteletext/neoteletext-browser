@@ -189,7 +189,9 @@ impl Painter {
             // that place in both frames, as in the common ends.
             for (was, now) in before.iter().zip(after).filter(|(was, now)| !same(was, now)) {
                 if let Some(dots) = self.narrowed(old, was, new, now) {
-                    damage.add(dots);
+                    for area in dots {
+                        damage.add(area);
+                    }
                 } else {
                     damage.add(was.bounds());
                     damage.add(now.bounds());
@@ -204,8 +206,9 @@ impl Painter {
     }
 
     /// For a page whose image alone changed, where it is drawn, inside the
-    /// same clips, the pixels of the dots that changed.
-    fn narrowed(&self, old: &Frame, was: &Recorded, new: &Frame, now: &Recorded) -> Option<DeviceBox> {
+    /// same clips, the pixels of the dots that changed: a box for each of a
+    /// ReGIS picture's changed parts.
+    fn narrowed(&self, old: &Frame, was: &Recorded, new: &Frame, now: &Recorded) -> Option<Vec<DeviceBox>> {
         let (Command::Page { key, area, .. }, Command::Page { key: key_now, area: area_now, .. }) = (was.command(), now.command()) else { return None };
         if key != key_now || area != area_now || old.rects(was.clip()) != new.rects(now.clip()) {
             return None;
@@ -214,19 +217,22 @@ impl Painter {
         // A ReGIS picture of which only some pixels changed, on a page
         // whose teletext image did not: those pixels, where the picture
         // lies in the page's place (REQ-6399 item 3).
-        if let (Some(pixels), None) = (self.regis_changed.get(key), self.changed.get(key)) {
+        if let (Some(parts), None) = (self.regis_changed.get(key), self.changed.get(key)) {
             let place = interface_core::canvas::regis_layout(*area, self.regis_contain, self.regis_keyed.contains(key)).picture;
             let (across, down) =
                 (place.width() / f64::from(interface_core::canvas::REGIS_WIDTH), place.height() / f64::from(interface_core::canvas::REGIS_HEIGHT));
             // Smooth sampling spreads a pixel's colour into its
             // neighbours' place: one pixel more on every side.
-            let changed = Rect {
-                x0: place.x0 + (f64::from(pixels.x0) - SAMPLING_REACH) * across,
-                y0: place.y0 + (f64::from(pixels.y0) - SAMPLING_REACH) * down,
-                x1: place.x0 + (f64::from(pixels.x1) + SAMPLING_REACH) * across,
-                y1: place.y0 + (f64::from(pixels.y1) + SAMPLING_REACH) * down,
+            let device = |pixels: &DeviceBox| {
+                let changed = Rect {
+                    x0: place.x0 + (f64::from(pixels.x0) - SAMPLING_REACH) * across,
+                    y0: place.y0 + (f64::from(pixels.y0) - SAMPLING_REACH) * down,
+                    x1: place.x0 + (f64::from(pixels.x1) + SAMPLING_REACH) * across,
+                    y1: place.y0 + (f64::from(pixels.y1) + SAMPLING_REACH) * down,
+                };
+                DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip)
             };
-            return Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip));
+            return Some(parts.boxes().iter().map(device).collect());
         }
         let dots = self.changed.get(key)?;
         let (across, down) = (area.width() / f64::from(PAGE_WIDTH), area.height() / f64::from(PAGE_HEIGHT));
@@ -236,7 +242,7 @@ impl Painter {
             x1: area.x0 + f64::from(dots.x1) * across,
             y1: area.y0 + f64::from(dots.y1) * down,
         };
-        Some(DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip))
+        Some(vec![DeviceBox::covering(changed, self.scale, self.surface()).intersect(clip)])
     }
 }
 
