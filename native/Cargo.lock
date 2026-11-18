@@ -2011,6 +2011,7 @@ dependencies = [
  "neoteletext-core",
  "neoteletext-formats",
  "neoteletext-input",
+ "neoteletext-rules",
  "neoteletext-transport",
  "neoteletext-web",
  "protocol",
@@ -2154,6 +2155,7 @@ dependencies = [
  "neoteletext-formats",
  "neoteletext-input",
  "neoteletext-qrkeyboard",
+ "neoteletext-rules",
  "neoteletext-web",
 ]
 

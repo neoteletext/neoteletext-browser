@@ -42,5 +42,10 @@ ring.workspace = true
 # engine's own clients.
 neoteletext-transport.workspace = true
 
+[dev-dependencies]
+# A rule's report, written as the engine writes it, for the tests of what
+# the fetcher sends on (page-rules.md RULE-46).
+neoteletext-rules.workspace = true
+
 [lints]
 workspace = true

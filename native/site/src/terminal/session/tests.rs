@@ -11,11 +11,31 @@ use crate::podcast::Episode;
 use crate::terminal::pages::contents_file;
 use neoteletext_input::event::{Mouse, Point, read_message, write};
 
-/// One item as a receiver sends it.
+/// One item as a receiver sends it under push protocol 9: the session's
+/// own as it is, and a viewer's input as the report of a rule of the
+/// page's table that sends it (page-rules.md RULE-46).
 pub(in crate::terminal) fn encoded(item: &Item<'_>) -> Vec<u8> {
     let mut out = [0; neoteletext_input::MAX_MESSAGE];
-    let length = write(item, &mut out).unwrap();
-    out[..length].to_vec()
+    let length = write_bare(item, &mut out);
+    if !neoteletext_input::event::is_page_input(item) {
+        return out[..length].to_vec();
+    }
+    let report = neoteletext_input::rules::RuleEvent {
+        on: ON,
+        generation: 1,
+        rule: 0,
+        tick: 0,
+        target: neoteletext_rules::table::Target::NONE,
+        body: neoteletext_input::rules::RuleBody::Input(&out[..length]),
+    };
+    let mut message = [0; neoteletext_input::MAX_MESSAGE];
+    let length = write(&Item::Event(Event::RuleEvent(report)), &mut message).unwrap();
+    message[..length].to_vec()
+}
+
+/// One item's own bytes, as a report carries them.
+fn write_bare(item: &Item<'_>, out: &mut [u8]) -> usize {
+    write(item, out).unwrap()
 }
 
 /// A printable key, as a receiver sends it outside `ALL_KEYS`: its text.

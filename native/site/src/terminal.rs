@@ -97,6 +97,9 @@ struct Session {
     /// The second page 700 last showed and whether it was playing, so the
     /// page is pushed each second and when the episode ends.
     shown: Option<(u64, bool)>,
+    /// The pages whose rule table this connection was sent (page-rules.md
+    /// RULE-41).
+    tables_sent: Vec<u16>,
 }
 
 /// Serves the terminal channel at `http://127.0.0.1:<port>/terminal/`,

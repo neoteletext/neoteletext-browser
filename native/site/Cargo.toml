@@ -13,6 +13,9 @@ decoder.workspace = true
 # sounds for its piano, the WebSocket accept value, and qrkeyboard for its
 # phone page.
 neoteletext-input.workspace = true
+# The table that sends every kind of input, which the reference channel
+# gives each of its pages (neoteletext-common's page-rules.md RULE-53).
+neoteletext-rules.workspace = true
 neoteletext-audio = { workspace = true, features = ["encode"] }
 neoteletext-web.workspace = true
 neoteletext-core.workspace = true

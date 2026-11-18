@@ -48,6 +48,7 @@ impl Session {
             away: false,
             podcast: settings.podcast.map(|episode| (episode, Player::new())),
             shown: None,
+            tables_sent: Vec::new(),
         }
     }
 
@@ -55,9 +56,38 @@ impl Session {
     /// packets with its cursor record as a packet 4/31 (neoteletext-common's
     /// DEC-1459), each cursor record a record of its own.
     pub(super) fn page_push(&mut self) -> Push {
-        let (bytes, next_record_id) = self.render().packets(AUDIO_SERVICE, self.record_id);
+        let mut bytes = self.rules();
+        let (page, next_record_id) = self.render().packets(AUDIO_SERVICE, self.record_id);
+        bytes.extend(page);
         self.record_id = next_record_id;
         Push::Page(bytes)
+    }
+
+    /// The open page's rule table, the first time the page is pushed on
+    /// this connection (page-rules.md RULE-41): the table that sends every
+    /// kind of input, which a server gives a channel whose pages have none
+    /// of their own (RULE-53), built by the engine's one function. Without
+    /// a table a receiver sends a page no input at all (RULE-50).
+    fn rules(&mut self) -> Vec<u8> {
+        /// Every table of this channel is its first.
+        const GENERATION: u16 = 1;
+        let mut bytes = Vec::new();
+        if self.tables_sent.contains(&self.page) {
+            return bytes;
+        }
+        // A table is 76 KB: kept off the stack.
+        let mut table = Box::new(neoteletext_rules::Table::new());
+        neoteletext_rules::default_send_all(false, &mut table);
+        let mut body = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
+        let Ok(length) = neoteletext_rules::encode(self.page, GENERATION, Some(&table), &mut body) else { return bytes };
+        let written = neoteletext_web::records::rules::encode(body.get(..length).unwrap_or(&[]), AUDIO_SERVICE, self.record_id, &mut |packet| {
+            bytes.extend_from_slice(&packet.bytes);
+        });
+        if written.is_ok() {
+            self.record_id = self.record_id.wrapping_add(1);
+            self.tables_sent.push(self.page);
+        }
+        bytes
     }
 
     /// The open page as it now stands.
@@ -139,11 +169,27 @@ impl Session {
         true
     }
 
-    /// Acts on one item of the input stream; returns what to push.
+    /// Acts on one item of the input stream; returns what to push. Under
+    /// push protocol 9 a viewer's input comes only as a rule's report
+    /// (neoteletext-common's page-rules.md RULE-46): a `RULE_EVENT` counts
+    /// one, whatever it carries, and the input it carries is acted on as
+    /// that input always was.
     pub(super) fn item(&mut self, item: &Item<'_>) -> Vec<Push> {
         // The input count (DOC-1943): a character or an event
         // counts one, modulo 65 536.
         self.acked = self.acked.wrapping_add(u16::try_from(units(item) & u32::from(u16::MAX)).unwrap_or(0));
+        if let Item::Event(Event::RuleEvent(rule)) = item {
+            return match rule.input() {
+                Some((carried, _)) => self.act(&carried),
+                // A firing or a value: no page of this channel asks for one.
+                None => Vec::new(),
+            };
+        }
+        self.act(item)
+    }
+
+    /// Acts on one item: the session's own, or the input a report carried.
+    fn act(&mut self, item: &Item<'_>) -> Vec<Push> {
         let mut pushes = Vec::new();
         match item {
             Item::Text(text) | Item::Event(Event::Paste { text, .. }) => {

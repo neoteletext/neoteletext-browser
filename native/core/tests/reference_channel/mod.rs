@@ -45,10 +45,25 @@ pub fn send(input: &Input, message: &ToFetcher) {
     input.flush().unwrap();
 }
 
-/// `item` as the receiver's session encodes it.
+/// `item` as the receiver's session encodes it. A viewer's input goes as
+/// the report of a rule of the page's table (push protocol 9,
+/// neoteletext-common's page-rules.md RULE-46): the `RULE_EVENT` that
+/// carries it, as the trusted core builds one for the table the reference
+/// channel sends each page, whose rules send every input.
 pub fn message(session: &mut Session, item: &Item<'_>) -> Vec<u8> {
+    use neoteletext_input::event::{Event, Stamp, is_page_input, write};
+    use neoteletext_input::rules::{RuleBody, RuleEvent};
     let mut out = [0; neoteletext_input::MAX_MESSAGE];
-    let length = session.send(item, 0, &mut out).unwrap();
+    let length = if is_page_input(item) {
+        let mut carried = [0; neoteletext_input::MAX_MESSAGE];
+        let carried_length = write(item, &mut carried).unwrap();
+        let on = Stamp::new(0x200, 0).unwrap();
+        let target = neoteletext_rules::table::Target::NONE;
+        let report = RuleEvent { on, generation: 1, rule: 0, tick: 0, target, body: RuleBody::Input(&carried[..carried_length]) };
+        session.send(&Item::Event(Event::RuleEvent(report)), 0, &mut out).unwrap()
+    } else {
+        session.send(item, 0, &mut out).unwrap()
+    };
     assert!(length > 0, "{item:?} went");
     out[..length].to_vec()
 }

@@ -249,6 +249,39 @@ struct SubPageListPart {
     entries: Vec<(u16, String)>,
 }
 
+/// Passes a channel's bytes to the trusted core, for its decoder, and
+/// tells it of each state query among what the channel pushed (RULE-47):
+/// the trusted core passes a page's state only in answer to a query this
+/// fetcher received (RULE-52 item 6).
+fn pass_bytes(output: &CorePipe, queries: &mut neoteletext_web::records::RecordReader, origin: Origin, bytes: Vec<u8>) -> Result<(), String> {
+    let asked = if matches!(origin, Origin::PushedPackets) { rules_queries(queries, &bytes) } else { Vec::new() };
+    send(output, &FromFetcher::Page { origin, bytes })?;
+    for query in &asked {
+        send(output, query)?;
+    }
+    Ok(())
+}
+
+/// The state queries (`RULES_QUERY`, page-rules.md RULE-47) among pushed
+/// packets, each as the message that tells the trusted core of it. Whole
+/// 42-byte packets are read as the channel's record stream; a query whose
+/// page the protocol would refuse is left out, never an error: the bytes
+/// are a server's.
+fn rules_queries(reader: &mut neoteletext_web::records::RecordReader, bytes: &[u8]) -> Vec<FromFetcher> {
+    use neoteletext_web::records::{ChannelRecord, Read as RecordRead};
+    let mut asked = Vec::new();
+    let (packets, _) = bytes.as_chunks::<{ neoteletext_core::consts::PACKET_BYTES }>();
+    for packet in packets {
+        if let RecordRead::Record(ChannelRecord::RulesQuery(query)) = reader.push(&neoteletext_core::packet::Packet { bytes: *packet }) {
+            let message = FromFetcher::RulesQuery { page: query.page.mpp(), identifier: query.identifier };
+            if write_to_core(&mut Vec::new(), &message).is_ok() {
+                asked.push(message);
+            }
+        }
+    }
+    asked
+}
+
 fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     if let Some(net) = output.net() {
         actions.push(match net {
@@ -551,6 +584,9 @@ fn run_with(
     let mut live = Live::default();
     // The status of the last response, for a refusal of its content.
     let mut last_status = None;
+    // The reader of the records the channel pushes, for the state queries
+    // among them; every packet goes on to the decoder unread all the same.
+    let mut queries = neoteletext_web::records::RecordReader::new();
 
     // The trusted core closes standard input to end the fetcher. Before
     // then it sends only what `ToFetcher` holds (REQ-1381 version 2):
@@ -572,7 +608,7 @@ fn run_with(
                 Action::Send(connection, bytes) => pump.execute(NetOutput::Send(connection, &bytes)),
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
-                Action::Bytes { origin, bytes } => send(&output, &FromFetcher::Page { origin, bytes })?,
+                Action::Bytes { origin, bytes } => pass_bytes(&output, &mut queries, origin, bytes)?,
                 Action::Ready(page, region) => {
                     service_ready(&agent, &output, page, region)?;
                     bundle_pending = agent.descriptor().is_some_and(|descriptor| descriptor.push().is_none());
@@ -1068,14 +1104,32 @@ mod tests {
     #[cfg(feature = "interaction")]
     const PUBLIC: neoteletext_web::url::IpAddress = neoteletext_web::url::IpAddress::V4([93, 184, 216, 34]);
 
-    /// A MOUSE move to the dot `x`, and a KEY press of `a`, as the
-    /// engine's writer writes them; the agent does not read them.
+    /// The report of a rule that carries `input`, a viewer's input event as
+    /// the engine's writer writes it: the only form input goes in under
+    /// push protocol 9 (page-rules.md RULE-46). The agent does not read it.
+    #[cfg(feature = "interaction")]
+    fn reported(input: &[u8]) -> Vec<u8> {
+        use neoteletext_input::event::{Event, Item, Stamp, write};
+        use neoteletext_input::rules::{RuleBody, RuleEvent};
+        let on = Stamp::new(0x200, 0).unwrap();
+        let target = neoteletext_rules::table::Target::NONE;
+        let event = RuleEvent { on, generation: 1, rule: 0, tick: 1, target, body: RuleBody::Input(input) };
+        let mut out = [0_u8; 64];
+        let length = write(&Item::Event(Event::RuleEvent(event)), &mut out).unwrap();
+        out[..length].to_vec()
+    }
+
+    /// The report of a MOUSE move to the dot `x`.
     #[cfg(feature = "interaction")]
     fn mouse_move(x: u8) -> Vec<u8> {
-        vec![0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x01, 0x05, x, 0x64]
+        reported(&[0xFF, 0x02, 0x80, 0x04, 0x00, 0x06, 0x00, 0x01, 0x05, x, 0x64])
     }
+
+    /// The report of a KEY press of `a`.
     #[cfg(feature = "interaction")]
-    const KEY: [u8; 9] = [0xFF, 0x01, 0x80, 0x04, 0x00, 0x10, b'a', 1, b'a'];
+    fn key_report() -> Vec<u8> {
+        reported(&[0xFF, 0x01, 0x80, 0x04, 0x00, 0x10, b'a', 1, b'a'])
+    }
 
     /// The frames of one send on the push WebSocket, unmasked: opcode and
     /// payload each (RFC 6455 section 5.2; short frames only).
@@ -1194,20 +1248,20 @@ mod tests {
     fn the_messages_of_one_moment_reach_the_agent_together_and_leave_in_one_write() {
         let send = |bytes: &[u8], move_of: Option<u8>, more: bool| ToFetcher::Send { bytes: bytes.to_vec(), move_of, more };
         let wakes = wakes_for(&[
-            send(&mouse_move(1), Some(0), true),
-            send(&KEY, None, false),
-            send(&KEY, None, false),
-            send(&KEY, None, true),
+            send(&mouse_move(1), None, true),
+            send(&key_report(), None, false),
+            send(&key_report(), None, false),
+            send(&key_report(), None, true),
             ToFetcher::MeasureRoundTrip(true),
-            send(&mouse_move(2), Some(0), true),
+            send(&mouse_move(2), None, true),
         ]);
         assert_eq!(wakes.len(), 5);
-        assert_eq!(records(&wakes[0]), [(mouse_move(1), Some(0)), (KEY.to_vec(), None)], "one moment, in order");
-        assert_eq!(records(&wakes[1]), [(KEY.to_vec(), None)], "a message alone, at once");
-        assert_eq!(records(&wakes[2]), [(KEY.to_vec(), None)], "another message hands on the moment");
+        assert_eq!(records(&wakes[0]), [(mouse_move(1), None), (key_report(), None)], "one moment, in order");
+        assert_eq!(records(&wakes[1]), [(key_report(), None)], "a message alone, at once");
+        assert_eq!(records(&wakes[2]), [(key_report(), None)], "another message hands on the moment");
         assert!(matches!(wakes[3], Wake::RoundTrip(true)));
-        assert_eq!(records(&wakes[4]), [(mouse_move(2), Some(0))], "the pipe's end hands on the moment");
-        let many: Vec<ToFetcher> = (0..=MOMENT_MESSAGES).map(|_| send(&KEY, None, true)).collect();
+        assert_eq!(records(&wakes[4]), [(mouse_move(2), None)], "the pipe's end hands on the moment");
+        let many: Vec<ToFetcher> = (0..=MOMENT_MESSAGES).map(|_| send(&key_report(), None, true)).collect();
         let wakes = wakes_for(&many);
         assert_eq!(wakes.iter().map(|wake| records(wake).len()).collect::<Vec<_>>(), [MOMENT_MESSAGES, 1], "bounded");
 
@@ -1216,15 +1270,15 @@ mod tests {
         open_push(&mut agent, 0);
         let mut actions = Vec::new();
         let mut handle = |input: Input<'_>| agent.handle(Instant(0), input, &mut |out| collect(out, &mut actions));
-        let moment = [Record { bytes: mouse_move(1), move_of: Some(0) }, Record { bytes: KEY.to_vec(), move_of: None }];
+        let moment = [Record { bytes: mouse_move(1), move_of: Some(0) }, Record { bytes: key_report(), move_of: None }];
         give_records(&moment, false, &mut handle);
-        give_records(&[Record { bytes: KEY.to_vec(), move_of: None }], true, &mut handle);
+        give_records(&[Record { bytes: key_report(), move_of: None }], true, &mut handle);
         give_records(&[Record { bytes: mouse_move(3), move_of: Some(0) }], false, &mut handle);
-        give_records(&[Record { bytes: KEY.to_vec(), move_of: None }], false, &mut handle);
+        give_records(&[Record { bytes: key_report(), move_of: None }], false, &mut handle);
         let binary = |bytes: &[u8]| (neoteletext_web::consts::OPCODE_BINARY, bytes.to_vec());
         assert_eq!(
             push_sends(&mut actions),
-            [vec![binary(&mouse_move(1)), binary(&KEY)], vec![binary(&KEY), binary(&mouse_move(3))], vec![binary(&KEY)]],
+            [vec![binary(&mouse_move(1)), binary(&key_report())], vec![binary(&key_report()), binary(&mouse_move(3))], vec![binary(&key_report())]],
             "a moment in one send, in order; one already here joins it; a lone message at once"
         );
     }
@@ -1372,7 +1426,7 @@ mod tests {
             // core is asked, then the proof, which must still go first.
             if let FromFetcher::StateChallenged { request, challenge, create: true } = &message {
                 assert_eq!(*challenge, [7; 32]);
-                protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::Send { bytes: KEY.to_vec(), move_of: None, more: false }).unwrap();
+                protocol::fetcher::write_to_fetcher(core_writes, &ToFetcher::Send { bytes: key_report(), move_of: None, more: false }).unwrap();
                 let reply = protocol::fetcher::StateReply::Proof {
                     algorithm: protocol::fetcher::Algorithm::Ed25519,
                     lifetime: protocol::fetcher::Lifetime::Visit,
@@ -1399,7 +1453,7 @@ mod tests {
         assert_eq!(proof[..5], [0xFF, 0x48, 98, 1, 0], "STATE_PROOF, Ed25519, a visit key, first");
         assert_eq!(proof.len(), 3 + 98);
         let key = hearing.recv_timeout(deadline).expect("the input message reached the channel");
-        assert_eq!(key, KEY, "written over wss, after the proof");
+        assert_eq!(key, key_report(), "written over wss, after the proof");
     }
 
     /// REQ-814: the push WebSocket has the engine's heartbeat in the
@@ -1447,5 +1501,29 @@ mod tests {
             })
             .collect();
         assert_eq!(told, [FromFetcher::RoundTrip { microseconds: 31_250 }]);
+    }
+
+    /// RULE-47, RULE-52 item 6 (REQ-6534): a `RULES_QUERY` record among
+    /// what a channel pushes is told the trusted core, by its page and
+    /// its identifier; other records and packets are not, a record cut
+    /// across two messages is read whole, and a query for a page the
+    /// protocol refuses is left out without ending the fetcher.
+    #[test]
+    fn a_state_query_the_channel_pushes_is_told_the_trusted_core() {
+        use neoteletext_web::records::rules::{RulesQueryRecord, encode_query};
+        // Each record under its own record id, as a server numbers them.
+        let packets = |page: u16, identifier: u32| {
+            let mut bytes = Vec::new();
+            let record = RulesQueryRecord { page: PageAddress::from_mpp(page).unwrap(), identifier };
+            encode_query(record, 0, u8::try_from(identifier & 0xFF).unwrap(), &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
+            bytes
+        };
+        let mut reader = neoteletext_web::records::RecordReader::new();
+        let pushed = packets(0x101, 0x0102_0304);
+        assert_eq!(rules_queries(&mut reader, &pushed), [FromFetcher::RulesQuery { page: 0x101, identifier: 0x0102_0304 }]);
+        assert_eq!(rules_queries(&mut reader, &[0x15; 84]), [], "packets that are no record");
+        let reserved = packets(0x1FF, 7);
+        assert_eq!(rules_queries(&mut reader, &reserved), [], "a page no channel has");
+        assert_eq!(rules_queries(&mut reader, &packets(0x200, 8)), [FromFetcher::RulesQuery { page: 0x200, identifier: 8 }], "and the next is read");
     }
 }
