@@ -158,6 +158,8 @@ fn object(record: &NaplpsObject<'_>) -> naplps::Object {
         pressed,
         alternative,
         frames: record.frames.to_vec(),
+        // The record's labels reach the renderer with TODO-6694 step 3.
+        label: String::new(),
     }
 }
 

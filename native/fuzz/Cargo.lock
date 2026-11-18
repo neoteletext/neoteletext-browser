@@ -1040,12 +1040,12 @@ dependencies = [
 [[package]]
 name = "naplps"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a#dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe#b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe"
 
 [[package]]
 name = "naplps-fonts"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a#dfd5e8c8cbf434a072cca13c8e693c573bdc6e8a"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-naplps?rev=b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe#b435b7dc61e6c89fdaec6f4991284bb2b4fd4abe"
 
 [[package]]
 name = "neoteletext"
