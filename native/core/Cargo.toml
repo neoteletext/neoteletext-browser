@@ -56,6 +56,14 @@ windows-sys = { version = "=0.52.0", features = ["Win32_Storage_FileSystem"] }
 # render, this crate's encoding and the interface's decoding.
 [dev-dependencies]
 decoder.workspace = true
+# The timed test of a key to a local sound and to a level (page-rules.md
+# RULE-66) runs the sound helper's mixers and writes the sound a channel
+# would send: the helper's library, the audio profile's writer and a
+# family's patch.
+sound = { path = "../sound", package = "neoteletext-sound" }
+neoteletext-audio = { workspace = true, features = ["encode"] }
+neoteletext-audio-instruments = { workspace = true, features = ["interface", "synth7"] }
+neoteletext-audio-mix.workspace = true
 # The stand-in broker the hostile-interface harness starts the core
 # against (finding F-98).
 confine = { workspace = true, features = ["test-support"] }
