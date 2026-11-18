@@ -162,11 +162,17 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // The paint point painted at in the last wake, and when on the
     // engine's own clock the painting began (RULE-98 item 5).
     let mut painting: Option<u64> = None;
+    // RULE-66's hops: when the loop last woke, to mark a wake whose work
+    // kept a message waiting.
+    #[cfg(feature = "timed-test")]
+    let mut woke = std::time::Instant::now();
     loop {
         // What the last message or deadline produced goes before waiting.
         output.flush()?;
         #[cfg(feature = "timed-test")]
         protocol::timed_test::flushed("decoder");
+        #[cfg(feature = "timed-test")]
+        timed::busy(woke);
         if let Some(began) = painting.take() {
             engine.painted(began);
         }
@@ -180,6 +186,13 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             Woken::Deadline => None,
             Woken::Ended => return Ok(()),
         };
+        #[cfg(feature = "timed-test")]
+        {
+            woke = std::time::Instant::now();
+            if let Some(Ok(Some(ToDecoder::RuleInput { sequence, .. }))) = &received {
+                protocol::timed_test::mark("decoder", "input-taken", woke, format_args!("{sequence}"));
+            }
+        }
         // RULE-66's hops: how late the loop woke for its deadline.
         #[cfg(feature = "timed-test")]
         let woke_late_us = if received.is_none() { deadline.map(|deadline| engine.now_us().saturating_sub(deadline)) } else { None };
@@ -206,7 +219,11 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                     "decoder",
                     "paint",
                     std::time::Instant::now(),
-                    format_args!("after-point {} woke-late {}", real.saturating_sub(point), woke_late_us.map_or(-1, |late| i64::try_from(late).unwrap_or(-1))),
+                    format_args!(
+                        "after-point {} woke-late {}",
+                        i64::try_from(real).unwrap_or(0).saturating_sub(i64::try_from(point).unwrap_or(0)),
+                        woke_late_us.map_or(-1, |late| i64::try_from(late).unwrap_or(-1))
+                    ),
                 );
             }
             // The animation of the pages on screen, after the rules ran
@@ -378,6 +395,20 @@ mod timed {
     pub(super) struct Held {
         on: bool,
         waiting: Vec<(u64, ToDecoder)>,
+    }
+
+    /// A wake whose work took longer than this is marked: a third of a
+    /// hop's two milliseconds in RULE-64.
+    const BUSY_MICROSECONDS: u128 = 300;
+
+    /// Marks the wake at `woke` when its work took longer than
+    /// [`BUSY_MICROSECONDS`], so that a message read meanwhile is seen to
+    /// have waited for it.
+    pub(super) fn busy(woke: std::time::Instant) {
+        let took = woke.elapsed().as_micros();
+        if took > BUSY_MICROSECONDS {
+            protocol::timed_test::mark("decoder", "busy-wake", woke, format_args!("{took}"));
+        }
     }
 
     impl Held {

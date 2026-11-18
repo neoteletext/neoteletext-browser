@@ -48,6 +48,9 @@ use neoteletext::settings as stored;
 fn core() -> Result<(), String> {
     let report = confine::apply(Role::Core, stored::folder().as_deref())?;
     eprintln!("neoteletext: the trusted core is confined: {report}");
+    // RULE-66: the timed test's marks carry each thread's use of the processor.
+    #[cfg(all(feature = "timed-test", target_os = "linux"))]
+    protocol::timed_test::read_threads_with(confine::scheduling::thread_usage);
     let broker = Broker::from_parent().map_err(|error| error.to_string())?;
     trusted_core::run(&broker, std::env::args().skip(2), &report.to_string())
 }

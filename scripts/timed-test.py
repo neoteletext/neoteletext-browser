@@ -92,7 +92,8 @@ def marks(path):
     """Every mark of the log, as (microseconds, process, what, detail)."""
     found = []
     for line in open(path, errors="replace"):
-        parts = line.split()
+        # After a `|`, the marking thread's scheduling, read by hops.
+        parts = line.split(" |", 1)[0].split()
         if len(parts) < 4 or parts[0] != "neoteletext-timed" or not parts[3].isdigit():
             continue
         found.append((int(parts[3]), parts[1], parts[2], " ".join(parts[4:])))

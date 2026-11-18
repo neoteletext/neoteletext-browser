@@ -17,7 +17,7 @@
 //! most a timer tick away. It needs no privilege and changes no share of
 //! the processor: the slice says how soon a thread runs, not how much.
 
-#![expect(unsafe_code, reason = "sched_setattr and getpriority, which neither the standard library nor libc's safe items offer")]
+#![expect(unsafe_code, reason = "sched_setattr, getpriority and getrusage, which neither the standard library nor libc's safe items offer")]
 
 use std::io;
 
@@ -75,6 +75,33 @@ pub fn ask_for_short_slices() -> io::Result<()> {
 fn clear_errno() {
     // SAFETY: __errno_location gives the calling thread's own errno.
     unsafe { *libc::__errno_location() = 0 };
+}
+
+/// Microseconds in a second, for a `timeval`.
+#[cfg(feature = "timed-test")]
+const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
+
+/// The calling thread's number, its processor time in microseconds, and
+/// its voluntary and involuntary context switches (`gettid(2)`,
+/// `getrusage(2)` with `RUSAGE_THREAD`): for the timed test's marks
+/// (RULE-66), which tell a hop's time apart as work, a wait to run or a
+/// wait for input, in every process, confined or not.
+#[cfg(feature = "timed-test")]
+#[must_use]
+pub fn thread_usage() -> Option<[u64; 4]> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: the buffer is a live rusage, which the call writes whole.
+    if unsafe { libc::getrusage(libc::RUSAGE_THREAD, usage.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: the kernel wrote it, and it was zeroed before.
+    let usage = unsafe { usage.assume_init() };
+    // SAFETY: gettid takes nothing and cannot fail.
+    let thread = u64::try_from(unsafe { libc::gettid() }).ok()?;
+    let microseconds =
+        |time: libc::timeval| u64::try_from(time.tv_sec).ok()?.checked_mul(MICROSECONDS_PER_SECOND)?.checked_add(u64::try_from(time.tv_usec).ok()?);
+    let ran = microseconds(usage.ru_utime)?.checked_add(microseconds(usage.ru_stime)?)?;
+    Some([thread, ran, u64::try_from(usage.ru_nvcsw).ok()?, u64::try_from(usage.ru_nivcsw).ok()?])
 }
 
 #[cfg(test)]

@@ -63,13 +63,41 @@ pub fn monotonic_us(at: Instant) -> Option<u64> {
 /// what more the test matches it by.
 pub fn mark(process: &str, what: &str, at: Instant, detail: core::fmt::Arguments<'_>) {
     use std::io::Write as _;
+    let scheduled = scheduled();
     let line = match monotonic_us(at) {
-        Some(us) => format!("neoteletext-timed {process} {what} {us} {detail}\n"),
-        None => format!("neoteletext-timed {process} {what} unreadable-clock {detail}\n"),
+        Some(us) => format!("neoteletext-timed {process} {what} {us} {detail} |{scheduled}\n"),
+        None => format!("neoteletext-timed {process} {what} unreadable-clock {detail} |{scheduled}\n"),
     };
     // One write for the whole line: the processes share one log, and a
     // line written in pieces is interleaved with another's.
     let _ = std::io::stderr().lock().write_all(line.as_bytes());
+}
+
+/// What reads the marking thread's number, processor time in
+/// microseconds and voluntary and involuntary context switches, given by
+/// each process at its start ([`read_threads_with`]).
+static THREAD_USAGE: std::sync::OnceLock<fn() -> Option<[u64; 4]>> = std::sync::OnceLock::new();
+
+/// Gives the marks the process's reader of its threads' use
+/// (`confine::scheduling::thread_usage`), which this crate cannot call.
+pub fn read_threads_with(reader: fn() -> Option<[u64; 4]>) {
+    let _ = THREAD_USAGE.set(reader);
+}
+
+/// The marking thread's scheduling so far, after a mark's `|`: its
+/// number, the microseconds it has run, its voluntary and involuntary
+/// context switches, and, where its confinement shows `/proc`, the
+/// microseconds it has waited runnable for a processor (the second field
+/// of Linux's `/proc/thread-self/schedstat`, in nanoseconds), so that a
+/// hop's time can be told apart as work, a wait to be scheduled or a wait
+/// for its input.
+fn scheduled() -> String {
+    let Some([thread, ran, voluntary, involuntary]) = THREAD_USAGE.get().and_then(|reader| reader()) else { return String::from("-") };
+    let waited = std::fs::read_to_string("/proc/thread-self/schedstat")
+        .ok()
+        .and_then(|times| times.split_whitespace().nth(1).and_then(|field| field.parse::<u64>().ok()))
+        .map_or_else(String::new, |ns| format!(" waited={}", ns / NANOSECONDS_PER_MICROSECOND));
+    format!("tid={thread} ran={ran} vcs={voluntary} ics={involuntary}{waited}")
 }
 
 /// A message the test times was written and waits for its flush.

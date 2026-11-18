@@ -377,6 +377,11 @@ impl ApplicationHandler<Incoming> for App {
         #[cfg(feature = "timed-test")]
         let key = matches!(&event, WindowEvent::KeyboardInput { event, .. } if event.state == winit::event::ElementState::Pressed && !event.repeat);
         self.window_input(event_loop, window_id, event);
+        // RULE-66's hops: when the key had been handled, before its flush.
+        #[cfg(feature = "timed-test")]
+        if key {
+            protocol::timed_test::mark("interface", "key-handled", Instant::now(), format_args!(""));
+        }
         // The input goes to the trusted core as soon as it has been
         // handled, before the frame it asked for is drawn: winit on macOS
         // draws the frames asked for before `about_to_wait` (REQ-RCH-003).

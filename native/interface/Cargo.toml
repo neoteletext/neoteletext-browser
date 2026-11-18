@@ -19,7 +19,7 @@ interaction = ["protocol/interaction", "interface-core/interaction", "dep:neotel
 phone-keyboard = ["interaction", "protocol/phone-keyboard", "interface-core/phone-keyboard"]
 # The timed test's display and marks (page-rules.md RULE-66), only in the
 # build `scripts/timed-test.sh` makes.
-timed-test = ["protocol/timed-test"]
+timed-test = ["protocol/timed-test", "confine/timed-test"]
 
 [dependencies]
 confine.workspace = true
