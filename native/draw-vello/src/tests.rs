@@ -590,3 +590,46 @@ fn a_part_of_a_regis_picture_is_laid_over_it_and_drawn_only_there() {
     assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 796, y: 0, width: 12, height: 1 }, &[0; 6]).is_err());
     assert!(painter.set_regis(FRONT, &regis_palette(), RegisPart { number: 4, base: 3, x: 0, y: 0, width: 12, height: 1 }, &[0; 5]).is_err());
 }
+
+/// REQ-6640 item 3: a still is the page with its screen as a frame draws
+/// it, made at the still's size, and a later image of the page does not
+/// change it; with no image held there is none.
+#[test]
+fn a_still_is_the_page_as_drawn_and_stays_as_it_was() {
+    use interface_core::canvas::{STILL_HEIGHT, STILL_WIDTH, image_within};
+    let samples = pages();
+    let (first, second) = (&samples[0], &samples[1]);
+    let colour = |sample: &Sample| {
+        let [red, green, blue] = sample.palette[usize::from(sample.screen)];
+        Colour { red, green, blue }
+    };
+    let whole = Rect::new(0.0, 0.0, f64::from(STILL_WIDTH), f64::from(STILL_HEIGHT));
+    let draw = |painter: &mut Painter, paint: &dyn Fn(&mut Painter)| {
+        let mut words = vec![0; usize::from(STILL_WIDTH) * usize::from(STILL_HEIGHT)];
+        painter.begin(STILL_WIDTH, STILL_HEIGHT, 1.0);
+        paint(painter);
+        painter.finish(&mut words);
+        words
+    };
+    let mut painter = Painter::new(Family::Roboto);
+    assert!(!painter.keep_still(1, FRONT), "no image of the page, no still");
+    painter.set_page(FRONT, &first.palette, first.screen, &first.indices).unwrap();
+    let as_drawn = draw(&mut painter, &|painter| {
+        painter.fill(whole, 0.0, colour(first));
+        painter.page(FRONT, image_within(whole));
+    });
+    assert!(painter.keep_still(1, FRONT));
+    painter.set_page(FRONT, &second.palette, second.screen, &second.indices).unwrap();
+    let newer = draw(&mut painter, &|painter| {
+        painter.fill(whole, 0.0, colour(second));
+        painter.page(FRONT, image_within(whole));
+    });
+    let still = draw(&mut painter, &|painter| {
+        assert!(painter.still(1, whole));
+    });
+    let differing = |a: &[u32], b: &[u32]| a.iter().zip(b).filter(|(a, b)| a != b).count();
+    assert!(differing(&as_drawn, &newer) > 0, "the two images differ");
+    assert_eq!(differing(&still, &as_drawn), 0, "the still is the first image as drawn");
+    painter.forget_still(1);
+    assert!(!painter.still(1, whole), "forgotten");
+}

@@ -44,13 +44,13 @@ impl Browser {
             .into_iter()
             .chain(self.bookmarks_deadline(now))
             .chain(self.tips_deadline(now))
-            .chain(self.tabs_deadline(now))
+            .chain(self.filmstrip_deadline(now))
             .chain(self.full_screen_deadline(now))
             .chain(self.wheel_blink_deadline(now))
             .chain(self.subpages_deadline(now))
             .chain(self.held_label_deadline(now))
             .min();
-        if self.wall.animating(now) || self.remote_animating(now) {
+        if self.wall.animating(now) || self.remote_animating(now) || self.filmstrip_animating(now) {
             Some(SMOOTH_FRAME_MILLISECONDS)
         } else if deadline.is_some() {
             deadline
@@ -79,7 +79,7 @@ impl Browser {
         self.rings.retain(|&(_, at)| now.saturating_sub(at) < UPDATE_RING_MILLISECONDS);
         let held = self.settle_hold(now);
         let tipped = self.tips_settle(now);
-        let paneled = self.tabs_settle(now);
+        let paneled = self.filmstrip_settle(now);
         let full_screen = self.full_screen_settle(now);
         let blinked = self.wheel_blink_settle(now);
         self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen || blinked

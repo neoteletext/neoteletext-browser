@@ -104,6 +104,27 @@ fn the_wheel_over_a_page_with_sub_pages_steps_them_unless_its_channel_uses_the_w
     assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "the channel's: it uses the wheel");
 }
 
+/// REQ-6640 items 6 and 9: while the filmstrip is open over a page whose
+/// channel takes the mouse, the wheel, the keys and Escape are the
+/// strip's, so the wheel slides the filmstrip and Escape closes it. Before,
+/// the wheel went to the channel beneath and the filmstrip did not move.
+#[test]
+fn the_open_filmstrip_takes_the_wheel_and_keys_from_the_page() {
+    let mut browser = browser();
+    browser.set_typing(typing(None), 0);
+    let row = browser.regions.rows[0].0;
+    crate::browser::fixture::press_at(&mut browser, &mut Recorder::new(), row);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
+    browser.take_outputs();
+    let tabs = browser.tab_strip.tabs_area;
+    browser.pointer_moved(tabs.x0 + 5.0, 20.0, 10_000);
+    assert!(browser.settle(10_300) && browser.filmstrip_open());
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 11_000);
+    browser.pointer_moved(400.0, 200.0, 11_000);
+    assert_eq!(browser.typing_target(), None, "the keys are the strip's");
+    assert_eq!(browser.terminal_wheel(0.0, 1.0), None, "the wheel is the browser's");
+}
+
 /// REQ-3937 item 4: a click on a list changes nothing for the mouse: the
 /// wheel where a rule claims it, a move and another button over the page
 /// still go to its channel, or the wheel would turn the page.

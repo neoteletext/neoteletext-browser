@@ -76,6 +76,12 @@ impl Tween {
         self.from + (self.to - self.from) * self.curve.at(progress)
     }
 
+    /// Where it is moving to, or rests.
+    #[must_use]
+    pub const fn target(&self) -> f32 {
+        self.to
+    }
+
     /// Starts moving towards `target` from wherever it is at `now`; the same target again changes nothing.
     pub fn set(&mut self, target: f32, now: u64) {
         if (target - self.to).abs() > f32::EPSILON {

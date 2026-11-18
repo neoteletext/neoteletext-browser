@@ -26,7 +26,11 @@ impl Browser {
             || self.over_known(point)
             || self.tips_take_wheel()
             || self.full_screen_over_strip();
-        let place = if elsewhere {
+        // The open filmstrip lies over everything below the strip, the
+        // overlays among them (REQ-6640 item 6).
+        let place = if self.over_filmstrip() {
+            WheelPlace::Filmstrip
+        } else if elsewhere {
             WheelPlace::Elsewhere
         } else if self.wall.zoomed().is_none() {
             WheelPlace::Wall

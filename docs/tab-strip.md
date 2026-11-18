@@ -19,6 +19,9 @@ Tabs shrink to 90 points; past that the strip stopped drawing them. A tab that d
 
 ## 3. Overflow
 
+*Withdrawn in part on 18 November 2026 by DEC-6637:* the panel this section describes, and its code, are gone. The tabs are one row of one width that slides with easing to show the active tab whole, with the count of those not shown; a rest on the tabs, or a press on the count, slides out the tab filmstrip in the panel's place, a row of still pictures of every tab (REQ-6640). A tab's title is its channel's name, else its host (REQ-6641). What follows is the panel as it was built.
+
+
 - **Every tab is 230 points wide** however many there are (decision 102): a tab never shrinks, so none moves under the pointer as tabs come and go. The strip shows the tabs that fit, in order; when the active tab would not fit, it takes the last place, so the tab being shown is always in view. A **count**, "+5", follows the last tab shown, before the new-tab button.
 - **When the pointer has rested on the tabs for 300 milliseconds** while tabs overflow, a **panel joined to the strip's underside** appears, with no seam between them: the tabs that did not fit wrap into it in rows, at the strip's tab width, as if the strip had grown downward. Every tab there can be chosen, closed, muted, middle-clicked closed and dragged, in the panel or back into the strip. A pointer crossing the strip on its way to the toolbar does not open it (decision 102: opening at once laid the panel over the toolbar and took the address field's click).
 - **While it is open, the tabs keep their places:** a tab chosen in the panel becomes active where it is, and moves to the strip only once the panel shuts; so it stays under the pointer, and a tab dragged from the panel is drawn where the pointer has it.

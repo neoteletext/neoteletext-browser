@@ -46,6 +46,13 @@ pub(crate) enum Command {
         style: Style,
         paint: Colour,
     },
+    /// A still of a page (REQ-6640 item 3), by the number of the still it
+    /// was.
+    Still {
+        still: u32,
+        area: Rect,
+        image: u64,
+    },
 }
 
 /// A call as kept: with the clips it was drawn inside, and the device
@@ -215,5 +222,19 @@ impl Canvas for Painter {
 
     fn line_height(&mut self, style: Style) -> f64 {
         self.layout("X", Style { caps: false, ..style }).map_or(0.0, |layout| f64::from(layout.height()))
+    }
+
+    fn keep_still(&mut self, still: u32, key: PageKey) -> bool {
+        self.make_still(still, key)
+    }
+
+    fn still(&mut self, still: u32, area: Rect) -> bool {
+        let Some(image) = self.stills.get(&still).map(crate::pages::Still::number) else { return false };
+        self.record(Command::Still { still, area, image }, area);
+        true
+    }
+
+    fn forget_still(&mut self, still: u32) {
+        self.stills.remove(&still);
     }
 }

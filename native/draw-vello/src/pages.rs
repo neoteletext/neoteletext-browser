@@ -1,13 +1,13 @@
 //! Page images as the painter holds them: set from a page's palette and
 //! dots, kept while the page is shown, and drawn.
 
-use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey, REGIS_COLOURS, REGIS_HEIGHT, REGIS_WIDTH};
+use interface_core::canvas::{MAX_STILLS, PAGE_HEIGHT, PAGE_WIDTH, PageKey, REGIS_COLOURS, REGIS_HEIGHT, REGIS_WIDTH, STILL_HEIGHT, STILL_WIDTH, image_within};
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 use std::sync::Arc;
 use vello_cpu::kurbo::{self, Vec2};
 use vello_cpu::peniko::{ImageAlphaType, ImageQuality, ImageSampler};
-use vello_cpu::{Image, ImageSource, PixelMetadata, Pixmap};
+use vello_cpu::{Image, ImageSource, PixelMetadata, Pixmap, RenderContext};
 
 use crate::damage::changed_dots;
 use crate::{DeviceBox, OPAQUE, PAGE_DOTS, PageError, Painter, RGBA_BYTES};
@@ -29,6 +29,21 @@ impl PageImage {
     }
 
     /// Which image it is.
+    pub(crate) fn number(&self) -> u64 {
+        self.number
+    }
+}
+
+/// A still of a page, made once at [`STILL_WIDTH`] by [`STILL_HEIGHT`]
+/// pixels from what the page area draws (REQ-6640 item 3).
+pub(crate) struct Still {
+    image: Image,
+    /// Which still it is: a new one is a new number.
+    number: u64,
+}
+
+impl Still {
+    /// Which still it is.
     pub(crate) fn number(&self) -> u64 {
         self.number
     }
@@ -259,6 +274,49 @@ impl Painter {
         self.next_image = number.wrapping_add(1);
         self.regis.insert(key, RegisImage { pixmap, background, number, sequence: part.number, palette: *palette, indices });
         Ok(())
+    }
+
+    /// Makes a still of `key` under `still` from its latest image, drawn as
+    /// a frame draws the page with its screen (REQ-6640 item 3); false when
+    /// no image of the page is held. Past [`MAX_STILLS`] the oldest still
+    /// goes.
+    pub(crate) fn make_still(&mut self, still: u32, key: PageKey) -> bool {
+        let Some(screen) = self.pages.get(&key).map(PageImage::screen) else { return false };
+        // The page is drawn by the frame's own code into a context of the
+        // still's size, with no offset and one pixel to each point, and
+        // the frame's context is put back after.
+        let frame = (core::mem::replace(&mut self.context, RenderContext::new(STILL_WIDTH, STILL_HEIGHT)), self.origin, self.scale);
+        self.origin = (0.0, 0.0);
+        self.scale = 1.0;
+        let whole = Rect::new(0.0, 0.0, f64::from(STILL_WIDTH), f64::from(STILL_HEIGHT));
+        self.draw_fill(whole, 0.0, screen);
+        self.draw_page(key, image_within(whole));
+        self.context.flush();
+        let mut pixmap = Pixmap::new(STILL_WIDTH, STILL_HEIGHT);
+        self.context.render(&mut pixmap, &mut self.resources);
+        (self.context, self.origin, self.scale) = frame;
+        if self.stills.len() >= MAX_STILLS
+            && !self.stills.contains_key(&still)
+            && let Some(oldest) = self.stills.iter().min_by_key(|(_, kept)| kept.number).map(|(&number, _)| number)
+        {
+            self.stills.remove(&oldest);
+        }
+        let number = self.next_image;
+        self.next_image = number.wrapping_add(1);
+        // Drawn larger or smaller than made, so sampled smoothly.
+        let image = Image { image: ImageSource::Pixmap(Arc::new(pixmap)), sampler: ImageSampler { quality: ImageQuality::Medium, ..ImageSampler::default() } };
+        self.stills.insert(still, Still { image, number });
+        true
+    }
+
+    /// Draws a still, scaled to fill `area`.
+    pub(crate) fn draw_still(&mut self, still: u32, area: Rect) {
+        let Some(image) = self.stills.get(&still).map(|kept| kept.image.clone()) else { return };
+        let (width, height) = (f64::from(STILL_WIDTH), f64::from(STILL_HEIGHT));
+        let placement = self.base().pre_translate(Vec2::new(area.x0, area.y0)).pre_scale_non_uniform(area.width() / width, area.height() / height);
+        self.context.set_transform(placement);
+        self.context.set_paint(image);
+        self.context.fill_rect(&kurbo::Rect::new(0.0, 0.0, width, height));
     }
 
     /// Forgets the images of pages not in `keep`.

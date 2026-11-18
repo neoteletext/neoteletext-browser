@@ -81,3 +81,7 @@ pub(super) const KIND_STATE_SEND_NONE: u8 = 175;
 // RULE-47, RULE-52 item 6), in the next number free across every pipe
 // after the decoder's rule messages.
 pub(super) const KIND_RULES_QUERY: u8 = 186;
+// The name a channel's `channel.ttx` gives, the tab's title (REQ-6641,
+// DEC-6637 item 9), in a number clear of those other work in flight on 18
+// November 2026 may take next.
+pub(super) const KIND_CHANNEL_NAME: u8 = 200;

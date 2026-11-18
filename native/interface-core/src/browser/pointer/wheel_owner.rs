@@ -43,6 +43,15 @@
 //! | `Picture` | no | yes | `Page` |
 //! | `Picture` | yes | no | `Steps` |
 //! | `Picture` | yes | yes | `Steps` |
+//! | `Filmstrip` | no | no | `Filmstrip` |
+//! | `Filmstrip` | no | yes | `Filmstrip` |
+//! | `Filmstrip` | yes | no | `Filmstrip` |
+//! | `Filmstrip` | yes | yes | `Filmstrip` |
+//!
+//! `Filmstrip` slides the open tab filmstrip's row of pictures (REQ-6640
+//! item 6): over it nothing beneath scrolls or steps, and no rule's claim
+//! counts, since the filmstrip covers the page and the strip then has the
+//! keys and the mouse.
 //!
 //! `Steps` steps the open page's sub-pages when it has them and the
 //! magazine's pages when it has none (REQ-6349), with the ways there are
@@ -55,6 +64,9 @@
 /// Where the pointer is, as the wheel sees it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::browser) enum WheelPlace {
+    /// Over the open tab filmstrip, which lies over everything below the
+    /// strip (REQ-6640).
+    Filmstrip,
     /// Outside the page area, or on something of the browser's own over
     /// it that takes the wheel or keeps it from the page: a tip that
     /// scrolls, a drop-down, a popover, a panel, the console, the phone
@@ -107,6 +119,8 @@ pub(in crate::browser) enum WheelOwner {
     /// The browser's, to step the open page's sub-pages, or the pages when
     /// it has none.
     Steps(Ways),
+    /// The browser's, to slide the open filmstrip (REQ-6640 item 6).
+    Filmstrip,
 }
 
 /// The decision, by the table of this module.
@@ -117,6 +131,7 @@ pub(in crate::browser) const fn wheel_owner(state: WheelState) -> WheelOwner {
             WheelOwner::Steps(state.ways)
         }
         (WheelPlace::Picture, false, true) => WheelOwner::Page,
+        (WheelPlace::Filmstrip, false | true, false | true) => WheelOwner::Filmstrip,
     }
 }
 
@@ -126,7 +141,7 @@ impl WheelOwner {
     pub(in crate::browser) const fn indicator(self) -> Option<Ways> {
         match self {
             Self::Steps(ways) if ways.up || ways.down => Some(ways),
-            Self::Steps(_) | Self::Scroll | Self::Page => None,
+            Self::Steps(_) | Self::Scroll | Self::Page | Self::Filmstrip => None,
         }
     }
 }
@@ -159,6 +174,10 @@ mod tests {
             (Picture, false, true, Page),
             (Picture, true, false, Steps(BOTH)),
             (Picture, true, true, Steps(BOTH)),
+            (WheelPlace::Filmstrip, false, false, WheelOwner::Filmstrip),
+            (WheelPlace::Filmstrip, false, true, WheelOwner::Filmstrip),
+            (WheelPlace::Filmstrip, true, false, WheelOwner::Filmstrip),
+            (WheelPlace::Filmstrip, true, true, WheelOwner::Filmstrip),
         ];
         for (place, modifier, claimed, owner) in rows {
             assert_eq!(wheel_owner(WheelState { place, modifier, claimed, ways: BOTH }), owner, "{place:?}, modifier {modifier}, claimed {claimed}");

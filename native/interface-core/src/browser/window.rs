@@ -92,7 +92,7 @@ impl Browser {
         }
         self.draw_toolbar(canvas, width);
         self.draw_bar(canvas, TOOLBAR_TOP + TOOLBAR_HEIGHT, width);
-        self.draw_tab_strip(canvas, width);
+        self.draw_tab_strip(canvas, width, now);
         self.draw_preview(canvas, width);
         self.draw_remote(canvas, width, height, body_top, now);
         #[cfg(feature = "phone-keyboard")]
@@ -102,7 +102,8 @@ impl Browser {
         self.draw_history_panel(canvas);
         self.draw_bookmarks_panel(canvas, now);
         self.draw_star_popover(canvas);
-        self.draw_tab_overflow(canvas, width, height);
+        self.draw_filmstrip(canvas, width, now);
+        self.draw_tab_drag(canvas);
         self.draw_popups(canvas);
         self.draw_tips(canvas, width, height, now);
         self.draw_drop_arrow(canvas);

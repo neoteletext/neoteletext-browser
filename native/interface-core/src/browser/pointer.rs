@@ -92,7 +92,7 @@ impl Browser {
         if self.over_subpage_divider() || self.over_console_grabber() {
             return Cursor::ResizeRow;
         }
-        if self.subpages.hovered.is_some() {
+        if self.subpages.hovered.is_some() || self.over_filmstrip_picture() {
             return Cursor::Hand;
         }
         #[cfg(feature = "links")]
@@ -155,11 +155,14 @@ impl Browser {
     /// steps (REQ-6632) each notch is one sub-page or page
     /// (`wheel_notch`); elsewhere it scrolls by lines.
     pub fn wheel_lines(&mut self, lines: f64, now: u64) -> bool {
-        if let WheelOwner::Steps(_) = self.wheel_owner() {
-            self.wheel_notch(lines, now);
-            return true;
+        match self.wheel_owner() {
+            // Over the open filmstrip a notch slides it by a picture
+            // (REQ-6640 item 6).
+            WheelOwner::Filmstrip => self.filmstrip_wheel_lines(lines, now),
+            WheelOwner::Steps(_) => self.wheel_notch(lines, now),
+            WheelOwner::Page | WheelOwner::Scroll => return self.scroll_by(lines * LINE_HEIGHT, now),
         }
-        self.scroll_by(lines * LINE_HEIGHT, now)
+        true
     }
 
     /// A press of the middle button: on a tab, the tab closes, and on what
@@ -245,6 +248,7 @@ impl Browser {
             return true;
         }
         self.over_menu(point)
+            || self.over_filmstrip()
             || self.over_tab_list(point)
             || self.over_suggestions(point)
             || self.over_star(point)
@@ -259,6 +263,10 @@ impl Browser {
     /// steps (REQ-6632); the page's own wheel is not the browser's to use.
     pub fn scroll_by(&mut self, distance: f64, now: u64) -> bool {
         match self.wheel_owner() {
+            WheelOwner::Filmstrip => {
+                self.filmstrip_wheel(distance, now);
+                return true;
+            }
             WheelOwner::Steps(_) => {
                 self.wheel_pages(distance, now);
                 return true;
