@@ -697,7 +697,7 @@ fn a_click_on_a_linked_naplps_object_follows_after_the_dwell_time() {
     records.hold(OPEN, 0, 1, language, Some(RegisPick::of(&record, [(5, 100, 200)].into_iter(), language)));
     let mut links = links_with_drawings(&[(5, "200")]);
     let mut pointing = Pointing::default();
-    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: false, finger: false }, &records);
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: false, finger: false, span: 1 }, &records);
     let under = pointing.under(&records);
     assert_eq!(under, Some((OPEN, 0, 5)), "the object under the pointer, from the NAPLPS pick record");
     let linked = under.is_some_and(|under| links.is_drawing_link(under));
@@ -706,8 +706,8 @@ fn a_click_on_a_linked_naplps_object_follows_after_the_dwell_time() {
     let shown = links.point_drawing(under).unwrap().unwrap();
     assert_eq!((shown.kind, shown.text.as_str()), (LinkKind::Page, "Page 200"), "the strip shows its destination");
     // A press and a release on it.
-    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: true, finger: false }, &records);
-    pointing.pointer(RegisPointer { key: OPEN, at: Some((121, 221)), pressed: false, finger: false }, &records);
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: true, finger: false, span: 1 }, &records);
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((121, 221)), pressed: false, finger: false, span: 1 }, &records);
     let (key, object) = pointing.take_click().unwrap();
     assert_eq!(links.click_drawing((key, 0, object), Some(CHANNEL), LATER - 1), Err(Refusal::Changed), "not within the dwell time");
     assert_eq!(links.click_drawing((key, 0, object), Some(CHANNEL), LATER), Ok(Follow::Page(0x200)));

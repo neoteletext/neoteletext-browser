@@ -11,9 +11,63 @@
 
 use interface_core::canvas::PageKey;
 use neoteletext_input::event::Stamp;
-use protocol::regis::{RegisPointer, RegisViewer};
+use protocol::regis::{PictureLanguage, RegisPick, RegisPointer, RegisViewer};
 
 use crate::regis::PickRecords;
+
+/// The most picture pixels, across and down, looked at under the pointer
+/// (renderer parity PAR-29): a picture shown at an eighth of its size or
+/// more has every pixel under a screen pixel looked at; one shown smaller
+/// has the 8 by 8 block centred on the pixel mapped.
+pub const MAX_PICK_SPAN: u8 = 8;
+
+/// The pixel of a picture drawn in `language`, with pick record `pick`,
+/// that a pointer is taken to be on (renderer parity PAR-29). The
+/// interface found `pixel`, the first of the picture's pixels its screen
+/// pixel covers, and `span`, how many it covers across and down. Every
+/// pixel of that block, or of the [`MAX_PICK_SPAN`] square centred on it
+/// when it is larger, is looked at; of those under a drawing or object
+/// the pick record names, the one nearest the block's centre is chosen,
+/// a tie going to the drawing drawn later (the pick record's order). With
+/// none, the pixel mapped is kept: `pixel` itself, or the block's centre
+/// when the block was cut down. At the picture's own size or larger the
+/// block is one pixel and nothing changes.
+#[must_use]
+pub fn chosen_pixel(pick: &RegisPick, language: PictureLanguage, pixel: (u16, u16), span: u8) -> (u16, u16) {
+    let span = span.max(1);
+    let half = u16::from(span / 2);
+    let limit = u16::from(MAX_PICK_SPAN);
+    // The block's top left, its side, and the pixel kept when nothing is found.
+    let (left, top, side, mapped) = if span <= MAX_PICK_SPAN {
+        (pixel.0, pixel.1, u16::from(span), pixel)
+    } else {
+        let centre = (pixel.0.saturating_add(half), pixel.1.saturating_add(half));
+        (centre.0.saturating_sub(limit / 2), centre.1.saturating_sub(limit / 2), limit, centre)
+    };
+    let clip = |at: u16, most: u16| at.min(most.saturating_sub(1));
+    let mapped = (clip(mapped.0, language.width()), clip(mapped.1, language.height()));
+    if side <= 1 {
+        return mapped;
+    }
+    let block = pick.block(language, usize::from(left), usize::from(top), usize::from(side), usize::from(side));
+    // Twice a distance, so that a block of an even side has a whole centre.
+    let across = |offset: u16| {
+        let doubled = i32::from(offset).saturating_mul(2).saturating_sub(i32::from(side).saturating_sub(1));
+        doubled.saturating_mul(doubled)
+    };
+    let mut best: Option<(i32, usize, (u16, u16))> = None;
+    for (index, &drawing) in block.iter().enumerate().filter(|(_, drawing)| **drawing != 0) {
+        let (row, column) = (index.checked_div(usize::from(side)).unwrap_or(0), index.checked_rem(usize::from(side)).unwrap_or(0));
+        let (Ok(row), Ok(column)) = (u16::try_from(row), u16::try_from(column)) else { continue };
+        let distance = across(column).saturating_add(across(row));
+        let order = pick.order(drawing).unwrap_or(0);
+        let nearer = best.is_none_or(|(best_distance, best_order, _)| distance < best_distance || (distance == best_distance && order > best_order));
+        if nearer {
+            best = Some((distance, order, (left.saturating_add(column), top.saturating_add(row))));
+        }
+    }
+    best.map_or(mapped, |(_, _, at)| at)
+}
 
 /// Something to say because of the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,7 +143,10 @@ impl Pointing {
 
     /// The interface said where the pointer is. A press takes the drawing
     /// under it, which stays pressed until the release (REQ-6374 item 4).
-    pub fn pointer(&mut self, pointer: RegisPointer, records: &PickRecords) {
+    pub fn pointer(&mut self, mut pointer: RegisPointer, records: &PickRecords) {
+        // The pixel looked up for everything that follows, the PICK and the
+        // rule table's pointer included, is the one chosen (PAR-29).
+        pointer.at = pointer.at.map(|at| records.chosen(pointer.key, at, pointer.span));
         let was_pressed = self.pointer.is_some_and(|before| before.pressed);
         self.pointer = Some(pointer);
         if pointer.pressed && !was_pressed {
@@ -234,7 +291,7 @@ mod tests {
     }
 
     fn mouse(at: Option<(u16, u16)>, pressed: bool) -> RegisPointer {
-        RegisPointer { key: KEY, at, pressed, finger: false }
+        RegisPointer { key: KEY, at, pressed, finger: false, span: 1 }
     }
 
     /// The pointer moved or pressed, with keys going to the page: what is said.
@@ -291,7 +348,7 @@ mod tests {
     fn a_finger_presses_and_does_not_hover() {
         let records = records(1);
         let mut pointing = Pointing::default();
-        let finger = RegisPointer { key: KEY, at: Some((150, 150)), pressed: true, finger: true };
+        let finger = RegisPointer { key: KEY, at: Some((150, 150)), pressed: true, finger: true, span: 1 };
         assert_eq!(moved(&mut pointing, &records, finger), [Say::Over { key: KEY, over: true }, viewer(0, 12)]);
     }
 
@@ -358,5 +415,81 @@ mod tests {
         }
         pointing.pointer(mouse(Some((250, 150)), false), &records);
         assert_eq!(pointing.under(&records), None);
+    }
+}
+
+#[cfg(test)]
+mod small_targets {
+    #![allow(clippy::indexing_slicing, reason = "a test indexes the record it built to a known size")]
+
+    use protocol::regis::{REGIS_PIXELS, REGIS_WIDTH};
+
+    use super::*;
+
+    const KEY: PageKey = PageKey { channel: 3, page: 0x100 };
+
+    /// A ReGIS pick record with drawing `number` on the one column
+    /// `column` of rows 100 to 199, for each (number, column) given, the
+    /// later drawn over the earlier.
+    fn columns(drawings: &[(u16, usize)]) -> PickRecords {
+        let mut record = vec![0_u16; REGIS_PIXELS];
+        for &(number, column) in drawings {
+            for row in record.chunks_mut(REGIS_WIDTH).skip(100).take(100) {
+                row[column] = number;
+            }
+        }
+        let mut records = PickRecords::default();
+        let origins = drawings.iter().map(|&(number, column)| (number, i32::try_from(column).unwrap_or(0), 100));
+        records.hold(KEY, 0, 1, PictureLanguage::Regis, Some(RegisPick::of(&record, origins, PictureLanguage::Regis)));
+        records
+    }
+
+    /// The drawing under a pointer whose screen pixel begins at `at` and
+    /// covers `span` picture pixels.
+    fn under(records: &PickRecords, at: (u16, u16), span: u8) -> u16 {
+        let mut pointing = Pointing::default();
+        pointing.pointer(RegisPointer { key: KEY, at: Some(at), pressed: false, finger: false, span }, records);
+        pointing.under(records).map_or(0, |(_, _, drawing)| drawing)
+    }
+
+    /// PAR-29: a drawing one pixel wide, in a picture shown at a third of
+    /// its size, is hit from each screen pixel whose three picture pixels
+    /// hold it, which the first of them alone would miss twice in three.
+    #[test]
+    fn a_one_pixel_wide_drawing_is_hit_at_a_third_of_the_size() {
+        let records = columns(&[(5, 401)]);
+        for first in [399, 400, 401] {
+            assert_eq!(under(&records, (first, 150), 3), 5, "a screen pixel from column {first}");
+        }
+        assert_eq!(under(&records, (402, 150), 3), 0, "the next screen pixel does not cover it");
+        assert_eq!(under(&records, (400, 150), 1), 0, "with one pixel looked at, the first alone");
+    }
+
+    /// PAR-29: two drawings in one block, the nearer the block's centre
+    /// wins; at equal distance the one drawn later.
+    #[test]
+    fn two_drawings_in_one_block_resolve_to_the_nearer_the_centre() {
+        // A block of 8 from column 400: its centre lies between 403 and 404.
+        let records = columns(&[(6, 400), (7, 405)]);
+        assert_eq!(under(&records, (400, 150), 8), 7, "405 is nearer the centre than 400");
+        let records = columns(&[(6, 402), (7, 406)]);
+        assert_eq!(under(&records, (400, 150), 8), 6, "402 is nearer than 406");
+        let records = columns(&[(6, 403), (7, 404)]);
+        assert_eq!(under(&records, (400, 150), 8), 7, "a tie: the one drawn later");
+        // Past MAX_PICK_SPAN: the 8 by 8 block centred on the pixel mapped.
+        let records = columns(&[(6, 420)]);
+        assert_eq!(under(&records, (400, 150), 40), 6, "column 420 is within 4 of the block's centre, 420");
+        assert_eq!(under(&records, (380, 150), 40), 0, "the block centred on 400 does not reach 420");
+    }
+
+    /// PAR-29: at its own size, or larger, the block is one pixel and the
+    /// result is the existing one.
+    #[test]
+    fn at_actual_size_the_pixel_under_the_pointer_is_the_one_looked_up() {
+        let records = columns(&[(5, 401)]);
+        assert_eq!((under(&records, (400, 150), 1), under(&records, (401, 150), 1), under(&records, (402, 150), 1)), (0, 5, 0));
+        let mut pointing = Pointing::default();
+        pointing.pointer(RegisPointer { key: KEY, at: Some((400, 150)), pressed: false, finger: false, span: 3 }, &records);
+        assert_eq!(pointing.at(KEY), Some((401, 151)), "PICK reports the pixel chosen, nearest the 3 by 3 block's centre");
     }
 }

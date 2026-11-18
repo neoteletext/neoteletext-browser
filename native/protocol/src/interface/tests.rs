@@ -264,9 +264,9 @@ fn every_intent_round_trips() {
     for message in [
         ToCore::Visible(vec![KEY]),
         // REQ-6377: the pointer on a ReGIS picture, on it and off it.
-        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: true, finger: false }),
-        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((0, 0)), pressed: false, finger: true }),
-        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: None, pressed: false, finger: false }),
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: true, finger: false, span: 1 }),
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: Some((0, 0)), pressed: false, finger: true, span: 1 }),
+        ToCore::RegisPointer(crate::regis::RegisPointer { key: KEY, at: None, pressed: false, finger: false, span: 1 }),
         ToCore::Cell { key: KEY, version: 7, column: 39, row: 24 },
         ToCore::SelectTab(3),
         ToCore::CloseTab(0),
@@ -486,16 +486,20 @@ fn a_regis_pointer_outside_the_picture_is_refused() {
         write_to_core(&mut bytes, &ToCore::RegisPointer(pointer)).unwrap();
         bytes
     };
-    let good = crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: false, finger: false };
+    let good = crate::regis::RegisPointer { key: KEY, at: Some((799, 479)), pressed: false, finger: false, span: 1 };
     assert!(read_from_interface(&mut written(good).as_slice()).is_ok());
     assert!(read_from_interface(&mut written(crate::regis::RegisPointer { at: Some((479, 499)), ..good }).as_slice()).is_ok());
     for at in [(800, 0), (0, 500), (u16::MAX, u16::MAX)] {
         let bytes = written(crate::regis::RegisPointer { at: Some(at), ..good });
         assert!(read_from_interface(&mut bytes.as_slice()).is_err(), "{at:?}");
     }
-    // A flag bit that means nothing: the byte after the page's key.
+    // A span of no pixels (PAR-29).
+    assert!(read_from_interface(&mut written(crate::regis::RegisPointer { span: 0, ..good }).as_slice()).is_err(), "a span of none");
+    assert!(read_from_interface(&mut written(crate::regis::RegisPointer { span: 8, ..good }).as_slice()).is_ok());
+    // A flag bit that means nothing: the byte after the page's key, before
+    // the place and the span.
     let mut flagged = written(good);
-    let flags = flagged.len() - 5;
+    let flags = flagged.len() - 6;
     flagged[flags] |= 0x80;
     assert!(read_from_interface(&mut flagged.as_slice()).is_err());
 }

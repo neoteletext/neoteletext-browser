@@ -8,7 +8,11 @@ use super::Browser;
 use super::output::Output;
 use crate::canvas::{PageKey, picture_layout};
 use crate::geometry::Point;
-use crate::regis::{RegisPointer, pixel_under};
+use crate::regis::{RegisPointer, pixel_under, span_of};
+
+/// The open page, the pixel of its picture under a point if any, and how
+/// many of the picture's pixels one screen pixel covers there.
+type PointedPixel = (PageKey, Option<(u16, u16)>, u8);
 
 /// What the interface has said of the pointer, and been told.
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,12 +35,12 @@ impl Browser {
     /// (REQ-6363). A NAPLPS picture is the teletext raster (REQ-5819), so
     /// its pixel is the dot of the page image, in the cell the teletext
     /// page has there.
-    fn regis_pixel(&self, point: Point) -> Option<(PageKey, Option<(u16, u16)>)> {
+    fn regis_pixel(&self, point: Point) -> Option<PointedPixel> {
         let (key, image) = self.wall.open()?;
         let language = self.picture_language(key)?;
         let keyed = self.regis_keyed().contains(&key);
         let picture = picture_layout(language, image, self.regis_contained(), keyed).picture;
-        Some((key, pixel_under(language, picture, point)))
+        Some((key, pixel_under(language, picture, point), span_of(language, picture)))
     }
 
     /// Tells the trusted core where the pointer is on the open page's
@@ -47,11 +51,12 @@ impl Browser {
     /// of this place.
     pub(super) fn regis_pointed(&mut self) {
         let finger = self.regis_pointer.finger;
-        let wanted = self.regis_pixel(finger.unwrap_or(self.pointer)).map(|(key, at)| RegisPointer {
+        let wanted = self.regis_pixel(finger.unwrap_or(self.pointer)).map(|(key, at, span)| RegisPointer {
             key,
             at,
             pressed: at.is_some() && (self.regis_pointer.pressed || finger.is_some()),
             finger: finger.is_some(),
+            span,
         });
         let sent = self.regis_pointer.sent;
         if wanted == sent {
@@ -59,7 +64,7 @@ impl Browser {
         }
         // Gone from a page it was on: that page's pointer is off its picture.
         if let Some(sent) = sent.filter(|sent| wanted.is_none_or(|wanted| wanted.key != sent.key) && sent.at.is_some()) {
-            self.outputs.push(Output::RegisPointer(RegisPointer { key: sent.key, at: None, pressed: false, finger: false }));
+            self.outputs.push(Output::RegisPointer(RegisPointer { key: sent.key, at: None, pressed: false, finger: false, span: 1 }));
         }
         if let Some(wanted) = wanted {
             self.outputs.push(Output::RegisPointer(wanted));
@@ -71,7 +76,7 @@ impl Browser {
 
     /// The main button went down or came up.
     pub(super) fn regis_button(&mut self, down: bool) {
-        self.regis_pointer.pressed = down && self.regis_pixel(self.pointer).is_some_and(|(_, at)| at.is_some());
+        self.regis_pointer.pressed = down && self.regis_pixel(self.pointer).is_some_and(|(_, at, _)| at.is_some());
         self.regis_pointed();
     }
 
@@ -105,7 +110,7 @@ impl Browser {
     /// that a click would act on: it is then the hand.
     pub(super) fn over_regis_drawing(&self) -> bool {
         let over = self.regis_pointer.over;
-        over.is_some() && self.regis_pixel(self.pointer).is_some_and(|(key, at)| Some(key) == over && at.is_some())
+        over.is_some() && self.regis_pixel(self.pointer).is_some_and(|(key, at, _)| Some(key) == over && at.is_some())
     }
 }
 
@@ -144,8 +149,27 @@ mod tests {
     }
 
     /// The pointers the trusted core was told of since they were last taken.
-    fn told(browser: &mut Browser) -> Vec<RegisPointer> {
+    fn told_with_spans(browser: &mut Browser) -> Vec<RegisPointer> {
         browser.take_outputs().into_iter().filter_map(|output| if let Output::RegisPointer(pointer) = output { Some(pointer) } else { None }).collect()
+    }
+
+    /// The same, each span read as one: the tests of the pixel found leave
+    /// the span to [`the_span_is_the_picture_pixels_a_screen_pixel_covers`].
+    fn told(browser: &mut Browser) -> Vec<RegisPointer> {
+        told_with_spans(browser).into_iter().map(|pointer| RegisPointer { span: 1, ..pointer }).collect()
+    }
+
+    /// PAR-29: each pointer the trusted core is told of carries how many
+    /// of the picture's pixels a screen pixel covers where the picture is
+    /// drawn, which is the span of its rectangle.
+    #[test]
+    fn the_span_is_the_picture_pixels_a_screen_pixel_covers() {
+        for contain in [true, false] {
+            let (mut browser, _, picture) = open_picture(contain);
+            browser.pointer_moved(picture.x0 + 0.25, picture.y0 + 0.25, 0);
+            let spans: Vec<u8> = told_with_spans(&mut browser).iter().map(|pointer| pointer.span).collect();
+            assert_eq!(spans, [span_of(crate::canvas::PictureLanguage::Regis, picture)], "contain {contain}");
+        }
     }
 
     /// REQ-6377: in each fit, the corners of the rectangle the picture is
@@ -156,14 +180,14 @@ mod tests {
         for contain in [true, false] {
             let (mut browser, key, picture) = open_picture(contain);
             browser.pointer_moved(picture.x0 + 0.25, picture.y0 + 0.25, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((0, 0)), pressed: false, finger: false }], "contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((0, 0)), pressed: false, finger: false, span: 1 }], "contain {contain}");
             browser.pointer_moved(picture.x1 - 0.25, picture.y1 - 0.25, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((799, 479)), pressed: false, finger: false }], "contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((799, 479)), pressed: false, finger: false, span: 1 }], "contain {contain}");
             // The same pixel again says nothing.
             browser.pointer_moved(picture.x1 - 0.2, picture.y1 - 0.2, 0);
             assert_eq!(told(&mut browser), []);
             browser.pointer_moved(picture.x0 - 30.0, picture.y0 + 5.0, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: None, pressed: false, finger: false }], "off the picture, contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: None, pressed: false, finger: false, span: 1 }], "off the picture, contain {contain}");
         }
         // Contained to the teletext page, the band above the picture is the
         // page's and not the picture's.
@@ -171,7 +195,7 @@ mod tests {
         browser.pointer_moved(picture.x0 + 5.0, picture.y0 + 5.0, 0);
         let _ = told(&mut browser);
         browser.pointer_moved(picture.x0 + 5.0, picture.y0 - 5.0, 0);
-        assert_eq!(told(&mut browser), [RegisPointer { key, at: None, pressed: false, finger: false }]);
+        assert_eq!(told(&mut browser), [RegisPointer { key, at: None, pressed: false, finger: false, span: 1 }]);
     }
 
     /// REQ-6374 item 4: the main button going down and coming up on the
@@ -183,9 +207,9 @@ mod tests {
         browser.pointer_moved(middle.x, middle.y, 0);
         let at = told(&mut browser)[0].at;
         browser.regis_button(true);
-        assert_eq!(told(&mut browser), [RegisPointer { key, at, pressed: true, finger: false }]);
+        assert_eq!(told(&mut browser), [RegisPointer { key, at, pressed: true, finger: false, span: 1 }]);
         browser.pointer_released();
-        assert_eq!(told(&mut browser), [RegisPointer { key, at, pressed: false, finger: false }]);
+        assert_eq!(told(&mut browser), [RegisPointer { key, at, pressed: false, finger: false, span: 1 }]);
     }
 
     /// REQ-6374 item 2: the pointer is the hand while the trusted core says
@@ -222,14 +246,14 @@ mod tests {
             let (_, image) = browser.wall.open().unwrap();
             let _ = browser.take_outputs();
             browser.pointer_moved(image.x0 + 0.25, image.y0 + 0.25, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((0, 0)), pressed: false, finger: false }], "contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((0, 0)), pressed: false, finger: false, span: 1 }], "contain {contain}");
             browser.pointer_moved(image.x1 - 0.25, image.y1 - 0.25, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((479, 499)), pressed: false, finger: false }], "contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((479, 499)), pressed: false, finger: false, span: 1 }], "contain {contain}");
             // The middle of cell (10, 12): column 10's dots are 120 to 131.
             let dot = |across: f64, down: f64| Point::new(image.x0 + across * image.width() / 480.0, image.y0 + down * image.height() / 500.0);
             let middle = dot(10.0 * 12.0 + 6.0, 12.0 * 20.0 + 10.0);
             browser.pointer_moved(middle.x, middle.y, 0);
-            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((126, 250)), pressed: false, finger: false }], "contain {contain}");
+            assert_eq!(told(&mut browser), [RegisPointer { key, at: Some((126, 250)), pressed: false, finger: false, span: 1 }], "contain {contain}");
         }
     }
 

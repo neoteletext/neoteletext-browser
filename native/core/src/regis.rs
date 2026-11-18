@@ -113,6 +113,16 @@ impl PickRecords {
         Some(Under { drawing: picked.drawing, x: picked.x, y: picked.y, picture_x: u32::from(pixel.0), picture_y: u32::from(pixel.1), commits: held.commits })
     }
 
+    /// The pixel of the picture held for `key` the pointer is taken to be
+    /// on, for a pointer whose screen pixel covers `span` of the picture's
+    /// pixels across and down from `pixel` (renderer parity PAR-29):
+    /// [`crate::regis_pointer::chosen_pixel`] over the record held, or
+    /// `pixel` itself when the page has no picture held.
+    #[must_use]
+    pub fn chosen(&self, key: PageKey, pixel: (u16, u16), span: u8) -> (u16, u16) {
+        self.pages.get(&key).map_or(pixel, |held| crate::regis_pointer::chosen_pixel(&held.pick, held.language, pixel, span))
+    }
+
     /// What lies under a pixel of the picture of `key`'s sub-page `sub`;
     /// `None` when the page is not drawn in ReGIS or the picture held is
     /// of another sub-page.

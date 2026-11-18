@@ -35,6 +35,29 @@ pub struct RegisPointer {
     pub pressed: bool,
     /// It is a finger, which presses and does not hover.
     pub finger: bool,
+    /// How many of the picture's pixels, across and down, one screen pixel
+    /// covers where the picture is drawn ([`span_of`]): 1 when it is shown
+    /// at its own size or larger. The trusted core looks at that many
+    /// under the pointer, up to its bound, so that a target a pixel wide
+    /// can be pointed at in a picture shown smaller (renderer parity
+    /// PAR-29). Meaningless while `at` is `None`.
+    pub span: u8,
+}
+
+/// How many of the pixels of a picture drawn in `language` in `rect` one
+/// screen pixel covers, across or down, whichever is more, rounded up:
+/// 1 when it is shown at its own size or larger, and at most `u8::MAX`.
+#[must_use]
+pub fn span_of(language: PictureLanguage, rect: Rect) -> u8 {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return 1;
+    }
+    let across = f64::from(language.width()) / rect.width();
+    let down = f64::from(language.height()) / rect.height();
+    let covered = libm::ceil(across.max(down)).clamp(1.0, f64::from(u8::MAX));
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to 1 to 255 just above")]
+    let span = covered as u8;
+    span
 }
 
 /// The pixel of a picture drawn in `language` in `rect` that lies under
@@ -64,6 +87,16 @@ mod tests {
     /// REQ-6377: in a picture shown at twice its size every pixel pair of
     /// the screen maps to its picture pixel, and every one of the 800
     /// columns and 480 rows is reached.
+    #[test]
+    fn a_span_is_the_picture_pixels_one_screen_pixel_covers() {
+        // PAR-29: at its own size or larger, one; at a third of its size, three.
+        assert_eq!(span_of(PictureLanguage::Regis, Rect::new(0.0, 0.0, 800.0, 480.0)), 1);
+        assert_eq!(span_of(PictureLanguage::Regis, Rect::new(0.0, 0.0, 1600.0, 960.0)), 1);
+        assert_eq!(span_of(PictureLanguage::Regis, Rect::new(10.0, 10.0, 10.0 + 800.0 / 3.0, 170.0)), 3);
+        assert_eq!(span_of(PictureLanguage::Naplps, Rect::new(0.0, 0.0, 48.0, 50.0)), 10);
+        assert_eq!(span_of(PictureLanguage::Regis, Rect::new(0.0, 0.0, 0.0, 0.0)), 1, "no rectangle: one");
+    }
+
     #[test]
     fn every_pixel_of_a_picture_shown_larger_can_be_pointed_at() {
         let rect = Rect::new(100.0, 50.0, 1700.0, 1010.0);

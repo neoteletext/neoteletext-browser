@@ -228,6 +228,48 @@ impl RegisPick {
         Self { origins, runs }
     }
 
+    /// The drawings under every pixel of the rectangle `width` by `height`
+    /// at (`x`, `y`) of the picture drawn in `language` the record is of,
+    /// row by row, 0 for none and for a pixel past the picture: read in one
+    /// pass over the runs, however large the rectangle (renderer parity
+    /// PAR-29 looks at up to 8 by 8 pixels under the pointer). Empty when
+    /// the rectangle is.
+    #[must_use]
+    pub fn block(&self, language: PictureLanguage, x: usize, y: usize, width: usize, height: usize) -> Vec<u16> {
+        let picture_width = usize::from(language.width());
+        let mut block = vec![0_u16; width.saturating_mul(height)];
+        let (Some(right), Some(bottom)) = (x.checked_add(width), y.checked_add(height)) else { return block };
+        let first = y.saturating_mul(picture_width);
+        let end = bottom.min(usize::from(language.height())).saturating_mul(picture_width);
+        let mut start = 0_usize;
+        for &(drawing, length) in &self.runs {
+            let stop = start.saturating_add(usize::from(length));
+            if stop > first && drawing != 0 {
+                for pixel in start.max(first)..stop.min(end) {
+                    let (row, column) = (pixel.checked_div(picture_width).unwrap_or(0), pixel.checked_rem(picture_width).unwrap_or(0));
+                    if (x..right).contains(&column)
+                        && let Some(slot) = block.get_mut(row.saturating_sub(y).saturating_mul(width).saturating_add(column.saturating_sub(x)))
+                    {
+                        *slot = drawing;
+                    }
+                }
+            }
+            if stop >= end {
+                break;
+            }
+            start = stop;
+        }
+        block
+    }
+
+    /// Where `drawing` comes in the record's drawing order: its place among
+    /// the origins, which are given in the order drawings are drawn, the
+    /// later over the earlier (renderer parity PAR-29 breaks ties by it).
+    #[must_use]
+    pub fn order(&self, drawing: u16) -> Option<usize> {
+        self.origins.iter().position(|origin| origin.drawing == drawing)
+    }
+
     /// What lies under the pixel at (`x`, `y`) of the picture drawn in
     /// `language` the record is of.
     #[must_use]
@@ -423,7 +465,7 @@ mod tests {
         let key = interface_core::canvas::PageKey { channel: 1, page: 0x100 };
         for (at, accepted) in [((479, 499), true), ((799, 479), true), ((800, 0), false), ((0, 500), false)] {
             let mut bytes = Vec::new();
-            push_pointer(&mut bytes, &RegisPointer { key, at: Some(at), pressed: false, finger: false });
+            push_pointer(&mut bytes, &RegisPointer { key, at: Some(at), pressed: false, finger: false, span: 1 });
             assert_eq!(read_pointer(&mut Fields::new(&bytes)).is_ok(), accepted, "{at:?}");
         }
     }
@@ -491,6 +533,8 @@ pub(crate) fn push_pointer(payload: &mut Vec<u8>, pointer: &RegisPointer) {
     if let Some((x, y)) = pointer.at {
         payload.extend_from_slice(&x.to_be_bytes());
         payload.extend_from_slice(&y.to_be_bytes());
+        // Renderer parity PAR-29: the picture pixels one screen pixel covers.
+        payload.push(pointer.span);
     }
 }
 
@@ -512,7 +556,13 @@ pub(crate) fn read_pointer(fields: &mut Fields<'_>) -> Result<RegisPointer, Prot
         }
         Some((x, y))
     };
-    Ok(RegisPointer { key, at, pressed: flags & POINTER_PRESSED != 0, finger: flags & POINTER_FINGER != 0 })
+    // A screen pixel covers at least one picture pixel; the trusted core
+    // bounds how many it looks at (PAR-29's MAX_PICK_SPAN).
+    let span = if at.is_some() { fields.u8()? } else { 1 };
+    if span == 0 {
+        return Err(ProtocolError::BadValue("a ReGIS pointer's span"));
+    }
+    Ok(RegisPointer { key, at, pressed: flags & POINTER_PRESSED != 0, finger: flags & POINTER_FINGER != 0, span })
 }
 
 /// What the viewer's pointer is doing to a sub-page's picture, as the
