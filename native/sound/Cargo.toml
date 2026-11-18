@@ -19,6 +19,9 @@ path = "src/main.rs"
 confine.workspace = true
 protocol.workspace = true
 neoteletext-audio-mix.workspace = true
+# The audio profile's bounds alone: its number of audio channels names the
+# streams a channel's decoder may hold (`audio/names.rs`).
+neoteletext-audio.workspace = true
 # The operating system's audio output: Core Audio on macOS, WASAPI on
 # Windows, and on Linux the system's ALSA library, libasound, linked
 # dynamically; the owner accepted its LGPL licence (decision 40). Only

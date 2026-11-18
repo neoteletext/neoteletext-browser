@@ -46,12 +46,13 @@ impl VoiceSink for Heard {
     fn define(&mut self, _: SoundId, _: SoundFormat) {}
     fn samples(&mut self, _: SoundId, _: u32, _: &[i16]) {}
     fn forget(&mut self, _: SoundId) {}
-    fn stream(&mut self, id: SoundId, rate_hz: u32) {
+    fn stream(&mut self, _: u8, id: SoundId, rate_hz: u32) {
         self.streams.push((id, rate_hz));
     }
-    fn stream_samples(&mut self, _: SoundId, pcm: &[i16]) {
+    fn stream_samples(&mut self, _: u8, _: SoundId, pcm: &[i16]) {
         self.samples += pcm.len();
     }
+    fn end_stream(&mut self, _: u8, _: SoundId) {}
     fn start(&mut self, channel: u8, _: Start) {
         self.starts.push(channel);
     }

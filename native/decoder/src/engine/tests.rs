@@ -658,7 +658,7 @@ fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
     engine.finish();
     let sounds = engine.take_sounds();
     let sound = Sound { handle: 6, generation: 1 };
-    assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 48_000 }), "{sounds:?}");
+    assert_eq!(sounds.first(), Some(&Audio::Stream { channel: 0, sound, rate_hz: 48_000 }), "{sounds:?}");
     assert!(sounds.iter().any(|audio| matches!(audio, Audio::Start { channel: 0, .. })));
     assert!(sounds.iter().any(|audio| matches!(audio, Audio::StreamSamples { pcm, .. } if pcm.len() == OPUS_FRAME_SAMPLES)));
     engine.tick_audio(2_999);
@@ -690,12 +690,14 @@ fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
     assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. } | Audio::Start { .. })), "{sounds:?}");
 }
 
-/// REQ-6415: a synth6581 sound (the engine's codec 12, MIDI-107), whose
-/// blocks are event lists (MIDI-39 to MIDI-42), is rendered by the engine's
-/// own chip in the decoder process and given to the sound helper as samples
-/// at 48 kHz, as an Opus sound's are.
+/// REQ-6415 and the engine's INT-33 to INT-37: a stored synth6581 sound
+/// (the engine's codec 12, MIDI-107), whose blocks are event lists (MIDI-39
+/// to MIDI-42), is rendered by the engine's own chip in the decoder process
+/// as it plays, and given to the sound helper as a stream on the audio
+/// channel that plays it, at 48 kHz: begun, its blocks in order, then
+/// ended; never defined whole.
 #[test]
-fn a_synth6581_sound_is_rendered_into_samples_for_the_sound_helper() {
+fn a_stored_synth6581_sound_streams_in_order_and_ends() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
     use neoteletext_audio_instruments::midi::status;
     use neoteletext_audio_instruments::synth6581::interface::{FULL_UPDATE_IDS, Patch, pack_patch};
@@ -726,11 +728,26 @@ fn a_synth6581_sound_is_rendered_into_samples_for_the_sound_helper() {
     engine.finish();
     let sounds = engine.take_sounds();
     let sound = Sound { handle: 9, generation: 1 };
-    assert_eq!(sounds.first(), Some(&Audio::Define { sound, rate_hz: 48_000, samples: 3 * 960 }), "{sounds:?}");
-    let pcm: Vec<i16> = sounds.iter().flat_map(|audio| if let Audio::Samples { pcm, .. } = audio { pcm.clone() } else { Vec::new() }).collect();
-    assert_eq!(pcm.len(), 3 * BLOCK);
+    assert_eq!(sounds.first(), Some(&Audio::Stream { channel: 0, sound, rate_hz: 48_000 }), "{sounds:?}");
+    assert!(!sounds.iter().any(|audio| matches!(audio, Audio::Define { .. } | Audio::Samples { .. })), "never defined whole");
+    let pcm: Vec<i16> = sounds
+        .iter()
+        .flat_map(|audio| {
+            if let Audio::StreamSamples { channel: 0, sound: streamed, pcm } = audio {
+                assert_eq!(*streamed, sound);
+                pcm.clone()
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    assert_eq!(pcm.len(), 3 * BLOCK, "every block, once");
     assert!(pcm.iter().any(|sample| sample.unsigned_abs() > 500), "the chip sounds");
     assert!(sounds.iter().any(|audio| matches!(audio, Audio::Start { channel: 0, .. })), "{sounds:?}");
+    // In order: begun, then started and given its samples, then ended.
+    let last_samples = sounds.iter().rposition(|audio| matches!(audio, Audio::StreamSamples { .. })).unwrap();
+    assert_eq!(sounds.last(), Some(&Audio::EndStream { channel: 0, sound }), "{:?}", sounds.last());
+    assert_eq!(last_samples, sounds.len() - 2, "the stream ends after its last samples");
 }
 
 /// Decision 114: an Opus sound (the engine's codec 2, decision E.124) is
@@ -769,7 +786,7 @@ fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
     engine.finish();
     let sounds = engine.take_sounds();
     let sound = Sound { handle: 8, generation: 1 };
-    assert_eq!(sounds.first(), Some(&Audio::Stream { sound, rate_hz: 48_000 }), "{sounds:?}");
+    assert_eq!(sounds.first(), Some(&Audio::Stream { channel: 0, sound, rate_hz: 48_000 }), "{sounds:?}");
     let streamed: usize = sounds.iter().map(|audio| if let Audio::StreamSamples { pcm, .. } = audio { pcm.len() } else { 0 }).sum();
     assert_eq!(streamed, 4 * OPUS_FRAME_SAMPLES, "four 20 ms frames");
 }

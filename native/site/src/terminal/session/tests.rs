@@ -130,8 +130,9 @@ impl neoteletext_audio::port::VoiceSink for Count {
     fn define(&mut self, _: neoteletext_audio::port::SoundId, _: neoteletext_audio::port::SoundFormat) {}
     fn samples(&mut self, _: neoteletext_audio::port::SoundId, _: u32, _: &[i16]) {}
     fn forget(&mut self, _: neoteletext_audio::port::SoundId) {}
-    fn stream(&mut self, _: neoteletext_audio::port::SoundId, _: u32) {}
-    fn stream_samples(&mut self, _: neoteletext_audio::port::SoundId, _: &[i16]) {}
+    fn stream(&mut self, _: u8, _: neoteletext_audio::port::SoundId, _: u32) {}
+    fn stream_samples(&mut self, _: u8, _: neoteletext_audio::port::SoundId, _: &[i16]) {}
+    fn end_stream(&mut self, _: u8, _: neoteletext_audio::port::SoundId) {}
     fn start(&mut self, channel: u8, _: neoteletext_audio::port::Start) {
         self.0.push(channel);
     }

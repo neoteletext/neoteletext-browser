@@ -17,8 +17,9 @@ fn every_operation() -> Vec<Audio> {
         Audio::Start { channel: 3, sound: SOUND, gain: 80, fade_ms: 5, looped: true, duck_percent: 25, after_current: true },
         Audio::Stop { channel: 0, fade_ms: 10_000 },
         Audio::Gain { channel: 1, gain: 0, fade_ms: 50 },
-        Audio::Stream { sound: SOUND, rate_hz: 8_000 },
-        Audio::StreamSamples { sound: SOUND, pcm: vec![1, -1] },
+        Audio::Stream { channel: 2, sound: SOUND, rate_hz: 8_000 },
+        Audio::StreamSamples { channel: 2, sound: SOUND, pcm: vec![1, -1] },
+        Audio::EndStream { channel: 3, sound: SOUND },
     ]
 }
 
@@ -73,9 +74,13 @@ fn every_bound_is_kept() {
     refused(Audio::Samples { sound: SOUND, first: 0, pcm: vec![0; MAX_MESSAGE_SAMPLES + 1] }, "samples");
     refused(Audio::Samples { sound: SOUND, first: MAX_SOUND_SAMPLES, pcm: vec![0] }, "samples beyond the sound");
     refused(Audio::Samples { sound: SOUND, first: u32::MAX, pcm: vec![0] }, "samples beyond the sound");
-    refused(Audio::Stream { sound: SOUND, rate_hz: 12_345 }, "sample rate");
-    refused(Audio::StreamSamples { sound: SOUND, pcm: vec![] }, "samples");
-    refused(Audio::StreamSamples { sound: SOUND, pcm: vec![0; MAX_MESSAGE_SAMPLES + 1] }, "samples");
+    refused(Audio::Stream { channel: 0, sound: SOUND, rate_hz: 12_345 }, "sample rate");
+    refused(Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![] }, "samples");
+    refused(Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![0; MAX_MESSAGE_SAMPLES + 1] }, "samples");
+    // A stream names one of the profile's audio channels.
+    refused(Audio::Stream { channel: CHANNELS, sound: SOUND, rate_hz: 8_000 }, "audio channel");
+    refused(Audio::StreamSamples { channel: CHANNELS, sound: SOUND, pcm: vec![0] }, "audio channel");
+    refused(Audio::EndStream { channel: CHANNELS, sound: SOUND }, "audio channel");
     let start = |channel, gain, fade_ms, duck_percent| Audio::Start { channel, sound: SOUND, gain, fade_ms, looped: false, duck_percent, after_current: false };
     refused(start(4, 100, 5, 100), "audio channel");
     refused(start(0, 101, 5, 100), "gain");

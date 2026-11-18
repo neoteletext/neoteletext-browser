@@ -17,9 +17,22 @@ use protocol::sound::ToSound;
 pub const MAX_HELD_SAMPLES: u64 = 16 * 1024 * 1024;
 /// The most it holds for every channel together: two channels' worth.
 pub const MAX_TOTAL_HELD_SAMPLES: u64 = 2 * MAX_HELD_SAMPLES;
-/// What a live sound is charged in the ledger: two seconds at the highest
-/// rate, above the 1.6-second ring the interface's mixer keeps of one.
+/// What a stream is charged in the ledger: two seconds at the highest
+/// rate, above the 1.6-second ring the interface's mixer keeps of one, and
+/// what the engine says a sink holds of a stream (its `STREAM_HELD_MS`).
 pub const STREAM_HELD_SAMPLES: u32 = 48_000 * 2;
+const _: () = assert!(STREAM_HELD_SAMPLES as u64 == 48_000 * neoteletext_audio::STREAM_HELD_MS / 1_000);
+
+/// What the sound helper holds under one name: a stored sound, or a stream
+/// of a sound on one audio channel (the engine's INT-37), so one sound may
+/// stream on two audio channels at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Held {
+    /// A sound defined whole.
+    Stored(Sound),
+    /// The stream of a sound on an audio channel.
+    Stream(u8, Sound),
+}
 
 /// A message for a process.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,8 +48,8 @@ pub enum Send {
 struct Heard {
     /// The page the user last opened in the channel's tab.
     opened: Option<u16>,
-    /// Each defined sound and what it is charged; live sounds are marked.
-    sounds: BTreeMap<Sound, (u32, bool)>,
+    /// Each defined sound and each stream, and what it is charged.
+    sounds: BTreeMap<Held, u32>,
     held: u64,
     muted: bool,
 }
@@ -79,8 +92,8 @@ impl Hearing {
     /// or beyond the ledger is dropped.
     pub fn decoded(&mut self, channel: u32, audio: Audio) -> Option<ToSound> {
         let heard = self.channels.entry(channel).or_default();
-        let charge = |heard: &mut Heard, total: &mut u64, sound: Sound, samples: u32, live: bool| -> Option<()> {
-            let previous = u64::from(heard.sounds.get(&sound).map_or(0, |(samples, _)| *samples));
+        let charge = |heard: &mut Heard, total: &mut u64, name: Held, samples: u32| -> Option<()> {
+            let previous = u64::from(heard.sounds.get(&name).copied().unwrap_or(0));
             let held = heard.held.saturating_sub(previous).saturating_add(u64::from(samples));
             let all = total.saturating_sub(previous).saturating_add(u64::from(samples));
             if held > MAX_HELD_SAMPLES || all > MAX_TOTAL_HELD_SAMPLES {
@@ -88,31 +101,52 @@ impl Hearing {
             }
             heard.held = held;
             *total = all;
-            heard.sounds.insert(sound, (samples, live));
+            heard.sounds.insert(name, samples);
+            Some(())
+        };
+        let release = |heard: &mut Heard, total: &mut u64, name: Held| -> Option<()> {
+            let length = u64::from(heard.sounds.remove(&name)?);
+            heard.held = heard.held.saturating_sub(length);
+            *total = total.saturating_sub(length);
             Some(())
         };
         match &audio {
-            Audio::Define { sound, samples, .. } => charge(heard, &mut self.held, *sound, *samples, false)?,
-            Audio::Stream { sound, .. } => charge(heard, &mut self.held, *sound, STREAM_HELD_SAMPLES, true)?,
+            Audio::Define { sound, samples, .. } => charge(heard, &mut self.held, Held::Stored(*sound), *samples)?,
+            Audio::Stream { channel: voice, sound, .. } => charge(heard, &mut self.held, Held::Stream(*voice, *sound), STREAM_HELD_SAMPLES)?,
             Audio::Samples { sound, first, pcm } => {
-                let (length, live) = heard.sounds.get(sound)?;
+                let length = heard.sounds.get(&Held::Stored(*sound))?;
                 let end = u64::from(*first).saturating_add(u64::try_from(pcm.len()).unwrap_or(u64::MAX));
-                if *live || end > u64::from(*length) {
+                if end > u64::from(*length) {
                     return None;
                 }
             }
-            Audio::StreamSamples { sound, .. } => {
-                if !heard.sounds.get(sound)?.1 {
-                    return None;
-                }
+            Audio::StreamSamples { channel: voice, sound, .. } => {
+                heard.sounds.get(&Held::Stream(*voice, *sound))?;
             }
+            Audio::EndStream { channel: voice, sound } => release(heard, &mut self.held, Held::Stream(*voice, *sound))?,
+            // The sound and every stream of it, on any audio channel.
             Audio::Forget(sound) => {
-                let (length, _) = heard.sounds.remove(sound)?;
-                heard.held = heard.held.saturating_sub(u64::from(length));
-                self.held = self.held.saturating_sub(u64::from(length));
+                let names: Vec<Held> = heard
+                    .sounds
+                    .keys()
+                    .copied()
+                    .filter(|name| match name {
+                        Held::Stored(held) | Held::Stream(_, held) => held == sound,
+                    })
+                    .collect();
+                if names.is_empty() {
+                    return None;
+                }
+                for name in names {
+                    release(heard, &mut self.held, name)?;
+                }
             }
-            Audio::Start { sound, .. } => {
-                heard.sounds.get(sound)?;
+            // A start plays the stream of its sound on its audio channel, or
+            // the sound stored whole.
+            Audio::Start { channel: voice, sound, .. } => {
+                if !heard.sounds.contains_key(&Held::Stream(*voice, *sound)) && !heard.sounds.contains_key(&Held::Stored(*sound)) {
+                    return None;
+                }
             }
             Audio::Stop { .. } | Audio::Gain { .. } => {}
             // Only the trusted core resets or mutes; the protocol refuses

@@ -36,14 +36,18 @@ impl VoiceSink for Outbox<'_> {
         self.0.push(Audio::Forget(sound(id)));
     }
 
-    fn stream(&mut self, id: SoundId, rate_hz: u32) {
-        self.0.push(Audio::Stream { sound: sound(id), rate_hz });
+    fn stream(&mut self, channel: u8, id: SoundId, rate_hz: u32) {
+        self.0.push(Audio::Stream { channel, sound: sound(id), rate_hz });
     }
 
-    fn stream_samples(&mut self, id: SoundId, pcm: &[i16]) {
+    fn stream_samples(&mut self, channel: u8, id: SoundId, pcm: &[i16]) {
         for piece in pcm.chunks(MAX_MESSAGE_SAMPLES) {
-            self.0.push(Audio::StreamSamples { sound: sound(id), pcm: piece.to_vec() });
+            self.0.push(Audio::StreamSamples { channel, sound: sound(id), pcm: piece.to_vec() });
         }
+    }
+
+    fn end_stream(&mut self, channel: u8, id: SoundId) {
+        self.0.push(Audio::EndStream { channel, sound: sound(id) });
     }
 
     fn start(&mut self, channel: u8, start: Start) {

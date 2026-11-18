@@ -29,6 +29,9 @@ const OP_STREAM: u8 = 8;
 const OP_STREAM_SAMPLES: u8 = 9;
 /// The trusted core's alone: the user muted or unmuted a channel.
 const OP_MUTE: u8 = 10;
+/// A stream ends (the engine's INT-36): a dedicated operation rather than
+/// a channel on [`Audio::Forget`], which ends every stream of a sound.
+const OP_END_STREAM: u8 = 11;
 
 const FLAG_LOOP: u8 = 1;
 const FLAG_AFTER_CURRENT: u8 = 2;
@@ -64,7 +67,9 @@ pub enum Audio {
         /// At most [`MAX_MESSAGE_SAMPLES`], ending within the sound's bound.
         pcm: Vec<i16>,
     },
-    /// The sound is gone; a voice already playing it plays to its end.
+    /// The sound is gone; a voice already playing it plays to its end, and
+    /// every stream of it, on any audio channel, ends as
+    /// [`Audio::EndStream`] ends one.
     Forget(Sound),
     /// Start a sound on a channel.
     Start {
@@ -99,20 +104,37 @@ pub enum Audio {
         /// 5 to 10 000 milliseconds.
         fade_ms: u16,
     },
-    /// A live sound exists (the engine's REQ-AUD-014): its samples follow
-    /// without end, in order.
+    /// A stream begins on an audio channel (the engine's REQ-AUD-014,
+    /// INT-33 and INT-37): samples of the sound follow in order, with no
+    /// length known ahead, until [`Audio::EndStream`] or [`Audio::Forget`].
+    /// A stream is named by its audio channel and its sound together, so
+    /// one sound may stream on two audio channels at once, each its own
+    /// playing; a stream begun under a name still held replaces it.
     Stream {
+        /// 0 to 3.
+        channel: u8,
         /// The sound.
         sound: Sound,
         /// One of the profile's sample rates.
         rate_hz: u32,
     },
-    /// The next samples of a live sound.
+    /// The next samples of the stream of a sound on an audio channel.
     StreamSamples {
+        /// 0 to 3.
+        channel: u8,
         /// The sound.
         sound: Sound,
         /// At most [`MAX_MESSAGE_SAMPLES`].
         pcm: Vec<i16>,
+    },
+    /// The stream of a sound on an audio channel ends (the engine's
+    /// INT-36): no more samples come. Its voice plays what it holds, then
+    /// ends, and a sound queued after it on that channel starts.
+    EndStream {
+        /// 0 to 3.
+        channel: u8,
+        /// The sound.
+        sound: Sound,
     },
     /// Forget every sound of the channel and stop its voices at once: its
     /// decoder ended. Only the trusted core sends it.
@@ -172,17 +194,21 @@ pub(crate) fn push(payload: &mut Vec<u8>, audio: &Audio, sender: Sender) -> Resu
             payload.extend_from_slice(&[OP_GAIN, *channel, *gain]);
             payload.extend_from_slice(&fade_ms.to_be_bytes());
         }
-        Audio::Stream { sound, rate_hz } => {
-            payload.push(OP_STREAM);
+        Audio::Stream { channel, sound, rate_hz } => {
+            payload.extend_from_slice(&[OP_STREAM, *channel]);
             push_sound(payload, *sound);
             payload.extend_from_slice(&rate_hz.to_be_bytes());
         }
-        Audio::StreamSamples { sound, pcm } => {
-            payload.push(OP_STREAM_SAMPLES);
+        Audio::StreamSamples { channel, sound, pcm } => {
+            payload.extend_from_slice(&[OP_STREAM_SAMPLES, *channel]);
             push_sound(payload, *sound);
             for sample in pcm {
                 payload.extend_from_slice(&sample.to_le_bytes());
             }
+        }
+        Audio::EndStream { channel, sound } => {
+            payload.extend_from_slice(&[OP_END_STREAM, *channel]);
+            push_sound(payload, *sound);
         }
         Audio::Reset => payload.push(OP_RESET),
         Audio::Mute(muted) => payload.extend_from_slice(&[OP_MUTE, u8::from(*muted)]),
@@ -235,16 +261,18 @@ pub(crate) fn read(fields: &mut Fields<'_>, sender: Sender) -> Result<Audio, Pro
         }
         OP_STOP => Audio::Stop { channel: channel(fields)?, fade_ms: fade(fields)? },
         OP_GAIN => Audio::Gain { channel: channel(fields)?, gain: gain(fields)?, fade_ms: fade(fields)? },
-        OP_STREAM => Audio::Stream { sound: sound(fields)?, rate_hz: rate(fields)? },
+        OP_STREAM => Audio::Stream { channel: channel(fields)?, sound: sound(fields)?, rate_hz: rate(fields)? },
         OP_STREAM_SAMPLES => {
+            let channel = channel(fields)?;
             let sound = sound(fields)?;
             let bytes = fields.take(fields.remaining())?;
             let (pairs, odd) = bytes.as_chunks::<2>();
             if !odd.is_empty() || pairs.is_empty() || pairs.len() > MAX_MESSAGE_SAMPLES {
                 return Err(ProtocolError::BadValue("samples"));
             }
-            Audio::StreamSamples { sound, pcm: pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect() }
+            Audio::StreamSamples { channel, sound, pcm: pairs.iter().map(|pair| i16::from_le_bytes(*pair)).collect() }
         }
+        OP_END_STREAM => Audio::EndStream { channel: channel(fields)?, sound: sound(fields)? },
         OP_RESET if sender == Sender::Core => Audio::Reset,
         OP_MUTE if sender == Sender::Core => Audio::Mute(fields.flag("mute")?),
         _ => return Err(ProtocolError::BadValue("audio operation")),

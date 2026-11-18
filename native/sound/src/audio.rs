@@ -34,10 +34,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use neoteletext_audio_mix::{Mixer, SoundKey, Start};
+use neoteletext_audio_mix::{Mixer, Start};
 use protocol::audio::{Audio, Sound};
 
+use names::{Name, Names};
+
 mod device;
+mod names;
 #[cfg(test)]
 mod tests;
 
@@ -50,18 +53,20 @@ const SCRATCH_FRAMES: usize = 8192;
 /// The mixers the reader and the audio thread share.
 pub type Shared = Arc<Mutex<Mixers>>;
 
-fn key(sound: Sound) -> SoundKey {
-    (sound.handle, sound.generation)
-}
-
 /// The loudest volume: the engine mixer's master is a percentage.
 const MAX_VOLUME: u8 = 100;
 const _: () = assert!(MAX_VOLUME == protocol::settings::MAX_VOLUME);
 
+/// One channel's mixer and the keys it knows the decoder's names by.
+struct Channel {
+    mixer: Mixer,
+    names: Names,
+}
+
 /// One mixer for each channel with sound, at the output's rate.
 pub struct Mixers {
     rate_hz: u32,
-    channels: BTreeMap<u32, Mixer>,
+    channels: BTreeMap<u32, Channel>,
     /// The settings: page sounds play, and their volume.
     sound: bool,
     volume: u8,
@@ -86,7 +91,7 @@ impl Mixers {
     /// back. Called with the lock held, on the audio thread too: it never
     /// blocks or allocates.
     fn note_activity(&mut self) {
-        let active = self.channels.values().any(Mixer::active);
+        let active = self.channels.values().any(|channel| channel.mixer.active());
         if active == self.active {
             return;
         }
@@ -102,7 +107,7 @@ impl Mixers {
     /// tab is muted.
     fn master(&mut self, channel: u32) {
         let silent = !self.sound || self.muted.contains(&channel);
-        if let Some(mixer) = self.channels.get_mut(&channel) {
+        if let Some(Channel { mixer, .. }) = self.channels.get_mut(&channel) {
             mixer.set_master(self.volume, silent);
         }
     }
@@ -110,7 +115,7 @@ impl Mixers {
     /// The channels sounding or about to, muted or not: their tabs show it.
     #[must_use]
     pub fn sounding(&self) -> BTreeSet<u32> {
-        self.channels.iter().filter(|(_, mixer)| mixer.active()).map(|(&channel, _)| channel).collect()
+        self.channels.iter().filter(|(_, channel)| channel.mixer.active()).map(|(&number, _)| number).collect()
     }
 
     /// Renders the sum of every channel into `out`, using `scratch`, as long
@@ -122,7 +127,7 @@ impl Mixers {
     fn render(&mut self, out: &mut [i16], scratch: &mut [i16]) {
         out.fill(0);
         let Some(scratch) = scratch.get_mut(..out.len()) else { return };
-        for mixer in self.channels.values_mut().filter(|mixer| mixer.active()) {
+        for Channel { mixer, .. } in self.channels.values_mut().filter(|channel| channel.mixer.active()) {
             mixer.render(scratch);
             for (sum, &sample) in out.iter_mut().zip(scratch.iter()) {
                 *sum = sum.saturating_add(sample);
@@ -178,7 +183,7 @@ enum Operation {
     /// [`Audio::Define`], with its silent samples.
     Define { sound: Sound, rate_hz: u32, samples: Vec<i16> },
     /// [`Audio::Stream`], with its ring.
-    Stream { sound: Sound, rate_hz: u32, ring: Vec<i16> },
+    Stream { channel: u8, sound: Sound, rate_hz: u32, ring: Vec<i16> },
     /// Every other operation, which needs no buffer.
     Other(Audio),
 }
@@ -190,7 +195,7 @@ impl Operation {
     fn prepare(audio: Audio) -> Self {
         match audio {
             Audio::Define { sound, rate_hz, samples } => Self::Define { sound, rate_hz, samples: vec![0; usize::try_from(samples).unwrap_or(0)] },
-            Audio::Stream { sound, rate_hz } => Self::Stream { sound, rate_hz, ring: vec![0; Mixer::stream_ring(rate_hz)] },
+            Audio::Stream { channel, sound, rate_hz } => Self::Stream { channel, sound, rate_hz, ring: vec![0; Mixer::stream_ring(rate_hz)] },
             other => Self::Other(other),
         }
     }
@@ -200,8 +205,9 @@ impl Operation {
 #[derive(Default)]
 struct Leftover {
     /// A channel's mixer, with every sound it held.
-    mixer: Option<Mixer>,
-    /// A ring the mixer refused.
+    mixer: Option<Channel>,
+    /// A ring the mixer refused, or a buffer for a name beyond the
+    /// channel's bound.
     buffer: Option<Vec<i16>>,
 }
 
@@ -237,26 +243,65 @@ impl Mixers {
             Operation::Define { .. } | Operation::Stream { .. } => {
                 if let std::collections::btree_map::Entry::Vacant(vacant) = self.channels.entry(channel) {
                     // A new mixer holds no sound yet, so it allocates nothing.
-                    vacant.insert(Mixer::new(self.rate_hz));
+                    vacant.insert(Channel { mixer: Mixer::new(self.rate_hz), names: Names::default() });
                     self.master(channel);
                 }
             }
             Operation::Other(_) => {}
         }
-        let Some(mixer) = self.channels.get_mut(&channel) else { return Leftover::default() };
+        let Some(Channel { mixer, names }) = self.channels.get_mut(&channel) else { return Leftover::default() };
         let mut leftover = Leftover::default();
         match operation {
-            Operation::Define { sound, rate_hz, samples } => mixer.define_with(key(sound), rate_hz, samples),
-            Operation::Stream { sound, rate_hz, ring } => leftover.buffer = mixer.stream_with(key(sound), rate_hz, ring).err(),
-            Operation::Other(audio) => match audio {
-                Audio::Samples { sound, first, pcm } => mixer.samples(key(sound), usize::try_from(first).unwrap_or(usize::MAX), &pcm),
-                Audio::Forget(sound) => mixer.forget(key(sound)),
-                Audio::Start { channel, sound, gain, fade_ms, looped, duck_percent, after_current } => {
-                    mixer.start(usize::from(channel), Start { key: key(sound), gain, fade_ms, looped, duck_percent, after_current });
+            Operation::Define { sound, rate_hz, samples } => match names.keep(Name::Stored(sound)) {
+                Some(key) => mixer.define_with(key, rate_hz, samples),
+                None => leftover.buffer = Some(samples),
+            },
+            // A stream under a name still held replaces it (the engine's
+            // INT-37): the old one's voice plays out what it holds.
+            Operation::Stream { channel: voice, sound, rate_hz, ring } => match names.renew(Name::Stream(voice, sound)) {
+                Some((key, old)) => {
+                    if let Some(old) = old {
+                        mixer.forget(old);
+                    }
+                    if let Err(ring) = mixer.stream_with(key, rate_hz, ring) {
+                        names.release(Name::Stream(voice, sound));
+                        leftover.buffer = Some(ring);
+                    }
                 }
-                Audio::Stop { channel, fade_ms } => mixer.stop(usize::from(channel), fade_ms),
-                Audio::Gain { channel, gain, fade_ms } => mixer.gain(usize::from(channel), gain, fade_ms),
-                Audio::StreamSamples { sound, pcm } => mixer.stream_samples(key(sound), &pcm),
+                None => leftover.buffer = Some(ring),
+            },
+            Operation::Other(audio) => match audio {
+                Audio::Samples { sound, first, pcm } => {
+                    if let Some(key) = names.get(Name::Stored(sound)) {
+                        mixer.samples(key, usize::try_from(first).unwrap_or(usize::MAX), &pcm);
+                    }
+                }
+                // The sound and every stream of it end; what plays them
+                // plays out what it holds.
+                Audio::Forget(sound) => {
+                    for key in names.release_sound(sound) {
+                        mixer.forget(key);
+                    }
+                }
+                // A live sound forgotten plays what it holds, then ends,
+                // and the sound queued after it on the voice starts.
+                Audio::EndStream { channel: voice, sound } => {
+                    if let Some(key) = names.release(Name::Stream(voice, sound)) {
+                        mixer.forget(key);
+                    }
+                }
+                Audio::Start { channel: voice, sound, gain, fade_ms, looped, duck_percent, after_current } => {
+                    if let Some(key) = names.started(voice, sound) {
+                        mixer.start(usize::from(voice), Start { key, gain, fade_ms, looped, duck_percent, after_current });
+                    }
+                }
+                Audio::Stop { channel: voice, fade_ms } => mixer.stop(usize::from(voice), fade_ms),
+                Audio::Gain { channel: voice, gain, fade_ms } => mixer.gain(usize::from(voice), gain, fade_ms),
+                Audio::StreamSamples { channel: voice, sound, pcm } => {
+                    if let Some(key) = names.get(Name::Stream(voice, sound)) {
+                        mixer.stream_samples(key, &pcm);
+                    }
+                }
                 // Prepared with their buffers, or applied above.
                 Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset => {}
             },

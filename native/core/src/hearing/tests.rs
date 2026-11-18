@@ -52,7 +52,7 @@ fn operations_are_checked_against_what_was_defined() {
     hearing.decoded(1, define(10)).unwrap();
     assert!(hearing.decoded(1, Audio::Samples { sound: SOUND, first: 8, pcm: vec![0; 2] }).is_some());
     assert!(hearing.decoded(1, Audio::Samples { sound: SOUND, first: 9, pcm: vec![0; 2] }).is_none(), "beyond its length");
-    assert!(hearing.decoded(1, Audio::StreamSamples { sound: SOUND, pcm: vec![0; 2] }).is_none(), "not a live sound");
+    assert!(hearing.decoded(1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![0; 2] }).is_none(), "not a live sound");
     assert!(hearing.decoded(1, start()).is_some());
     assert!(hearing.decoded(1, Audio::Reset).is_none());
     assert!(hearing.decoded(1, Audio::Mute(true)).is_none());
@@ -63,9 +63,9 @@ fn operations_are_checked_against_what_was_defined() {
 #[test]
 fn a_live_sound_takes_stream_samples_only() {
     let mut hearing = Hearing::default();
-    assert!(hearing.decoded(1, Audio::StreamSamples { sound: SOUND, pcm: vec![0; 2] }).is_none(), "never announced");
-    assert!(hearing.decoded(1, Audio::Stream { sound: SOUND, rate_hz: 8_000 }).is_some());
-    assert!(hearing.decoded(1, Audio::StreamSamples { sound: SOUND, pcm: vec![0; 2] }).is_some());
+    assert!(hearing.decoded(1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![0; 2] }).is_none(), "never announced");
+    assert!(hearing.decoded(1, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 }).is_some());
+    assert!(hearing.decoded(1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![0; 2] }).is_some());
     assert!(hearing.decoded(1, Audio::Samples { sound: SOUND, first: 0, pcm: vec![0; 2] }).is_none(), "a live sound has no positions");
     assert!(hearing.decoded(1, start()).is_some());
 }

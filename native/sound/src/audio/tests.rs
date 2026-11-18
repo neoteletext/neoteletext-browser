@@ -129,9 +129,9 @@ fn the_settings_silence_and_scale_every_channel() {
 #[test]
 fn a_live_sound_plays_once_its_buffer_fills() {
     let mixers = Mutex::new(Mixers::new(8_000));
-    apply(&mixers, 3, Audio::Stream { sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 3, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
     apply(&mixers, 3, Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false });
-    apply(&mixers, 3, Audio::StreamSamples { sound: SOUND, pcm: vec![6_000; 4_000] });
+    apply(&mixers, 3, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![6_000; 4_000] });
     let mut data = vec![0_i16; 400];
     render(&mixers, &mut data, 1, &mut [0; 512]);
     assert!((5_800..=6_200).contains(&data[300]), "{}", data[300]);
@@ -213,7 +213,7 @@ fn an_operation_on_an_unknown_channel_makes_no_mixer() {
         Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 0, looped: true, duck_percent: 100, after_current: false },
         Audio::Stop { channel: 0, fade_ms: 0 },
         Audio::Gain { channel: 0, gain: 50, fade_ms: 0 },
-        Audio::StreamSamples { sound: SOUND, pcm: vec![1; 8] },
+        Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![1; 8] },
         Audio::Mute(true),
     ]
     .into_iter()
@@ -224,7 +224,7 @@ fn an_operation_on_an_unknown_channel_makes_no_mixer() {
     assert_eq!(mixers.lock().unwrap().channels.keys().collect::<Vec<_>>(), Vec::<&u32>::new(), "no mixer made");
     // Channel 6 was muted before it had a mixer: it is silent once it plays.
     play(&mixers, 6, 8_000);
-    apply(&mixers, 7, Audio::Stream { sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 7, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
     assert_eq!(mixers.lock().unwrap().channels.keys().copied().collect::<Vec<_>>(), [6, 7]);
     let mut data = vec![0_i16; 400];
     let mut scratch = vec![0_i16; 400];
@@ -260,7 +260,9 @@ fn a_definition_and_a_live_sound_are_given_their_buffers_before_the_lock() {
     assert_eq!(samples.len(), 4_000);
     // The rate the tests above play at, and the device's usual one.
     for rate_hz in [8_000, 48_000] {
-        let Operation::Stream { ring, .. } = Operation::prepare(Audio::Stream { sound: SOUND, rate_hz }) else { panic!("a live sound is prepared as one") };
+        let Operation::Stream { ring, .. } = Operation::prepare(Audio::Stream { channel: 0, sound: SOUND, rate_hz }) else {
+            panic!("a live sound is prepared as one")
+        };
         assert_eq!(ring.len(), Mixer::stream_ring(rate_hz), "at {rate_hz} Hz");
     }
     assert!(matches!(Operation::prepare(Audio::Forget(SOUND)), Operation::Other(Audio::Forget(_))));
@@ -272,10 +274,10 @@ fn a_definition_and_a_live_sound_are_given_their_buffers_before_the_lock() {
 fn a_refused_ring_is_handed_back_to_be_freed_outside_the_lock() {
     let mut mixers = Mixers::new(8_000);
     let wrong = Mixer::stream_ring(8_000) + 1;
-    let leftover = mixers.apply(3, Operation::Stream { sound: SOUND, rate_hz: 8_000, ring: vec![0; wrong] });
+    let leftover = mixers.apply(3, Operation::Stream { channel: 0, sound: SOUND, rate_hz: 8_000, ring: vec![0; wrong] });
     assert_eq!(leftover.buffer.map(|ring| ring.len()), Some(wrong));
     let start = Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false };
     let _ = mixers.apply(3, Operation::Other(start));
-    let _ = mixers.apply(3, Operation::Other(Audio::StreamSamples { sound: SOUND, pcm: vec![6_000; 4_000] }));
+    let _ = mixers.apply(3, Operation::Other(Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![6_000; 4_000] }));
     assert_eq!(mixers.sounding(), BTreeSet::new(), "no live sound to play");
 }
