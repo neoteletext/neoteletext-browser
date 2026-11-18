@@ -774,8 +774,12 @@ mod tests {
 
     /// A home folder of its own for one test, with the browser's settings
     /// folder in it, as the broker's places name them.
+    /// In the build's own folder, on the disk, not under `TMPDIR`: whether
+    /// a file made where one was removed takes its inode number depends on
+    /// the file system (TODO-6629), so the test of a grant's file must not
+    /// depend on where `TMPDIR` points.
     fn home(name: &str) -> PathBuf {
-        let home = std::env::temp_dir().join(format!("neoteletext-broker-{name}-{}", std::process::id()));
+        let home = std::env::current_exe().unwrap().parent().unwrap().join(format!("neoteletext-broker-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(home.join("settings")).unwrap();
         home.canonicalize().unwrap()

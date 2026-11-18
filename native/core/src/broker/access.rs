@@ -160,7 +160,7 @@ mod tests {
         path
     }
 
-    const IDENTITY: FileIdentity = FileIdentity { volume: 1, file: 2 };
+    const IDENTITY: FileIdentity = FileIdentity { volume: 1, file: 2, born: 3 };
 
     fn declaration(path: &Path, keep: bool) -> Declaration {
         Declaration { paths: vec![path.display().to_string()], keep }

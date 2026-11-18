@@ -118,7 +118,7 @@ impl Grants {
         }
         for grant in &self.grants {
             if let Some(path) = hexadecimal(&grant.path) {
-                let _ = writeln!(text, "{GRANT} {:x} {:x} {path}", grant.identity.volume, grant.identity.file);
+                let _ = writeln!(text, "{GRANT} {:x} {:x} {:x} {path}", grant.identity.volume, grant.identity.file, grant.identity.born);
             }
         }
         text
@@ -139,10 +139,15 @@ impl Grants {
             let fields: Vec<&str> = line.split(' ').collect();
             match fields.as_slice() {
                 [LAST_FOLDER, folder] if path_from(folder).is_some() => grants.last_folder = path_from(folder),
-                [GRANT, volume, file, path] => match (u64::from_str_radix(volume, 16), u64::from_str_radix(file, 16), path_from(path)) {
-                    (Ok(volume), Ok(file), Some(path)) => grants.record(Grant { path, identity: FileIdentity { volume, file } }),
-                    _ => dropped = dropped.saturating_add(1),
-                },
+                // A grant names the file by device, inode and when it was
+                // made (TODO-6629); a line without the last, as written
+                // before, names no file for certain and is dropped.
+                [GRANT, volume, file, born, path] => {
+                    match (u64::from_str_radix(volume, 16), u64::from_str_radix(file, 16), u128::from_str_radix(born, 16), path_from(path)) {
+                        (Ok(volume), Ok(file), Ok(born), Some(path)) => grants.record(Grant { path, identity: FileIdentity { volume, file, born } }),
+                        _ => dropped = dropped.saturating_add(1),
+                    }
+                }
                 _ => dropped = dropped.saturating_add(1),
             }
         }
@@ -183,7 +188,7 @@ mod tests {
     }
 
     fn grant(path: &str, file: u64) -> Grant {
-        Grant { path: PathBuf::from(absolute(path)), identity: FileIdentity { volume: 7, file } }
+        Grant { path: PathBuf::from(absolute(path)), identity: FileIdentity { volume: 7, file, born: 9 } }
     }
 
     #[test]
@@ -197,13 +202,27 @@ mod tests {
 
     #[test]
     fn a_line_that_breaks_a_rule_is_dropped() {
-        let good = format!("{HEADER}\ngrant 7 1 {}\n", hexadecimal(Path::new(&absolute("/a"))).unwrap());
+        let good = format!("{HEADER}\ngrant 7 1 9 {}\n", hexadecimal(Path::new(&absolute("/a"))).unwrap());
         assert_eq!(Grants::parse(&good).0.find(Path::new(&absolute("/a"))), Some(&grant("/a", 1)));
-        for bad in ["grant 7 1", "grant 7 1 61", "grant 7 1 zz", "grant 7 1 612f", "grant x 1 2f61", "grant 7 1 2f61 extra", "folder 61", "another 1"] {
+        // "grant 7 1 2f61" is a line as written before a grant held when
+        // its file was made (TODO-6629): it names no file for certain.
+        let bad_lines = [
+            "grant 7 1",
+            "grant 7 1 2f61",
+            "grant 7 1 9 61",
+            "grant 7 1 9 zz",
+            "grant 7 1 9 612f",
+            "grant x 1 9 2f61",
+            "grant 7 1 x 2f61",
+            "grant 7 1 9 2f61 extra",
+            "folder 61",
+            "another 1",
+        ];
+        for bad in bad_lines {
             let (read, dropped) = Grants::parse(&format!("{good}{bad}\n"));
             assert_eq!((read.len(), dropped), (1, 1), "{bad}");
         }
-        assert_eq!(Grants::parse("grant 7 1 2f61\n"), (Grants::default(), 1), "no header");
+        assert_eq!(Grants::parse("grant 7 1 9 2f61\n"), (Grants::default(), 1), "no header");
         assert_eq!(Grants::parse(""), (Grants::default(), 0));
     }
 
