@@ -48,11 +48,13 @@ impl Core {
         u64::try_from(self.started.elapsed().as_micros()).unwrap_or(u64::MAX)
     }
 
-    /// The interface told its frames: kept, and passed to every decoder,
-    /// each of which paints its pages on screen just before a composition
-    /// (RULE-65) and locks its open page's ticks to them (RULE-98).
-    pub(super) fn frame_phase(&mut self, phase: FramePhase) {
-        self.frame_phase = Some(Compositions::of(phase, self.phase_clock_us()));
+    /// The interface told its frames, read from its pipe at `read_at`:
+    /// kept, and passed to every decoder, each of which paints its pages
+    /// on screen just before a composition (RULE-65) and locks its open
+    /// page's ticks to them (RULE-98).
+    pub(super) fn frame_phase(&mut self, phase: FramePhase, read_at: std::time::Instant) {
+        let read_us = u64::try_from(read_at.saturating_duration_since(self.started).as_micros()).unwrap_or(u64::MAX);
+        self.frame_phase = Some(Compositions::of(phase, read_us));
         let channels: Vec<u32> = self.decoders.keys().copied().collect();
         for channel in channels {
             self.tell_frame_phase(channel);

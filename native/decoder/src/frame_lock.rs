@@ -24,6 +24,19 @@ const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 const LOCK_BASE_HERTZ: u64 = neoteletext_rules::limits::TICKS_PER_SECOND as u64;
 /// Parts a thousand, the tolerance's unit.
 const PARTS: u64 = 1_000;
+/// The interface's last tellings kept to judge its compositions by: those
+/// of the last `PHASE_STALE_MILLISECONDS`, at most this many. The
+/// interface tells at least every half second and whenever its last was
+/// 500 microseconds wrong (RULE-98 item 1), about twice a second in the
+/// timed test, so eight hold every telling of the last second.
+const TELLINGS_KEPT: usize = 8;
+/// The loop's last wakes for a deadline kept, to judge how late it wakes.
+const WAKES_KEPT: usize = 16;
+/// The most the paint points are aimed early for the loop's lateness in
+/// waking: the loop woke 80 microseconds late in the median and 132 at the
+/// 90th percentile in the timed test of 19 November 2026, and a machine so
+/// loaded that it wakes later than this is not helped by aiming earlier.
+const MOST_WAKE_LEAD_MICROSECONDS: u64 = 500;
 
 /// The interface's compositions as this decoder read them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,7 +52,12 @@ struct Compositions {
 /// The lock, the offset and the paint points.
 #[derive(Debug, Default)]
 pub struct FrameLock {
+    /// The compositions judged from the tellings: the earliest of them.
     compositions: Option<Compositions>,
+    /// The tellings of the last `PHASE_STALE_MILLISECONDS`, newest last.
+    tellings: Vec<Compositions>,
+    /// How late the loop woke for its last deadlines, oldest first.
+    wakes: Vec<u64>,
     /// Microseconds the presentation clock is behind the decoder's own:
     /// negative when ahead.
     offset: i64,
@@ -78,6 +96,15 @@ pub fn lockable(period: u64) -> bool {
     exact.abs_diff(near) <= tolerance
 }
 
+/// How much earlier than `newest` a composition grid of `period` through
+/// `at` falls, within half a period either way: 0 when it falls later.
+fn earlier_by(at: u64, newest: u64, period: u64) -> u64 {
+    let Some(behind) = newest.abs_diff(at).checked_rem(period) else { return 0 };
+    // The distance from `newest` back to the grid's composition before it.
+    let back = if at <= newest { behind } else { period.saturating_sub(behind).checked_rem(period).unwrap_or(0) };
+    if back.saturating_mul(2) <= period { back } else { 0 }
+}
+
 /// The presentation tick due at or before `presentation_us`, and when the
 /// next is due.
 fn next_tick(presentation_us: u64) -> (u32, u64) {
@@ -110,9 +137,29 @@ impl FrameLock {
     /// The interface told its frames, read at `real_us` (RULE-98 item 2).
     /// When none was in force, a display that can be locked to puts the
     /// next tick on the target at once, without slewing (DEC-6659 item 13).
+    ///
+    /// A telling is read late by the time it spent in the pipes and the
+    /// threads between the interface and here, never early, so each one
+    /// puts the compositions later than they are by that time, which on a
+    /// loaded machine was up to 8 milliseconds (the timed test of 19
+    /// November 2026, a median of 0.3). The compositions are therefore
+    /// judged by the earliest of the last second's tellings of the same
+    /// period, the one least delayed, as each puts the composition nearest
+    /// before or after the newest's (within half a period): a display
+    /// whose compositions truly moved earlier is followed at once, one
+    /// whose compositions moved later within a second, as the tellings
+    /// before the move fall out of it.
     pub fn told(&mut self, phase: FramePhase, real_us: u64) {
         let fresh = !self.in_force(real_us);
-        self.compositions = Some(Compositions { period: u64::from(phase.period_us), at: phase.composition_after(real_us), told: real_us });
+        let newest = Compositions { period: u64::from(phase.period_us), at: phase.composition_after(real_us), told: real_us };
+        let stale = PHASE_STALE_MILLISECONDS.saturating_mul(MICROSECONDS_PER_MILLISECOND);
+        self.tellings.retain(|telling| telling.period == newest.period && real_us.saturating_sub(telling.told) < stale);
+        if self.tellings.len() >= TELLINGS_KEPT {
+            self.tellings.remove(0);
+        }
+        self.tellings.push(newest);
+        let earliest = self.tellings.iter().map(|telling| earlier_by(telling.at, newest.at, newest.period)).max().unwrap_or(0);
+        self.compositions = Some(Compositions { at: newest.at.saturating_sub(earliest), ..newest });
         if fresh && self.locking(real_us) {
             let (_, due) = next_tick(self.presentation_us(real_us));
             let due_real = self.real_us(due);
@@ -185,6 +232,12 @@ impl FrameLock {
     /// test's unlocked setting, the presentation tick. `None` with no
     /// phase in force: the decoder paints at once.
     pub(crate) fn paint_point_at_or_before(&self, real_us: u64) -> Option<u64> {
+        self.point_at_or_before(real_us.saturating_add(self.wake_lead()))
+    }
+
+    /// The paint point at or before `real_us` itself, with no lead for the
+    /// loop's waking.
+    fn point_at_or_before(&self, real_us: u64) -> Option<u64> {
         if !self.in_force(real_us) {
             return None;
         }
@@ -209,12 +262,32 @@ impl FrameLock {
     #[must_use]
     pub fn next_paint_us(&self, real_us: u64) -> Option<u64> {
         let point = self.paint_point_at_or_before(real_us)?;
+        let lead = self.wake_lead();
         if self.painted != Some(point) {
-            return Some(self.presentation_us(point));
+            return Some(self.presentation_us(point.saturating_sub(lead)));
         }
         let period =
             if self.unlocked { neoteletext_core::consts::presentation_tick_due_us(1) } else { self.compositions.map_or(0, |compositions| compositions.period) };
-        Some(self.presentation_us(point.saturating_add(period)))
+        Some(self.presentation_us(point.saturating_add(period).saturating_sub(lead)))
+    }
+
+    /// The loop woke `late_us` after a deadline it waited for.
+    pub fn woke_late(&mut self, late_us: u64) {
+        if self.wakes.len() >= WAKES_KEPT {
+            self.wakes.remove(0);
+        }
+        self.wakes.push(late_us);
+    }
+
+    /// How long before a paint point the loop wakes for it, so that it
+    /// paints at the point itself (RULE-98 item 5, the paint point
+    /// `TICK_LEAD_MICROSECONDS` before a composition): the median of how
+    /// late it woke for its last deadlines, at most
+    /// `MOST_WAKE_LEAD_MICROSECONDS`.
+    fn wake_lead(&self) -> u64 {
+        let mut wakes = self.wakes.clone();
+        wakes.sort_unstable();
+        wakes.get(wakes.len() / 2).copied().unwrap_or(0).min(MOST_WAKE_LEAD_MICROSECONDS)
     }
 
     /// The decoder painted at the paint point due at `began_us` and
@@ -373,6 +446,65 @@ mod tests {
         assert_eq!(lock.late_frames(), 0);
         lock.painted(first + 6_944, first + 6_944 + 4_001);
         assert_eq!(lock.late_frames(), 1, "finished after its composition");
+    }
+
+    /// RULE-98 item 2: a telling read late, as one held in a busy pipe
+    /// is, does not move the paint points later; the earliest of the last
+    /// second's tellings is followed, and a display whose compositions
+    /// truly moved later is followed once the tellings before the move are
+    /// a second old.
+    #[test]
+    fn a_telling_read_late_does_not_make_the_paint_points_late() {
+        let period = u64::from(SIXTY);
+        // The display's compositions fall at `moved` after 20,000 and
+        // every period after it.
+        let tell = |lock: &mut FrameLock, written: u64, read: u64, moved: u64| {
+            let next = 20_000 + moved + ((written - 20_000 - moved) / period + 1) * period;
+            lock.told(FramePhase::at(SIXTY, next, written).unwrap(), read);
+        };
+        // Where in its period the paint point falls, and where it should
+        // for compositions `late` after the true ones.
+        let phase = |lock: &FrameLock, real: u64| lock.paint_point_at_or_before(real).unwrap() % period;
+        let expected = |late: u64| (20_000 + late - TICK_LEAD_MICROSECONDS) % period;
+        let mut lock = FrameLock::default();
+        tell(&mut lock, 1_000_000, 1_000_100, 0);
+        assert_eq!(phase(&lock, 1_100_000), expected(100), "read 100 microseconds after its writing");
+        tell(&mut lock, 1_500_000, 1_506_000, 0);
+        assert_eq!(phase(&lock, 1_600_000), expected(100), "one held 6 milliseconds in the pipes moves nothing");
+        tell(&mut lock, 1_700_000, 1_700_020, 0);
+        assert_eq!(phase(&lock, 1_800_000), expected(20), "one read sooner moves the paint points earlier at once");
+        // The compositions now truly 2 milliseconds later, told at once.
+        for at in [1_900_000, 2_300_000, 2_650_000] {
+            tell(&mut lock, at, at, 2_000);
+        }
+        assert_eq!(phase(&lock, 2_650_000), expected(20), "the second's earliest telling still holds");
+        tell(&mut lock, 2_710_000, 2_710_000, 2_000);
+        assert_eq!(phase(&lock, 2_710_000), expected(2_000), "followed once the earlier tellings are a second old");
+    }
+
+    /// RULE-98 item 5: a loop that wakes late for its deadlines is woken
+    /// that much before its paint points, the median of its last wakes,
+    /// and paints there, so that it paints at the points themselves.
+    #[test]
+    fn the_paint_points_are_aimed_early_by_how_late_the_loop_wakes() {
+        let mut lock = FrameLock::default();
+        lock.told(FramePhase { period_us: SIXTY, next_in_us: 10_000 }, 100_000);
+        let point = 100_000 + 10_000 - TICK_LEAD_MICROSECONDS;
+        // The paint point before it was painted.
+        lock.painted(point - u64::from(SIXTY), point - u64::from(SIXTY));
+        assert_eq!(lock.next_paint_us(point - 1_000).map(|at| lock.real_us(at)), Some(point), "no lead before any wake");
+        for late in [60, 80, 80, 90, 5_000] {
+            lock.woke_late(late);
+        }
+        assert_eq!(lock.next_paint_us(point - 1_000).map(|at| lock.real_us(at)), Some(point - 80), "the median, not the one slow wake");
+        assert!(!lock.paint_due(point - 81) && lock.paint_due(point - 80), "it paints when it wakes for it");
+        lock.painted(point - 80, point);
+        let next = point + u64::from(SIXTY);
+        assert_eq!(lock.next_paint_us(point).map(|at| lock.real_us(at)), Some(next - 80));
+        for _ in 0..WAKES_KEPT {
+            lock.woke_late(9_000);
+        }
+        assert_eq!(lock.next_paint_us(point).map(|at| lock.real_us(at)), Some(next - MOST_WAKE_LEAD_MICROSECONDS), "at most");
     }
 
     /// RULE-66: the timed test's unlocked setting never moves the clock

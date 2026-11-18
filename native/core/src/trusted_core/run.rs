@@ -39,6 +39,7 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             }
         }
         Event::FetcherEnded(channel, generation, reason) => core.fetcher_ended(channel, generation, reason),
+        Event::FramePhase(phase, read_at) => core.frame_phase(phase, read_at),
         Event::Intent(intent) => {
             // What the intent changes in a tab's list is stamped with now.
             core.session.now = neoteletext::calendar::utc_now();

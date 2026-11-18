@@ -363,8 +363,19 @@ pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Resul
     let output = child.stdout.take().ok_or("the interface has no output")?;
     #[cfg(feature = "timed-test")]
     let read_from_interface = timed_read_from_interface;
-    relay(output, read_from_interface, events, Event::Intent, Event::InterfaceEnded);
+    relay(output, read_from_interface, events, interface_said, Event::InterfaceEnded);
     Ok(())
+}
+
+/// What the interface said, as the core's thread is to take it: its
+/// frames stamped with the moment they were read, so that the time the
+/// event waits for the core's thread is not counted against the display's
+/// phase (RULE-98 item 2; DEC-6753).
+fn interface_said(message: protocol::ToCore) -> Event {
+    match message {
+        protocol::ToCore::FramePhase(phase) => Event::FramePhase(phase, std::time::Instant::now()),
+        other => Event::Intent(other),
+    }
 }
 
 /// The timed test's hops (page-rules.md RULE-66): when the reader of the

@@ -112,6 +112,10 @@ enum Event {
     FetcherEnded(u32, u64, Option<String>),
     DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
+    /// The interface's frames, with when its reader read them from the
+    /// pipe: the phase is relative to its reading (RULE-98 item 2), not to
+    /// when the core's thread takes it.
+    FramePhase(protocol::rules::FramePhase, std::time::Instant),
     InterfaceEnded(Option<String>),
     /// The broker ended: by a signal, a crash or its own end, the core has
     /// no one to start, end or wait for its helpers, and ends (TODO-2006).

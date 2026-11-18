@@ -436,6 +436,12 @@ impl Engine {
         self.lock.paint_point_at_or_before(self.real_us())
     }
 
+    /// The loop woke `late_us` after a deadline it waited for (RULE-98
+    /// item 5): the paint points are aimed that much earlier.
+    pub fn woke_late(&mut self, late_us: u64) {
+        self.lock.woke_late(late_us);
+    }
+
     /// The decoder painted, from `began_real_us` on the engine's own clock
     /// to now: its paint point is spent, and a frame finished after its
     /// composition is counted (RULE-98 item 5).
