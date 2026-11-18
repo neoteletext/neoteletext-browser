@@ -61,6 +61,7 @@ impl App {
     pub(super) fn compose_test_display(&mut self, event_loop: &ActiveEventLoop) -> Instant {
         let now = Instant::now();
         if let Some(phase) = self.test_display.phase_due(now) {
+            protocol::timed_test::mark("interface", "phase", now, format_args!("{} {}", phase.period_us, phase.next_in_us));
             self.send(event_loop, &ToCore::FramePhase(phase));
             let _ = self.output.handled();
         }

@@ -166,6 +166,10 @@ impl Engine {
     fn frame_phase(&mut self, phase: protocol::rules::FramePhase) {
         let real = self.real_us();
         self.lock.told(phase, real);
+        // RULE-66: when the phase was read, for the test's measure of its
+        // error, the time it spent in the pipes.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("decoder", "phase", std::time::Instant::now(), format_args!("{} {}", phase.period_us, phase.next_in_us));
     }
 
     /// When the open page's next tick is due, on [`Engine::now_us`]'s
