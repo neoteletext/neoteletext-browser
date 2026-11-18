@@ -15,8 +15,8 @@ use interface_core::controls::SUBPAGE_ROWS;
 use kinds::{
     KIND_ARRIVED, KIND_ASK_SUBPAGE_ROWS, KIND_AUDIO, KIND_AUDIO_RECEIVER, KIND_BOOKMARK_FOLDER, KIND_BOOKMARK_FOLDER_END, KIND_BOOKMARK_LINK,
     KIND_BOOKMARKS_READ, KIND_CHANNEL_LOG, KIND_CLOSE, KIND_CONFINED, KIND_DATA, KIND_END, KIND_FRAME, KIND_MISSING, KIND_OPENED, KIND_PICTURE,
-    KIND_PICTURE_CONVERTED, KIND_PICTURE_REFUSED, KIND_REGION, KIND_REGIS, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT, KIND_SUBPAGE_ROWS, KIND_SUBPAGES,
-    KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
+    KIND_PICTURE_CONVERTED, KIND_PICTURE_OUTPUT, KIND_PICTURE_REFUSED, KIND_REGION, KIND_REGIS, KIND_SHOWING, KIND_STORE_FULL, KIND_SUBPAGE_COUNT,
+    KIND_SUBPAGE_ROWS, KIND_SUBPAGES, KIND_UPDATED, KIND_VIEW, KIND_WHOLE,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_CURSOR, KIND_INPUT_CONTROL};
@@ -339,6 +339,16 @@ pub enum FromDecoder {
     },
     /// Why a picture decoder made no page, not yet cleaned.
     PictureRefused(String),
+    /// The picture a picture decoder converted, in a picture language, at
+    /// most [`crate::picture::MAX_PICTURE_OUTPUT`] bytes, or why it made
+    /// none, untrusted: sent after [`FromDecoder::PictureConverted`], once
+    /// for ReGIS and once for NAPLPS (renderer parity PAR-36 item 2).
+    PictureOutput {
+        /// The language.
+        language: interface_core::canvas::PictureLanguage,
+        /// The bytes, or why there are none, not yet cleaned.
+        output: Result<Vec<u8>, String>,
+    },
     /// The links found in a page, sent before its image whenever they
     /// change (`hyperlinks.md` section 8.1): untrusted, for the trusted
     /// core to check and decide.
@@ -840,6 +850,10 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             push_raw_text(&mut payload, reason, interface_core::picture::MAX_STATUS);
             KIND_PICTURE_REFUSED
         }
+        FromDecoder::PictureOutput { language, output } => {
+            crate::picture::push_output(&mut payload, *language, output)?;
+            KIND_PICTURE_OUTPUT
+        }
         FromDecoder::Confined => KIND_CONFINED,
         FromDecoder::AudioReceiver(receiver) => {
             for figure in [receiver.store_bytes, receiver.objects, receiver.records_in_flight] {
@@ -952,6 +966,10 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             FromDecoder::PictureConverted { tti, t42, summary }
         }
         KIND_PICTURE_REFUSED => FromDecoder::PictureRefused(raw_text(&mut fields, interface_core::picture::MAX_STATUS, "reason too long")?),
+        KIND_PICTURE_OUTPUT => {
+            let (language, output) = crate::picture::read_output(&mut fields)?;
+            FromDecoder::PictureOutput { language, output }
+        }
         KIND_CONFINED => FromDecoder::Confined,
         KIND_AUDIO_RECEIVER => {
             FromDecoder::AudioReceiver(AudioReceiver { store_bytes: fields.u32()?, objects: fields.u32()?, records_in_flight: fields.u32()? })

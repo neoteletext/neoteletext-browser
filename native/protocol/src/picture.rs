@@ -5,6 +5,7 @@
 //! are bounded here and pass to a channel's decoder unread, and its words
 //! are cleaned by the trusted core.
 
+use interface_core::canvas::PictureLanguage;
 use interface_core::picture::{MAX_STATUS, PictureChoice, PictureStatus};
 
 use crate::{Fields, ProtocolError, push_raw_text, push_text, raw_text};
@@ -15,6 +16,15 @@ use crate::{Fields, ProtocolError, push_raw_text, push_text, raw_text};
 /// keeps both forms in one message under the framing's 256 KB.
 pub const MAX_PICTURE_PAGE: usize = 96 * 1024;
 const _: () = assert!(2 * MAX_PICTURE_PAGE + MAX_STATUS + 16 < crate::MAX_PAYLOAD, "one message holds both forms and the summary");
+
+/// The most bytes of the picture converter's ReGIS or NAPLPS output the
+/// browser carries (renderer parity PAR-36 item 2): each goes in a message
+/// of its own, which the framing holds to 256 KB, so this is 255 KB, a
+/// kilobyte under the engine's `MAX_PICTURE_OUTPUT_BYTES` (262,144). An
+/// output the engine made between the two is refused as larger than the
+/// browser takes.
+pub const MAX_PICTURE_OUTPUT: usize = 255 * 1024;
+const _: () = assert!(MAX_PICTURE_OUTPUT + MAX_STATUS + 16 < crate::MAX_PAYLOAD, "one message holds an output or its refusal");
 
 /// The largest picture file the broker reads and a decoder converts: the
 /// engine converter's `MAX_INPUT_BYTES`, which the decoder, linking both,
@@ -109,4 +119,46 @@ pub(crate) fn read_converted(fields: &mut Fields<'_>) -> Result<(Vec<u8>, Vec<u8
     let tti = read_page(fields)?;
     let t42 = read_page(fields)?;
     Ok((tti, t42, raw_text(fields, MAX_STATUS, "summary too long")?))
+}
+
+/// The picture converter's output in one picture language, or why none was
+/// made, untrusted (renderer parity PAR-36 item 2): the language as the
+/// picture messages give it, a flag, then the bytes with a four-byte length
+/// or the reason.
+///
+/// # Errors
+/// When the output is longer than [`MAX_PICTURE_OUTPUT`].
+pub(crate) fn push_output(payload: &mut Vec<u8>, language: PictureLanguage, output: &Result<Vec<u8>, String>) -> Result<(), ProtocolError> {
+    payload.push(u8::from(language == PictureLanguage::Naplps));
+    match output {
+        Ok(bytes) => {
+            if bytes.len() > MAX_PICTURE_OUTPUT {
+                return Err(ProtocolError::TooLong(bytes.len()));
+            }
+            payload.push(1);
+            payload.extend_from_slice(&u32::try_from(bytes.len()).map_err(|_| ProtocolError::TooLong(bytes.len()))?.to_be_bytes());
+            payload.extend_from_slice(bytes);
+        }
+        Err(reason) => {
+            payload.push(0);
+            push_raw_text(payload, reason, MAX_STATUS);
+        }
+    }
+    Ok(())
+}
+
+/// Reads what [`push_output`] wrote.
+///
+/// # Errors
+/// When the payload is malformed or the output too long.
+pub(crate) fn read_output(fields: &mut Fields<'_>) -> Result<(PictureLanguage, Result<Vec<u8>, String>), ProtocolError> {
+    let language = if fields.flag("a picture output's language")? { PictureLanguage::Naplps } else { PictureLanguage::Regis };
+    if !fields.flag("a picture output's outcome")? {
+        return Ok((language, Err(raw_text(fields, MAX_STATUS, "reason too long")?)));
+    }
+    let length = usize::try_from(fields.u32()?).map_err(|_| ProtocolError::BadValue("output length"))?;
+    if length > MAX_PICTURE_OUTPUT {
+        return Err(ProtocolError::TooLong(length));
+    }
+    Ok((language, Ok(fields.take(length)?.to_vec())))
 }

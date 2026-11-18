@@ -282,6 +282,8 @@ fn every_intent_round_trips() {
         ToCore::OpenFile { kind: OpenKind::Picture, parent: String::new() },
         ToCore::OpenFile { kind: OpenKind::SavePictureTti, parent: String::new() },
         ToCore::OpenFile { kind: OpenKind::SavePictureT42, parent: String::new() },
+        ToCore::OpenFile { kind: OpenKind::SavePictureRegis, parent: String::new() },
+        ToCore::OpenFile { kind: OpenKind::SavePictureNaplps, parent: String::new() },
         ToCore::Picture(interface_core::picture::PictureChoice { level: 1, fit: 2, align: 0, background: 4, hold_mosaics: false }),
         ToCore::Dropped { files: vec!["/a/b.tti".into(), "/c.t42".into()], place: DropPlace::Before(3), left_out: 0 },
         ToCore::Dropped { files: Vec::new(), place: DropPlace::NewTabs, left_out: 7 },

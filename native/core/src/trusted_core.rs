@@ -136,8 +136,8 @@ enum Event {
     BookmarksRead(Result<(Vec<BookmarkEntry>, u32), String>),
     /// A decoder converted a picture, or did not, for the conversion of
     /// that generation (`docs/picture-tools.md`): TTI, T42 and the
-    /// converter's summary, untrusted.
-    PictureConverted(u64, Result<(Vec<u8>, Vec<u8>, String), String>),
+    /// converter's summary, and the picture in ReGIS and NAPLPS, untrusted.
+    PictureConverted(u64, Result<picture::Converted, String>),
     /// The updater said something, untrusted (`installation-and-updates.md`).
     Updater(update::wire::FromUpdater),
     /// The updater ended.

@@ -37,6 +37,11 @@ pub enum OpenKind {
     SavePictureTti,
     /// Where to save the converted page as T42 packets.
     SavePictureT42,
+    /// Where to save the converted picture written in ReGIS (renderer
+    /// parity PAR-36 item 2).
+    SavePictureRegis,
+    /// Where to save the converted picture written in NAPLPS.
+    SavePictureNaplps,
 }
 
 /// Where dropped files go (REQ-1700).

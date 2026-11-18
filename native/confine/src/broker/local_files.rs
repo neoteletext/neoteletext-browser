@@ -48,15 +48,20 @@ pub enum ChooseKind {
     SaveTti,
     /// Where to save the converted page as T42 packets, likewise.
     SaveT42,
+    /// Where to save the converted picture written in ReGIS, likewise
+    /// (renderer parity PAR-36 item 2).
+    SaveRegis,
+    /// Where to save the converted picture written in NAPLPS, likewise.
+    SaveNaplps,
 }
 
 impl ChooseKind {
-    const ALL: [Self; 6] = [Self::File, Self::Folder, Self::Bookmarks, Self::Picture, Self::SaveTti, Self::SaveT42];
+    const ALL: [Self; 8] = [Self::File, Self::Folder, Self::Bookmarks, Self::Picture, Self::SaveTti, Self::SaveT42, Self::SaveRegis, Self::SaveNaplps];
 
     /// Whether the dialog chooses where to save, not what to read.
     #[must_use]
     pub fn is_save(self) -> bool {
-        matches!(self, Self::SaveTti | Self::SaveT42)
+        matches!(self, Self::SaveTti | Self::SaveT42 | Self::SaveRegis | Self::SaveNaplps)
     }
 
     pub(super) fn code(self) -> u8 {
@@ -67,6 +72,8 @@ impl ChooseKind {
             Self::Picture => 4,
             Self::SaveTti => 5,
             Self::SaveT42 => 6,
+            Self::SaveRegis => 7,
+            Self::SaveNaplps => 8,
         }
     }
 
@@ -84,6 +91,8 @@ impl ChooseKind {
             Self::Picture => "picture",
             Self::SaveTti => "save-tti",
             Self::SaveT42 => "save-t42",
+            Self::SaveRegis => "save-regis",
+            Self::SaveNaplps => "save-naplps",
         }
     }
 

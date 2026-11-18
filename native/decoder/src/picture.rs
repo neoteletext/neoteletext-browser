@@ -4,10 +4,11 @@
 //! every decoder is, so the picture's decoders never run in the trusted
 //! core (requirement 3.2).
 
+use interface_core::canvas::PictureLanguage;
 use interface_core::picture::{ALIGNS, PictureChoice};
-use neoteletext_picture::{Align, Fit, Level, Options, convert, parse_colour};
+use neoteletext_picture::{Align, Fit, Level, Options, PictureOptions, convert, parse_colour, to_naplps, to_regis};
 use protocol::decoder::FromDecoder;
-use protocol::picture::MAX_PICTURE_PAGE;
+use protocol::picture::{MAX_PICTURE_OUTPUT, MAX_PICTURE_PAGE};
 
 const _: () = assert!(protocol::picture::MAX_PICTURE_FILE == neoteletext_picture::MAX_INPUT_BYTES, "the broker reads what the converter takes");
 
@@ -45,6 +46,25 @@ pub fn converted(bytes: &[u8], choice: PictureChoice) -> FromDecoder {
         return FromDecoder::PictureRefused(String::from("the page made is larger than the browser takes"));
     }
     FromDecoder::PictureConverted { tti: page.tti.into_bytes(), t42, summary: page.summary }
+}
+
+/// The picture in `bytes` in each picture language, ReGIS then NAPLPS, or
+/// why it is not (renderer parity PAR-36 item 2, PAR-9): fitted, aligned
+/// and on the background the panel chose, in the most colours either
+/// language's colour map holds. An output larger than the browser carries
+/// is refused, as a page is.
+#[must_use]
+pub fn outputs(bytes: &[u8], choice: PictureChoice) -> [FromDecoder; 2] {
+    let options = PictureOptions { options: options(choice), ..PictureOptions::default() };
+    let output = |made: Result<Vec<u8>, neoteletext_picture::Error>| match made {
+        Ok(written) if written.len() > MAX_PICTURE_OUTPUT => Err(String::from("the picture written is larger than the browser takes")),
+        Ok(written) => Ok(written),
+        Err(error) => Err(error.to_string()),
+    };
+    [
+        FromDecoder::PictureOutput { language: PictureLanguage::Regis, output: output(to_regis(bytes, &options)) },
+        FromDecoder::PictureOutput { language: PictureLanguage::Naplps, output: output(to_naplps(bytes, &options)) },
+    ]
 }
 
 #[cfg(test)]
@@ -113,5 +133,19 @@ mod tests {
         assert!(String::from_utf8(tti).unwrap().lines().any(|line| line == "PN,10000"));
         assert!(!t42.is_empty() && t42.len().is_multiple_of(42));
         assert!(summary.starts_with("8 colours"), "{summary}");
+    }
+
+    /// Renderer parity PAR-36 item 2: the picture is also written in ReGIS
+    /// and in NAPLPS, each within the browser's bound, and each draws in
+    /// its own renderer.
+    #[test]
+    fn a_picture_is_written_in_regis_and_naplps() {
+        let [regis, naplps] = outputs(&bmp(), PictureChoice::default());
+        let FromDecoder::PictureOutput { language: PictureLanguage::Regis, output: Ok(regis) } = regis else { panic!("no ReGIS: {regis:?}") };
+        let FromDecoder::PictureOutput { language: PictureLanguage::Naplps, output: Ok(naplps) } = naplps else { panic!("no NAPLPS: {naplps:?}") };
+        assert!(regis.starts_with(b"\x1bP") && regis.len() <= MAX_PICTURE_OUTPUT, "a ReGIS device control string");
+        assert!(!naplps.is_empty() && naplps.len() <= MAX_PICTURE_OUTPUT);
+        let [refused, _] = outputs(b"not a picture", PictureChoice::default());
+        assert!(matches!(refused, FromDecoder::PictureOutput { output: Err(_), .. }), "refused with the converter's reason");
     }
 }

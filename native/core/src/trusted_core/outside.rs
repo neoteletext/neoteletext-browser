@@ -42,6 +42,8 @@ impl Core {
             OpenKind::Picture => ChooseKind::Picture,
             OpenKind::SavePictureTti => ChooseKind::SaveTti,
             OpenKind::SavePictureT42 => ChooseKind::SaveT42,
+            OpenKind::SavePictureRegis => ChooseKind::SaveRegis,
+            OpenKind::SavePictureNaplps => ChooseKind::SaveNaplps,
         };
         match self.broker().and_then(|broker| broker.choose(kind, parent, keep)) {
             Ok(()) => Ok(()),
@@ -54,7 +56,9 @@ impl Core {
         match opening {
             Opening::Chosen { kind: ChooseKind::Bookmarks, path } => self.import_chosen(&path)?,
             Opening::Chosen { kind: ChooseKind::Picture, path } => self.picture_chosen(&path)?,
-            Opening::Chosen { kind: kind @ (ChooseKind::SaveTti | ChooseKind::SaveT42), path } => self.picture_save(kind, &path)?,
+            Opening::Chosen { kind: kind @ (ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps), path } => {
+                self.picture_save(kind, &path)?;
+            }
             Opening::Chosen { path, .. } => {
                 if let Err(reason) = self.session.navigate(&path, true) {
                     self.log(Level::Warning, self.log_place(), &reason);

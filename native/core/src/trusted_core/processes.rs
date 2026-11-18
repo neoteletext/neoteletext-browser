@@ -8,6 +8,7 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use confine::broker::{Broker, Helper, Program};
+use interface_core::canvas::PictureLanguage;
 use neoteletext::budget::Budget;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
@@ -302,18 +303,27 @@ fn convert_picture_with(
     let mut input = child.stdin.take().ok_or("the picture converter has no input")?;
     let (answer, answered) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        let exchange = move || -> Result<(Vec<u8>, Vec<u8>, String), String> {
+        let exchange = move || -> Result<super::picture::Converted, String> {
             write_to_decoder(&mut input, &ToDecoder::Picture(choice)).map_err(|error| error.to_string())?;
             for chunk in picture.chunks(MAX_CHUNK) {
                 write_to_decoder(&mut input, &ToDecoder::Data(chunk.to_vec())).map_err(|error| error.to_string())?;
             }
             write_to_decoder(&mut input, &ToDecoder::End).map_err(|error| error.to_string())?;
-            match read_from_decoder(&mut BufReader::new(output)).map_err(|error| error.to_string())? {
-                Some(FromDecoder::PictureConverted { tti, t42, summary }) => Ok((tti, t42, summary)),
-                Some(FromDecoder::PictureRefused(reason)) => Err(reason),
-                Some(_) => Err(String::from("the picture converter said what it may not")),
-                None => Err(String::from("the picture converter ended without a page")),
-            }
+            let mut output = BufReader::new(output);
+            let (tti, t42, summary) = match read_from_decoder(&mut output).map_err(|error| error.to_string())? {
+                Some(FromDecoder::PictureConverted { tti, t42, summary }) => (tti, t42, summary),
+                Some(FromDecoder::PictureRefused(reason)) => return Err(reason),
+                Some(_) => return Err(String::from("the picture converter said what it may not")),
+                None => return Err(String::from("the picture converter ended without a page")),
+            };
+            // The picture in ReGIS, then in NAPLPS (renderer parity PAR-36
+            // item 2), each in the language it was asked in or none.
+            let [regis, naplps] = [PictureLanguage::Regis, PictureLanguage::Naplps].map(|language| match read_from_decoder(&mut output) {
+                Ok(Some(FromDecoder::PictureOutput { language: said, output })) if said == language => output,
+                Ok(_) => Err(String::from("the picture converter said what it may not")),
+                Err(error) => Err(error.to_string()),
+            });
+            Ok(super::picture::Converted { tti, t42, summary, regis, naplps })
         };
         let _ = answer.send(exchange());
     });

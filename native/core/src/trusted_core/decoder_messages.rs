@@ -45,7 +45,7 @@ impl Core {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
             }
             // Only a decoder started to convert a picture makes one.
-            FromDecoder::PictureConverted { .. } | FromDecoder::PictureRefused(_) => {
+            FromDecoder::PictureConverted { .. } | FromDecoder::PictureRefused(_) | FromDecoder::PictureOutput { .. } => {
                 self.log(Level::Warning, Some(channel), "the channel's decoder reported a converted picture, which it may not; ignored");
             }
             FromDecoder::Arrived { page, title } => self.arrived(channel, page, &title)?,

@@ -10,12 +10,36 @@ use confine::broker::{ChooseKind, MAX_SAVE};
 use interface_core::picture::{MAX_STATUS, PictureChoice, PictureStatus};
 use protocol::ToInterface;
 use protocol::console::Level;
-use protocol::picture::MAX_PICTURE_PAGE;
+use protocol::picture::{MAX_PICTURE_OUTPUT, MAX_PICTURE_PAGE};
 
 use super::Core;
 use super::processes::start_picture_converter;
 
 const _: () = assert!(MAX_PICTURE_PAGE <= MAX_SAVE, "the broker saves any page a decoder may make");
+const _: () = assert!(MAX_PICTURE_OUTPUT <= MAX_SAVE, "the broker saves any picture a decoder may write");
+
+/// What a picture decoder made of a picture, untrusted: the page as TTI and
+/// T42, the converter's summary, and the picture in ReGIS and in NAPLPS, or
+/// why each was not written (renderer parity PAR-36 item 2).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Converted {
+    /// The TTI page file.
+    pub tti: Vec<u8>,
+    /// The same page as T42 packets.
+    pub t42: Vec<u8>,
+    /// What the converter used, not yet cleaned.
+    pub summary: String,
+    /// The picture in ReGIS, or why not, not yet cleaned.
+    pub regis: Result<Vec<u8>, String>,
+    /// The picture in NAPLPS, or why not, not yet cleaned.
+    pub naplps: Result<Vec<u8>, String>,
+}
+
+impl Default for Converted {
+    fn default() -> Self {
+        Self { tti: Vec::new(), t42: Vec::new(), summary: String::new(), regis: Err(String::new()), naplps: Err(String::new()) }
+    }
+}
 
 /// The page made opens at its page number: the engine's converter writes
 /// page 100 (its `PAGE_NUMBER`), which a test holds this to.
@@ -29,8 +53,8 @@ pub(super) struct PictureState {
     /// The chosen picture's file name, for the panel.
     name: String,
     choice: PictureChoice,
-    /// The page made: TTI and T42, from a confined decoder.
-    page: Option<(Vec<u8>, Vec<u8>)>,
+    /// What was made, from a confined decoder.
+    page: Option<Converted>,
     /// Counts conversions, so an older answer never replaces a newer.
     generation: u64,
 }
@@ -84,14 +108,15 @@ impl Core {
 
     /// A picture decoder's answer: the page made is shown, or why none was.
     /// The decoder's words are untrusted and cleaned.
-    pub(super) fn picture_converted(&mut self, generation: u64, result: Result<(Vec<u8>, Vec<u8>, String), String>) -> Result<(), String> {
+    pub(super) fn picture_converted(&mut self, generation: u64, result: Result<Converted, String>) -> Result<(), String> {
         if generation != self.picture.generation {
             return Ok(());
         }
         match result {
-            Ok((tti, t42, summary)) => {
-                self.session.picture_page.clone_from(&tti);
-                self.picture.page = Some((tti, t42));
+            Ok(converted) => {
+                self.session.picture_page.clone_from(&converted.tti);
+                let summary = converted.summary.clone();
+                self.picture.page = Some(converted);
                 // The converted page opens in the active tab, or opens again
                 // with the new page when it is shown already.
                 if let Err(reason) = self.session.navigate(PICTURE_ADDRESS, false) {
@@ -110,12 +135,22 @@ impl Core {
 
     /// The user chose where to save the page: the broker writes it there.
     pub(super) fn picture_save(&mut self, kind: ChooseKind, path: &str) -> Result<(), String> {
-        let Some((tti, t42)) = &self.picture.page else {
+        let Some(made) = &self.picture.page else {
             return self.picture_status(false, "There is no converted page to save.");
         };
-        let bytes = if kind == ChooseKind::SaveT42 { t42.clone() } else { tti.clone() };
+        let (form, bytes) = match kind {
+            ChooseKind::SaveT42 => ("T42", Ok(made.t42.clone())),
+            ChooseKind::SaveRegis => ("ReGIS", made.regis.clone()),
+            ChooseKind::SaveNaplps => ("NAPLPS", made.naplps.clone()),
+            _ => ("TTI", Ok(made.tti.clone())),
+        };
+        // The picture in a language the converter could not write it in:
+        // its reason, which the status cleans (renderer parity PAR-36).
+        let bytes = match bytes {
+            Ok(bytes) => bytes,
+            Err(reason) => return self.picture_status(true, &format!("Not written as {form}: {reason}")),
+        };
         let name = std::path::Path::new(path).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        let form = if kind == ChooseKind::SaveT42 { "T42" } else { "TTI" };
         match self.broker().and_then(|broker| broker.save(kind, &bytes)) {
             Ok(()) => self.picture_status(true, &format!("Saved as {form}: {name}")),
             Err(reason) => self.picture_status(true, &format!("Not saved: {reason}")),
@@ -147,7 +182,7 @@ mod tests {
     fn a_converted_page_opens_at_its_built_in_address() {
         let (mut core, _broker, written) = core_watched("a.invalid");
         core.picture.generation = 1;
-        core.picture_converted(1, Ok((PAGE.to_vec(), vec![0; 42], "8 colours".into()))).unwrap();
+        core.picture_converted(1, Ok(Converted { tti: PAGE.to_vec(), t42: vec![0; 42], summary: "8 colours".into(), ..Converted::default() })).unwrap();
         assert_eq!(core.session.active_tab().unwrap().address().unwrap().text, PICTURE_ADDRESS);
         assert_eq!(core.session.picture_page, PAGE);
         let said = statuses(&sent_to_interface(&mut core, &written));
@@ -160,7 +195,7 @@ mod tests {
     fn an_older_answer_is_ignored_and_words_are_cleaned() {
         let (mut core, _broker, written) = core_watched("a.invalid");
         core.picture.generation = 2;
-        core.picture_converted(1, Ok((PAGE.to_vec(), Vec::new(), String::new()))).unwrap();
+        core.picture_converted(1, Ok(Converted { tti: PAGE.to_vec(), ..Converted::default() })).unwrap();
         assert_eq!(core.session.picture_page, Vec::<u8>::new());
         core.picture_converted(2, Err("bad\u{1b}[2Jpicture\u{202e}".into())).unwrap();
         let said = statuses(&sent_to_interface(&mut core, &written));
@@ -177,6 +212,23 @@ mod tests {
         core.picture_save(ChooseKind::SaveTti, "/home/a/page.tti").unwrap();
         let said = statuses(&sent_to_interface(&mut core, &written));
         assert!(said.last().is_some_and(|status| !status.converted && status.text.contains("no converted page")), "{said:?}");
+    }
+
+    /// Renderer parity PAR-36 item 2: the picture written in ReGIS goes to
+    /// the broker to be saved (which a test's broker refuses), and one the
+    /// converter could not write in NAPLPS is not saved, the converter's
+    /// reason said cleaned.
+    #[test]
+    fn the_picture_in_a_language_is_saved_or_its_reason_said() {
+        let (mut core, _broker, written) = core_watched("a.invalid");
+        core.picture.generation = 1;
+        let made = Converted { tti: PAGE.to_vec(), regis: Ok(b"\x1bPpS(E)\x1b\\".to_vec()), naplps: Err("too \u{1b}wide".into()), ..Converted::default() };
+        core.picture_converted(1, Ok(made)).unwrap();
+        core.picture_save(ChooseKind::SaveRegis, "/home/a/picture.regis").unwrap();
+        core.picture_save(ChooseKind::SaveNaplps, "/home/a/picture.nap").unwrap();
+        let said = statuses(&sent_to_interface(&mut core, &written));
+        let texts: Vec<&str> = said.iter().rev().take(2).rev().map(|status| status.text.as_str()).collect();
+        assert_eq!(texts, ["Not saved: a test has no pictures", "Not written as NAPLPS: too wide"], "{said:?}");
     }
 
     /// The converted page's address is built in, kept out of history, and

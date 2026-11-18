@@ -440,6 +440,10 @@ mod tests {
             Request::Choose { kind: ChooseKind::SaveT42, parent: String::new(), keep: true },
             Request::ReadPicture("/home/a/photo.jpg".into()),
             Request::Save { kind: ChooseKind::SaveTti, bytes: b"PN,10000\n".to_vec() },
+            // Renderer parity PAR-36 item 2: the picture in ReGIS and NAPLPS.
+            Request::Choose { kind: ChooseKind::SaveRegis, parent: String::new(), keep: true },
+            Request::Choose { kind: ChooseKind::SaveNaplps, parent: String::new(), keep: false },
+            Request::Save { kind: ChooseKind::SaveNaplps, bytes: vec![0x20; MAX_SAVE] },
             Request::Openings,
         ] {
             assert_eq!(round_trip(&request), request);

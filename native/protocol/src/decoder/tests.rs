@@ -3,7 +3,7 @@
 
 #[cfg(feature = "interaction")]
 use super::kinds::KIND_INPUT_CONTROL;
-use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME};
+use super::kinds::{KIND_ARRIVED, KIND_BOOKMARK_FOLDER, KIND_END, KIND_FRAME, KIND_PICTURE_OUTPUT};
 use super::*;
 use crate::frame::PAGE_DOTS;
 use crate::{MAX_PAGE_TITLE, ProtocolError};
@@ -194,6 +194,8 @@ fn every_kind_round_trips() {
         FromDecoder::ChannelLog { level: interface_core::console::Level::Info, page: None, text: "Started".into() },
         FromDecoder::PictureConverted { tti: b"PN,10000\n".to_vec(), t42: vec![0; 42], summary: "8 colours".into() },
         FromDecoder::PictureRefused("the picture could not be read".into()),
+        FromDecoder::PictureOutput { language: interface_core::canvas::PictureLanguage::Regis, output: Ok(b"\x1bPpS(E)\x1b\\".to_vec()) },
+        FromDecoder::PictureOutput { language: interface_core::canvas::PictureLanguage::Naplps, output: Err("too large".into()) },
     ] {
         let mut bytes = Vec::new();
         write_to_core(&mut bytes, &message).unwrap();
@@ -374,5 +376,27 @@ fn a_frame_area_outside_its_bounds_is_refused() {
     let mut bytes = vec![kinds::KIND_FRAME_AREA];
     bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
     bytes.extend_from_slice(&payload);
+    assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
+}
+
+/// Renderer parity PAR-36 item 2: a picture converter's output in a
+/// picture language is carried up to its bound, and one longer is refused
+/// both when written and when read.
+#[test]
+fn a_picture_output_is_held_to_its_bound() {
+    use crate::picture::MAX_PICTURE_OUTPUT;
+    use interface_core::canvas::PictureLanguage;
+    let largest = FromDecoder::PictureOutput { language: PictureLanguage::Naplps, output: Ok(vec![0x20; MAX_PICTURE_OUTPUT]) };
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &largest).unwrap();
+    assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), largest);
+    let longer = FromDecoder::PictureOutput { language: PictureLanguage::Regis, output: Ok(vec![0x20; MAX_PICTURE_OUTPUT + 1]) };
+    assert!(write_to_core(&mut Vec::new(), &longer).is_err());
+    let mut bytes = vec![KIND_PICTURE_OUTPUT];
+    let length = MAX_PICTURE_OUTPUT + 1;
+    bytes.extend_from_slice(&u32::try_from(length + 6).unwrap().to_be_bytes());
+    bytes.extend_from_slice(&[0, 1]);
+    bytes.extend_from_slice(&u32::try_from(length).unwrap().to_be_bytes());
+    bytes.extend(std::iter::repeat_n(0x20, length));
     assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
 }

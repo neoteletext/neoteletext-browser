@@ -105,7 +105,16 @@ pub fn convert_picture() -> Result<(), ProtocolError> {
         }
     }
     let mut output = BufWriter::new(io::stdout().lock());
-    write_to_core(&mut output, &crate::picture::converted(&picture, choice))?;
+    let converted = crate::picture::converted(&picture, choice);
+    write_to_core(&mut output, &converted)?;
+    // The picture's ReGIS and NAPLPS follow a page made (renderer parity
+    // PAR-36 item 2).
+    if matches!(converted, FromDecoder::PictureConverted { .. }) {
+        output.flush()?;
+        for written in crate::picture::outputs(&picture, choice) {
+            write_to_core(&mut output, &written)?;
+        }
+    }
     output.flush()?;
     Ok(())
 }

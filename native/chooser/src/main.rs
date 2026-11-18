@@ -54,12 +54,20 @@ fn title(kind: ChooseKind) -> &'static str {
         ChooseKind::Picture => "Convert Picture to Teletext",
         ChooseKind::SaveTti => "Save Page as TTI",
         ChooseKind::SaveT42 => "Save Page as T42",
+        ChooseKind::SaveRegis => "Save Picture as ReGIS",
+        ChooseKind::SaveNaplps => "Save Picture as NAPLPS",
     }
 }
 
-/// The name a save dialog offers, by kind: the converted page's.
+/// The name a save dialog offers, by kind: the converted page's, or the
+/// converted picture's in its language (renderer parity PAR-36 item 2).
 fn save_name(kind: ChooseKind) -> &'static str {
-    if kind == ChooseKind::SaveT42 { "picture.t42" } else { "picture.tti" }
+    match kind {
+        ChooseKind::SaveT42 => "picture.t42",
+        ChooseKind::SaveRegis => "picture.regis",
+        ChooseKind::SaveNaplps => "picture.nap",
+        _ => "picture.tti",
+    }
 }
 
 /// The picture formats the engine's converter reads (its DEC-2114), by
@@ -91,7 +99,7 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
     }
     Ok(match kind {
         ChooseKind::Folder => dialog.pick_folder(),
-        ChooseKind::SaveTti | ChooseKind::SaveT42 => dialog.set_file_name(save_name(kind)).save_file(),
+        ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => dialog.set_file_name(save_name(kind)).save_file(),
         ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture => dialog.pick_file(),
     })
 }
@@ -256,6 +264,7 @@ mod tests {
         assert_eq!(title(ChooseKind::Bookmarks), "Import Bookmarks");
         assert_eq!(title(ChooseKind::Picture), "Convert Picture to Teletext");
         assert_eq!((save_name(ChooseKind::SaveTti), save_name(ChooseKind::SaveT42)), ("picture.tti", "picture.t42"));
+        assert_eq!((save_name(ChooseKind::SaveRegis), save_name(ChooseKind::SaveNaplps)), ("picture.regis", "picture.nap"));
     }
 
     /// REQ-754: the portal's standard key decides when it is answered,

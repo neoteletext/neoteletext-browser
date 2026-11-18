@@ -353,7 +353,9 @@ impl Chooser {
                 // is written once: neither is a grant to read as a channel.
                 match kind {
                     ChooseKind::Picture => *picture.lock().unwrap_or_else(PoisonError::into_inner) = Some(path.clone()),
-                    ChooseKind::SaveTti | ChooseKind::SaveT42 => *save.lock().unwrap_or_else(PoisonError::into_inner) = Some((kind, path.clone())),
+                    ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => {
+                        *save.lock().unwrap_or_else(PoisonError::into_inner) = Some((kind, path.clone()));
+                    }
                     ChooseKind::File | ChooseKind::Folder | ChooseKind::Bookmarks => lock(&access).name(&path, keep),
                 }
                 if let Some(path) = path.to_str().map(str::to_owned) {

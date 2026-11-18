@@ -43,6 +43,8 @@ enum Control {
     Hold(bool),
     SaveTti,
     SaveT42,
+    SaveRegis,
+    SaveNaplps,
 }
 
 /// The panel's state in the browser.
@@ -95,9 +97,14 @@ impl Browser {
                 self.outputs.push(Output::OpenFile(OpenKind::Picture));
                 return true;
             }
-            Control::SaveTti | Control::SaveT42 => {
+            Control::SaveTti | Control::SaveT42 | Control::SaveRegis | Control::SaveNaplps => {
                 if self.picture.status.converted {
-                    let kind = if control == Control::SaveTti { OpenKind::SavePictureTti } else { OpenKind::SavePictureT42 };
+                    let kind = match control {
+                        Control::SaveTti => OpenKind::SavePictureTti,
+                        Control::SaveT42 => OpenKind::SavePictureT42,
+                        Control::SaveRegis => OpenKind::SavePictureRegis,
+                        _ => OpenKind::SavePictureNaplps,
+                    };
                     self.outputs.push(Output::OpenFile(kind));
                 }
                 return true;
@@ -174,17 +181,26 @@ impl Browser {
         if choice.level == 0 {
             y = group(canvas, y, "Hold mosaics", &["Off", "On"], 2, u8::from(choice.hold_mosaics), |on| Control::Hold(on == 1));
         }
+        // The page as TTI and T42, and the picture in ReGIS and NAPLPS
+        // (renderer parity PAR-36 item 2), two to a row.
         let half = (right - left - GAP) / 2.0;
-        let save_tti = Rect::new(left, y, left + half, y + ROW);
-        let save_t42 = Rect::new(right - half, y, right, y + ROW);
         let converted = self.picture.status.converted;
-        button(canvas, save_tti, "Save as TTI\u{2026}", false);
-        button(canvas, save_t42, "Save as T42\u{2026}", false);
-        if converted {
-            controls.push((Control::SaveTti, save_tti));
-            controls.push((Control::SaveT42, save_t42));
+        let saves = [
+            (Control::SaveTti, "Save as TTI\u{2026}"),
+            (Control::SaveT42, "Save as T42\u{2026}"),
+            (Control::SaveRegis, "Save as ReGIS\u{2026}"),
+            (Control::SaveNaplps, "Save as NAPLPS\u{2026}"),
+        ];
+        for pair in saves.chunks(2) {
+            for (rect, (control, label)) in [Rect::new(left, y, left + half, y + ROW), Rect::new(right - half, y, right, y + ROW)].into_iter().zip(pair) {
+                button(canvas, rect, label, false);
+                if converted {
+                    controls.push((*control, rect));
+                }
+            }
+            y += ROW + GAP;
         }
-        y = save_tti.y1 + ROW_GAP;
+        y += ROW_GAP - GAP;
         let text = if self.picture.status.text.is_empty() { "Choose a picture: PNG, JPEG, GIF, BMP or WebP." } else { self.picture.status.text.as_str() };
         for line in wrapped(text, right - left).iter().take(STATUS_LINES) {
             left_centred(canvas, Rect::new(left, y, right, y + LABEL_HEIGHT), 0.0, line, ROW_TITLE, if converted { WHITE } else { MUTED });
@@ -263,6 +279,19 @@ mod tests {
         draw(&mut browser);
         press(&mut browser, Control::SaveT42);
         assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::SavePictureT42)]);
+    }
+
+    /// Renderer parity PAR-36 item 2: the picture is also saved in ReGIS
+    /// and in NAPLPS, each with a dialog of its own, once a page was made.
+    #[test]
+    fn the_picture_is_saved_in_regis_and_naplps() {
+        let mut browser = open();
+        assert!(!browser.picture.controls.iter().any(|(control, _)| matches!(control, Control::SaveRegis | Control::SaveNaplps)));
+        browser.set_picture_status(PictureStatus { converted: true, text: "Converted".into() });
+        draw(&mut browser);
+        press(&mut browser, Control::SaveRegis);
+        press(&mut browser, Control::SaveNaplps);
+        assert_eq!(browser.take_outputs(), [Output::OpenFile(OpenKind::SavePictureRegis), Output::OpenFile(OpenKind::SavePictureNaplps)]);
     }
 
     /// Hold Mosaics is offered at Level 1.5 alone, and leaving the level

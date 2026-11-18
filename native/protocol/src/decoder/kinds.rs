@@ -52,6 +52,10 @@ pub(super) const KIND_MISSING: u8 = 135;
 pub(super) const KIND_PICTURE: u8 = 145;
 pub(super) const KIND_PICTURE_CONVERTED: u8 = 146;
 pub(super) const KIND_PICTURE_REFUSED: u8 = 147;
+// Decoder to trusted core: the picture converter's ReGIS or NAPLPS output
+// (renderer parity PAR-36 item 2), in the next number free across every
+// pipe on 19 November 2026.
+pub(super) const KIND_PICTURE_OUTPUT: u8 = 204;
 // Decoder to trusted core: its audio receiver's figures (the engine's
 // REQ-AUD-017), in the next number free across every pipe.
 pub(super) const KIND_AUDIO_RECEIVER: u8 = 152;
