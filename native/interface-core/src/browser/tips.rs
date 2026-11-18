@@ -148,7 +148,11 @@ impl Browser {
         // show, and none over the drop-down itself, whose rows are words
         // with their shortcuts or a channel's titles (REQ-764, DEC-2352). A
         // panel covers what is below the strip.
-        if self.popup_open() {
+        if self.filmstrip_open() {
+            // The filmstrip covers the strip's tabs and the toolbar: its
+            // pictures' tips are the tabs' (REQ-996, REQ-6640).
+            self.filmstrip_tips(&mut tips);
+        } else if self.popup_open() {
             if !self.over_popup(self.pointer) {
                 self.strip_tips(&mut tips);
                 self.bar_tips(&mut tips);
@@ -243,16 +247,27 @@ impl Browser {
         canvas.pop_clip();
     }
 
+    /// The open filmstrip's pictures, each its tab's tip, and the buttons
+    /// of the one the pointer rests on.
+    fn filmstrip_tips(&self, tips: &mut Vec<(Rect, String)>) {
+        for picture in &self.filmstrip.pictures {
+            let Some(tab) = self.tabs.get(picture.index) else { continue };
+            // The buttons after the picture, so that they are found first.
+            tips.push((picture.rect, tab_tip(tab)));
+            if self.filmstrip.hovered == Some(picture.index) {
+                let keys = self.keys_named("Cmd+W", "Ctrl+W");
+                tips.push((picture.close, format!("Close this tab ({keys})")));
+                tips.push((picture.speaker, String::from(if tab.muted { "Unmute this tab" } else { "Mute this tab" })));
+            }
+        }
+    }
+
     /// The tab strip's and the toolbar's controls.
     fn strip_tips(&self, tips: &mut Vec<(Rect, String)>) {
         let regions = &self.regions;
         for region in &regions.tabs {
             if let Some(tab) = self.tabs.get(region.index) {
-                let private = if tab.private { " (private tab)" } else { "" };
-                // The title is the host; the address says where in it the
-                // tab is (decision 103).
-                let address = if tab.address.is_empty() { String::new() } else { format!("{LINE_BREAK}{}", tab.address) };
-                tips.push((region.tab, format!("{}{private}{address}", tab.title)));
+                tips.push((region.tab, tab_tip(tab)));
                 if let Some(speaker) = region.speaker {
                     tips.push((speaker, String::from(if tab.muted { "Unmute this tab" } else { "Mute this tab" })));
                 }
@@ -315,6 +330,15 @@ impl Browser {
         #[cfg(feature = "links")]
         self.link_tips(tips);
     }
+}
+
+/// A tab's tip: its title, which is its channel's name or else its host
+/// (REQ-6641), marked when private, and under it its address, which says
+/// where in the channel the tab is (decision 103).
+fn tab_tip(tab: &crate::browser::TabInfo) -> String {
+    let private = if tab.private { " (private tab)" } else { "" };
+    let address = if tab.address.is_empty() { String::new() } else { format!("{LINE_BREAK}{}", tab.address) };
+    format!("{}{private}{address}", tab.title)
 }
 
 #[cfg(test)]

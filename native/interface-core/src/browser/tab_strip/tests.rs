@@ -226,14 +226,20 @@ fn the_middle_button_closes_the_tab_under_it() {
 }
 
 /// Decision 103: resting on a tab shows its title and, under it, its
-/// address, drawn as two lines.
+/// address, drawn as two lines, once the filmstrip the rest opens first
+/// has been put away with Escape (REQ-6640 item 9).
 #[test]
 fn a_tab_s_tip_shows_its_address() {
     let mut browser = browser_with(3, 0);
     let second = browser.regions.tabs[1].tab;
     browser.pointer_moved(middle(second).x, middle(second).y, 0);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
+    assert!(browser.settle(300) && browser.filmstrip_open(), "the rest opens the filmstrip first");
+    assert!(browser.key(Key::Escape, Modifiers::default(), 300));
+    browser.pointer_moved(middle(second).x + 1.0, middle(second).y, 310);
+    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 310);
     assert!(browser.settle(1_000));
+    assert!(!browser.filmstrip_open(), "put away, it stays shut while the pointer stays on the strip");
     assert_eq!(browser.tip_shown(), Some("Tab 1\nhttps://tab1.invalid/"));
     let mut canvas = Recorder::new();
     browser.draw(&mut canvas, 1440.0, 900.0, 1_000);

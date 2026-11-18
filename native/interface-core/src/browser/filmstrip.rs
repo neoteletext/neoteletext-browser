@@ -51,6 +51,10 @@ enum Phase {
     Open,
     /// Shown, the pointer away from both since this moment.
     Leaving(u64),
+    /// Put away by Escape or the count: not shown, and not opened again
+    /// by a rest until the pointer has left the strip, as the overflow
+    /// panel did (decision 102).
+    Dismissed,
 }
 
 /// A picture as last drawn, and its buttons.
@@ -294,6 +298,7 @@ impl Browser {
             Phase::Resting(_) if !on_tabs || pressing => Phase::Shut,
             Phase::Open if !on_strip && !on_filmstrip => Phase::Leaving(now),
             Phase::Leaving(_) if on_strip || on_filmstrip => Phase::Open,
+            Phase::Dismissed if !on_strip => Phase::Shut,
             unchanged => unchanged,
         };
         self.filmstrip.hovered = if self.filmstrip.shown() {
@@ -309,7 +314,7 @@ impl Browser {
         let due = match self.filmstrip.phase {
             Phase::Resting(since) => since.saturating_add(FILMSTRIP_DELAY_MILLISECONDS),
             Phase::Leaving(since) => since.saturating_add(FILMSTRIP_CLOSE_MILLISECONDS),
-            Phase::Shut | Phase::Open => return None,
+            Phase::Shut | Phase::Open | Phase::Dismissed => return None,
         };
         Some(due.saturating_sub(now).max(1))
     }
@@ -320,7 +325,7 @@ impl Browser {
         match self.filmstrip.phase {
             Phase::Resting(since) if now.saturating_sub(since) >= FILMSTRIP_DELAY_MILLISECONDS => self.filmstrip_show(now),
             Phase::Leaving(since) if now.saturating_sub(since) >= FILMSTRIP_CLOSE_MILLISECONDS => self.filmstrip_hide(now),
-            Phase::Shut | Phase::Resting(_) | Phase::Open | Phase::Leaving(_) => return false,
+            Phase::Shut | Phase::Resting(_) | Phase::Open | Phase::Leaving(_) | Phase::Dismissed => return false,
         }
         true
     }
@@ -339,6 +344,7 @@ impl Browser {
         if self.tab_strip.count.contains(point) {
             if self.filmstrip.shown() {
                 self.filmstrip_hide(now);
+                self.filmstrip.phase = Phase::Dismissed;
             } else {
                 self.filmstrip_show(now);
             }
@@ -373,6 +379,7 @@ impl Browser {
             return false;
         }
         self.filmstrip_hide(now);
+        self.filmstrip.phase = Phase::Dismissed;
         true
     }
 

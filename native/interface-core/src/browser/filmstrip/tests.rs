@@ -32,7 +32,7 @@ fn tabs(count: usize) -> Vec<TabInfo> {
         .map(|index| TabInfo {
             title: format!("Channel {index}"),
             colour: 0,
-            channel: FIRST + u32::try_from(index).unwrap(),
+            channel: FIRST.saturating_add(u32::try_from(index).unwrap()),
             muted: false,
             private: false,
             address: format!("https://tab{index}.invalid/"),
@@ -45,9 +45,9 @@ fn tabs(count: usize) -> Vec<TabInfo> {
 fn open(browser: &mut Browser, canvas: &mut Recorder, now: u64) -> u64 {
     let tab = browser.regions.tabs[0].tab;
     browser.pointer_moved(middle(tab).x, middle(tab).y, now);
-    let opened = now + FILMSTRIP_DELAY_MILLISECONDS;
+    let opened = now.saturating_add(FILMSTRIP_DELAY_MILLISECONDS);
     assert!(browser.settle(opened), "it opens");
-    let out = opened + FILMSTRIP_OPEN_MILLISECONDS;
+    let out = opened.saturating_add(FILMSTRIP_OPEN_MILLISECONDS);
     browser.draw(canvas, WIDTH, HEIGHT, out);
     out
 }
@@ -180,7 +180,7 @@ fn the_wheel_slides_the_row_with_easing_to_bounds_at_both_ends() {
     let first = browser.filmstrip.pictures[0].rect;
     assert!((first.width() - WIDTH / 5.0).abs() < WIDTH / 25.0, "about a fifth: {}", first.width());
     point_at(&mut browser, first, now);
-    let list = browser.list_scroll;
+    let scrolled = browser.list_scroll;
     let layout = Layout::of(WIDTH, 12, browser.wall.shape().height_per_width());
     // Towards the viewer: later pictures, the row to the left.
     assert!(browser.wheel_lines(1.0, now));
@@ -194,16 +194,16 @@ fn the_wheel_slides_the_row_with_easing_to_bounds_at_both_ends() {
     let end = now + 1_000;
     assert!((browser.filmstrip_slide_at(end).0 - least).abs() < 1e-3, "stopped at the left end");
     browser.draw(&mut canvas, WIDTH, HEIGHT, end);
-    let last = browser.filmstrip.pictures.iter().find(|picture| picture.index == 11).unwrap().rect;
-    assert!((last.x0 - MARGIN).abs() < 1e-3, "the last picture all the way across, whole: {last:?}");
-    browser.pointer = middle(last);
+    let final_picture = browser.filmstrip.pictures.iter().find(|picture| picture.index == 11).unwrap().rect;
+    assert!((final_picture.x0 - MARGIN).abs() < 1e-3, "the last picture all the way across, whole: {final_picture:?}");
+    browser.pointer = middle(final_picture);
     browser.scroll_by(-1.0e6, end);
     let far = end + 1_000;
     assert!((browser.filmstrip_slide_at(far).0 - most).abs() < 1e-3, "stopped at the right end");
     browser.draw(&mut canvas, WIDTH, HEIGHT, far);
     let first = browser.filmstrip.pictures.iter().find(|picture| picture.index == 0).unwrap().rect;
     assert!((first.x1 - (WIDTH - MARGIN)).abs() < 1e-3, "the first picture all the way across, whole: {first:?}");
-    assert!((browser.list_scroll - list).abs() < f64::EPSILON, "nothing beneath scrolled");
+    assert!((browser.list_scroll - scrolled).abs() < f64::EPSILON, "nothing beneath scrolled");
 }
 
 /// REQ-6640 item 6: opening places the row so the active tab's picture is
@@ -303,7 +303,7 @@ fn at_most_the_cap_of_stills_is_held() {
     let (mut browser, mut canvas) = browser_of(count);
     for index in 0..count {
         let mut shown = channel();
-        shown.channel = FIRST + u32::try_from(index).unwrap();
+        shown.channel = FIRST.saturating_add(u32::try_from(index).unwrap());
         browser.set_channel(shown);
         browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
         browser.set_tabs(tabs(count), (index + 1) % count);
@@ -312,4 +312,18 @@ fn at_most_the_cap_of_stills_is_held() {
     assert_eq!(browser.filmstrip.stills.len(), MAX_STILLS);
     assert_eq!(canvas.stills.len(), MAX_STILLS, "the canvas holds as many");
     assert!(browser.filmstrip.still(FIRST).is_none(), "the first taken has gone");
+}
+
+/// REQ-996 with REQ-6640: while the filmstrip is open the strip's tips do
+/// not cover it; a picture rested on shows its tab's tip, the title over
+/// the address.
+#[test]
+fn a_rested_picture_shows_its_tabs_tip_and_the_strips_do_not_cover_it() {
+    let (mut browser, mut canvas) = browser_of(3);
+    let now = open(&mut browser, &mut canvas, 0);
+    let picture = browser.filmstrip.pictures[1].rect;
+    point_at(&mut browser, Rect::new(picture.x0, picture.y1 - 20.0, picture.x0 + 20.0, picture.y1), now);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, now);
+    browser.settle(now + 1_000);
+    assert_eq!(browser.tip_shown(), Some("Channel 1\nhttps://tab1.invalid/"));
 }
