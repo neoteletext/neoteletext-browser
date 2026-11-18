@@ -209,6 +209,9 @@ impl Engine {
             items = released;
         } else {
             self.drop_pushed(&mut items);
+            if packets {
+                self.read_fetched_records(&items);
+            }
         }
         self.push_all(&items);
         self.complete();
@@ -237,6 +240,30 @@ impl Engine {
                 None => self.receiver_rows.remove(&key),
             };
             self.updated.push(page);
+        }
+    }
+
+    /// Reads the picture records of a fetched file of packets, as a static
+    /// channel's sub-page file carries them after its packets (renderer
+    /// parity PAR-8 and PAR-36 item 1): its ReGIS or NAPLPS stream, its
+    /// objects, sheet and cursor, and its drawing links, by the same
+    /// readers a live channel's are read by. The file is whole, so it is
+    /// read by a reader of its own, apart from the live connection's.
+    fn read_fetched_records(&mut self, items: &[(Packet, PacketMeta)]) {
+        use crate::animation::frames::{Held, Taken};
+        let mut reader = neoteletext_web::records::RecordReader::new();
+        for (packet, _) in items {
+            let read = reader.push(packet);
+            if let Some(Taken::Change(held @ (Held::Stream { .. } | Held::Objects { .. } | Held::Cursor { .. } | Held::Sheet { .. }))) = Taken::of(&read) {
+                self.apply_held(vec![held]);
+                continue;
+            }
+            #[cfg(feature = "links")]
+            if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) = read
+                && let Some((page, sub, links)) = self.regis.read_links(&record)
+            {
+                self.pictures.record_links(*page, *sub, links);
+            }
         }
     }
 

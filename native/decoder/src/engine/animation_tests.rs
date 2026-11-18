@@ -302,6 +302,34 @@ fn twenty_picture_sub_pages_visited_are_shown_again_from_the_sources_kept() {
     assert_eq!(take(&mut engine, PAGE).unwrap()[55 * REGIS_WIDTH + 105], 5, "the stream sent again is drawn");
 }
 
+/// Renderer parity PAR-36 item 1 (PAR-8): a static channel's sub-page file,
+/// fetched, carries the sub-page's packets and then its picture's records
+/// as packets 4/31; they are read as a live channel's are, by the same
+/// readers, so a ReGIS and a NAPLPS sub-page are drawn, with links and a
+/// cursor, though nothing was pushed.
+#[test]
+fn a_static_channels_fetched_file_draws_its_picture_records() {
+    use neoteletext_web::records::drawing_links::{DrawingLink, encode};
+    let mut engine = Engine::new();
+    let mut file = tti(b"PN,10000\nSC,0000\nPS,8000\nOL,1,A picture page\n\n");
+    file.extend(regis(PAGE, 1, 0, b"D(B1)W(I3)F(V[0,0][19,0][19,19][0,19])D(E)D(S1(X100,Y50),C)"));
+    encode(address(PAGE), SubCode::new(0), &[DrawingLink { drawing: 1, target: b"200" }], 0, 0, &mut |packet| file.extend_from_slice(&packet.bytes)).unwrap();
+    engine.feed_whole(true, false, &file);
+    let (regis, _) = engine.take_pictures(PAGE, None, 0);
+    let pixels = unpack(&regis.expect("the fetched file's ReGIS is drawn").picture.packed);
+    assert_eq!(pixels[55 * REGIS_WIDTH + 105], 3);
+    assert_eq!(engine.regis().take_links(), [(PAGE, 0, vec![(1, "200".to_owned())])], "and its links read");
+    let naplps_page = 0x200;
+    let mut bytes = vec![DEF_MACRO, 0x20];
+    bytes.extend(rectangle(3, 0, 0, 32, 32));
+    bytes.extend([END, 0x3E, 0x40]);
+    let mut file = tti(b"PN,20000\nSC,0000\nPS,8000\nOL,1,Another\n\n");
+    file.extend(naplps(naplps_page, 1, 0, &bytes));
+    engine.feed_whole(true, false, &file);
+    let (_, naplps) = engine.take_pictures(naplps_page, None, 0);
+    assert!(naplps.is_some(), "the fetched file's NAPLPS is drawn");
+}
+
 /// RULE-26, ANIM-6 (REQ-6536): through the picture the rule table's host
 /// is given, a rule's actions hide, show and re-look a ReGIS drawing, and
 /// set its frame; its conditions read the state back; an operation on a

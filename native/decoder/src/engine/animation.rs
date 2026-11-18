@@ -139,7 +139,7 @@ impl Engine {
     /// Applies what changes a page's picture, in order: as it arrives
     /// when its page has no frame open, or all together at its frame's
     /// end (ANIM-2).
-    fn apply_held(&mut self, items: Vec<Held>) {
+    pub(super) fn apply_held(&mut self, items: Vec<Held>) {
         self.apply_held_kept(items, true);
     }
 
