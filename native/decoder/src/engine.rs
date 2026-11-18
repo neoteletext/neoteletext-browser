@@ -193,6 +193,12 @@ pub struct Engine {
     /// The channel's records on its push connection, for its LINKS
     /// records (REQ-1494) and its REGIS records (the engine's REQ-6336).
     records: neoteletext_web::records::RecordReader,
+    /// The reader of the picture records of fetched packet files, apart
+    /// from the live connection's: a static channel's file with a picture
+    /// comes in several messages, its teletext packets first and its record
+    /// packets after them in pieces of one message (the browser's
+    /// DEC-6817), and a record may lie across two pieces.
+    fetched_records: neoteletext_web::records::RecordReader,
     /// The sub-pages the channel draws in ReGIS (DEC-6335).
     regis: crate::regis::RegisPages,
     /// The sub-pages the channel draws in NAPLPS (DEC-6407).
@@ -300,6 +306,7 @@ impl Engine {
             #[cfg(feature = "links")]
             lines: links::Lines::default(),
             records: neoteletext_web::records::RecordReader::new(),
+            fetched_records: neoteletext_web::records::RecordReader::new(),
             regis: crate::regis::RegisPages::default(),
             naplps: crate::naplps::NaplpsPages::default(),
             receiver_rows: BTreeMap::new(),

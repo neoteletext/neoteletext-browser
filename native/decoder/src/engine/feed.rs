@@ -247,11 +247,14 @@ impl Engine {
     /// channel's sub-page file carries them after its packets (renderer
     /// parity PAR-8 and PAR-36 item 1): its ReGIS or NAPLPS stream, its
     /// objects, sheet and cursor, and its drawing links, by the same
-    /// readers a live channel's are read by. The file is whole, so it is
-    /// read by a reader of its own, apart from the live connection's.
+    /// readers a live channel's are read by, apart from the live
+    /// connection's. A file larger than one message comes as several, its
+    /// record packets in pieces (the browser's DEC-6817), so the reader is
+    /// kept from one to the next and joins a record that lies across two.
     fn read_fetched_records(&mut self, items: &[(Packet, PacketMeta)]) {
         use crate::animation::frames::{Held, Taken};
-        let mut reader = neoteletext_web::records::RecordReader::new();
+        // Taken out while what it reads is applied, and put back after.
+        let mut reader = core::mem::replace(&mut self.fetched_records, neoteletext_web::records::RecordReader::new());
         for (packet, _) in items {
             let read = reader.push(packet);
             if let Some(Taken::Change(held @ (Held::Stream { .. } | Held::Objects { .. } | Held::Cursor { .. } | Held::Sheet { .. }))) = Taken::of(&read) {
@@ -265,6 +268,7 @@ impl Engine {
                 self.pictures.record_links(*page, *sub, links);
             }
         }
+        self.fetched_records = reader;
     }
 
     /// Drops the fetched packets of pages the channel has pushed: a page

@@ -332,6 +332,26 @@ fn a_static_channels_fetched_file_draws_its_picture_records() {
     assert!(naplps.is_some(), "the fetched file's NAPLPS is drawn");
 }
 
+/// The browser's DEC-6817 (renderer parity PAR-8, the engine's DEC-6810):
+/// a static channel's file with a picture larger than one message comes as
+/// its teletext packets and then its record packets in pieces, which may
+/// cut a record in two; the pieces are read as one file, so the picture is
+/// drawn.
+#[test]
+fn a_fetched_files_records_in_pieces_are_read_as_one() {
+    use neoteletext_core::consts::PACKET_BYTES;
+    let mut engine = Engine::new();
+    let records = regis(PAGE, 1, 0, b"D(B1)W(I3)F(V[0,0][19,0][19,19][0,19])D(E)D(S1(X100,Y50),C)");
+    assert!(records.len() > PACKET_BYTES, "a record of more than one packet, to cut in two");
+    let (first, second) = records.split_at(PACKET_BYTES);
+    engine.feed_whole(true, false, &tti(b"PN,10000\nSC,0000\nPS,8000\nOL,1,A picture page\n\n"));
+    engine.feed_whole(true, false, first);
+    engine.feed_whole(true, false, second);
+    let (regis, _) = engine.take_pictures(PAGE, None, 0);
+    let pixels = unpack(&regis.expect("the record cut across two pieces is read whole").picture.packed);
+    assert_eq!(pixels[55 * REGIS_WIDTH + 105], 3);
+}
+
 /// RULE-26, ANIM-6 (REQ-6536): through the picture the rule table's host
 /// is given, a rule's actions hide, show and re-look a ReGIS drawing, and
 /// set its frame; its conditions read the state back; an operation on a

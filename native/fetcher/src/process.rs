@@ -15,7 +15,7 @@ use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_transport::web_address;
-use neoteletext_web::agent::{Config, Event, Failure, Input, InputMessage, Output, Source, Storage, Subscription, UserAgent};
+use neoteletext_web::agent::{Config, Event, Failure, Input, InputMessage, Output, Source, Subscription, UserAgent};
 use neoteletext_web::channel::{BUNDLE_FILE, SETTINGS_FILE};
 use neoteletext_web::consts::{ALLOWED_LOCAL, STATUS_GONE, STATUS_NOT_FOUND};
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
@@ -46,15 +46,14 @@ pub(crate) type CorePipe = Rc<RefCell<BufWriter<Box<dyn Write>>>>;
 /// What the console is told when a name led only to addresses the channel
 /// may not reach.
 const LOCAL_REFUSED: &str = "Blocked: the server's name leads to this computer or the local network, which this channel may not reach";
-/// The longest body the agent takes for a page or a bundle: what one
-/// page message to the trusted core carries, its payload being the origin
-/// byte and then the bytes (`write_to_core` refuses more, and refusing
-/// ends this fetcher; finding F-74).
-const PAGE_LIMIT: usize = protocol::MAX_PAYLOAD - 1;
-// The agent's body buffer holds it, so it is the limit the agent keeps.
-const _: () = assert!(PAGE_LIMIT <= neoteletext_web::consts::DEFAULT_PAGE_LIMIT);
-// A pushed message goes to the trusted core as a page message too.
-const _: () = assert!(neoteletext_web::consts::DEFAULT_PUSH_LIMIT <= PAGE_LIMIT);
+/// The longest body the agent takes for a page or a bundle: the largest
+/// page file with a picture (the engine's DEC-6810). A body longer than one
+/// page message to the trusted core goes in pieces of one message each, or
+/// not at all (`pictured::pieces`): `write_to_core` refuses more than a
+/// message, and refusing ends this fetcher (finding F-74).
+const PAGE_LIMIT: usize = crate::pictured::MAX_PICTURED_PAGE_FILE;
+// A pushed message goes to the trusted core as one page message.
+const _: () = assert!(neoteletext_web::consts::DEFAULT_PUSH_LIMIT <= crate::pictured::PAGE_MESSAGE);
 /// Bytes passed to the agent at a time.
 const READ_CHUNK: usize = 16 * 1024;
 /// The parts of lists of sub-pages kept as read, so that one the agent says
@@ -291,6 +290,27 @@ fn rules_queries(reader: &mut neoteletext_web::records::RecordReader, bytes: &[u
     asked
 }
 
+/// A page file, a bundle or a pushed message, for the trusted core: in
+/// pieces of one message when a page file with a picture passes one (PAR-8,
+/// the browser's DEC-6817), and the bundle settled once its pages have gone.
+fn page_bytes(page: &neoteletext_web::agent::PageBytes<'_>, actions: &mut Vec<Action>) {
+    let origin = match (page.source, page.media) {
+        (Source::Push, _) => Origin::PushedPackets,
+        (_, MediaType::T42) => Origin::FetchedPackets,
+        (_, MediaType::Tti) => Origin::FetchedPage,
+        _ => Origin::Fetched,
+    };
+    let packets = matches!(origin, Origin::FetchedPackets);
+    match crate::pictured::pieces(packets, matches!(page.source, Source::Page { .. }), page.bytes.to_vec()) {
+        Ok(pieces) => actions.extend(pieces.into_iter().map(|bytes| Action::Bytes { origin, bytes })),
+        Err(reason) => actions.push(Action::Tell(FromFetcher::Notice(String::from(reason)))),
+    }
+    // The bundle's pages have gone, so a page it lacks may be asked for.
+    if matches!(page.source, Source::FrontDoor) {
+        actions.push(Action::BundleSettled);
+    }
+}
+
 fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     if let Some(net) = output.net() {
         actions.push(match net {
@@ -301,17 +321,7 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         return;
     }
     if let Output::PageBytes(page) = output {
-        let origin = match (page.source, page.media) {
-            (Source::Push, _) => Origin::PushedPackets,
-            (_, MediaType::T42) => Origin::FetchedPackets,
-            (_, MediaType::Tti) => Origin::FetchedPage,
-            _ => Origin::Fetched,
-        };
-        actions.push(Action::Bytes { origin, bytes: page.bytes.to_vec() });
-        // The bundle's pages have gone, so a page it lacks may be asked for.
-        if matches!(page.source, Source::FrontDoor) {
-            actions.push(Action::BundleSettled);
-        }
+        page_bytes(&page, actions);
         return;
     }
     // Said to the trusted core by its role and status; a refused bundle has
@@ -571,7 +581,8 @@ fn run_with(
     let output: CorePipe = Rc::new(RefCell::new(BufWriter::new(output)));
     send(&output, &FromFetcher::Confined)?;
     output.borrow_mut().flush().map_err(|error| error.to_string())?;
-    let mut storage = Box::new(Storage::default());
+    // The body buffer holds the largest page file with a picture (PAGE_LIMIT).
+    let mut storage = crate::pictured::Storage::new();
     let random = Random::new();
     let (wakes, woken) = mpsc::channel::<Wake>();
     // The trusted core's answers to viewer state's challenges, read by the
@@ -922,6 +933,7 @@ fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use neoteletext_web::agent::Storage;
     use neoteletext_web::channel::SETTINGS_FILE;
 
     /// REQ-708: every failure of a whole file reaches the trusted core by
@@ -979,11 +991,24 @@ mod tests {
     #[test]
     fn the_largest_page_the_agent_accepts_reaches_the_core() {
         let config = agent_config(&[], false);
-        let page = FromFetcher::Page { origin: Origin::FetchedPage, bytes: vec![b'x'; config.page_limit] };
+        assert_eq!(config.page_limit, crate::pictured::MAX_PICTURED_PAGE_FILE, "the largest page file with a picture (DEC-6810)");
+        let page = FromFetcher::Page { origin: Origin::FetchedPage, bytes: vec![b'x'; crate::pictured::PAGE_MESSAGE] };
         let mut written = Vec::new();
         write_to_core(&mut written, &page).unwrap();
         let read = protocol::fetcher::read_from_fetcher(&mut written.as_slice()).unwrap();
-        assert!(matches!(read, Some(FromFetcher::Page { bytes, .. }) if bytes.len() == config.page_limit));
+        assert!(matches!(read, Some(FromFetcher::Page { bytes, .. }) if bytes.len() == crate::pictured::PAGE_MESSAGE));
+        // Past one message, a TTI page is dropped with a notice, never
+        // written whole (which would end this fetcher).
+        let tti = neoteletext_web::agent::PageBytes {
+            source: Source::Page { page: PageAddress::from_mpp(0x100).unwrap(), subcode: None },
+            media: MediaType::Tti,
+            url: "http://a.invalid/100.tti",
+            secure: false,
+            bytes: &vec![b'x'; crate::pictured::PAGE_MESSAGE + 1],
+        };
+        let mut actions = Vec::new();
+        collect(Output::PageBytes(tti), &mut actions);
+        assert!(matches!(actions.as_slice(), [Action::Tell(FromFetcher::Notice(_))]));
     }
 
     /// REQ-1888, DOC-1869: a part of a list of the standard's 8,190

@@ -22,6 +22,7 @@
 mod agent;
 mod arguments;
 mod live;
+mod pictured;
 mod process;
 mod state;
 mod transport;

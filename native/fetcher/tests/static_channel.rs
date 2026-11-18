@@ -359,3 +359,66 @@ fn a_live_channel_asks_for_nothing_after_its_settings_but_its_push_connection() 
     }
     assert_eq!(*asked.lock().unwrap(), ["/channel.ttx", "/push", "/push"]);
 }
+
+/// The packets of a static channel's page file with a ReGIS picture of
+/// `stream` bytes after `teletext` packets of the page (the engine's
+/// DEC-6810): the teletext as row 1 of magazine 2 repeated, the stream in
+/// records of the most data each holds, as `neottx convert --to channel`
+/// cuts it.
+fn pictured_file(teletext: usize, stream: usize) -> Vec<u8> {
+    use neoteletext_core::types::{PageAddress, SubCode};
+    use neoteletext_web::records::regis::{MAX_DATA, RegisRecord, encode};
+    const PACKET: usize = 42;
+    let mut row = [0x20_u8; PACKET];
+    // Hamming 8/4 of magazine 2 and row 1 (EN 300 706 clause 7.1.2).
+    row[0] = 0x02;
+    row[1] = 0x15;
+    let mut file = row.repeat(teletext);
+    let bytes = vec![b'P'; stream];
+    for (index, data) in bytes.chunks(MAX_DATA).enumerate() {
+        let offset = u32::try_from(index * MAX_DATA).unwrap();
+        let record = RegisRecord { page: PageAddress::from_mpp(0x200).unwrap(), subcode: SubCode::new(0), generation: 1, offset, data };
+        encode(record, 0, 0, &mut |packet| file.extend_from_slice(&packet.bytes)).unwrap();
+    }
+    file
+}
+
+/// The browser's DEC-6817 (the engine's DEC-6810, renderer parity PAR-8):
+/// a static page file with a picture of the largest stream, 1 MiB, far past
+/// the 256 KiB of one message the fetcher held every page to before
+/// (finding F-74), reaches the trusted core whole, its teletext packets in
+/// the first message and its record packets in pieces of one message each,
+/// in order. Before this the agent refused the file and the page was
+/// refused.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "a confined fetcher reaches this computer only once an administrator has run CheckNetIsolation.exe LoopbackExempt -a -p=<the fetcher container's SID> (decision 78); run with --ignored after it"
+)]
+fn a_static_page_with_the_largest_picture_reaches_the_core_in_pieces() {
+    const STREAM: usize = 1_048_576;
+    const TELETEXT: usize = 74;
+    let file: &'static [u8] = Box::leak(pictured_file(TELETEXT, STREAM).into_boxed_slice());
+    assert!(file.len() > protocol::MAX_PAYLOAD, "past one message: {}", file.len());
+    let port = serve(BTreeMap::from([("/200.t42", (200, "application/octet-stream", file))]));
+    let mut fetcher = Fetcher::start(port);
+    fetcher.until(|message| matches!(message, FromFetcher::BundleSettled).then_some(()));
+    fetcher.tell(&ToFetcher::FetchPage { page: 0x200 });
+    let mut received = Vec::new();
+    let mut pieces = 0_usize;
+    while received.len() < file.len() {
+        let piece = fetcher.until(|message| match message {
+            FromFetcher::Page { origin: Origin::FetchedPackets, bytes } => Some(bytes.clone()),
+            FromFetcher::Refused { .. } => panic!("the file was refused"),
+            _ => None,
+        });
+        assert!(piece.len() < protocol::MAX_PAYLOAD, "each piece within one message");
+        if pieces == 0 {
+            assert_eq!(piece.len(), TELETEXT * 42, "the teletext packets first");
+        }
+        pieces += 1;
+        received.extend(piece);
+    }
+    assert!(pieces > 2, "in several pieces: {pieces}");
+    assert_eq!(received, file, "every packet, in the file's order");
+}
