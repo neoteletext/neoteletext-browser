@@ -29,22 +29,72 @@
 //!
 //! The settings' sound and volume (requirement 19.4) are each mixer's
 //! master: off silences every channel, and the volume scales them all.
+//!
+//! A page's local sounds (page-rules.md RULE-60, RULE-62) are instruments
+//! held here and rendered on the audio thread, as each mixer asks for its
+//! pulled voices' samples (`local.rs`); while one plays, the device runs,
+//! so that a note never waits for it to start. What a page's rules watch
+//! (RULE-32, RULE-33) is metered after each buffer and told the trusted
+//! core once a sixtieth of a second of frames was rendered: each watched
+//! audio channel's peak before the master volume and the mute, and a local
+//! sound's envelope and voice count. Neither a condition nor a rule is
+//! known here.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use neoteletext_audio_mix::{Mixer, Start};
-use protocol::audio::{Audio, Sound};
+use neoteletext_rules::table::WATCH_LEVEL;
+use protocol::audio::{Audio, MAX_WATCH_SLOTS, Sound, WatchSlot};
 
+use local::{LocalVoice, Locals, VOICES};
 use names::{Name, Names};
 
 mod device;
+mod local;
+#[cfg(test)]
+mod local_tests;
 mod names;
 #[cfg(test)]
 mod tests;
 
 pub use device::{OutputSample, Speaker, render};
+pub use local::{LOCAL_MIDI_QUEUE, LOCAL_OVERRUN_BUFFERS};
+
+/// The reports of the audio thread that wait for the helper's loop: a few
+/// buffers' worth for every view; one that finds no room is dropped, and
+/// the next takes its place.
+pub const TOLD_QUEUE: usize = 64;
+/// The parts of a second after which what is watched is reported: a tick
+/// of a page's rules (RULE-33 item 3).
+const REPORTS_PER_SECOND: u32 = neoteletext_rules::limits::TICKS_PER_SECOND;
+/// The parts of a second of silence after which a view whose local sound
+/// plays nothing no longer shows as sounding (RULE-62: a view's speaker
+/// mark follows what is heard).
+const UNHEARD_PER_SECOND: u32 = 2;
+/// Microseconds in a second.
+const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
+
+/// What the audio thread tells the helper's loop, for the trusted core.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Told {
+    /// The values of one view's watch list, in its order (RULE-33 item 3).
+    Metered {
+        /// The view's channel.
+        channel: u32,
+        /// The values, of which the first `count` are the list's.
+        values: [u8; MAX_WATCH_SLOTS],
+        /// How many.
+        count: usize,
+    },
+    /// One view's local sounds overran their time and were stopped
+    /// (RULE-62).
+    Overrun {
+        /// The view's channel.
+        channel: u32,
+    },
+}
 
 /// The most frames rendered at once: buffers larger than this are rendered
 /// in pieces, so the scratch buffer is allocated once, before playing.
@@ -57,10 +107,29 @@ pub type Shared = Arc<Mutex<Mixers>>;
 const MAX_VOLUME: u8 = 100;
 const _: () = assert!(MAX_VOLUME == protocol::settings::MAX_VOLUME);
 
-/// One channel's mixer and the keys it knows the decoder's names by.
+/// One channel's mixer, the keys it knows the decoder's names by, and its
+/// local sounds.
 struct Channel {
     mixer: Mixer,
     names: Names,
+    locals: Locals,
+    /// Whether its output was other than silence lately, and for how many
+    /// frames it has been silent.
+    heard: bool,
+    silent_frames: usize,
+}
+
+impl Channel {
+    fn new(rate_hz: u32) -> Self {
+        Self { mixer: Mixer::new(rate_hz), names: Names::default(), locals: Locals::default(), heard: false, silent_frames: 0 }
+    }
+
+    /// Whether the view's tab shows it sounds: something plays or is about
+    /// to, and where a local sound is held, something of it was heard
+    /// lately (RULE-62).
+    fn sounding(&self) -> bool {
+        self.mixer.active() && (!self.locals.any() || self.heard)
+    }
 }
 
 /// One mixer for each channel with sound, at the output's rate.
@@ -72,8 +141,18 @@ pub struct Mixers {
     volume: u8,
     /// The channels whose tabs are muted.
     muted: BTreeSet<u32>,
-    /// Whether any channel sounded when last looked.
+    /// Whether any channel sounded when last looked, and how many of the
+    /// views with a local sound showed as sounding.
     active: bool,
+    shown: usize,
+    /// Each view's watch list (RULE-33 item 2), kept apart from its mixer,
+    /// so a list given before the view's first sound holds when its mixer
+    /// is made.
+    watches: BTreeMap<u32, Vec<WatchSlot>>,
+    /// The output frames rendered since what is watched was last reported.
+    since_report: usize,
+    /// Where the audio thread tells what it metered and what it stopped.
+    told: Option<SyncSender<Told>>,
     /// Woken when that changes. It holds one wake, and a wake that finds
     /// one waiting is not needed: the watcher looks afresh each time.
     wake: Option<SyncSender<()>>,
@@ -84,7 +163,32 @@ impl Mixers {
     /// settings say otherwise.
     #[must_use]
     pub fn new(rate_hz: u32) -> Self {
-        Self { rate_hz, channels: BTreeMap::new(), sound: true, volume: MAX_VOLUME, muted: BTreeSet::new(), active: false, wake: None }
+        Self {
+            rate_hz,
+            channels: BTreeMap::new(),
+            sound: true,
+            volume: MAX_VOLUME,
+            muted: BTreeSet::new(),
+            active: false,
+            shown: 0,
+            watches: BTreeMap::new(),
+            since_report: 0,
+            told: None,
+            wake: None,
+        }
+    }
+
+    /// Gives the audio thread where to tell what it metered and stopped.
+    pub fn tell(&mut self, told: SyncSender<Told>) {
+        self.told = Some(told);
+    }
+
+    /// Whether the output device is to run: a channel sounds or is about
+    /// to. A local sound keeps it running while it plays, heard or not, so
+    /// that a note never waits for the device to start (RULE-62).
+    #[must_use]
+    pub fn device_wanted(&self) -> bool {
+        self.channels.values().any(|channel| channel.mixer.active())
     }
 
     /// Wakes the watcher when the channels went from silent to sounding or
@@ -92,10 +196,14 @@ impl Mixers {
     /// blocks or allocates.
     fn note_activity(&mut self) {
         let active = self.channels.values().any(|channel| channel.mixer.active());
-        if active == self.active {
+        // A view with a local sound shows as sounding only while it is
+        // heard: its tab's mark changes while the device runs on.
+        let shown = self.channels.values().filter(|channel| channel.locals.any() && channel.sounding()).count();
+        if active == self.active && shown == self.shown {
             return;
         }
         self.active = active;
+        self.shown = shown;
         if let Some(wake) = &self.wake
             && let Err(TrySendError::Disconnected(())) = wake.try_send(())
         {
@@ -115,7 +223,63 @@ impl Mixers {
     /// The channels sounding or about to, muted or not: their tabs show it.
     #[must_use]
     pub fn sounding(&self) -> BTreeSet<u32> {
-        self.channels.iter().filter(|(_, channel)| channel.mixer.active()).map(|(&number, _)| number).collect()
+        self.channels.iter().filter(|(_, channel)| channel.sounding()).map(|(&number, _)| number).collect()
+    }
+
+    /// Keeps the peak of exactly the audio channels of `channel` whose
+    /// level its watch list reads (RULE-32: nothing is metered for a
+    /// channel no rule watches).
+    fn meter(&mut self, channel: u32) {
+        let Some(Channel { mixer, .. }) = self.channels.get_mut(&channel) else { return };
+        let watch = self.watches.get(&channel).map_or(&[][..], Vec::as_slice);
+        for (voice, number) in (0..VOICES).zip(0_u8..) {
+            let watched = watch.iter().any(|slot| slot.kind == WATCH_LEVEL && slot.channel == number);
+            if mixer.is_metered(voice) != watched {
+                mixer.set_metered(voice, watched);
+            }
+        }
+    }
+
+    /// Tells the helper's loop, without waiting: a report that finds no
+    /// room is dropped.
+    fn tell_loop(&mut self, told: Told) {
+        if let Some(sender) = &self.told
+            && let Err(TrySendError::Disconnected(_)) = sender.try_send(told)
+        {
+            self.told = None;
+        }
+    }
+
+    /// One report of zeros for each view with a watch list: the output
+    /// device stopped, and nothing more is reported until it runs again
+    /// (RULE-33 item 3).
+    pub fn report_silence(&mut self) {
+        let silent: Vec<(u32, usize)> = self.watches.iter().map(|(&channel, watch)| (channel, watch.len())).collect();
+        for (channel, count) in silent {
+            self.tell_loop(Told::Metered { channel, values: [0; MAX_WATCH_SLOTS], count });
+        }
+    }
+
+    /// Reports what each view's watch list reads, once a sixtieth of a
+    /// second of output frames was rendered since the last report (RULE-33
+    /// item 3). On the audio thread: it never allocates or waits.
+    fn report_watched(&mut self, frames: usize) {
+        self.since_report = self.since_report.saturating_add(frames);
+        let due = usize::try_from(self.rate_hz.checked_div(REPORTS_PER_SECOND).unwrap_or(0)).unwrap_or(usize::MAX);
+        if self.since_report < due || self.watches.is_empty() {
+            return;
+        }
+        self.since_report = 0;
+        let Self { watches, channels, told, .. } = self;
+        let Some(sender) = told else { return };
+        for (&channel, watch) in watches.iter() {
+            let mut values = [0; MAX_WATCH_SLOTS];
+            let count = match channels.get_mut(&channel) {
+                Some(Channel { mixer, locals, .. }) => locals.metered(mixer, watch, &mut values),
+                None => watch.len().min(MAX_WATCH_SLOTS),
+            };
+            let _ = sender.try_send(Told::Metered { channel, values, count });
+        }
     }
 
     /// Renders the sum of every channel into `out`, using `scratch`, as long
@@ -127,12 +291,43 @@ impl Mixers {
     fn render(&mut self, out: &mut [i16], scratch: &mut [i16]) {
         out.fill(0);
         let Some(scratch) = scratch.get_mut(..out.len()) else { return };
-        for Channel { mixer, .. } in self.channels.values_mut().filter(|channel| channel.mixer.active()) {
-            mixer.render(scratch);
+        let frames = u64::try_from(out.len()).unwrap_or(u64::MAX);
+        let fills_us = frames.saturating_mul(MICROSECONDS_PER_SECOND).checked_div(u64::from(self.rate_hz)).unwrap_or(0);
+        let unheard_after = usize::try_from(self.rate_hz.checked_div(UNHEARD_PER_SECOND).unwrap_or(0)).unwrap_or(usize::MAX);
+        let mut overran = None;
+        for (&number, channel) in self.channels.iter_mut().filter(|(_, channel)| channel.mixer.active()) {
+            let Channel { mixer, locals, heard, silent_frames, .. } = channel;
+            // A view with local sounds is timed: its instruments are
+            // rendered here, in the time of the buffer they fill.
+            let started = locals.any().then(std::time::Instant::now);
+            mixer.render_pulling(scratch, locals);
             for (sum, &sample) in out.iter_mut().zip(scratch.iter()) {
                 *sum = sum.saturating_add(sample);
             }
+            let Some(started) = started else { continue };
+            if scratch.iter().any(|&sample| sample != 0) {
+                *heard = true;
+                *silent_frames = 0;
+            } else {
+                *silent_frames = silent_frames.saturating_add(scratch.len());
+                *heard &= *silent_frames < unheard_after;
+            }
+            let took_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            if locals.overran(took_us, fills_us) {
+                // Stopped with all notes released, and reported (RULE-62).
+                for (voice, local) in locals.voices.iter_mut().enumerate() {
+                    if let Some(local) = local {
+                        local.release();
+                        mixer.stop(voice, neoteletext_audio::MIN_FADE_MS);
+                    }
+                }
+                overran = Some(number);
+            }
         }
+        if let Some(channel) = overran {
+            self.tell_loop(Told::Overrun { channel });
+        }
+        self.report_watched(out.len());
         // A sound ends here, on the audio thread.
         self.note_activity();
     }
@@ -142,12 +337,17 @@ impl Mixers {
 /// `changed` which channels sound, muted or not, each time that set
 /// changes. Returns when the mixers are gone or `changed` says to stop.
 pub fn watch(mixers: &Mutex<Mixers>, wakes: &Receiver<()>, mut changed: impl FnMut(BTreeSet<u32>) -> bool) {
-    let mut last = BTreeSet::new();
+    let mut last = (BTreeSet::new(), false);
     while wakes.recv().is_ok() {
-        let sounding = mixers.lock().unwrap_or_else(PoisonError::into_inner).sounding();
-        if sounding != last {
-            last.clone_from(&sounding);
-            if !changed(sounding) {
+        let now = {
+            let mixers = mixers.lock().unwrap_or_else(PoisonError::into_inner);
+            (mixers.sounding(), mixers.device_wanted())
+        };
+        // Told too when only the device is wanted or no longer is: a local
+        // sound that plays nothing yet keeps it running (RULE-62).
+        if now != last {
+            last.clone_from(&now);
+            if !changed(now.0) {
                 return;
             }
         }
@@ -169,12 +369,23 @@ pub fn set_sound(mixers: &Mutex<Mixers>, sound: bool, volume: u8) {
 /// buffer is allocated before the lock is taken, and what it leaves to
 /// free is freed after the lock is let go (finding F-55).
 pub fn apply(mixers: &Mutex<Mixers>, channel: u32, audio: Audio) {
-    let operation = Operation::prepare(audio);
+    let operation = match audio {
+        // A local sound's instrument is made and given its setup before
+        // the lock is taken for it, with the banks given for it, which
+        // only this thread writes.
+        Audio::Local { channel: voice, start } => {
+            let banks = mixers.lock().unwrap_or_else(PoisonError::into_inner).take_banks(channel, voice);
+            let local = LocalVoice::new((0, 0), &start, banks);
+            Operation::Local { voice, start, ring: vec![0; Mixer::pulled_ring()], local }
+        }
+        other => Operation::prepare(other),
+    };
     let mut locked = mixers.lock().unwrap_or_else(PoisonError::into_inner);
-    let Leftover { mixer, buffer } = locked.apply(channel, operation);
+    let Leftover { mixer, buffer, local } = locked.apply(channel, operation);
     drop(locked);
     drop(mixer);
     drop(buffer);
+    drop(local);
 }
 
 /// A voice operation from the trusted core with the buffer it gives the
@@ -184,6 +395,9 @@ enum Operation {
     Define { sound: Sound, rate_hz: u32, samples: Vec<i16> },
     /// [`Audio::Stream`], with its ring.
     Stream { channel: u8, sound: Sound, rate_hz: u32, ring: Vec<i16> },
+    /// [`Audio::Local`], with its pulled sound's ring and its instrument,
+    /// made and set up; none for a family this build has no instrument of.
+    Local { voice: u8, start: protocol::audio::LocalStart, ring: Vec<i16>, local: Option<Box<LocalVoice>> },
     /// Every other operation, which needs no buffer.
     Other(Audio),
 }
@@ -209,9 +423,18 @@ struct Leftover {
     /// A ring the mixer refused, or a buffer for a name beyond the
     /// channel's bound.
     buffer: Option<Vec<i16>>,
+    /// A local sound's instrument that another replaced, or that could
+    /// not be started.
+    local: Option<Box<LocalVoice>>,
 }
 
 impl Mixers {
+    /// The banks given for the local sound about to start on audio channel
+    /// `voice` of `channel`, taken: it allocates nothing.
+    fn take_banks(&mut self, channel: u32, voice: u8) -> Vec<Vec<u8>> {
+        self.channels.get_mut(&channel).and_then(|held| held.locals.pending_banks.get_mut(usize::from(voice))).map(core::mem::take).unwrap_or_default()
+    }
+
     /// Applies one voice operation of `channel`, with the lock held. Only
     /// a definition or a live sound makes the channel's mixer (finding
     /// F-55): any other operation on a channel without one does nothing,
@@ -226,8 +449,9 @@ impl Mixers {
             Operation::Other(Audio::Reset) => {
                 let mixer = self.channels.remove(&channel);
                 self.muted.remove(&channel);
+                self.watches.remove(&channel);
                 self.note_activity();
-                return Leftover { mixer, buffer: None };
+                return Leftover { mixer, buffer: None, local: None };
             }
             // Kept apart from the mixer, so a mute given before the
             // channel's first sound holds when its mixer is made.
@@ -240,16 +464,45 @@ impl Mixers {
                 self.master(channel);
                 return Leftover::default();
             }
-            Operation::Define { .. } | Operation::Stream { .. } => {
+            // The view's watch list, replacing the one before (RULE-33
+            // item 2): kept apart from the mixer, as a mute is.
+            Operation::Other(Audio::Watch(slots)) => {
+                if slots.is_empty() {
+                    self.watches.remove(&channel);
+                } else {
+                    self.watches.insert(channel, slots);
+                }
+                // A tick of frames from now, the new list's first report.
+                self.since_report = 0;
+                self.meter(channel);
+                return Leftover::default();
+            }
+            Operation::Define { .. } | Operation::Stream { .. } | Operation::Local { .. } | Operation::Other(Audio::LocalBank { .. }) => {
                 if let std::collections::btree_map::Entry::Vacant(vacant) = self.channels.entry(channel) {
                     // A new mixer holds no sound yet, so it allocates nothing.
-                    vacant.insert(Channel { mixer: Mixer::new(self.rate_hz), names: Names::default() });
+                    vacant.insert(Channel::new(self.rate_hz));
                     self.master(channel);
+                    self.meter(channel);
                 }
             }
             Operation::Other(_) => {}
         }
-        let Some(Channel { mixer, names }) = self.channels.get_mut(&channel) else { return Leftover::default() };
+        let leftover = match self.channels.get_mut(&channel) {
+            Some(held) => held.apply(operation),
+            None => Leftover::default(),
+        };
+        // A sound starts here, on the reader's thread, while the device
+        // may be stopped.
+        self.note_activity();
+        leftover
+    }
+}
+
+impl Channel {
+    /// Applies one voice operation to this channel's mixer.
+    #[must_use]
+    fn apply(&mut self, operation: Operation) -> Leftover {
+        let Self { mixer, names, locals, .. } = self;
         let mut leftover = Leftover::default();
         match operation {
             Operation::Define { sound, rate_hz, samples } => match names.keep(Name::Stored(sound)) {
@@ -270,7 +523,23 @@ impl Mixers {
                 }
                 None => leftover.buffer = Some(ring),
             },
+            Operation::Local { voice, start, ring, local } => return self.start_local(voice, &start, ring, local),
             Operation::Other(audio) => match audio {
+                // One bank of the local sound about to start on an audio
+                // channel: the banks of a start come in index order.
+                Audio::LocalBank { channel: voice, index, image, .. } => {
+                    if let Some(banks) = locals.pending_banks.get_mut(usize::from(voice)) {
+                        banks.truncate(usize::from(index));
+                        banks.push(image);
+                    }
+                }
+                // A rule's MIDI message, for the local sound's next block
+                // (RULE-62).
+                Audio::LocalMidi { channel: voice, status, data1, data2 } => {
+                    if let Some(local) = locals.voices.get_mut(usize::from(voice)).and_then(Option::as_mut) {
+                        local.queue((status, data1, data2));
+                    }
+                }
                 Audio::Samples { sound, first, pcm } => {
                     if let Some(key) = names.get(Name::Stored(sound)) {
                         mixer.samples(key, usize::try_from(first).unwrap_or(usize::MAX), &pcm);
@@ -292,32 +561,66 @@ impl Mixers {
                 }
                 Audio::Start { channel: voice, sound, gain, fade_ms, looped, duck_percent, after_current } => {
                     if let Some(key) = names.started(voice, sound) {
+                        // What replaces a local sound ends it, its notes
+                        // released as it ramps out.
+                        if let Some(local) = locals.voices.get_mut(usize::from(voice)).and_then(Option::as_mut).filter(|local| local.key != key) {
+                            local.release();
+                        }
                         mixer.start(usize::from(voice), Start { key, gain, fade_ms, looped, duck_percent, after_current });
                     }
                 }
-                Audio::Stop { channel: voice, fade_ms } => mixer.stop(usize::from(voice), fade_ms),
+                // A stop releases every note of a local sound (RULE-60).
+                Audio::Stop { channel: voice, fade_ms } => {
+                    if let Some(local) = locals.voices.get_mut(usize::from(voice)).and_then(Option::as_mut) {
+                        local.release();
+                    }
+                    mixer.stop(usize::from(voice), fade_ms);
+                }
                 Audio::Gain { channel: voice, gain, fade_ms } => mixer.gain(usize::from(voice), gain, fade_ms),
                 Audio::StreamSamples { channel: voice, sound, pcm } => {
                     if let Some(key) = names.get(Name::Stream(voice, sound)) {
                         mixer.stream_samples(key, &pcm);
                     }
                 }
-                // Prepared with their buffers, or applied above; and a
-                // local sound and its metering (page-rules.md RULE-62,
-                // RULE-33).
-                Audio::Define { .. }
-                | Audio::Stream { .. }
-                | Audio::Mute(_)
-                | Audio::Reset
-                | Audio::LocalBank { .. }
-                | Audio::Local { .. }
-                | Audio::LocalMidi { .. }
-                | Audio::Watch(_) => {}
+                // Prepared with their buffers, or applied above.
+                Audio::Define { .. } | Audio::Stream { .. } | Audio::Mute(_) | Audio::Reset | Audio::Local { .. } | Audio::Watch(_) => {}
             },
         }
-        // A sound starts here, on the reader's thread, while the device
-        // may be stopped.
-        self.note_activity();
+        leftover
+    }
+
+    /// A local sound starts (RULE-60): its pulled voice replaces what the
+    /// audio channel played, and the instrument it had.
+    #[must_use]
+    fn start_local(&mut self, voice: u8, start: &protocol::audio::LocalStart, ring: Vec<i16>, local: Option<Box<LocalVoice>>) -> Leftover {
+        let Self { mixer, names, locals, .. } = self;
+        let mut leftover = Leftover::default();
+        let place = locals.voices.get_mut(usize::from(voice));
+        match (local, place, names.renew(Name::Stream(voice, start.sound))) {
+            (Some(mut local), Some(place), Some((key, old))) => {
+                if let Some(old) = old {
+                    mixer.forget(old);
+                }
+                match mixer.pulled_with(key, ring) {
+                    Ok(()) => {
+                        local.key = key;
+                        leftover.local = place.replace(local);
+                        let begin =
+                            Start { key, gain: start.gain, fade_ms: start.fade_ms, looped: false, duck_percent: start.duck_percent, after_current: false };
+                        mixer.start(usize::from(voice), begin);
+                    }
+                    Err(ring) => {
+                        names.release(Name::Stream(voice, start.sound));
+                        leftover.buffer = Some(ring);
+                        leftover.local = Some(local);
+                    }
+                }
+            }
+            (local, _, _) => {
+                leftover.buffer = Some(ring);
+                leftover.local = local;
+            }
+        }
         leftover
     }
 }

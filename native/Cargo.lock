@@ -2164,7 +2164,9 @@ dependencies = [
  "confine",
  "cpal",
  "neoteletext-audio",
+ "neoteletext-audio-instruments",
  "neoteletext-audio-mix",
+ "neoteletext-rules",
  "protocol",
 ]
 

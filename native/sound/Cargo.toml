@@ -22,6 +22,13 @@ neoteletext-audio-mix.workspace = true
 # The audio profile's bounds alone: its number of audio channels names the
 # streams a channel's decoder may hold (`audio/names.rs`).
 neoteletext-audio.workspace = true
+# The instruments of a page's local sounds, rendered here just in time
+# (neoteletext-common's page-rules.md RULE-62, DEC-6525 item 12): every
+# family that plays notes. They are integer-only, never allocate and hold
+# no unsafe code.
+neoteletext-audio-instruments = { workspace = true, features = ["synth7", "synth106", "synthd", "synth53", "synth8", "synth80"] }
+# The rule table's codes for a watch list's slots (RULE-33), by name.
+neoteletext-rules.workspace = true
 # The operating system's audio output: Core Audio on macOS, WASAPI on
 # Windows, and on Linux the system's ALSA library, libasound, linked
 # dynamically; the owner accepted its LGPL licence (decision 40). Only

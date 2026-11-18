@@ -20,6 +20,9 @@ pub struct Speaker {
     pub peak: Arc<AtomicU16>,
     /// Wakes for [`watch`], taken once by the thread that watches.
     pub wakes: Option<Receiver<()>>,
+    /// What the audio thread metered and stopped (page-rules.md RULE-33,
+    /// RULE-62), taken once by the thread that tells the trusted core.
+    pub told: Option<Receiver<super::Told>>,
     stream: Stream,
     playing: bool,
 }
@@ -35,8 +38,10 @@ impl Speaker {
         let supported = device.default_output_config().map_err(|error| format!("the audio output's format: {error}"))?;
         let config = supported.config();
         let (wake, wakes) = std::sync::mpsc::sync_channel(1);
+        let (tell, told) = std::sync::mpsc::sync_channel(super::TOLD_QUEUE);
         let mut mixers = Mixers::new(config.sample_rate);
         mixers.wake = Some(wake);
+        mixers.tell(tell);
         let mixers: Shared = Arc::new(Mutex::new(mixers));
         let channels = usize::from(config.channels).max(1);
         let peak = Arc::new(AtomicU16::new(0));
@@ -48,7 +53,7 @@ impl Speaker {
         }?;
         // Some platforms start a stream as it is built; this one waits.
         let _ = stream.pause();
-        Ok(Self { mixers, peak, wakes: Some(wakes), stream, playing: false })
+        Ok(Self { mixers, peak, wakes: Some(wakes), told: Some(told), stream, playing: false })
     }
 
     /// Runs the device while `playing`, and stops it otherwise. A device

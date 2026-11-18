@@ -3,7 +3,7 @@
 //! back, the device running only while one does.
 
 use std::collections::BTreeSet;
-use std::io::{self, BufReader, BufWriter, Write as _};
+use std::io::{self, BufReader, BufWriter};
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
@@ -19,8 +19,11 @@ enum Wake {
     Core(Option<ToSound>),
     /// The pipe broke, or a message was malformed.
     Broken(String),
-    /// The channels sounding changed.
+    /// The channels sounding changed, or whether the device is wanted.
     Sounding(BTreeSet<u32>),
+    /// The audio thread metered a view's watch list, or stopped a view's
+    /// local sounds (page-rules.md RULE-33, RULE-62).
+    Told(audio::Told),
 }
 
 /// Plays the voice operations the trusted core sends on standard input
@@ -55,6 +58,17 @@ pub fn run() -> Result<(), String> {
         let to_loop = wakes.clone();
         std::thread::spawn(move || audio::watch(&mixers, &sounding_wakes, |sounding| to_loop.send(Wake::Sounding(sounding)).is_ok()));
     }
+    // What the audio thread metered and stopped, for the trusted core.
+    if let Some(told) = speaker.told.take() {
+        let to_loop = wakes.clone();
+        std::thread::spawn(move || {
+            for told in told {
+                if to_loop.send(Wake::Told(told)).is_err() {
+                    return;
+                }
+            }
+        });
+    }
     if trace {
         let peak = Arc::clone(&speaker.peak);
         std::thread::spawn(move || {
@@ -81,17 +95,36 @@ pub fn run() -> Result<(), String> {
             Wake::Core(Some(ToSound::Close) | None) => return Ok(()),
             Wake::Broken(reason) => return Err(format!("bad message from the trusted core: {reason}")),
             Wake::Sounding(sounding) => {
-                // The device runs only while a channel sounds (decision 53);
-                // the trace says when it starts and stops (TODO-1243).
-                let playing = !sounding.is_empty();
+                // The device runs only while a channel sounds (decision 53)
+                // or a local sound plays, heard or not (RULE-62); the trace
+                // says when it starts and stops (TODO-1243).
+                let mut mixers = speaker.mixers.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let playing = mixers.device_wanted();
+                if !playing {
+                    // One report of zeros, then none while it is stopped
+                    // (RULE-33 item 3).
+                    mixers.report_silence();
+                }
+                drop(mixers);
                 if speaker.set_playing(playing) && trace {
                     eprintln!("neoteletext-sound: the output device {}", if playing { "started" } else { "stopped" });
                 }
-                write_from_sound(&mut output, &FromSound::Sounding(sounding.into_iter().collect()))
-                    .and_then(|()| output.flush().map_err(Into::into))
-                    .map_err(|error| format!("cannot write to the trusted core: {error}"))?;
+                tell(&mut output, &FromSound::Sounding(sounding.into_iter().collect()))?;
+            }
+            Wake::Told(audio::Told::Metered { channel, values, count }) => {
+                let values = values.get(..count).unwrap_or(&[]).to_vec();
+                tell(&mut output, &FromSound::Metered { channel, values })?;
+            }
+            Wake::Told(audio::Told::Overrun { channel }) => {
+                eprintln!("neoteletext-sound: channel {channel}: its local sounds overran their time and were stopped");
+                tell(&mut output, &FromSound::LocalOverrun { channel })?;
             }
         }
     }
     Ok(())
+}
+
+/// Writes one message to the trusted core, at once.
+fn tell(output: &mut impl io::Write, message: &FromSound) -> Result<(), String> {
+    write_from_sound(output, message).and_then(|()| output.flush().map_err(Into::into)).map_err(|error| format!("cannot write to the trusted core: {error}"))
 }
