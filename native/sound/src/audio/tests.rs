@@ -281,3 +281,80 @@ fn a_refused_ring_is_handed_back_to_be_freed_outside_the_lock() {
     let _ = mixers.apply(3, Operation::Other(Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![6_000; 4_000] }));
     assert_eq!(mixers.sounding(), BTreeSet::new(), "no live sound to play");
 }
+
+/// A start of `SOUND` on audio channel `voice` at full gain.
+fn start_on(voice: u8, after_current: bool) -> Audio {
+    Audio::Start { channel: voice, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current }
+}
+
+/// The engine's INT-37: a stream is named by its audio channel and its
+/// sound, so one sound streaming on two audio channels is two voices, each
+/// with its own samples, and ending one leaves the other playing.
+#[test]
+fn one_sound_on_two_audio_channels_plays_as_two_independent_voices() {
+    let mixers = Mutex::new(Mixers::new(8_000));
+    // Channel 0 holds the mixer's buffering target, 400 ms; channel 2
+    // more than a second, short of what would make the mixer skip ahead.
+    for (voice, level, samples) in [(0_u8, 6_000_i16, 3_200), (2, 2_000, 9_000)] {
+        apply(&mixers, 3, Audio::Stream { channel: voice, sound: SOUND, rate_hz: 8_000 });
+        apply(&mixers, 3, start_on(voice, false));
+        apply(&mixers, 3, Audio::StreamSamples { channel: voice, sound: SOUND, pcm: vec![level; samples] });
+    }
+    let mut data = vec![0_i16; 400];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!((7_800..=8_200).contains(&data[300]), "both voices, each its own samples: {}", data[300]);
+    // The stream on channel 0 ends; what it holds plays out, then only
+    // channel 2's is heard.
+    apply(&mixers, 3, Audio::EndStream { channel: 0, sound: SOUND });
+    let mut data = vec![0_i16; 4_000];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!((7_800..=8_200).contains(&data[2_000]), "both, while channel 0's plays out: {}", data[2_000]);
+    assert!((1_900..=2_100).contains(&data[3_500]), "channel 2's alone: {}", data[3_500]);
+}
+
+/// The engine's INT-36: a stream's end plays out what its voice holds, then
+/// ends it, and the sound queued after it on that audio channel starts.
+#[test]
+fn a_stream_end_starts_the_queued_sound() {
+    let mixers = Mutex::new(Mixers::new(8_000));
+    let queued = Sound { handle: 5, generation: 1 };
+    apply(&mixers, 1, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 1, start_on(0, false));
+    // Half a second of the stream: above the mixer's buffering target.
+    apply(&mixers, 1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![6_000; 4_000] });
+    apply(&mixers, 1, Audio::Define { sound: queued, rate_hz: 8_000, samples: 8_000 });
+    apply(&mixers, 1, Audio::Samples { sound: queued, first: 0, pcm: vec![2_000; 8_000] });
+    apply(&mixers, 1, Audio::Start { channel: 0, sound: queued, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: true });
+    let mut data = vec![0_i16; 4_800];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!((5_800..=6_200).contains(&data[300]), "the stream: {}", data[300]);
+    // Its 4 000 samples end a little after 4 000 out, past the ramp in.
+    assert!(data[4_200..].iter().all(|&sample| sample == 0), "without its end, the starved stream waits and nothing follows");
+    apply(&mixers, 1, Audio::EndStream { channel: 0, sound: SOUND });
+    let mut data = vec![0_i16; 800];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!((1_900..=2_100).contains(&data[600]), "the queued sound: {}", data[600]);
+}
+
+/// A stream begun again under a name still held replaces it, and a forget
+/// of a sound ends every stream of it, on every audio channel.
+#[test]
+fn a_stream_under_a_held_name_replaces_it_and_a_forget_ends_every_stream() {
+    let mixers = Mutex::new(Mixers::new(8_000));
+    apply(&mixers, 1, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![6_000; 4_000] });
+    apply(&mixers, 1, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 1, start_on(0, false));
+    apply(&mixers, 1, Audio::StreamSamples { channel: 0, sound: SOUND, pcm: vec![3_000; 4_000] });
+    let mut data = vec![0_i16; 400];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!((2_900..=3_100).contains(&data[300]), "the new stream's samples: {}", data[300]);
+    apply(&mixers, 1, Audio::Stream { channel: 1, sound: SOUND, rate_hz: 8_000 });
+    apply(&mixers, 1, start_on(1, false));
+    apply(&mixers, 1, Audio::StreamSamples { channel: 1, sound: SOUND, pcm: vec![1_000; 4_000] });
+    apply(&mixers, 1, Audio::Forget(SOUND));
+    let mut data = vec![0_i16; 8_000];
+    render(&mixers, &mut data, 1, &mut [0; 512]);
+    assert!(data[7_000..].iter().all(|&sample| sample == 0), "both streams played out and ended");
+    assert_eq!(mixers.lock().unwrap().sounding(), BTreeSet::new());
+}

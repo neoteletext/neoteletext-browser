@@ -93,3 +93,35 @@ fn the_ledger_bounds_what_the_interface_holds() {
     assert_eq!(hearing.channel_gone(1), []);
     assert!(hearing.decoded(3, Audio::Define { sound: SOUND, rate_hz: 48_000, samples: big }).is_some(), "the gone channel's room is free");
 }
+
+/// The engine's INT-36 and INT-37: a stream is named by its audio channel
+/// and its sound, each charged on its own; its samples and its start go only
+/// to the audio channel it streams on; its end lets it go, and a forget ends
+/// every stream of the sound.
+#[test]
+fn each_audio_channels_stream_is_checked_and_charged_on_its_own() {
+    let mut hearing = Hearing::default();
+    let stream = |voice| Audio::Stream { channel: voice, sound: SOUND, rate_hz: 8_000 };
+    let samples = |voice| Audio::StreamSamples { channel: voice, sound: SOUND, pcm: vec![0; 2] };
+    let start_on = |voice| Audio::Start { channel: voice, sound: SOUND, gain: 50, fade_ms: 5, looped: false, duck_percent: 100, after_current: false };
+    let end = |voice| Audio::EndStream { channel: voice, sound: SOUND };
+    assert!(hearing.decoded(1, end(0)).is_none(), "no stream to end");
+    assert!(hearing.decoded(1, stream(0)).is_some());
+    assert!(hearing.decoded(1, stream(2)).is_some());
+    assert_eq!(hearing.held, 2 * u64::from(STREAM_HELD_SAMPLES), "each stream charged");
+    assert!(hearing.decoded(1, samples(2)).is_some());
+    assert!(hearing.decoded(1, samples(1)).is_none(), "no stream on audio channel 1");
+    assert!(hearing.decoded(1, start_on(1)).is_none(), "nothing to start on audio channel 1");
+    assert!(hearing.decoded(1, start_on(2)).is_some());
+    assert!(hearing.decoded(1, stream(2)).is_some(), "a stream under a held name replaces it");
+    assert_eq!(hearing.held, 2 * u64::from(STREAM_HELD_SAMPLES), "charged once");
+    assert!(hearing.decoded(1, end(0)).is_some());
+    assert!(hearing.decoded(1, samples(0)).is_none(), "ended");
+    assert!(hearing.decoded(1, end(0)).is_none(), "ended once");
+    assert_eq!(hearing.held, u64::from(STREAM_HELD_SAMPLES));
+    hearing.decoded(1, define(10)).unwrap();
+    assert!(hearing.decoded(1, Audio::Forget(SOUND)).is_some());
+    assert!(hearing.decoded(1, samples(2)).is_none(), "the forget ended the stream too");
+    assert_eq!(hearing.held, 0);
+    assert!(hearing.decoded(1, Audio::Forget(SOUND)).is_none(), "nothing left to forget");
+}
