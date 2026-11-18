@@ -22,6 +22,11 @@
 //! picture again; a pointer's dot of the raster is that picture's pixel
 //! under it ([`design_point`]).
 //!
+//! The decoder gives every terminal the glyphs of the engine's 55 teletext
+//! character sets, from the Noto Teletext glyphs it has compiled in, so
+//! that a page's private designation of any of them draws (REQ-6668; the
+//! owner's DEC-6669: only the provided sets).
+//!
 //! The decoder is the compositor of its animation (neoteletext-common's
 //! `docs/animation.md`, ANIM-22). WAIT (ANSI X3.110-1983 section 5.3.2.8)
 //! and BLINK (section 5.3.2.7) are played on the presentation clock by the
@@ -34,9 +39,14 @@
 
 use std::collections::BTreeMap;
 
+use std::sync::OnceLock;
+
 use interface_core::canvas::{NAPLPS_DISPLAY_LINES, NAPLPS_TOP_LINE, PAGE_HEIGHT, PAGE_WIDTH, PictureLanguage};
 use naplps::limits::{MAX_ANIMATED_OBJECTS, MAX_ANIMATION_PIXELS_PER_TICK, MAX_CYCLING_OBJECTS, OBJECT_PICTURE_HEIGHT, OBJECT_PICTURE_WIDTH};
-use naplps::{Animation, Canvas, Look, Object, Player, StrokeFont, Terminal};
+use naplps::{Animation, BitmapSet, Canvas, Look, Object, Player, StrokeFont, TELETEXT_SET_COUNT, Terminal};
+use neoteletext_core::charset::CharRef;
+use neoteletext_core::consts::{CELL_HEIGHT, CELL_WIDTH};
+use neoteletext_core::glyphs::conformance::{FONT_SET_COUNT, FONT_SETS};
 use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
 use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::limits::MAX_POINTER_OBJECTS;
@@ -91,6 +101,10 @@ const _: () = assert!(
         && CANVAS_WIDTH <= DESIGN_WIDTH
         && CANVAS_HEIGHT <= DESIGN_HEIGHT
 );
+// REQ-6668: the engine's sets are the renderer's, one for one, and each
+// glyph is the engine's cell.
+const _: () = assert!(FONT_SET_COUNT == TELETEXT_SET_COUNT);
+
 /// `value`, a length or place along a side of `from` pixels, along the
 /// same side of `to` pixels, to the nearest pixel (halves away from the
 /// top left).
@@ -156,6 +170,38 @@ pub(crate) fn design_point(x: u16, y: u16) -> (u16, u16) {
     (u16::try_from(across).unwrap_or(u16::MAX), u16::try_from(down).unwrap_or(u16::MAX))
 }
 
+/// The engine's 55 teletext character sets as the renderer takes them
+/// (REQ-6668): for each, in the order of the engine's `FONT_SETS`, which is
+/// the renderer's `TELETEXT_SETS`, the glyph the teletext renderer draws
+/// for each code 2/0 to 7/15 from the Noto Teletext glyphs compiled in
+/// (DEC-6669: the provided sets only), a G2 set's marks as their spacing
+/// forms and the letters of the Arabic-script sets in their isolated forms.
+/// Made once, and copied into each terminal.
+fn teletext_sets() -> &'static [BitmapSet] {
+    static SETS: OnceLock<Vec<BitmapSet>> = OnceLock::new();
+    SETS.get_or_init(|| {
+        let (Ok(width), Ok(height)) = (u8::try_from(CELL_WIDTH), u8::try_from(CELL_HEIGHT)) else { return Vec::new() };
+        FONT_SETS
+            .iter()
+            .filter_map(|(_, set)| {
+                let mut bitmap = BitmapSet::new(width, height).ok()?;
+                for code in FIRST_SET_CODE..=LAST_SET_CODE {
+                    // A glyph of the engine's own cell always fits; one that
+                    // did not would leave its code blank.
+                    let _ = bitmap.set_glyph(code, &crate::engine::GLYPHS.glyph(CharRef::new(*set, code)));
+                }
+                Some(bitmap)
+            })
+            .collect()
+    })
+}
+
+/// The first and last codes of a set: 2/0 and 7/15.
+const FIRST_SET_CODE: u8 = 0x20;
+/// See [`FIRST_SET_CODE`].
+const LAST_SET_CODE: u8 = 0x7F;
+const _: () = assert!((LAST_SET_CODE - FIRST_SET_CODE + 1) as usize == naplps::bitmap::BITMAP_SET_CODES);
+
 /// One sub-page's NAPLPS.
 struct Page {
     /// Which stream of the sub-page is being drawn.
@@ -220,6 +266,10 @@ impl Page {
         // would move the cursor and draw nothing.
         if let Ok(font) = StrokeFont::parse(naplps_fonts::NEOTELETEXT) {
             terminal.set_font(font);
+        }
+        // REQ-6668: every provided set, by its number.
+        for (number, set) in (0_u8..).zip(teletext_sets()) {
+            let _ = terminal.set_teletext_set(number, set.clone());
         }
         let (width, height) = (u32::try_from(WIDTH).ok()?, u32::try_from(HEIGHT).ok()?);
         let mut canvas = Canvas::new(width, height).ok()?;
@@ -826,6 +876,40 @@ mod tests {
         assert_eq!(found[0], 7);
         assert_eq!(pages.objects_at(0x100, Some(0), 310, 250, &mut found), 0);
         assert_eq!(pages.objects_at(0x100, Some(0), 330, 480, &mut found), 0, "past the picture's bottom: the border lines");
+    }
+
+    /// REQ-6668, DEC-6669: every NAPLPS terminal has the engine's 55 sets,
+    /// in the engine's order, which is the renderer's; a page that
+    /// designates Greek (set 17, ESC 2/8 2/1 3/1 into G0) draws the
+    /// engine's Noto Teletext Greek glyph for its code 4/4, capital delta,
+    /// exactly as a terminal given that glyph alone draws it, and not
+    /// nothing, nor the primary set's D.
+    #[test]
+    fn a_page_designating_greek_draws_the_engines_greek_glyphs() {
+        assert_eq!(teletext_sets().len(), TELETEXT_SET_COUNT);
+        for (number, (engine, renderer)) in FONT_SETS.iter().zip(naplps::TELETEXT_SETS).enumerate() {
+            assert_eq!(engine.0, renderer, "set {number}");
+        }
+        let delta = *crate::engine::GLYPHS.lookup('\u{0394}').unwrap();
+        assert_eq!(teletext_sets()[17].glyph(0x44).unwrap(), delta.as_slice(), "the Greek set's 4/4 is the engine's capital delta");
+        let drawn = |bytes: &[u8]| {
+            let mut pages = NaplpsPages::default();
+            pages.read(&record(0x100, 1, 0, bytes));
+            unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed)
+        };
+        let greek = drawn(b"\x1b\x28\x21\x31D");
+        // The same bytes on a terminal given the engine's delta alone.
+        let mut terminal = Terminal::new(PALETTE_BITS);
+        let mut set = BitmapSet::new(12, 20).unwrap();
+        set.set_glyph(0x44, &delta).unwrap();
+        terminal.set_teletext_set(17, set).unwrap();
+        let mut canvas = Canvas::new(480, 462).unwrap();
+        let _ = terminal.feed(&mut canvas, b"\x1b\x28\x21\x31D");
+        let _ = terminal.finish(&mut canvas);
+        let display = &greek[19 * 480..481 * 480];
+        assert!(canvas.pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
+        assert_eq!(display, canvas.pixels(), "the engine's Greek glyph, as the renderer draws it");
+        assert_ne!(greek, drawn(b"D"), "not the primary set's D");
     }
 
     /// As for ReGIS: one sub-page more than are kept, and the one fed

@@ -47,8 +47,9 @@ const THREE_DIGIT_PLACE: usize = DECIMAL_BASE * DECIMAL_BASE * DECIMAL_BASE - 1;
 /// (`STANDARD-LIMITS.md` question 2, open): the place is in the browser's
 /// own controls.
 const PLACE_TOO_WIDE: &str = "+++";
-/// Noto Teletext, the engine's one compiled font (its REQ-FNT-001).
-static GLYPHS: GlyphSet<'static> = GlyphSet::noto_teletext();
+/// Noto Teletext, the engine's one compiled font (its REQ-FNT-001), which
+/// also gives a NAPLPS page the teletext sets' glyphs (REQ-6668).
+pub(crate) static GLYPHS: GlyphSet<'static> = GlyphSet::noto_teletext();
 
 // The protocol bounds a page's controls by the engine's own bound.
 #[cfg(feature = "links")]

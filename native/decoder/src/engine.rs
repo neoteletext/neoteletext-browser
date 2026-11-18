@@ -43,6 +43,7 @@ mod sprite_pixel_tests;
 mod tests;
 
 use feed::ReceiverRow;
+pub(crate) use render::GLYPHS;
 
 /// A log line the channel wrote for its author.
 #[derive(Clone, Debug, PartialEq, Eq)]
