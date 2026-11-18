@@ -38,6 +38,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // RULE-66: the timed test's marks carry each thread's use of the processor.
+    #[cfg(all(feature = "timed-test", target_os = "linux"))]
+    protocol::timed_test::read_threads_with(confine::scheduling::thread_usage);
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

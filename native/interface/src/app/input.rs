@@ -335,6 +335,9 @@ impl App {
     #[cfg(feature = "interaction")]
     fn channel_key(&mut self, event_loop: &ActiveEventLoop, event: &KeyEvent) -> bool {
         self.terminal_key(event);
+        // RULE-66's hops: the key made into the channel's input.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "key-made", std::time::Instant::now(), format_args!(""));
         self.act(event_loop);
         false
     }

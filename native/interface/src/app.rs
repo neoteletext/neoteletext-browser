@@ -85,6 +85,18 @@ enum Heard {
 
 /// One window and what it shows (`multiple-windows.md`): the interface
 /// holds the window at hand in [`App::view`] and sets the others aside.
+/// A window's size in its own pixels and whether it is maximized or full
+/// screen. On X11 asking any of these is a round trip to the X server,
+/// which held a key up to 2.7 milliseconds on its way to the trusted core
+/// and each frame up to 1.8 in the timed test (DEC-6753): they are asked
+/// once and kept until the window is resized, moved or rescaled.
+#[derive(Clone, Copy)]
+struct WindowFrame {
+    size: winit::dpi::PhysicalSize<u32>,
+    maximized: bool,
+    full_screen: bool,
+}
+
 struct View {
     graphics: Option<Graphics>,
     browser: Browser,
@@ -99,6 +111,9 @@ struct View {
     pointer_shape: (Cursor, bool),
     /// The window's edge the pointer is on, whose shape it then has.
     pointer_edge: Option<winit::window::ResizeDirection>,
+    /// The window's size and state as last asked of the window system,
+    /// kept until it is resized, moved or rescaled ([`WindowFrame`]).
+    window_frame: std::cell::Cell<Option<WindowFrame>>,
     /// The wheel pointer's pictures as the windowing system holds them,
     /// by state and by whether the wheel is lit: made with the window.
     wheel_pointers: HashMap<(interface_core::wheel_cursor::WheelCursor, bool), winit::window::CustomCursor>,
@@ -150,6 +165,7 @@ impl View {
             pace: pace::Pace::default(),
             pointer_shape: (Cursor::Arrow, false),
             pointer_edge: None,
+            window_frame: std::cell::Cell::new(None),
             wheel_pointers: HashMap::new(),
             opened: None,
             #[cfg(feature = "interaction")]
@@ -357,6 +373,9 @@ impl ApplicationHandler<Incoming> for App {
             // The viewer may have changed it while away (REQ-754).
             self.follow_reduced_motion();
         }
+        if matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }) {
+            self.view.window_frame.set(None);
+        }
         if matches!(event, WindowEvent::Resized(_)) {
             self.full_screen_resized();
         }
@@ -377,6 +396,11 @@ impl ApplicationHandler<Incoming> for App {
         #[cfg(feature = "timed-test")]
         let key = matches!(&event, WindowEvent::KeyboardInput { event, .. } if event.state == winit::event::ElementState::Pressed && !event.repeat);
         self.window_input(event_loop, window_id, event);
+        // RULE-66's hops: when the key had been handled, before its flush.
+        #[cfg(feature = "timed-test")]
+        if key {
+            protocol::timed_test::mark("interface", "key-handled", Instant::now(), format_args!(""));
+        }
         // The input goes to the trusted core as soon as it has been
         // handled, before the frame it asked for is drawn: winit on macOS
         // draws the frames asked for before `about_to_wait` (REQ-RCH-003).

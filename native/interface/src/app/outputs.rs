@@ -40,6 +40,9 @@ impl App {
     pub(super) fn act(&mut self, event_loop: &ActiveEventLoop) {
         self.sync_full_screen();
         self.update_cursor();
+        // RULE-66's hops: the window's state brought up to date.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "act-synced", std::time::Instant::now(), format_args!(""));
         for output in self.view.browser.take_outputs() {
             // The look asked for under the pointer, beside the frames that
             // draw it: the round trip a hover takes.

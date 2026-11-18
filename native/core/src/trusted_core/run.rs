@@ -39,6 +39,7 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             }
         }
         Event::FetcherEnded(channel, generation, reason) => core.fetcher_ended(channel, generation, reason),
+        Event::FramePhase(phase, read_at) => core.frame_phase(phase, read_at),
         Event::Intent(intent) => {
             // What the intent changes in a tab's list is stamped with now.
             core.session.now = neoteletext::calendar::utc_now();
@@ -258,11 +259,17 @@ fn event_loop(core: &mut Core, incoming: &mpsc::Receiver<Event>) -> Result<(), S
             }
             continue;
         };
+        // RULE-66's hops: what the core's thread was doing when an event
+        // waited for it.
+        #[cfg(feature = "timed-test")]
+        let (began, name) = (std::time::Instant::now(), timed::name(&event));
         // Timed work falls due while events are handled too: a feed that
         // just started, a notice that expired, the sleep check.
         let handled = handle(core, event).and_then(|go| core.tick().and_then(|()| core.flush()).map(|()| go));
         #[cfg(feature = "timed-test")]
         protocol::timed_test::flushed("core");
+        #[cfg(feature = "timed-test")]
+        timed::slow(began, &name);
         match handled {
             Ok(true) => {}
             Ok(false) => break Ok(()),
@@ -455,3 +462,58 @@ mod tests {
 /// The command line's tests run on every platform; those above need Unix's wait statuses.
 #[cfg(test)]
 mod command_line_tests;
+
+/// The timed test's marks of the core's own thread (page-rules.md
+/// RULE-66), only in its build.
+#[cfg(feature = "timed-test")]
+mod timed {
+    use super::Event;
+
+    /// An event handled for longer than this is marked, with what it was:
+    /// a third of a hop's two milliseconds in RULE-64.
+    const SLOW_MICROSECONDS: u128 = 300;
+    /// How much of a message's debugging form names it.
+    const NAME_BYTES: usize = 48;
+
+    /// A writer that keeps the first [`NAME_BYTES`] and then refuses, so
+    /// that a frame's debugging form is never formatted whole.
+    struct First(String);
+
+    impl core::fmt::Write for First {
+        fn write_str(&mut self, text: &str) -> core::fmt::Result {
+            for character in text.chars() {
+                if self.0.len() >= NAME_BYTES {
+                    return Err(core::fmt::Error);
+                }
+                self.0.push(if character.is_whitespace() { '_' } else { character });
+            }
+            Ok(())
+        }
+    }
+
+    fn first(what: &str, message: &dyn core::fmt::Debug) -> String {
+        let mut name = First(format!("{what}:"));
+        let _ = core::fmt::write(&mut name, format_args!("{message:?}"));
+        name.0
+    }
+
+    /// What the event is, in a word or two.
+    pub(super) fn name(event: &Event) -> String {
+        match event {
+            Event::Budgeted(event, _) => name(event),
+            Event::Decoded(_, _, message) => first("decoded", message),
+            Event::Fetched(_, _, message) => first("fetched", message),
+            Event::Intent(intent) => first("intent", intent),
+            _ => String::from("other"),
+        }
+    }
+
+    /// Marks an event whose handling, with the timed work and the flush
+    /// after it, took longer than [`SLOW_MICROSECONDS`].
+    pub(super) fn slow(began: std::time::Instant, name: &str) {
+        let took = began.elapsed().as_micros();
+        if took > SLOW_MICROSECONDS {
+            protocol::timed_test::mark("core", "slow-event", began, format_args!("{took} {name}"));
+        }
+    }
+}

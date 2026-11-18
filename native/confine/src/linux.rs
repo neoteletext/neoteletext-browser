@@ -30,6 +30,7 @@ mod namespace;
 mod paths;
 pub mod probe;
 mod runtime;
+pub mod scheduling;
 mod seccomp;
 
 /// Confines the calling process as `role` says, every layer or none: the

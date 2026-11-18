@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
@@ -162,11 +162,20 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // The paint point painted at in the last wake, and when on the
     // engine's own clock the painting began (RULE-98 item 5).
     let mut painting: Option<u64> = None;
+    // A message read while rule messages were being taken, of another
+    // kind, for the next turn of the loop.
+    let mut waiting: Option<Received> = None;
+    // RULE-66's hops: when the loop last woke, to mark a wake whose work
+    // kept a message waiting.
+    #[cfg(feature = "timed-test")]
+    let mut woke = Instant::now();
     loop {
         // What the last message or deadline produced goes before waiting.
         output.flush()?;
         #[cfg(feature = "timed-test")]
         protocol::timed_test::flushed("decoder");
+        #[cfg(feature = "timed-test")]
+        timed::busy(woke);
         if let Some(began) = painting.take() {
             engine.painted(began);
         }
@@ -175,17 +184,55 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         engine.slew_clock();
         let now = engine.now_us();
         let deadline = next_deadline(&mut engine, &flashing, &showing, &sent, now);
-        let received = match wait(&incoming, deadline, now) {
+        let woken = match waiting.take() {
+            Some(message) => Woken::Message(message),
+            None => wait(&incoming, deadline, now),
+        };
+        let received = match woken {
             Woken::Message(message) => Some(message),
-            Woken::Deadline => None,
+            Woken::Deadline => {
+                // RULE-98 item 5: how late the loop woke for a deadline it
+                // waited for, so that it wakes that much before its paint
+                // points.
+                if let Some(at) = deadline.filter(|at| *at > now) {
+                    engine.woke_late(engine.now_us().saturating_sub(at));
+                }
+                None
+            }
             Woken::Ended => return Ok(()),
         };
+        #[cfg(feature = "timed-test")]
+        {
+            woke = Instant::now();
+            if let Some(Ok(Some(ToDecoder::RuleInput { sequence, .. }))) = &received {
+                protocol::timed_test::mark("decoder", "input-taken", woke, format_args!("{sequence}"));
+            }
+        }
         // RULE-66's hops: how late the loop woke for its deadline.
         #[cfg(feature = "timed-test")]
         let woke_late_us = if received.is_none() { deadline.map(|deadline| engine.now_us().saturating_sub(deadline)) } else { None };
         #[cfg(feature = "timed-test")]
         let received = held.hold(&engine, received);
         let received = take_rule_message(&mut engine, received, &mut output)?;
+        // RULE-96: the rule messages already waiting behind it, an input
+        // among them, are handled now too, before the tick's work and the
+        // paint, up to the first message of another kind, which waits for
+        // the next turn so that the order of the pipe is kept.
+        while received.is_none() {
+            let Ok(next) = incoming.try_recv().map(as_read) else { break };
+            #[cfg(feature = "timed-test")]
+            if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &next {
+                protocol::timed_test::mark("decoder", "input-taken", Instant::now(), format_args!("{sequence}"));
+            }
+            #[cfg(feature = "timed-test")]
+            let next = held.hold(&engine, Some(next));
+            #[cfg(not(feature = "timed-test"))]
+            let next = Some(next);
+            if let Some(other) = take_rule_message(&mut engine, next, &mut output)? {
+                waiting = Some(other);
+                break;
+            }
+        }
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
         #[cfg(feature = "timed-test")]
@@ -205,18 +252,22 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 protocol::timed_test::mark(
                     "decoder",
                     "paint",
-                    std::time::Instant::now(),
-                    format_args!("after-point {} woke-late {}", real.saturating_sub(point), woke_late_us.map_or(-1, |late| i64::try_from(late).unwrap_or(-1))),
+                    Instant::now(),
+                    format_args!(
+                        "after-point {} woke-late {}",
+                        i64::try_from(real).unwrap_or(0).saturating_sub(i64::try_from(point).unwrap_or(0)),
+                        woke_late_us.map_or(-1, |late| i64::try_from(late).unwrap_or(-1))
+                    ),
                 );
             }
             // The animation of the pages on screen, after the rules ran
             // (animation.md ANIM-22, page-rules.md RULE-65).
             let animated = animate(&mut engine, &showing, now, &mut output)?;
             #[cfg(feature = "timed-test")]
-            protocol::timed_test::mark("decoder", "animated", std::time::Instant::now(), format_args!(""));
+            protocol::timed_test::mark("decoder", "animated", Instant::now(), format_args!(""));
             draw(&engine, &animated, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
             #[cfg(feature = "timed-test")]
-            protocol::timed_test::mark("decoder", "drawn", std::time::Instant::now(), format_args!("{}", animated.len()));
+            protocol::timed_test::mark("decoder", "drawn", Instant::now(), format_args!("{}", animated.len()));
         }
         let Some(message) = received else {
             // A deadline: the sounds' clock, and the flashing pages whose
@@ -362,7 +413,7 @@ fn write_rule_messages(produced: &[FromDecoder], output: &mut Output<'_>) -> Res
     #[cfg(feature = "timed-test")]
     for message in produced {
         if let FromDecoder::Audio(protocol::audio::Audio::LocalMidi { status, data1, .. }) = message {
-            protocol::timed_test::mark("decoder", "local-midi", std::time::Instant::now(), format_args!("{status:02X} {data1}"));
+            protocol::timed_test::mark("decoder", "local-midi", Instant::now(), format_args!("{status:02X} {data1}"));
         }
     }
     Ok(())
@@ -380,6 +431,20 @@ mod timed {
     pub(super) struct Held {
         on: bool,
         waiting: Vec<(u64, ToDecoder)>,
+    }
+
+    /// A wake whose work took longer than this is marked: a third of a
+    /// hop's two milliseconds in RULE-64.
+    const BUSY_MICROSECONDS: u128 = 300;
+
+    /// Marks the wake at `woke` when its work took longer than
+    /// [`BUSY_MICROSECONDS`], so that a message read meanwhile is seen to
+    /// have waited for it.
+    pub(super) fn busy(woke: std::time::Instant) {
+        let took = woke.elapsed().as_micros();
+        if took > BUSY_MICROSECONDS {
+            protocol::timed_test::mark("decoder", "busy-wake", woke, format_args!("{took}"));
+        }
     }
 
     impl Held {
@@ -501,7 +566,7 @@ fn draw_regis(engine: &mut Engine, showing: &[u16], sent: &BTreeMap<u16, Rendere
                 let area =
                     |picture: &protocol::regis::RegisPicture| format!("{},{},{},{}", picture.area.x, picture.area.y, picture.area.width, picture.area.height);
                 let areas: Vec<String> = core::iter::once(&drawn.picture).chain(&drawn.more).map(area).collect();
-                protocol::timed_test::mark("decoder", "regis", std::time::Instant::now(), format_args!("{}", areas.join(";")));
+                protocol::timed_test::mark("decoder", "regis", Instant::now(), format_args!("{}", areas.join(";")));
                 protocol::timed_test::owe_flush();
             }
             write_to_core(output, &FromDecoder::Regis { page: drawn.page, sub: drawn.sub, picture: drawn.picture, pick: drawn.pick })?;
@@ -548,7 +613,7 @@ enum Woken {
 
 /// Reads the trusted core's messages on a thread of their own, until its
 /// pipe ends or a message cannot be read.
-fn read_messages() -> Receiver<Received> {
+fn read_messages() -> Receiver<(Received, Instant)> {
     let (messages, incoming) = mpsc::channel();
     std::thread::spawn(move || {
         let mut input = BufReader::new(io::stdin().lock());
@@ -557,10 +622,10 @@ fn read_messages() -> Receiver<Received> {
             // RULE-66's hops: when the input event was read from the pipe.
             #[cfg(feature = "timed-test")]
             if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &message {
-                protocol::timed_test::mark("decoder", "input-read", std::time::Instant::now(), format_args!("{sequence}"));
+                protocol::timed_test::mark("decoder", "input-read", Instant::now(), format_args!("{sequence}"));
             }
             let last = !matches!(message, Ok(Some(_)));
-            if messages.send(message).is_err() || last {
+            if messages.send((message, Instant::now())).is_err() || last {
                 return;
             }
         }
@@ -570,14 +635,28 @@ fn read_messages() -> Receiver<Received> {
 
 /// Waits for a message until `deadline` (microseconds by the engine's
 /// clock, which reads `now`), or with none for as long as it takes.
-fn wait(incoming: &Receiver<Received>, deadline: Option<u64>, now: u64) -> Woken {
+fn wait(incoming: &Receiver<(Received, Instant)>, deadline: Option<u64>, now: u64) -> Woken {
     match deadline {
         Some(at) => match incoming.recv_timeout(Duration::from_micros(at.saturating_sub(now))) {
-            Ok(message) => Woken::Message(message),
+            Ok(read) => Woken::Message(as_read(read)),
             Err(RecvTimeoutError::Timeout) => Woken::Deadline,
             Err(RecvTimeoutError::Disconnected) => Woken::Ended,
         },
-        None => incoming.recv().map_or(Woken::Ended, Woken::Message),
+        None => incoming.recv().map_or(Woken::Ended, |read| Woken::Message(as_read(read))),
+    }
+}
+
+/// A message as read from the pipe at `read_at`: the interface's frames
+/// told relative to now rather than to its reading, so that the time it
+/// waited for the loop is not counted against the display's phase
+/// (RULE-98 item 2; DEC-6753). Any other message as it is.
+fn as_read((message, read_at): (Received, Instant)) -> Received {
+    match message {
+        Ok(Some(ToDecoder::FramePhase(phase))) => {
+            let waited = u64::try_from(read_at.elapsed().as_micros()).unwrap_or(u64::MAX);
+            Ok(Some(ToDecoder::FramePhase(protocol::rules::FramePhase::at(phase.period_us, u64::from(phase.next_in_us), waited).unwrap_or(phase))))
+        }
+        other => other,
     }
 }
 
@@ -740,6 +819,20 @@ mod tests {
             links: crate::Found::default(),
             subpages: protocol::subpages::SubPageStep::default(),
         }
+    }
+
+    /// RULE-98 item 2 (DEC-6753): the interface's frames are told relative
+    /// to when the pipe's reader read them, not to when the loop takes
+    /// them, so the time they waited for the loop does not make the paint
+    /// points late; other messages are as they were read.
+    #[test]
+    fn the_frames_are_told_from_their_reading() {
+        let phase = protocol::rules::FramePhase { period_us: 16_667, next_in_us: 10_000 };
+        let read_at = Instant::now().checked_sub(Duration::from_millis(3)).unwrap();
+        let Ok(Some(ToDecoder::FramePhase(told))) = as_read((Ok(Some(ToDecoder::FramePhase(phase))), read_at)) else { panic!("a phase") };
+        // Three milliseconds and the moments of this test since its reading.
+        assert!((6_000..=7_000).contains(&told.next_in_us), "{told:?}");
+        assert!(matches!(as_read((Ok(Some(ToDecoder::End)), read_at)), Ok(Some(ToDecoder::End))));
     }
 
     /// ANIM-5: a one-cell change sends a frame of that cell's rectangle

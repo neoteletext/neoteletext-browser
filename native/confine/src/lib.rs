@@ -62,6 +62,8 @@ pub use identity::{FileIdentity, file_identity};
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub use linux::probe;
+#[cfg(target_os = "linux")]
+pub use linux::scheduling;
 pub use process::{Input, Output, Process};
 pub use role::{Report, Role};
 pub use spawn::{Spawn, apply, spawn};

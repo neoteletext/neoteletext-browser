@@ -117,8 +117,9 @@ impl App {
         #[cfg(feature = "timed-test")]
         protocol::timed_test::mark("interface", "redraw", Instant::now(), format_args!(""));
         let now = self.now();
+        let Some(frame) = self.window_frame() else { return };
         let Some(graphics) = self.view.graphics.as_mut() else { return };
-        let size = graphics.window.inner_size();
+        let size = frame.size;
         let (Ok(width), Ok(height)) = (u16::try_from(size.width), u16::try_from(size.height)) else { return };
         let (Some(surface_width), Some(surface_height)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
         if graphics.surface.resize(surface_width, surface_height).is_err() {
@@ -138,7 +139,7 @@ impl App {
         self.view.painter.set_regis_keyed(self.view.browser.regis_keyed());
         self.view.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.view.painter.scale, f64::from(height) / self.view.painter.scale);
-        self.view.browser.set_window_maximised(graphics.window.is_maximized());
+        self.view.browser.set_window_maximised(frame.maximized);
         self.view.browser.draw(&mut self.view.painter, logical.0, logical.1, now);
         self.view.browser.draw_window_border(&mut self.view.painter, logical.0, logical.1);
         // The input method's candidates sit beside the caret of the field
@@ -217,11 +218,16 @@ impl App {
     /// Sets the window's pointer shape to the browser's, when it changed,
     /// and hides it as full screen does a still one.
     pub(super) fn update_cursor(&mut self) {
+        // RULE-66's hops: what the window system was asked here.
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "cursor-begin", Instant::now(), format_args!(""));
         let hidden = self.view.browser.pointer_hidden(self.now());
         if hidden != self.view.pointer_hidden {
             self.view.pointer_hidden = hidden;
             if let Some(graphics) = &self.view.graphics {
                 graphics.window.set_cursor_visible(!hidden);
+                #[cfg(feature = "timed-test")]
+                protocol::timed_test::mark("interface", "cursor-visible", Instant::now(), format_args!(""));
             }
         }
         // At an edge of a window the browser frames itself, the pointer
@@ -233,6 +239,8 @@ impl App {
             self.view.pointer_shape = (Cursor::Arrow, false);
             if let Some(graphics) = &self.view.graphics {
                 graphics.window.set_cursor(edge.map_or(CursorIcon::Default, CursorIcon::from));
+                #[cfg(feature = "timed-test")]
+                protocol::timed_test::mark("interface", "cursor-edge", Instant::now(), format_args!(""));
             }
         }
         if edge.is_some() {
@@ -256,6 +264,8 @@ impl App {
             Cursor::Wheel(wheel) => {
                 if let Some(picture) = self.view.wheel_pointers.get(&(wheel, lit)) {
                     graphics.window.set_cursor(picture.clone());
+                    #[cfg(feature = "timed-test")]
+                    protocol::timed_test::mark("interface", "cursor-picture", Instant::now(), format_args!(""));
                     return;
                 }
                 // A platform that made no picture marks the place with its
@@ -264,6 +274,8 @@ impl App {
             }
         };
         graphics.window.set_cursor(icon);
+        #[cfg(feature = "timed-test")]
+        protocol::timed_test::mark("interface", "cursor-icon", Instant::now(), format_args!("{icon:?}"));
     }
 
     /// Asks for the window at hand's next frame when it is due, and says

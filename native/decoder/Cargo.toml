@@ -29,7 +29,7 @@ page-cache = []
 # The timed test's marks and its settings "events held for the tick" and
 # "the tick left unlocked" (page-rules.md RULE-66), only in the build
 # `scripts/timed-test.sh` makes.
-timed-test = ["protocol/timed-test"]
+timed-test = ["protocol/timed-test", "confine/timed-test"]
 
 [dependencies]
 confine.workspace = true
