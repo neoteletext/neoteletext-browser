@@ -13,7 +13,7 @@ use crate::browser::{Browser, Output};
 use crate::canvas::PageShape;
 use crate::editor::Editor;
 use crate::geometry::Rect;
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
+use crate::settings::{ProxyView, SettingChange, SettingsView, UpdateView};
 
 mod draw;
 mod input;
@@ -93,8 +93,9 @@ struct Controls {
     wheel_inverted: Rect,
     regis_contain: Rect,
     regis_teletext: Rect,
-    cookie_modes: Vec<(CookieMode, Rect)>,
-    manage_cookies: Rect,
+    know_allow: Rect,
+    know_never: Rect,
+    manage_known: Rect,
     updates_on: Rect,
     updates_off: Rect,
     install: Rect,
@@ -244,7 +245,18 @@ impl Browser {
             self.settings.refresh();
         } else {
             self.unfocus_settings();
+            self.set_known_open(false);
         }
+    }
+
+    /// "Channels that know you…": the settings panel shows the list
+    /// (VS-112), opening first if it is closed.
+    pub(in crate::browser) fn manage_known(&mut self) {
+        if !self.settings.open {
+            self.toggle_settings();
+        }
+        self.unfocus_settings();
+        self.set_known_open(true);
     }
 
     fn focus_settings(&mut self, field: Field) {

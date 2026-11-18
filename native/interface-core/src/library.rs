@@ -141,8 +141,8 @@ pub enum HistoryRequest {
     RemoveBookmark(u32),
     /// Remove the rows of a time.
     Clear(ClearRange),
-    /// Remove the cookies made in a time (requirement 21.8).
-    ClearCookies(ClearRange),
+    /// Forget the channels whose keys were made in a time (VS-112).
+    ForgetChannels(ClearRange),
     /// Reopen a closed tab by its number, or the most recent.
     Reopen(Option<u32>),
 }

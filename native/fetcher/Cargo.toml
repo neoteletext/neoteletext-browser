@@ -18,7 +18,7 @@ default = ["links", "interaction"]
 links = ["protocol/links", "dep:interface-core"]
 # Typing into a page (`interaction.md`): off, the typing messages are
 # compiled out and every side refuses their kinds.
-interaction = ["protocol/interaction", "dep:neoteletext-input"]
+interaction = ["protocol/interaction"]
 
 [dependencies]
 confine.workspace = true
@@ -30,10 +30,14 @@ neoteletext-formats.workspace = true
 embedded-io.workspace = true
 protocol.workspace = true
 # The contacts and the longest move the protocol lets the trusted core tag,
-# asserted to fit the web agent's slots (REQ-RCH-035).
-neoteletext-input = { workspace = true, optional = true }
+# asserted to fit the web agent's slots (REQ-RCH-035); and viewer state's
+# answers, written as the input protocol's events (VS-204).
+neoteletext-input.workspace = true
 interface-core = { workspace = true, optional = true }
 rustls.workspace = true
+# Each WebSocket frame's mask from the system's cryptographic random
+# source (RFC 6455 section 5.3, TODO-6472); approved by name (DEC-6478).
+ring.workspace = true
 # The reader thread, the TLS pump and the handshake, shared with the
 # engine's own clients.
 neoteletext-transport.workspace = true

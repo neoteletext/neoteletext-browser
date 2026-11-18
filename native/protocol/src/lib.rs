@@ -25,7 +25,6 @@ pub mod audio;
 mod bounds;
 pub mod console;
 mod controls;
-pub mod cookies;
 pub mod decoder;
 mod error;
 pub mod fetcher;
@@ -46,6 +45,7 @@ pub mod settings;
 pub mod sound;
 pub mod subpages;
 mod text;
+pub mod viewer_state;
 
 pub use bounds::*;
 pub use error::ProtocolError;

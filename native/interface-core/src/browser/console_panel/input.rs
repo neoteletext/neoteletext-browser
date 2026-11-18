@@ -45,8 +45,6 @@ impl Browser {
             self.toggle_console();
         } else if self.recording_press(point) {
             // The recording's buttons, on every tab.
-        } else if self.console.tab == Tab::Cookies {
-            self.cookies_press(point);
         } else if self.console.pause.contains(point) {
             self.set_paused(!self.console.paused);
         } else if self.console.clear.contains(point) {

@@ -94,6 +94,11 @@ fn describe(item: &Item<'_>) -> String {
         Event::DrawingHover { leave, drawing, commits, .. } => {
             format!("DRAWING_HOVER {} {drawing} c{commits}", if *leave { "leave" } else { "enter" })
         }
+        // Viewer state's messages by their kind alone: never a key or a
+        // signature (VS-209).
+        Event::StateProof(_) => String::from("STATE_PROOF"),
+        Event::StateNone(reason) => format!("STATE_NONE {}", reason.code()),
+        Event::StateOffer => String::from("STATE_OFFER"),
         Event::Extension { kind, .. } => format!("EXTENSION {kind:#04x}"),
     }
 }

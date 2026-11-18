@@ -2,41 +2,35 @@
 //! product it names itself as, and the links of the channel's descriptor
 //! passed on.
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-
 #[cfg(feature = "links")]
 use neoteletext_web::agent::UserAgent;
 #[cfg(feature = "links")]
 use protocol::fetcher::FromFetcher;
 
-#[cfg(feature = "links")]
-use crate::process::{COOKIE_BYTES, COOKIE_SLOTS};
-
-/// Randomness for the agent (WebSocket masks), from the operating system's
-/// per-process random keys, which `RandomState` draws.
-pub(crate) struct Random {
-    state: RandomState,
-    counter: u64,
-}
+/// Randomness for the agent: each WebSocket frame's masking key, drawn
+/// afresh from the operating system's cryptographic random source, as
+/// RFC 6455 section 5.3 requires ("derived from a strong source of
+/// entropy"), so that no page or program can predict the masked bytes
+/// (TODO-6472). It holds no state of its own: nothing in the process
+/// predicts the next mask.
+pub(crate) struct Random(ring::rand::SystemRandom);
 
 impl Random {
-    /// Randomness from this process's own keys, its counter at the start.
+    /// The system's random source.
     pub(crate) fn new() -> Self {
-        Self { state: RandomState::new(), counter: 0 }
+        Self(ring::rand::SystemRandom::new())
     }
 }
 
 impl neoteletext_web::port::RandomSource for Random {
     fn fill(&mut self, bytes: &mut [u8]) {
-        for chunk in bytes.chunks_mut(8) {
-            self.counter = self.counter.wrapping_add(1);
-            let mut hasher = self.state.build_hasher();
-            hasher.write_u64(self.counter);
-            let value = hasher.finish().to_le_bytes();
-            for (byte, &random) in chunk.iter_mut().zip(&value) {
-                *byte = random;
-            }
+        use ring::rand::SecureRandom as _;
+        // A fetcher that cannot draw random bytes cannot mask safely: it
+        // ends, which the trusted core reports, rather than send a frame
+        // with a mask anyone could predict.
+        if self.0.fill(bytes).is_err() {
+            eprintln!("neoteletext-fetcher: the system's random source failed; no frame is sent with a predictable mask");
+            std::process::abort();
         }
     }
 }
@@ -57,7 +51,7 @@ pub(crate) fn product() -> Option<neoteletext_web::user_agent::Product> {
 /// written: untrusted, for the trusted core to parse. Aliases of numbers
 /// that are not display pages are left out.
 #[cfg(feature = "links")]
-pub(crate) fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKIE_BYTES>) -> Option<FromFetcher> {
+pub(crate) fn descriptor_links(agent: &UserAgent<'_, Random>) -> Option<FromFetcher> {
     use protocol::links::{Alias, MAX_ALIASES, MAX_SERVICES, Service};
     let descriptor = agent.descriptor()?;
     let aliases: Vec<Alias> = descriptor
@@ -77,6 +71,30 @@ pub(crate) fn descriptor_links(agent: &UserAgent<'_, Random, COOKIE_SLOTS, COOKI
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// TODO-6472, RFC 6455 section 5.3: the masks come from the system's
+    /// cryptographic source and from nothing the process keeps. Before,
+    /// they were a hash of a counter under the process's `RandomState`
+    /// keys, so the source held a key and a counter (24 bytes) from which
+    /// every later mask followed; it fails here, both by its type and by
+    /// its size.
+    #[test]
+    fn masks_come_from_the_systems_random_source_alone() {
+        use neoteletext_web::port::RandomSource as _;
+        let Random(system) = Random::new();
+        let _: ring::rand::SystemRandom = system;
+        assert_eq!(size_of::<Random>(), 0, "no key or counter kept in the process");
+        let mut random = Random::new();
+        let masks: std::collections::BTreeSet<[u8; 4]> = (0..64)
+            .map(|_| {
+                let mut mask = [0_u8; 4];
+                random.fill(&mut mask);
+                mask
+            })
+            .collect();
+        // 64 draws of 32 bits collide with a chance below one in a million.
+        assert_eq!(masks.len(), 64, "fresh masks");
+    }
 
     /// Requirement 5.14, the engine's REQ-WEB-031: the browser names itself
     /// `NeoTeletext/0.1 (<family>)`.

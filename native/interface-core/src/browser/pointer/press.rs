@@ -73,7 +73,11 @@ impl Browser {
         if self.phone_press(self.pointer) {
             return Some(true);
         }
-        // The strip's question, drawn over the address field.
+        // The strip's questions, drawn over the address field, and its mark
+        // of a channel that knows this browser.
+        if self.remember_press() {
+            return Some(true);
+        }
         #[cfg(feature = "links")]
         if self.link_press(now) {
             return Some(true);

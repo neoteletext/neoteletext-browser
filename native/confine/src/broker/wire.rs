@@ -7,9 +7,9 @@ use std::fmt;
 use std::io;
 
 use super::{
-    COOKIE_KEY_BYTES, ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_COOKIE_KEY, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL,
-    KIND_LOCAL_TIME, KIND_OPEN_WEB, KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME,
-    KIND_UPDATE_STATE, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program,
+    ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL, KIND_LOCAL_TIME, KIND_OPEN_WEB,
+    KIND_OPENINGS, KIND_PIPE, KIND_READ, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_TIME, KIND_UPDATE_STATE,
+    KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
 };
 use crate::LocalTime;
 
@@ -58,9 +58,9 @@ pub enum Request {
     /// cannot read from the system's files (`history-and-bookmarks.md`
     /// section 7).
     LocalTime,
-    /// The cookie file's key, from the platform's secret store, which the
-    /// core cannot reach (`cookies.md` section 10).
-    CookieKey,
+    /// The viewer key file's sealing key, from the platform's secret
+    /// store, which the core cannot reach (VS-108).
+    ViewerKeysKey,
     /// The version is healthy (`installation-and-updates.md` section 3.2):
     /// the broker tells the launcher, which commits a trial.
     Healthy,
@@ -117,7 +117,7 @@ pub enum Reply {
     Failed(String),
     /// The time and the local offset.
     Time(LocalTime),
-    /// The cookie file's key.
+    /// The viewer key file's sealing key.
     Key(Vec<u8>),
     /// The pipe of [`Request::Openings`], which travels with the reply.
     Pipe,
@@ -224,7 +224,7 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             KIND_OPEN_WEB
         }
         Request::LocalTime => KIND_LOCAL_TIME,
-        Request::CookieKey => KIND_COOKIE_KEY,
+        Request::ViewerKeysKey => KIND_VIEWER_KEYS_KEY,
         Request::Healthy => KIND_HEALTHY,
         Request::UpdateState => KIND_UPDATE_STATE,
         Request::Choose { kind, parent, keep } => {
@@ -273,7 +273,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_READ => Request::Read(fields.text()?),
         KIND_OPEN_WEB => Request::OpenWeb(fields.text()?),
         KIND_LOCAL_TIME => Request::LocalTime,
-        KIND_COOKIE_KEY => Request::CookieKey,
+        KIND_VIEWER_KEYS_KEY => Request::ViewerKeysKey,
         KIND_HEALTHY => Request::Healthy,
         KIND_UPDATE_STATE => Request::UpdateState,
         KIND_CHOOSE => {
@@ -336,7 +336,7 @@ pub fn encode_reply(reply: &Reply) -> io::Result<Vec<u8>> {
             KIND_TIME
         }
         Reply::Key(key) => {
-            if key.len() != COOKIE_KEY_BYTES {
+            if key.len() != SEALING_KEY_BYTES {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "a key of the wrong length"));
             }
             payload.extend_from_slice(key);
@@ -373,7 +373,7 @@ pub fn decode_reply(kind: u8, payload: Vec<u8>) -> io::Result<Reply> {
             }
             Reply::Time(time)
         }
-        KIND_KEY => Reply::Key(fields.take(COOKIE_KEY_BYTES)?.to_vec()),
+        KIND_KEY => Reply::Key(fields.take(SEALING_KEY_BYTES)?.to_vec()),
         KIND_PIPE => Reply::Pipe,
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "no such reply")),
     };
@@ -414,7 +414,7 @@ mod tests {
             Request::Read("/tmp/x.t42".into()),
             Request::OpenWeb("https://a.example/".into()),
             Request::LocalTime,
-            Request::CookieKey,
+            Request::ViewerKeysKey,
             Request::Healthy,
             Request::UpdateState,
             Request::Spawn { program: Program::Updater, local_network: false, arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()] },
@@ -433,7 +433,7 @@ mod tests {
             Reply::Source(vec![1, 2, 3]),
             Reply::Failed("no".into()),
             Reply::Time(LocalTime { utc: 1_792_656_300, offset: 39_600 }),
-            Reply::Key(vec![9; COOKIE_KEY_BYTES]),
+            Reply::Key(vec![9; SEALING_KEY_BYTES]),
             Reply::Pipe,
         ] {
             let bytes = encode_reply(&reply).unwrap();

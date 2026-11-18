@@ -122,16 +122,11 @@ impl Fetcher {
         Self { process, output }
     }
 
-    /// Reads until `wanted` picks something out of a message. The cookie
-    /// questions the agent asks are answered with no cookies.
+    /// Reads until `wanted` picks something out of a message. A static
+    /// channel has no push connection, so nothing asks the trusted core.
     fn until<T>(&mut self, mut wanted: impl FnMut(&FromFetcher) -> Option<T>) -> T {
         loop {
             let message = read_from_fetcher(&mut self.output).unwrap().expect("the fetcher ended");
-            match &message {
-                FromFetcher::CookieQuestion { id, .. } => self.tell(&ToFetcher::CookieAnswer { id: *id, header: Vec::new() }),
-                FromFetcher::ReachedQuestion { id, .. } => self.tell(&ToFetcher::ReachedAnswer { id: *id, reached: false }),
-                _ => {}
-            }
             if let Some(found) = wanted(&message) {
                 return found;
             }

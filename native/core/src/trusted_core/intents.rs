@@ -148,7 +148,7 @@ impl Core {
             | ToCore::GoTo { .. }
             | ToCore::NewPrivateTab => self.library_intent(intent)?,
             ToCore::Window(window) => self.window_reported(window),
-            ToCore::Cookies(request) => self.cookies_request(request)?,
+            ToCore::Known(request) => self.known_request(request)?,
             #[cfg(feature = "links")]
             ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } | ToCore::Confirm(_) | ToCore::Cancel(_) => self.link_intent(&intent)?,
             ToCore::RegisPointer(pointer) => self.regis_pointer(pointer)?,
@@ -161,7 +161,7 @@ impl Core {
         }
         // Another page of a channel already drawing is a visit at once.
         self.record_drawn()?;
-        self.private_cookies_closed();
+        self.private_keys_closed();
         self.keep_session();
         Ok(true)
     }

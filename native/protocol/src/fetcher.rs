@@ -16,22 +16,23 @@ use interface_core::channel::page_index;
 #[cfg(feature = "links")]
 use kinds::KIND_LINKS;
 use kinds::{
-    KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CLEAR_SITE_DATA, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_COOKIE_ANSWER,
-    KIND_COOKIE_QUESTION, KIND_COOKIE_SET, KIND_DENIED, KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES,
-    KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS, KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED,
-    KIND_PUSHING, KIND_REACHED_ANSWER, KIND_REACHED_QUESTION, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION, KIND_SUBPAGES, KIND_SUBPAGES_FAILED,
-    KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
+    KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_DENIED, KIND_EXCHANGE,
+    KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS, KIND_NOTICE,
+    KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED, KIND_REGION,
+    KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE, KIND_STATE_SEND_OFFER, KIND_SUBPAGES,
+    KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
 use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
-mod cookies;
 mod kinds;
+mod state;
 #[cfg(test)]
 mod tests;
 
-pub use cookies::{CookieSameSite, CookieSite, MAX_COOKIE_ATTRIBUTE, MAX_COOKIE_HEADER, MAX_COOKIE_NAME_VALUE, SetCookie};
+pub use neoteletext_input::state::{Algorithm, CHALLENGE_BYTES, Lifetime, NoneReason, PUBLIC_KEY_BYTES, SIGNATURE_BYTES};
+pub use state::{KEY_ID_BYTES, StateReply};
 
 /// The engine's contents file limits (`neoteletext-web` `contents`): at
 /// most 1000 lines, so at most 1000 entries, and 800 pages.
@@ -266,44 +267,27 @@ pub enum FromFetcher {
         /// DEC-6447).
         wheel: bool,
     },
-    /// Asks for the `Cookie` header of a request the agent is about to
-    /// send (`cookies.md` section 2): the trusted core keeps every cookie.
-    CookieQuestion {
-        /// Matches the answer to the question.
-        id: u32,
-        /// The request's host.
-        host: String,
-        /// The request's path.
-        path: String,
-        /// The request goes over an encrypted connection.
-        secure: bool,
-        /// The kind of request.
-        site: CookieSite,
+    /// The channel's push connection carried a `STATE_CHALLENGE` record
+    /// (VS-204): the trusted core answers with [`ToFetcher::StateAnswer`]
+    /// of the same `request`. It carries no channel: the core takes the
+    /// channel from the fetcher's tab (VS-103).
+    StateChallenged {
+        /// Matches the answer to the challenge.
+        request: u32,
+        /// The server's challenge.
+        challenge: [u8; CHALLENGE_BYTES],
+        /// The channel asks for a key to be made.
+        create: bool,
     },
-    /// Asks whether the host was reached over an encrypted connection
-    /// that set a cookie still live (the engine's REQ-SEC-007).
-    ReachedQuestion {
-        /// Matches the answer to the question.
-        id: u32,
-        /// The host asked about.
-        host: String,
+    /// A `STATE_END` record: the channel ended the viewer's state, for the
+    /// key whose identifier this is (VS-204).
+    StateEndReceived {
+        /// The key identifier (VS-302).
+        key_id: [u8; KEY_ID_BYTES],
     },
-    /// A `Set-Cookie` value a response carried, as the fetcher read it.
-    CookieSet {
-        /// The response's host.
-        host: String,
-        /// The path of the request it answered.
-        path: String,
-        /// The channel's folder, which keeps the cookie inside it.
-        scope: Option<String>,
-        /// The response came over an encrypted connection.
-        secure: bool,
-        /// The header's fields.
-        cookie: SetCookie,
-    },
-    /// A response from `host` over an encrypted connection said
-    /// `Clear-Site-Data: "cookies"` (`cookies.md` section 8).
-    ClearSiteData(String),
+    /// A `STATE_KEEP_OFFER` record: the channel offers to remember the
+    /// viewer (VS-208).
+    StateKeepOffered,
     /// A part of a page's list of sub-pages, `NNN/P.sub` (DOC-1869), as
     /// the engine's reader read it, or of a live channel's list from its
     /// SUBPAGES records: the page's version, its number of sub-pages, the
@@ -382,7 +366,7 @@ const NOT_A_MOVE: u8 = u8::MAX;
 const _: () = assert!(neoteletext_input::MAX_CONTACTS <= NOT_A_MOVE as usize);
 
 /// From the trusted core to a fetcher: input messages (requirement 4.7
-/// and its one exception, 18.4), the answers to its cookie questions, and
+/// and its one exception, 18.4), the answers to its state challenges, and
 /// the catalogues and sub-pages the user's page needs (decision 112).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToFetcher {
@@ -409,20 +393,20 @@ pub enum ToFetcher {
     /// channel, off when they stop.
     #[cfg(feature = "interaction")]
     MeasureRoundTrip(bool),
-    /// The `Cookie` header of a request, empty for none.
-    CookieAnswer {
-        /// The question's.
-        id: u32,
-        /// The header's value.
-        header: Vec<u8>,
+    /// The answer to [`FromFetcher::StateChallenged`] of `request`: a
+    /// proof or `STATE_NONE`, sent as it is on the push connection (VS-119).
+    StateAnswer {
+        /// The challenge's.
+        request: u32,
+        /// The answer.
+        reply: StateReply,
     },
-    /// Whether the host was reached securely.
-    ReachedAnswer {
-        /// The question's.
-        id: u32,
-        /// Reached securely, with a cookie still live.
-        reached: bool,
-    },
+    /// Send `STATE_OFFER` unprompted: a key was made or remembered through
+    /// another tab of the channel (VS-111).
+    StateSendOffer,
+    /// Send `STATE_NONE` unprompted: the key in use was forgotten (VS-111,
+    /// VS-113).
+    StateSendNone(NoneReason),
     /// Fetch the channel's contents file, `contents.txt`: its listing is
     /// wanted, and is never fetched as the channel opens (REQ-703).
     FetchContents,
@@ -470,9 +454,9 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
         }
         #[cfg(feature = "interaction")]
         ToFetcher::MeasureRoundTrip(on) => write_frame(out, KIND_MEASURE_ROUND_TRIP, &[u8::from(*on)]),
-        ToFetcher::CookieAnswer { .. } | ToFetcher::ReachedAnswer { .. } => {
+        ToFetcher::StateAnswer { .. } | ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_) => {
             let mut payload = Vec::new();
-            let kind = cookies::push_answer(&mut payload, message)?;
+            let kind = state::push_to_fetcher(&mut payload, message)?;
             write_frame(out, kind, &payload)
         }
         ToFetcher::FetchContents => write_frame(out, KIND_FETCH_CONTENTS, &[]),
@@ -522,7 +506,7 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         }
         #[cfg(feature = "interaction")]
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
-        KIND_COOKIE_ANSWER | KIND_REACHED_ANSWER => cookies::read_answer(kind, &mut fields)?,
+        KIND_STATE_ANSWER | KIND_STATE_SEND_OFFER | KIND_STATE_SEND_NONE => state::read_to_fetcher(kind, &mut fields)?,
         KIND_FETCH_CONTENTS => ToFetcher::FetchContents,
         KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.channel_page()? },
         KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.channel_page()?, part: checked_part(fields.u8()?)? },
@@ -806,8 +790,8 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             payload.push(crate::problem_code(*problem));
             KIND_CERTIFICATE_REFUSED
         }
-        FromFetcher::CookieQuestion { .. } | FromFetcher::ReachedQuestion { .. } | FromFetcher::CookieSet { .. } | FromFetcher::ClearSiteData(_) => {
-            cookies::push_cookie_message(&mut payload, message)?
+        FromFetcher::StateChallenged { .. } | FromFetcher::StateEndReceived { .. } | FromFetcher::StateKeepOffered => {
+            state::push_from_fetcher(&mut payload, message)?
         }
         FromFetcher::SubPages { page, version, part } => push_list_part(&mut payload, *page, version, part)?,
         FromFetcher::SubPagesMissing { .. }
@@ -904,7 +888,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_PROXY_FAILED => FromFetcher::ProxyFailed,
         KIND_TIMED_OUT => FromFetcher::TimedOut,
         KIND_CERTIFICATE_REFUSED => FromFetcher::CertificateRefused(crate::problem_of(fields.u8()?).ok_or(ProtocolError::BadValue("certificate problem"))?),
-        KIND_COOKIE_QUESTION | KIND_REACHED_QUESTION | KIND_COOKIE_SET | KIND_CLEAR_SITE_DATA => cookies::read_cookie_message(kind, &mut fields)?,
+        KIND_STATE_CHALLENGED | KIND_STATE_END_RECEIVED | KIND_STATE_KEEP_OFFERED => state::read_from_fetcher(kind, &mut fields)?,
         KIND_SUBPAGES => {
             let page = fields.channel_page()?;
             let version = raw_text(&mut fields, MAX_LIST_VERSION, "version too long")?;

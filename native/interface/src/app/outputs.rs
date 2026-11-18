@@ -125,7 +125,7 @@ impl App {
                 ToCore::SubPageRows { channel, page, range: protocol::subpages::SubPageRange { first, count }, request }
             }
             Output::History(request) => ToCore::History(request),
-            Output::Cookies(request) => ToCore::Cookies(request),
+            Output::Known(request) => ToCore::Known(request),
             Output::Bookmarks(request) => ToCore::Bookmarks(request),
             Output::Star(request) => ToCore::Star(request),
             Output::Bar(request) => ToCore::Bar(request),

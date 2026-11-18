@@ -5,6 +5,7 @@ use interface_core::browser::{CertificateProblem, Denied, Failed, StripState};
 
 use super::kinds::{ALL_FLAGS, BOOKMARKED, BUILT_IN, CAN_GO_BACK, CAN_GO_FORWARD, ENCRYPTED, LOCAL, PRIVATE};
 use crate::fetcher::STATUS_CODES;
+use crate::viewer_state::{Known, known_code, known_of};
 use crate::{Fields, MAX_ADDRESS, MAX_IDENTITY, MAX_STRIP_NOTICE, ProtocolError, push_text};
 
 /// In place of a status: the channel refused nothing.
@@ -21,6 +22,12 @@ const FAILED_CHANNEL: u8 = 3;
 const FAILED_PAGE: u8 = 4;
 /// In place of a status: nothing answered.
 const NO_STATUS: u16 = 0;
+/// The viewer state byte: what the channel knows in its low two bits
+/// (VS-114), then whether it may be remembered and whether it offered
+/// (VS-109, VS-208).
+const KNOWN_MASK: u8 = 3;
+const CAN_REMEMBER: u8 = 4;
+const KEEP_OFFER: u8 = 8;
 
 pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -48,6 +55,8 @@ pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<()
     };
     payload.push(failed);
     payload.extend_from_slice(&status.unwrap_or(NO_STATUS).to_be_bytes());
+    let flag = |set: bool, bit: u8| if set { bit } else { 0 };
+    payload.push(known_code(strip.known) | flag(strip.can_remember, CAN_REMEMBER) | flag(strip.keep_offer, KEEP_OFFER));
     Ok(())
 }
 
@@ -57,7 +66,7 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
         return Err(ProtocolError::BadValue("strip flags"));
     }
     let identity = fields.text(MAX_IDENTITY)?;
-    Ok(StripState {
+    let strip = StripState {
         address: fields.text(MAX_ADDRESS)?,
         identity,
         encrypted: flags & ENCRYPTED != 0,
@@ -93,7 +102,15 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
                 _ => return Err(ProtocolError::BadValue("failed tab")),
             }
         },
-    })
+        known: Known::Not,
+        can_remember: false,
+        keep_offer: false,
+    };
+    let state = fields.u8()?;
+    if state & !(KNOWN_MASK | CAN_REMEMBER | KEEP_OFFER) != 0 {
+        return Err(ProtocolError::BadValue("strip viewer state"));
+    }
+    Ok(StripState { known: known_of(state & KNOWN_MASK)?, can_remember: state & CAN_REMEMBER != 0, keep_offer: state & KEEP_OFFER != 0, ..strip })
 }
 
 /// A certificate problem's code on the wire: its place among

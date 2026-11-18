@@ -37,7 +37,6 @@ pub mod canvas;
 pub mod channel;
 pub mod console;
 pub mod controls;
-pub mod cookies;
 pub mod editor;
 pub mod geometry;
 #[cfg(feature = "interaction")]
@@ -58,5 +57,6 @@ pub mod theme;
 #[cfg(feature = "interaction")]
 pub mod trace;
 pub mod tween;
+pub mod viewer_state;
 pub mod wall;
 pub mod wheel_cursor;

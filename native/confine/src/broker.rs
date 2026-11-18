@@ -74,7 +74,8 @@ const KIND_WAIT: u8 = 3;
 const KIND_READ: u8 = 4;
 const KIND_OPEN_WEB: u8 = 5;
 const KIND_LOCAL_TIME: u8 = 6;
-const KIND_COOKIE_KEY: u8 = 7;
+// 7 was the cookie file's key, removed with cookies (DEC-6471); never
+// reused.
 const KIND_HEALTHY: u8 = 8;
 const KIND_UPDATE_STATE: u8 = 9;
 const KIND_CHOOSE: u8 = 10;
@@ -92,11 +93,15 @@ pub(crate) const KIND_PIPE: u8 = 19;
 const KIND_READ_PICTURE: u8 = 20;
 /// The converted page, written where the user chose to save it.
 const KIND_SAVE: u8 = 21;
+/// The viewer key file's sealing key (neoteletext-common's
+/// `docs/viewer-state.md` VS-108).
+const KIND_VIEWER_KEYS_KEY: u8 = 22;
 /// The most bytes the broker saves for the core: a converted page, at
 /// most `protocol::picture::MAX_PICTURE_PAGE`, which the core asserts fits.
 pub const MAX_SAVE: usize = 256 * 1024;
-/// The cookie file's key: 256 bits (`cookies.md` section 7).
-pub const COOKIE_KEY_BYTES: usize = 32;
+/// The viewer key file's sealing key: 256 bits, a ChaCha20-Poly1305 key
+/// (RFC 8439 section 2.8, VS-108).
+pub const SEALING_KEY_BYTES: usize = 32;
 /// The port of TLS, the update host's (`installation-and-updates.md`
 /// section 8.1).
 const HTTPS_PORT: u16 = 443;

@@ -119,23 +119,24 @@ fn rows_are_removed_by_number() {
     let all = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::All).unwrap().1;
     browser.history_press(middle(all), false);
     assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Clear(ClearRange::All))]);
-    // Requirement 21.8: cookies too, or cookies alone.
+    // VS-112: the channels that came to know this browser then too, or
+    // alone.
     browser.history_press(middle(clear), false);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-    let (with_history, with_cookies) = (browser.history.controls.with_history, browser.history.controls.with_cookies);
-    browser.history_press(middle(with_cookies), false);
+    let (with_history, with_channels) = (browser.history.controls.with_history, browser.history.controls.with_channels);
+    browser.history_press(middle(with_channels), false);
     let hour = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::Hour).unwrap().1;
     browser.history_press(middle(hour), false);
     assert_eq!(
         browser.take_outputs(),
-        [Output::History(HistoryRequest::Clear(ClearRange::Hour)), Output::History(HistoryRequest::ClearCookies(ClearRange::Hour))]
+        [Output::History(HistoryRequest::Clear(ClearRange::Hour)), Output::History(HistoryRequest::ForgetChannels(ClearRange::Hour))]
     );
     browser.history_press(middle(clear), false);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
     browser.history_press(middle(with_history), false);
     let day = browser.history.controls.ranges.iter().find(|(range, _)| *range == ClearRange::Day).unwrap().1;
     browser.history_press(middle(day), false);
-    assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::ClearCookies(ClearRange::Day))]);
+    assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::ForgetChannels(ClearRange::Day))]);
     let closed = browser.history.controls.closed[0].1;
     browser.history_press(middle(closed), false);
     assert_eq!(browser.take_outputs(), [Output::History(HistoryRequest::Reopen(Some(3)))]);

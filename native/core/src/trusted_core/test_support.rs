@@ -7,9 +7,10 @@ use std::time::Duration;
 use neoteletext::bookmarks::Bookmarks;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::Settings;
-use protocol::cookies::CookiesView;
-use protocol::fetcher::{CookieSite, FromFetcher, ToFetcher};
+#[cfg(all(unix, feature = "interaction"))]
+use protocol::fetcher::ToFetcher;
 use protocol::library::{BookmarksView, HistoryView};
+use protocol::viewer_state::KnownView;
 use protocol::{ToInterface, read_from_core};
 
 use super::Core;
@@ -114,28 +115,6 @@ pub(super) fn healthy_once_settled(core: &mut Core) -> bool {
     core.updates.health.healthy(std::time::Instant::now().checked_add(super::updates::HEALTH_SETTLE).unwrap())
 }
 
-/// A `Set-Cookie` header as a fetcher would have read it.
-pub(super) fn read_cookie(line: &str) -> protocol::fetcher::SetCookie {
-    let cookie = neoteletext_web::cookie::SetCookie::parse(line.as_bytes(), true).unwrap();
-    protocol::fetcher::SetCookie {
-        name: cookie.name.to_vec(),
-        value: cookie.value.to_vec(),
-        max_age: cookie.max_age,
-        expires: cookie.expires,
-        domain: cookie.domain,
-        path: cookie.path.map(<[u8]>::to_vec),
-        secure: cookie.secure,
-        http_only: cookie.http_only,
-        partitioned: cookie.partitioned,
-        same_site: match cookie.same_site {
-            neoteletext_web::cookie::SameSite::Strict => protocol::fetcher::CookieSameSite::Strict,
-            neoteletext_web::cookie::SameSite::Lax => protocol::fetcher::CookieSameSite::Lax,
-            neoteletext_web::cookie::SameSite::None => protocol::fetcher::CookieSameSite::None,
-            neoteletext_web::cookie::SameSite::Default => protocol::fetcher::CookieSameSite::Default,
-        },
-    }
-}
-
 /// Gives `channel` a decoder that reads nothing, and what the core writes to
 /// it read back, a chunk at a time.
 #[cfg(unix)]
@@ -208,7 +187,7 @@ impl Test {
         self.core.record_pending(channel).unwrap();
     }
 
-    pub(super) fn last_view(&mut self) -> CookiesView {
+    pub(super) fn last_known(&mut self) -> KnownView {
         self.core.to_interface.flush().unwrap();
         let mut bytes = Vec::new();
         // The outbox writes on a thread of its own.
@@ -218,7 +197,7 @@ impl Test {
         let mut input = bytes.as_slice();
         let mut last = None;
         while let Some(message) = read_from_core(&mut input).unwrap() {
-            if let ToInterface::Cookies(view) = message {
+            if let ToInterface::Known(view) = message {
                 last = Some(view);
             }
         }
@@ -233,17 +212,6 @@ impl Test {
             self.core.session.open(address).unwrap();
         }
         self.core.session.tabs.last().unwrap().channel.id
-    }
-
-    pub(super) fn set(&mut self, channel: u32, host: &str, line: &str) {
-        let message = FromFetcher::CookieSet { host: host.into(), path: "/teletext/".into(), scope: None, secure: true, cookie: read_cookie(line) };
-        assert_eq!(self.core.cookie_reply(channel, message).unwrap(), None);
-    }
-
-    pub(super) fn ask(&mut self, channel: u32, host: &str) -> String {
-        let question = FromFetcher::CookieQuestion { id: 9, host: host.into(), path: "/teletext/100.tti".into(), secure: true, site: CookieSite::SameService };
-        let Some(ToFetcher::CookieAnswer { id: 9, header }) = self.core.cookie_reply(channel, question).unwrap() else { panic!("no answer") };
-        String::from_utf8(header).unwrap()
     }
 }
 

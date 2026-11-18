@@ -3,7 +3,7 @@
 //! exempted it from Windows' loopback isolation, with a command that names
 //! the container by its security identifier. A per-user installer may not
 //! run it, so the browser says why a channel on this computer was not
-//! reached and gives the command (TODO-1251, `cookies.md` section 15
+//! reached and gives the command (TODO-1251, the former `cookies.md` section 15
 //! item 11): in the strip when such a channel is refused, and in the
 //! settings panel beside the local network.
 

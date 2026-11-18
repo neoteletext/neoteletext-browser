@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::browser::{Browser, Frame, Key, Modifiers, Output};
 use crate::geometry::{Point, Rect};
-use crate::settings::{CookieMode, ProxyView, SettingChange, SettingsView, UpdateView};
+use crate::settings::{ProxyView, SettingChange, SettingsView, UpdateView};
 use crate::test_canvas::Recorder;
 
 fn view() -> SettingsView {
@@ -14,7 +14,7 @@ fn view() -> SettingsView {
         proxy: ProxyView::None,
         local: alloc::vec!["192.168.1.20".into()],
         restore_session: true,
-        cookies: CookieMode::Keep,
+        channels_may_know: true,
         aspect: false,
         wheel_inverted: false,
         regis_contain: true,
@@ -112,18 +112,18 @@ fn each_control_asks_for_its_change() {
     let (contain, teletext) = (browser.settings.controls.regis_contain, browser.settings.controls.regis_teletext);
     assert_eq!(press(&mut browser, teletext), [Output::Setting(SettingChange::RegisContain(false))]);
     assert_eq!(press(&mut browser, contain), [Output::Setting(SettingChange::RegisContain(true))]);
-    let on_close = browser.settings.controls.cookie_modes[1].1;
-    assert_eq!(press(&mut browser, on_close), [Output::Setting(SettingChange::Cookies(CookieMode::Close))]);
-    let manage = browser.settings.controls.manage_cookies;
-    assert_eq!(
-        press(&mut browser, manage),
-        [Output::Console(true), Output::Cookies(crate::cookies::CookiesRequest::Panel(true))],
-        "the settings panel gives way to the console's cookies"
-    );
-    assert!(browser.cookies_open() && browser.console_open() && !browser.settings_open());
-    browser.toggle_settings();
-    browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
-    browser.take_outputs();
+    // VS-112 and open question Q16: Allow and Never ask for the change;
+    // "Which…" shows the list in the panel, and its close button goes back
+    // to the settings.
+    let (allow, never) = (browser.settings.controls.know_allow, browser.settings.controls.know_never);
+    assert_eq!(press(&mut browser, never), [Output::Setting(SettingChange::ChannelsMayKnow(false))]);
+    assert_eq!(press(&mut browser, allow), [Output::Setting(SettingChange::ChannelsMayKnow(true))]);
+    let manage = browser.settings.controls.manage_known;
+    assert_eq!(press(&mut browser, manage), [Output::Known(crate::viewer_state::KnownRequest::Panel(true))], "the list takes the settings panel");
+    assert!(browser.known_open() && browser.settings_open() && !browser.console_open());
+    let close = browser.settings.controls.close;
+    assert_eq!(press(&mut browser, close), [Output::Known(crate::viewer_state::KnownRequest::Panel(false))], "back to the settings");
+    assert!(!browser.known_open() && browser.settings_open());
     // A field's change goes on Enter.
     press(&mut browser, home);
     browser.key(Key::Text("a"), Modifiers { command: true, ..Modifiers::default() }, 0);

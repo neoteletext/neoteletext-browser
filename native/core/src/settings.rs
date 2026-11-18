@@ -19,15 +19,18 @@ pub(crate) const VERSION_LINE: &str = "neoteletext-settings 1";
 pub const MAX_VALUE: usize = protocol::MAX_ADDRESS;
 /// The name of a local address's line.
 const ALLOW_LOCAL: &str = "allow-local";
-/// The name of a blocked channel's line (`cookies.md` section 4.2), the
-/// longest name a line starts with.
-const COOKIE_BLOCK: &str = "cookie-block";
+/// The name of a blocked channel's line (neoteletext-common's
+/// `docs/viewer-state.md` VS-112), the longest name a line starts with.
+const STATE_BLOCK: &str = "viewer-state-block";
+/// The name of the line of whether channels may ask to know the viewer
+/// (VS-112).
+const STATE_ALLOWED: &str = "viewer-state";
 /// The longest line read: a name, a space and a value, so whatever the
 /// address rules accept is kept.
-pub const MAX_LINE: usize = COOKIE_BLOCK.len() + 1 + MAX_VALUE;
-const _: () = assert!(COOKIE_BLOCK.len() >= ALLOW_LOCAL.len(), "the longest name sets the longest line");
-/// The most channels whose cookies are blocked (`cookies.md` section 4.2).
-pub const MAX_BLOCKED: usize = 1_000;
+pub const MAX_LINE: usize = STATE_BLOCK.len() + 1 + MAX_VALUE;
+const _: () = assert!(STATE_BLOCK.len() >= ALLOW_LOCAL.len(), "the longest name sets the longest line");
+/// The most channels blocked from knowing the viewer (VS-112).
+pub const MAX_BLOCKED: usize = crate::viewer_keys::MOST_BLOCKED_CHANNELS;
 /// The longest file read (section 1.2): every blocked channel at the
 /// longest line, with room for the rest, rounded up to 8 MiB.
 pub const MAX_FILE: usize = 8 * 1024 * 1024;
@@ -75,10 +78,11 @@ pub struct Settings {
     /// The browser checks for updates (`installation-and-updates.md`
     /// section 3.4).
     pub check_updates: bool,
-    /// What is kept of cookies (requirement 21.7).
-    pub cookies: crate::cookies::Mode,
-    /// The channels whose cookies are blocked, by their identity.
-    pub cookie_block: Vec<String>,
+    /// Channels may ask to know the viewer: "Allow", or "Never" (VS-112).
+    pub channels_may_know: bool,
+    /// The channels the viewer blocked from knowing them, by their
+    /// identity (VS-112).
+    pub state_block: Vec<String>,
     /// Where the remote control is (`remote-control.md`, decision 68).
     pub remote: RemotePlace,
 }
@@ -97,8 +101,8 @@ impl Default for Settings {
             regis_contain: true,
             restore: true,
             check_updates: true,
-            cookies: crate::cookies::Mode::Keep,
-            cookie_block: Vec::new(),
+            channels_may_know: true,
+            state_block: Vec::new(),
             remote: RemotePlace::default(),
         }
     }
@@ -203,17 +207,17 @@ impl Settings {
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
-            "cookies" => match value {
-                "keep" => Some(crate::cookies::Mode::Keep),
-                "close" => Some(crate::cookies::Mode::Close),
-                "block" => Some(crate::cookies::Mode::Block),
+            STATE_ALLOWED => match value {
+                "allow" => Some(true),
+                "never" => Some(false),
                 _ => None,
             }
-            .map(|mode| self.cookies = mode)
+            .map(|allowed| self.channels_may_know = allowed)
             .is_some(),
-            COOKIE_BLOCK => match crate::cookies::Channel::of(value).filter(|channel| channel.key == value) {
-                Some(channel) if self.cookie_block.len() < MAX_BLOCKED && !self.cookie_block.contains(&channel.key) => {
-                    self.cookie_block.push(channel.key);
+            // Only a channel identity in its canonical form (VS-102).
+            STATE_BLOCK => match neoteletext_web::viewer_state::ChannelIdentity::read(value) {
+                Ok(_) if self.state_block.len() < MAX_BLOCKED && !self.state_block.iter().any(|kept| kept == value) => {
+                    self.state_block.push(value.to_owned());
                     true
                 }
                 _ => false,
@@ -255,15 +259,8 @@ impl Settings {
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
         lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));
-        lines.push(format!(
-            "cookies {}",
-            match self.cookies {
-                crate::cookies::Mode::Keep => "keep",
-                crate::cookies::Mode::Close => "close",
-                crate::cookies::Mode::Block => "block",
-            }
-        ));
-        lines.extend(self.cookie_block.iter().map(|key| format!("{COOKIE_BLOCK} {key}")));
+        lines.push(format!("{STATE_ALLOWED} {}", if self.channels_may_know { "allow" } else { "never" }));
+        lines.extend(self.state_block.iter().map(|identity| format!("{STATE_BLOCK} {identity}")));
         let mut text = lines.join("\n");
         text.push('\n');
         text

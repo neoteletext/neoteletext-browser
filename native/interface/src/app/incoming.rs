@@ -132,7 +132,7 @@ impl App {
     fn library(&mut self, view: Library, now: u64) {
         match view {
             Library::History(view) => self.view.browser.set_history(view),
-            Library::Cookies(view) => self.view.browser.set_cookies(view),
+            Library::Known(view) => self.view.browser.set_known(view),
             Library::PageControls(controls) => self.view.browser.set_page_controls(controls),
             Library::Remote(place) => self.view.browser.set_remote(place),
             Library::Suggestions(suggestions) => self.view.browser.set_suggestions(suggestions),

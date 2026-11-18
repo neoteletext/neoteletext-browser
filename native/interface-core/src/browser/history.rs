@@ -58,9 +58,10 @@ struct Controls {
     search: Rect,
     clear: Rect,
     ranges: Vec<(ClearRange, Rect)>,
-    /// What clearing clears: history, cookies (requirement 21.8).
+    /// What clearing clears: history, and the channels that came to know
+    /// this browser in the time (VS-112).
     with_history: Rect,
-    with_cookies: Rect,
+    with_channels: Rect,
     cancel: Rect,
     remove_selected: Rect,
     closed: Vec<(u32, Rect)>,
@@ -117,12 +118,12 @@ pub(super) struct HistoryUi {
     grip: Option<resize::Grip>,
 }
 
-/// What clearing clears: history, as it did; cookies, when chosen
-/// (requirement 21.8).
+/// What clearing clears: history, as it did; the channels whose keys were
+/// made in the time, when chosen (VS-112).
 #[derive(Clone, Copy, Debug)]
 struct Clears {
     history: bool,
-    cookies: bool,
+    channels: bool,
 }
 
 impl Default for HistoryUi {
@@ -134,7 +135,7 @@ impl Default for HistoryUi {
             focused: false,
             selected: BTreeSet::new(),
             clearing: false,
-            clears: Clears { history: true, cookies: false },
+            clears: Clears { history: true, channels: false },
             controls: Controls::default(),
             menu: None,
             width: PANEL_WIDTH,

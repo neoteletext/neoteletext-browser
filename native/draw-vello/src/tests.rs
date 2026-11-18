@@ -10,7 +10,7 @@ use interface_core::browser::{Browser, Frame as WindowFrame, TabInfo};
 use interface_core::canvas::Canvas;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};
 use interface_core::library::BarView;
-use interface_core::settings::{CookieMode, ProxyView, SettingsView};
+use interface_core::settings::{ProxyView, SettingsView};
 
 const WIDTH: u16 = 720;
 const HEIGHT: u16 = 450;
@@ -329,7 +329,7 @@ fn the_aspect_correction_stretches_the_drawn_page_and_keeps_its_screen() {
             proxy: ProxyView::None,
             local: Vec::new(),
             restore_session: true,
-            cookies: CookieMode::Keep,
+            channels_may_know: true,
             aspect,
             wheel_inverted: false,
             regis_contain: true,

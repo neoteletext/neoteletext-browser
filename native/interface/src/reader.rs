@@ -47,7 +47,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             Ok(Some(ToInterface::Console(update))) => Incoming::Console(update),
             Ok(Some(ToInterface::Recording(view))) => Incoming::Recording(view),
             Ok(Some(ToInterface::History(view))) => Incoming::Library(Library::History(view)),
-            Ok(Some(ToInterface::Cookies(view))) => Incoming::Library(Library::Cookies(view)),
+            Ok(Some(ToInterface::Known(view))) => Incoming::Library(Library::Known(view)),
             Ok(Some(ToInterface::Suggestions(suggestions))) => Incoming::Library(Library::Suggestions(suggestions)),
             Ok(Some(ToInterface::TabList(list))) => Incoming::Library(Library::TabList(list)),
             Ok(Some(ToInterface::Bookmarks(view))) => Incoming::Library(Library::Bookmarks(view)),

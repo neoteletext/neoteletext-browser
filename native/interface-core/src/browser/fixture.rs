@@ -8,7 +8,7 @@ use alloc::string::String;
 use crate::browser::{Browser, Frame, StripState, TabInfo};
 use crate::channel::{BANKS, Channel, PAGES, PAGES_PER_BANK, PageInfo, Status};
 use crate::geometry::{Point, Rect};
-use crate::settings::{CookieMode, ProxyView, SettingsView};
+use crate::settings::{ProxyView, SettingsView};
 use crate::test_canvas::Recorder;
 
 pub(super) const WIDTH: f64 = 1440.0;
@@ -64,7 +64,7 @@ pub(super) fn settings() -> SettingsView {
         proxy: ProxyView::None,
         local: alloc::vec::Vec::new(),
         restore_session: true,
-        cookies: CookieMode::Keep,
+        channels_may_know: true,
         aspect: false,
         wheel_inverted: false,
         regis_contain: true,

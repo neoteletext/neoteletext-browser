@@ -69,7 +69,7 @@ impl Core {
             proxy,
             local: self.settings.local.iter().map(ToString::to_string).collect(),
             restore_session: self.settings.restore,
-            cookies: super::cookies::mode_view(self.settings.cookies),
+            channels_may_know: self.settings.channels_may_know,
             aspect: self.settings.aspect,
             wheel_inverted: self.settings.wheel_inverted,
             regis_contain: self.settings.regis_contain,
@@ -95,7 +95,7 @@ impl Core {
     /// logged.
     fn change_setting(&mut self, change: SettingChange) -> Result<(), String> {
         let current = self.session.active_tab().and_then(|tab| tab.address()).map(|address| address.channel_text().to_owned());
-        let cookies = if let SettingChange::Cookies(mode) = change { Some(mode) } else { None };
+        let may_know = if let SettingChange::ChannelsMayKnow(allowed) = change { Some(allowed) } else { None };
         let remote = matches!(change, SettingChange::Remote(_));
         let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
         let home = matches!(change, SettingChange::Home(_));
@@ -104,8 +104,8 @@ impl Core {
                 self.refusal = None;
                 self.save_settings();
                 self.others_stale();
-                if let Some(mode) = cookies {
-                    self.cookie_mode_changed(mode);
+                if let Some(allowed) = may_know {
+                    self.channels_may_know_changed(allowed);
                 }
                 match checking {
                     // "Off" stops the updater from starting at all.
@@ -175,13 +175,9 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.restore = on;
             Ok(None)
         }
-        // And what is kept of cookies (requirement 21.7).
-        SettingChange::Cookies(mode) => {
-            settings.cookies = match mode {
-                protocol::settings::CookieMode::Keep => neoteletext::cookies::Mode::Keep,
-                protocol::settings::CookieMode::Close => neoteletext::cookies::Mode::Close,
-                protocol::settings::CookieMode::Block => neoteletext::cookies::Mode::Block,
-            };
+        // Whether channels may ask to know the viewer (VS-112).
+        SettingChange::ChannelsMayKnow(allowed) => {
+            settings.channels_may_know = allowed;
             Ok(None)
         }
         // How pages are drawn, the window's alone: no channel is told

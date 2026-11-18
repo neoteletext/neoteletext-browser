@@ -107,7 +107,7 @@ fn every_request_round_trips() {
         HistoryRequest::MoreFromSite(9),
         HistoryRequest::RemoveBookmark(9),
         HistoryRequest::Clear(ClearRange::FourWeeks),
-        HistoryRequest::ClearCookies(ClearRange::Hour),
+        HistoryRequest::ForgetChannels(ClearRange::Hour),
         HistoryRequest::Clear(ClearRange::FifteenMinutes),
         HistoryRequest::Reopen(None),
         HistoryRequest::Reopen(Some(3)),

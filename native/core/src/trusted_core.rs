@@ -7,7 +7,6 @@
 mod address_tests;
 mod channels;
 mod console;
-mod cookies;
 mod decoder_messages;
 mod fetcher_messages;
 #[cfg(test)]
@@ -40,6 +39,7 @@ mod timing;
 #[cfg(feature = "interaction")]
 mod typing;
 mod updates;
+mod viewer_state;
 #[cfg(feature = "interaction")]
 mod wall_fill;
 mod windows;
@@ -245,8 +245,9 @@ struct Core {
     /// The interface's intents name a window that is not open, as one just
     /// closed: they are not acted on until it names one that is.
     from_closed: bool,
-    /// Every cookie, and the cookies panel (`cookies.md`).
-    cookies: cookies::Cookies,
+    /// Every viewer key, and the list of channels that know the viewer
+    /// (neoteletext-common's `docs/viewer-state.md`).
+    viewer_state: viewer_state::ViewerState,
     /// Each input event sent described on the open page's row 0, with
     /// `--input-trace`; `None` without it.
     #[cfg(feature = "interaction")]
@@ -378,7 +379,7 @@ impl Core {
             shown_elsewhere: BTreeMap::new(),
             stale: std::collections::BTreeSet::new(),
             from_closed: false,
-            cookies: cookies::Cookies::default(),
+            viewer_state: viewer_state::ViewerState::default(),
             #[cfg(feature = "interaction")]
             input_trace: None,
             controls: page_controls::State::default(),

@@ -139,7 +139,7 @@ fn is_strip_input(intent: &ToCore) -> bool {
         | ToCore::Suggestion { .. }
         | ToCore::GoTo { .. }
         | ToCore::NewPrivateTab
-        | ToCore::Cookies(_)
+        | ToCore::Known(_)
         | ToCore::PageControl(_)
         | ToCore::NewWindow { .. }
         | ToCore::TabToWindow { .. }
@@ -492,7 +492,7 @@ fn helpers_started(requests: &[Request], addresses: &[String; 2]) -> Vec<(Progra
             | Request::Save { .. } => {
                 panic!("the core asked the broker for {request:?}")
             }
-            Request::Kill(_) | Request::Wait(_) | Request::LocalTime | Request::CookieKey | Request::Healthy | Request::UpdateState => {}
+            Request::Kill(_) | Request::Wait(_) | Request::LocalTime | Request::ViewerKeysKey | Request::Healthy | Request::UpdateState => {}
         }
     }
     started

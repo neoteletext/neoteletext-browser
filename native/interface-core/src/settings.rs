@@ -44,8 +44,9 @@ pub struct SettingsView {
     pub local: Vec<String>,
     /// The last session is restored at start (requirement 20.24).
     pub restore_session: bool,
-    /// What is kept of cookies (requirement 21.7).
-    pub cookies: CookieMode,
+    /// Channels may ask to know the viewer: "Allow", or "Never", which
+    /// declines every request to make a key (VS-112, open question Q16).
+    pub channels_may_know: bool,
     /// Pages are drawn with the 4:3 aspect correction (REQ-737).
     pub aspect: bool,
     /// A mouse wheel's notches are taken the other way (REQ-6351).
@@ -81,8 +82,8 @@ pub enum SettingChange {
     /// Restore the last session at start, or open the home address
     /// (requirement 20.24).
     RestoreSession(bool),
-    /// What is kept of cookies (requirement 21.7).
-    Cookies(CookieMode),
+    /// Channels may ask to know the viewer, or never (VS-112).
+    ChannelsMayKnow(bool),
     /// Where the remote control is (`remote-control.md`, decision 68).
     Remote(RemotePlace),
     /// Check for updates, or not (`installation-and-updates.md` section 3.4).
@@ -137,16 +138,4 @@ pub struct UpdateView {
     pub offer: Option<String>,
     /// The browser checks for updates.
     pub checking: bool,
-}
-
-/// What is kept of cookies (`cookies.md` section 4.2).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CookieMode {
-    /// Persistent cookies between runs.
-    #[default]
-    Keep,
-    /// None once the browser closes.
-    Close,
-    /// None stored or sent.
-    Block,
 }

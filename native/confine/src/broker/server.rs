@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use super::local_files::{ChooseKind, Declaration, acknowledgement, decode_declaration};
 use super::wire::{Exit, Reply, Request, decode_request, encode_reply};
-use super::{COOKIE_KEY_BYTES, Channel, MAX_DECLARATION, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, UpdaterGrant};
+use super::{Channel, MAX_DECLARATION, MAX_HELPERS, MAX_REPLY, MAX_REQUEST, MAX_UPDATE_STATE, Program, SEALING_KEY_BYTES, UpdaterGrant};
 #[cfg(unix)]
 use crate::unix as platform;
 #[cfg(windows)]
@@ -25,9 +25,9 @@ pub struct Handlers<'a> {
     pub open_web: &'a dyn Fn(&str) -> Result<(), String>,
     /// The environment a helper of a role is given.
     pub environment: &'a dyn Fn(Role) -> Vec<(OsString, OsString)>,
-    /// The cookie file's key, read from the platform's secret store or
+    /// The viewer key file's sealing key, read from the platform's secret store or
     /// made there.
-    pub cookie_key: &'a dyn Fn() -> Result<Vec<u8>, String>,
+    pub viewer_keys_key: &'a dyn Fn() -> Result<Vec<u8>, String>,
     /// Tells the launcher the version is healthy.
     pub healthy: &'a dyn Fn() -> Result<(), String>,
     /// The launcher's state file's bytes.
@@ -160,8 +160,8 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(time) => Reply::Time(time),
             Err(error) => Reply::Failed(format!("the local time cannot be read: {error}")),
         },
-        Request::CookieKey => match (handlers.cookie_key)() {
-            Ok(key) if key.len() == COOKIE_KEY_BYTES => Reply::Key(key),
+        Request::ViewerKeysKey => match (handlers.viewer_keys_key)() {
+            Ok(key) if key.len() == SEALING_KEY_BYTES => Reply::Key(key),
             Ok(_) => Reply::Failed(String::from("the secret store holds a key of the wrong length")),
             Err(reason) => Reply::Failed(reason),
         },

@@ -124,7 +124,7 @@ fn the_interface_s_window_reaches_the_screen() {
     let serving = thread::spawn(move || {
         let refuse_read = |_: &Path| Err(String::from("this test reads nothing"));
         let refuse_web = |_: &str| Err(String::from("this test opens nothing"));
-        let refuse_key = || Err(String::from("this test keeps no cookies"));
+        let refuse_key = || Err(String::from("this test remembers no channel"));
         let refuse_health = || Err(String::from("this test has no launcher"));
         let refuse_state = || Err(String::from("this test has no launcher"));
         let refuse_updater = |_: &[String]| Err(String::from("this test has no launcher"));
@@ -139,7 +139,7 @@ fn the_interface_s_window_reaches_the_screen() {
             read_source: &refuse_read,
             open_web: &refuse_web,
             environment: &environment,
-            cookie_key: &refuse_key,
+            viewer_keys_key: &refuse_key,
             healthy: &refuse_health,
             update_state: &refuse_state,
             updater: &refuse_updater,

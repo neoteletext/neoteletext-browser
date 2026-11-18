@@ -14,8 +14,8 @@ use interface_core::library::WindowGeometry;
 pub enum Library {
     /// The history panel's rows.
     History(interface_core::library::HistoryView),
-    /// The cookies panel.
-    Cookies(interface_core::cookies::CookiesView),
+    /// The list "Channels that know you" (VS-112).
+    Known(interface_core::viewer_state::KnownView),
     /// Suggestions for the address field.
     Suggestions(interface_core::library::Suggestions),
     /// The active tab's Back or Forward list.

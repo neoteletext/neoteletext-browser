@@ -87,8 +87,8 @@ pub(crate) const KIND_BOOKMARKS_VIEW: u8 = 53;
 pub(crate) const KIND_STAR_VIEW: u8 = 54;
 pub(crate) const KIND_BAR_VIEW: u8 = 55;
 pub(crate) const KIND_WINDOW_VIEW: u8 = 56;
-// The cookies panel (`cookies.md` section 9).
-pub(crate) const KIND_COOKIES_VIEW: u8 = 57;
+// 57 was the cookies panel's view, and 70 its requests, removed with
+// cookies (DEC-6471); never reused.
 pub(crate) const KIND_PAGE_CONTROLS: u8 = 58;
 pub(crate) const KIND_REMOTE: u8 = 59;
 pub(crate) const KIND_HISTORY: u8 = 60;
@@ -101,7 +101,6 @@ pub(crate) const KIND_TAB_LIST: u8 = 66;
 pub(crate) const KIND_GO_TO: u8 = 67;
 pub(crate) const KIND_NEW_PRIVATE_TAB: u8 = 68;
 pub(crate) const KIND_WINDOW: u8 = 69;
-pub(crate) const KIND_COOKIES: u8 = 70;
 pub(crate) const KIND_RELOAD: u8 = 71;
 pub(crate) const KIND_PAGE_CONTROL: u8 = 72;
 pub(crate) const KIND_MOVE_TAB: u8 = 73;
@@ -128,6 +127,11 @@ pub(crate) const KIND_FROM_SYSTEM: u8 = 125;
 // what the trusted core says of a conversion.
 pub(crate) const KIND_PICTURE_CHOICE: u8 = 148;
 pub(crate) const KIND_PICTURE_STATUS: u8 = 149;
+// Viewer state (neoteletext-common's `docs/viewer-state.md`, VS-112): the
+// list "Channels that know you" and the viewer's controls, in numbers clear
+// of those other work in flight on 18 November 2026 may take next.
+pub(crate) const KIND_KNOWN_VIEW: u8 = 176;
+pub(crate) const KIND_KNOWN: u8 = 177;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;

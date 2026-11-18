@@ -61,7 +61,7 @@ impl Browser {
         let asking = self.prompt_shown();
         #[cfg(not(feature = "links"))]
         let asking = false;
-        self.editing || self.strip_has_keys() || self.cookies_open() || self.console_open() || asking
+        self.editing || self.strip_has_keys() || self.known_open() || self.console_open() || asking
     }
 
     /// A key of the paired phone while no page is open for typing: the

@@ -5,7 +5,7 @@
 //! (`address`); the bookmarks and `bookmarks.txt` (`bookmarks`); the
 //! bytes a helper's messages may wait in (`budget`);
 //! civil-calendar arithmetic (`calendar`); the developer console's entries
-//! (`console`); the cookie store and its sealed file (`cookies`); which
+//! (`console`); the viewer keys and their sealed file (`viewer_keys`); which
 //! frames are sent (`frames`, measured by the latency test); what of each
 //! channel's sound is heard (`hearing`); history and `history.txt`
 //! (`history`); hyperlinks (`links`); the pipes written by threads of
@@ -35,7 +35,6 @@ pub mod bookmarks;
 pub mod budget;
 pub mod calendar;
 pub mod console;
-pub mod cookies;
 pub mod dropped;
 pub mod frames;
 pub mod grants;
@@ -53,6 +52,7 @@ mod private_file;
 pub mod recording;
 pub mod regis;
 pub mod regis_pointer;
+pub mod sealed_file;
 pub use private_file::make_folder;
 pub mod session_file;
 pub mod settings;
@@ -61,3 +61,4 @@ pub mod start_page;
 pub mod subpages;
 #[cfg(feature = "interaction")]
 pub mod typing;
+pub mod viewer_keys;

@@ -12,7 +12,7 @@ use super::ToCore;
 use super::kinds::KIND_FOCUSED;
 use super::kinds::{
     KIND_ASK_SUBPAGE_ROWS, KIND_BACK, KIND_BAR, KIND_BOOKMARK, KIND_BOOKMARKS, KIND_CELL, KIND_CHANGE_SETTING, KIND_CLOSE_TAB, KIND_CLOSE_WINDOW, KIND_CONSOLE,
-    KIND_COOKIES, KIND_DRAWN, KIND_DROPPED, KIND_FORWARD, KIND_FROM, KIND_FROM_SYSTEM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_MOVE_TAB,
+    KIND_DRAWN, KIND_DROPPED, KIND_FORWARD, KIND_FROM, KIND_FROM_SYSTEM, KIND_GO_TO, KIND_HISTORY, KIND_HOME, KIND_INSTALL_UPDATE, KIND_KNOWN, KIND_MOVE_TAB,
     KIND_MUTE_ALL, KIND_MUTE_TAB, KIND_NAVIGATE, KIND_NEW_PRIVATE_TAB, KIND_NEW_TAB, KIND_NEW_WINDOW, KIND_OPEN_FILE, KIND_OPENED, KIND_PAGE_CONTROL,
     KIND_PICTURE_CHOICE, KIND_RELOAD, KIND_SELECT_TAB, KIND_STAR, KIND_SUGGEST, KIND_SUGGESTION, KIND_TAB_LIST, KIND_TAB_TO_WINDOW, KIND_VISIBLE, KIND_WINDOW,
 };
@@ -25,8 +25,8 @@ use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL, PHONE_PANEL_WITH_PIN}
 #[cfg(feature = "links")]
 use crate::links::{KIND_CANCEL, KIND_CONFIRM, KIND_LIT, KIND_POINT, KIND_TYPED};
 use crate::{
-    Fields, MAX_ADDRESS, MAX_FILES_AT_ONCE, MAX_TABS, ProtocolError, controls, cookies, library, push_count_u8, push_key, push_keys, push_text, read_frame,
-    settings, write_frame,
+    Fields, MAX_ADDRESS, MAX_FILES_AT_ONCE, MAX_TABS, ProtocolError, controls, library, push_count_u8, push_key, push_keys, push_text, read_frame, settings,
+    write_frame,
 };
 
 /// Writes a message to the trusted core.
@@ -105,7 +105,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::GoTo { .. } => KIND_GO_TO,
         ToCore::NewPrivateTab => KIND_NEW_PRIVATE_TAB,
         ToCore::Window(_) => KIND_WINDOW,
-        ToCore::Cookies(_) => KIND_COOKIES,
+        ToCore::Known(_) => KIND_KNOWN,
     }
 }
 
@@ -181,7 +181,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         ToCore::GoTo { forward, steps } => push_go_to(payload, *forward, *steps)?,
         ToCore::NewPrivateTab => {}
         ToCore::Window(window) => library::push_window(payload, window)?,
-        ToCore::Cookies(request) => cookies::push_request(payload, request)?,
+        ToCore::Known(request) => crate::viewer_state::push_request(payload, request)?,
     }
     Ok(())
 }
@@ -398,7 +398,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         }
         KIND_NEW_PRIVATE_TAB => ToCore::NewPrivateTab,
         KIND_WINDOW => ToCore::Window(library::read_window(&mut fields)?),
-        KIND_COOKIES => ToCore::Cookies(cookies::read_request(&mut fields)?),
+        KIND_KNOWN => ToCore::Known(crate::viewer_state::read_request(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

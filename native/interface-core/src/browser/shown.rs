@@ -75,6 +75,16 @@ pub struct StripState {
     /// The tab failed: the page area says so, in the browser's own words
     /// (REQ-683).
     pub failed: Option<Failed>,
+    /// What the tab's channel knows of this browser: the strip's mark
+    /// (VS-114) and the menu's choice (VS-109).
+    pub known: crate::viewer_state::Known,
+    /// The tab's channel may be remembered: an ordinary tab of a channel
+    /// with a key, and the key file's sealing key can be had (VS-108,
+    /// VS-109).
+    pub can_remember: bool,
+    /// The channel offered to remember the viewer, and the strip asks
+    /// (VS-208, open question Q4).
+    pub keep_offer: bool,
 }
 
 /// Why a tab shows nothing of its channel: said by the trusted core, in the

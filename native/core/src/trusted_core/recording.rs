@@ -155,17 +155,16 @@ impl Core {
     }
 
     /// A message from `channel`'s fetcher: one entry. Bytes are written
-    /// whole; a cookie's question or setting only as its kind; the rest as
-    /// the report's text.
+    /// whole; viewer state's messages only as their kind, never a challenge,
+    /// key or signature (VS-209); the rest as the report's text.
     pub(super) fn record_received(&mut self, channel: u32, message: &FromFetcher) {
         let now = self.now();
         let Some(recording) = self.recording_of(channel) else { return };
         let wrote = match message {
             FromFetcher::Page { origin, bytes } => recording.entry(now, Direction::Received, origin_kind(*origin), Payload::Bytes(bytes)),
-            FromFetcher::CookieQuestion { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("question")),
-            FromFetcher::ReachedQuestion { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("reached question")),
-            FromFetcher::CookieSet { .. } => recording.entry(now, Direction::Received, "cookie", Payload::Text("set")),
-            FromFetcher::ClearSiteData(_) => recording.entry(now, Direction::Received, "cookie", Payload::Text("clear site data")),
+            FromFetcher::StateChallenged { .. } => recording.entry(now, Direction::Received, "state", Payload::Text("challenge")),
+            FromFetcher::StateEndReceived { .. } => recording.entry(now, Direction::Received, "state", Payload::Text("end")),
+            FromFetcher::StateKeepOffered => recording.entry(now, Direction::Received, "state", Payload::Text("keep offer")),
             other => recording.entry(now, Direction::Received, "report", Payload::Text(&format!("{other:?}"))),
         };
         self.recording_wrote(wrote);
@@ -179,8 +178,8 @@ impl Core {
             // Input is the only thing sent as bytes, and a build without it has no such message.
             #[cfg(feature = "interaction")]
             ToFetcher::Send { bytes, .. } => recording.entry(now, Direction::Sent, "send", Payload::Bytes(bytes)),
-            ToFetcher::CookieAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("answer")),
-            ToFetcher::ReachedAnswer { .. } => recording.entry(now, Direction::Sent, "cookie", Payload::Text("reached answer")),
+            ToFetcher::StateAnswer { .. } => recording.entry(now, Direction::Sent, "state", Payload::Text("answer")),
+            ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_) => recording.entry(now, Direction::Sent, "state", Payload::Text("unprompted")),
             other => recording.entry(now, Direction::Sent, "request", Payload::Text(&format!("{other:?}"))),
         };
         self.recording_wrote(wrote);
@@ -310,21 +309,28 @@ mod tests {
         );
     }
 
-    /// REQ-6406 item 3: a cookie's value is never written.
+    /// REQ-6406 item 3 and VS-209: viewer state's messages are recorded
+    /// as their kind alone, never a challenge, key or signature.
     #[test]
-    fn a_cookie_is_recorded_only_as_its_kind() {
-        let mut test = Test::new("recording-cookie");
+    fn viewer_state_is_recorded_only_as_its_kind() {
+        let mut test = Test::new("recording-state");
         let channel = test.tab("https://example.invalid/teletext/", false);
         test.core.settings_intent(ToCore::Console(true)).unwrap();
         test.core.settings_intent(ToCore::Recording(RecordingRequest::Record)).unwrap();
-        let cookie = super::super::test_support::read_cookie("session=secret-value; Path=/teletext/; Secure");
-        test.core
-            .record_received(channel, &FromFetcher::CookieSet { host: "example.invalid".into(), path: "/teletext/".into(), scope: None, secure: true, cookie });
-        test.core.record_sent(channel, &ToFetcher::CookieAnswer { id: 1, header: b"session=secret-value".to_vec() });
+        test.core.record_received(channel, &FromFetcher::StateChallenged { request: 1, challenge: [0xAB; 32], create: true });
+        let reply = protocol::fetcher::StateReply::Proof {
+            algorithm: protocol::fetcher::Algorithm::Ed25519,
+            lifetime: protocol::fetcher::Lifetime::Visit,
+            public_key: [0xCD; 32],
+            signature: [0xEF; 64],
+        };
+        test.core.record_sent(channel, &ToFetcher::StateAnswer { request: 1, reply });
         test.core.settings_intent(ToCore::Console(false)).unwrap();
         let written = &recordings(&test)[0].1;
-        assert!(!written.contains("secret-value"), "{written}");
-        assert_eq!(entries(written)[..2], ["< cookie set", "> cookie answer"]);
+        for secret in ["171", "205", "239", "AB", "CD", "EF", "ab", "cd", "ef"] {
+            assert!(!written.contains(&format!("{secret}, {secret}")), "{written}");
+        }
+        assert_eq!(entries(written)[..2], ["< state challenge", "> state answer"]);
     }
 
     /// REQ-6406 items 1 and 2: a private tab is never recorded, even when

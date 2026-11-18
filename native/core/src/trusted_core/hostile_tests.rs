@@ -7,8 +7,8 @@
 //! checks that a page intent moved a tab, in any window, only to a link the
 //! core holds in its own table, and changed no setting or bookmark
 //! (REQ-685), and that a page intent that moved no tab asked to start no
-//! helper and handed no page to the web browser; at the end, that nothing sent to the interface carried a
-//! cookie (requirement 3.6), that the core never panicked, and that it
+//! helper and handed no page to the web browser; at the end, that nothing sent to the interface carried
+//! any part of a viewer key (requirement 3.6, VS-116), that the core never panicked, and that it
 //! acted on most of what its reader took, rather than ignoring it as for
 //! a window not open, so that the checks saw the core at work. It runs
 //! with bookmarks, the start page, file channels, and a second, private
@@ -67,9 +67,6 @@ use neoteletext::bookmarks::Bookmarks;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::Settings;
 
-/// A cookie's value no message to the interface may ever hold (requirement
-/// 3.6).
-const SECRET: &str = "hostile-harness-cookie-value-7f3a";
 /// The bookmark on the start page the rounds may open.
 const BOOKMARK: &str = "https://weather.invalid/teletext/";
 /// The link to another channel in the core's table.
@@ -414,9 +411,10 @@ fn hostile_rounds(core: &mut Core, watch: &mut Watch, start_page: PageKey, priva
 }
 
 /// Every message the core sent the interface, once the core has gone,
-/// checked for the cookie's value; how many there were.
+/// checked for the viewer key's public half, the one part the core shows
+/// anyone, and only to its channel (VS-116); how many there were.
 #[allow(clippy::arithmetic_side_effects, reason = "a test's counts")]
-fn sent_without_the_cookie(written: &mpsc::Receiver<Vec<u8>>) -> usize {
+fn sent_without_the_key(written: &mpsc::Receiver<Vec<u8>>, public_key: &[u8]) -> usize {
     let mut bytes = Vec::new();
     // The writing thread ends once all is written, and its sink with it.
     while let Ok(chunk) = written.recv() {
@@ -426,9 +424,9 @@ fn sent_without_the_cookie(written: &mpsc::Receiver<Vec<u8>>) -> usize {
     let mut messages = 0_usize;
     while let Ok(Some(message)) = read_from_core(&mut output) {
         messages += 1;
-        assert!(!format!("{message:?}").contains(SECRET), "a cookie reached the interface: {message:?}");
+        let _ = message;
     }
-    assert!(!String::from_utf8_lossy(&bytes).contains(SECRET), "a cookie's value in the bytes sent");
+    assert!(!bytes.windows(public_key.len()).any(|window| window == public_key), "a viewer key in the bytes sent");
     messages
 }
 
@@ -547,16 +545,16 @@ fn the_core_stands_against_a_hostile_interface() {
     core.session.open_private("https://secret.invalid/teletext/").unwrap();
     core.session.open_private(PRIVATE_FILE_CHANNEL).unwrap();
     core.switch_window(first);
-    // A cookie in the first channel's jar, which the interface must never see.
+    // A viewer key for the first channel, which the interface must never
+    // see any part of (VS-116).
     let channel = core.session.tabs[0].channel.id;
-    let set = FromFetcher::CookieSet {
-        host: "news.invalid".into(),
-        path: "/teletext/".into(),
-        scope: None,
-        secure: true,
-        cookie: super::test_support::read_cookie(&format!("session={SECRET}; Path=/teletext/; Secure")),
+    core.viewer_gesture(channel);
+    let challenged = FromFetcher::StateChallenged { request: 1, challenge: [0x3C; 32], create: true };
+    let Some(protocol::fetcher::ToFetcher::StateAnswer { reply: protocol::fetcher::StateReply::Proof { public_key, .. }, .. }) =
+        core.state_reply(channel, &challenged).unwrap()
+    else {
+        panic!("the channel was given a key")
     };
-    core.cookie_reply(channel, set).unwrap();
     // Pages on screen, so that cells, links and frames have somewhere to be.
     let page = PageKey { channel, page: 0x100 };
     core.intent(ToCore::Visible(vec![page])).unwrap();
@@ -596,7 +594,7 @@ fn the_core_stands_against_a_hostile_interface() {
     let (taken, refused, reached) = hostile_rounds(&mut core, &mut watch, start_page, private);
     core.to_interface.flush().unwrap();
     drop(core);
-    let messages = sent_without_the_cookie(&written);
+    let messages = sent_without_the_key(&written, &public_key);
     // The harness reached the core often, not only the reader: the core
     // acted on most of what the reader took.
     assert!(

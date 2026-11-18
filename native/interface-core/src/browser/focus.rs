@@ -33,8 +33,8 @@ impl Browser {
         if self.history_editing() {
             return self.history_field();
         }
-        if self.cookies_editing() {
-            return self.cookies_field();
+        if self.known_editing() {
+            return self.known_field();
         }
         if self.console_searching() {
             return self.console_field();

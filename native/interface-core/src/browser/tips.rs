@@ -167,8 +167,10 @@ impl Browser {
             self.bar_tips(&mut tips);
             self.remote_tips(&mut tips);
             self.tabs_tips(&mut tips);
+            self.remember_tips(&mut tips);
             if self.settings_open() {
                 self.settings_tips(&mut tips);
+                self.known_tips(&mut tips);
             } else if self.history_open() {
                 self.history_tips(&mut tips);
             } else if self.bookmarks_open() {

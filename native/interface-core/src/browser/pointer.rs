@@ -260,7 +260,7 @@ impl Browser {
         if self.tips_scroll(distance) {
             return true;
         }
-        if self.history_scroll(distance) || self.cookies_scroll(distance) || self.bookmarks_scroll(distance) {
+        if self.history_scroll(distance) || self.known_scroll(distance) || self.bookmarks_scroll(distance) {
             return true;
         }
         if self.console_scroll(distance) {
