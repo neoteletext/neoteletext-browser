@@ -125,3 +125,32 @@ fn each_audio_channels_stream_is_checked_and_charged_on_its_own() {
     assert_eq!(hearing.held, 0);
     assert!(hearing.decoded(1, Audio::Forget(SOUND)).is_none(), "nothing left to forget");
 }
+
+/// RULE-21, RULE-60, RULE-63 (REQ-6535): a local sound's operations pass
+/// the trusted core's check; at most two local sounds play at once in a
+/// view and a third is refused; a rule's MIDI message goes only to an
+/// audio channel a local sound was started on and not stopped or replaced
+/// since; and a decoder cannot give a watch list.
+#[test]
+fn local_sounds_are_bounded_and_midi_goes_only_to_one() {
+    use protocol::audio::{LocalStart, WatchSlot};
+    let local = |channel: u8| Audio::Local {
+        channel,
+        start: LocalStart { sound: SOUND, family: 14, variant: 0, option: 0, split: 0, gain: 100, fade_ms: 5, duck_percent: 100, setup: vec![0, 0xC0, 0] },
+    };
+    let midi = |channel: u8| Audio::LocalMidi { channel, status: 0x90, data1: 60, data2: 100 };
+    let mut hearing = Hearing::default();
+    assert!(hearing.decoded(7, midi(0)).is_none(), "no local sound plays there");
+    assert!(hearing.decoded(7, Audio::LocalBank { channel: 0, sound: SOUND, index: 0, image: vec![1; 64] }).is_some());
+    assert!(hearing.decoded(7, local(0)).is_some());
+    assert!(hearing.decoded(7, midi(0)).is_some());
+    assert!(hearing.decoded(7, midi(1)).is_none(), "another audio channel");
+    assert!(hearing.decoded(8, midi(0)).is_none(), "another view");
+    assert!(hearing.decoded(7, local(1)).is_some(), "a second");
+    assert!(hearing.decoded(7, local(2)).is_none(), "a third is refused");
+    assert!(hearing.decoded(7, local(1)).is_some(), "one started again on its own audio channel is no third");
+    assert!(hearing.decoded(7, Audio::Stop { channel: 0, fade_ms: 5 }).is_some());
+    assert!(hearing.decoded(7, midi(0)).is_none(), "stopped: its notes are no longer its page's to play");
+    assert!(hearing.decoded(7, local(2)).is_some(), "and there is room for another");
+    assert!(hearing.decoded(7, Audio::Watch(vec![WatchSlot { channel: 0, kind: 1, part: 0 }])).is_none(), "only the trusted core gives a watch list");
+}
