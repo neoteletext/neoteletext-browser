@@ -1164,9 +1164,11 @@ mod tests {
         let on = naplps::Rect { x: 320, y: 240, width: 64, height: 48 }.on_canvas(480, 462).unwrap();
         let (left, top) = (on.x as usize, on.y as usize + TOP);
         let (right, bottom) = (left + on.width as usize, top + on.height as usize);
-        // Design row 240 is canvas row 231 less a fraction, so canvas row
-        // 230, which straddles its top edge, is the object's too.
-        assert_eq!((left, top), (240, 249), "the raster's (240, 249)");
+        // An object has the canvas pixels whose centre lies in its design
+        // rectangle (`naplps::design_pixel`): canvas row 230's centre is
+        // design row 239 (230.5 x 480 / 462), outside it, and row 231's is
+        // design row 240, so its top is canvas row 231, raster line 250.
+        assert_eq!((left, top), (240, 250), "the raster's (240, 250)");
         assert_eq!(pixels[top * 480 + left], 3, "the hidden region's cover, at its place");
         assert_eq!(pixels[top * 480 + right - 1], 3);
         assert_eq!(pixels[top * 480 + right], 0, "past its right edge");
