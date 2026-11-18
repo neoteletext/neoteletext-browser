@@ -141,6 +141,13 @@ enum Event {
     UpdaterEnded(Option<String>),
 }
 
+/// The frame a decoder last sent of a page (animation.md ANIM-5).
+struct DecodedFrame {
+    palette: Vec<[u8; 3]>,
+    screen: u8,
+    dots: Vec<u8>,
+}
+
 struct Core {
     session: Session,
     decoders: BTreeMap<u32, Decoder>,
@@ -219,6 +226,10 @@ struct Core {
     /// refresh period, one composition and when the interface told it, on
     /// this process's clock.
     frame_phase: Option<frame_phase::Compositions>,
+    /// The frame each decoder last sent of each page it shows, its
+    /// palette, screen colour and dots: what a changed rectangle is laid
+    /// over (animation.md ANIM-5).
+    decoded: BTreeMap<PageKey, DecodedFrame>,
     /// The tiles of the wall being selected in turn (REQ-1559).
     #[cfg(feature = "interaction")]
     wall_fill: wall_fill::WallFill,
@@ -380,6 +391,7 @@ impl Core {
             watching: BTreeMap::new(),
             page_cost: page_cost::PageCost::default(),
             frame_phase: None,
+            decoded: BTreeMap::new(),
             #[cfg(feature = "interaction")]
             wall_fill: wall_fill::WallFill::default(),
             #[cfg(feature = "interaction")]

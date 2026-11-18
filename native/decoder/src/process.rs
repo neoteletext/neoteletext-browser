@@ -613,13 +613,56 @@ fn draw(
             write_to_core(output, &FromDecoder::SubPages { page, step: rendered.subpages })?;
         }
         if new_image {
-            write_frame_to_core(output, page, &rendered.palette, rendered.screen, &rendered.indices)?;
+            // ANIM-5: only the rectangle that changed, when the rest is the
+            // frame last sent of the page in the same colours.
+            match before.and_then(|before| changed_area(before, &rendered)) {
+                Some((area, indices)) => {
+                    let message = FromDecoder::FrameArea { page, palette: rendered.palette.clone(), screen: rendered.screen, area, indices };
+                    write_to_core(output, &message)?;
+                }
+                None => write_frame_to_core(output, page, &rendered.palette, rendered.screen, &rendered.indices)?,
+            }
         }
         if let Some(replaced) = sent.insert(page, rendered) {
             *spare = replaced.indices;
         }
     }
     Ok(())
+}
+
+/// The rectangle of `after` that differs from `before` and its dots, when
+/// both are whole pages in the same palette and screen colour and the
+/// rectangle is not the whole page (animation.md ANIM-5).
+fn changed_area(before: &Rendered, after: &Rendered) -> Option<(protocol::decoder::PageArea, Vec<u8>)> {
+    let width = usize::from(interface_core::canvas::PAGE_WIDTH);
+    if before.palette != after.palette || before.screen != after.screen || before.indices.len() != after.indices.len() || width == 0 {
+        return None;
+    }
+    let (mut left, mut top, mut right, mut bottom) = (usize::MAX, usize::MAX, 0_usize, 0_usize);
+    for (row, (was, now)) in before.indices.chunks_exact(width).zip(after.indices.chunks_exact(width)).enumerate() {
+        let Some(first) = was.iter().zip(now).position(|(was, now)| was != now) else { continue };
+        let last = was.iter().zip(now).rposition(|(was, now)| was != now).unwrap_or(first);
+        left = left.min(first);
+        right = right.max(last.saturating_add(1));
+        top = top.min(row);
+        bottom = row.saturating_add(1);
+    }
+    let (across, down) = (right.checked_sub(left)?, bottom.checked_sub(top)?);
+    if across.saturating_mul(down) >= after.indices.len() {
+        return None;
+    }
+    let area = protocol::decoder::PageArea {
+        x: u16::try_from(left).ok()?,
+        y: u16::try_from(top).ok()?,
+        width: u16::try_from(across).ok()?,
+        height: u16::try_from(down).ok()?,
+    };
+    let mut dots = Vec::with_capacity(area.dots());
+    for row in top..bottom {
+        let start = row.saturating_mul(width).saturating_add(left);
+        dots.extend_from_slice(after.indices.get(start..start.saturating_add(across))?);
+    }
+    Some((area, dots))
 }
 
 /// Sends the voice operations the audio receiver produced, and the
@@ -639,4 +682,47 @@ fn send_sounds(engine: &mut Engine, output: &mut Output<'_>) -> Result<(), Proto
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, clippy::naive_bytecount, reason = "a test")]
+mod tests {
+    use super::*;
+
+    fn rendered(indices: Vec<u8>) -> Rendered {
+        Rendered {
+            palette: vec![[0, 0, 0], [255, 255, 255]],
+            screen: 0,
+            indices,
+            flash: None,
+            #[cfg(feature = "links")]
+            links: crate::Found::default(),
+            subpages: protocol::subpages::SubPageStep::default(),
+        }
+    }
+
+    /// ANIM-5: a one-cell change sends a frame of that cell's rectangle
+    /// alone; a change of colours, or of the whole page, sends it whole.
+    #[test]
+    fn a_one_cell_change_sends_that_cells_rectangle() {
+        let width = usize::from(interface_core::canvas::PAGE_WIDTH);
+        let before = rendered(vec![0; protocol::frame::PAGE_DOTS]);
+        // The cell at column 3, row 2: 12 dots by 20 from (36, 40).
+        let mut dots = before.indices.clone();
+        for y in 40..60 {
+            for x in 36..48 {
+                dots[y * width + x] = 1;
+            }
+        }
+        dots[45 * width + 40] = 0;
+        let after = rendered(dots);
+        let (area, indices) = changed_area(&before, &after).unwrap();
+        assert_eq!(area, protocol::decoder::PageArea { x: 36, y: 40, width: 12, height: 20 });
+        assert_eq!(indices.len(), 240);
+        assert_eq!(indices.iter().filter(|&&index| index == 1).count(), 239, "the cell's dots as drawn");
+        let mut recoloured = after.clone();
+        recoloured.palette[1] = [255, 0, 0];
+        assert!(changed_area(&before, &recoloured).is_none(), "other colours: whole");
+        assert!(changed_area(&before, &rendered(vec![1; protocol::frame::PAGE_DOTS])).is_none(), "the whole page: whole");
+    }
 }

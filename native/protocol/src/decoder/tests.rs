@@ -134,6 +134,15 @@ fn every_kind_round_trips() {
         FromDecoder::StoreFull,
         FromDecoder::Missing(vec![0x100, 0x899]),
         FromDecoder::Frame { page: 0x123, palette: vec![[0, 0, 0], [255, 255, 255]], screen: 1, indices },
+        // ANIM-5: a page's changed rectangle, one cell and the page's last dot.
+        FromDecoder::FrameArea {
+            page: 0x123,
+            palette: vec![[0, 0, 0], [255, 255, 255]],
+            screen: 1,
+            area: PageArea { x: 12, y: 20, width: 12, height: 20 },
+            indices: vec![1; 240],
+        },
+        FromDecoder::FrameArea { page: 0x123, palette: vec![[0, 0, 0]], screen: 0, area: PageArea { x: 479, y: 499, width: 1, height: 1 }, indices: vec![0] },
         FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_picture(), pick: Some(regis_pick()) },
         // REQ-6399: a part of a picture, with no pick record; and a part that changed nowhere.
         FromDecoder::Regis { page: 0x123, sub: 2, picture: regis_part(crate::regis::RegisArea { x: 10, y: 20, width: 6, height: 2 }), pick: None },
@@ -311,4 +320,31 @@ fn picture_messages_are_bounded() {
     frame = vec![146, 0, 0, 0, 4];
     frame.extend(length);
     assert!(read_from_decoder(&mut frame.as_slice()).is_err());
+}
+
+/// ANIM-5: a page's rectangle is refused outside the page, empty, with
+/// dots that are not its own, or an index outside the palette.
+#[test]
+fn a_frame_area_outside_its_bounds_is_refused() {
+    let palette = vec![[0, 0, 0], [255, 255, 255]];
+    for (area, indices) in [
+        (PageArea { x: 470, y: 0, width: 11, height: 1 }, vec![0; 11]),
+        (PageArea { x: 0, y: 499, width: 1, height: 2 }, vec![0; 2]),
+        (PageArea { x: 0, y: 0, width: 0, height: 5 }, vec![]),
+        (PageArea { x: 0, y: 0, width: 2, height: 2 }, vec![0; 3]),
+        (PageArea { x: 0, y: 0, width: 1, height: 1 }, vec![2]),
+    ] {
+        let message = FromDecoder::FrameArea { page: 0x100, palette: palette.clone(), screen: 0, area, indices };
+        assert!(write_to_core(&mut Vec::new(), &message).is_err(), "{area:?}");
+    }
+    // Written past the writer's check: an area off the page is refused on reading.
+    let mut payload = vec![0x01, 0x00, 1, 0, 0, 0, 0];
+    for field in [470_u16, 0, 11, 1] {
+        payload.extend_from_slice(&field.to_be_bytes());
+    }
+    payload.extend_from_slice(&[0; 11]);
+    let mut bytes = vec![kinds::KIND_FRAME_AREA];
+    bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+    bytes.extend_from_slice(&payload);
+    assert!(read_from_decoder(&mut bytes.as_slice()).is_err());
 }

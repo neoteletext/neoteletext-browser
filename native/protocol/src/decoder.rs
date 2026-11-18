@@ -36,7 +36,7 @@ pub use bookmarks::{BookmarkEntry, MAX_BOOKMARK_ENTRIES, MAX_BOOKMARK_FILE, MAX_
 // Map of Presentation Levels 2.5 and 3.5 (EN 300 706 clause 12.4) and the
 // receiver's eight colours after it (the engine's DEC-2464).
 pub use crate::frame::MAX_COLOURS;
-pub use frame::write_frame_to_core;
+pub use frame::{PageArea, write_frame_to_core};
 pub use view::View;
 pub(crate) use view::names_one_subpage;
 
@@ -235,6 +235,21 @@ pub enum FromDecoder {
         /// Table 4, Default Screen Colour; clause 12.3, Full Screen Colour).
         screen: u8,
         /// One palette index per dot, row by row.
+        indices: Vec<u8>,
+    },
+    /// The rectangle of a teletext page that changed since the frame the
+    /// decoder last sent of it (animation.md ANIM-5): laid over that
+    /// frame, whose palette and screen colour it has.
+    FrameArea {
+        /// The page number.
+        page: u16,
+        /// Red, green and blue of each colour the page uses, as the frame's.
+        palette: Vec<[u8; 3]>,
+        /// The screen colour's index, as the frame's.
+        screen: u8,
+        /// Where, in dots of the page.
+        area: PageArea,
+        /// One palette index per dot of the area, row by row.
         indices: Vec<u8>,
     },
     /// A sub-page drawn by the ReGIS renderer (DEC-6335), which is shown in
@@ -721,6 +736,7 @@ fn write_regis_links(out: &mut dyn Write, page: u16, sub: u16, links: &[(u16, St
 
 /// # Errors
 /// When writing fails or the message breaks a bound.
+#[allow(clippy::too_many_lines, reason = "one arm a message of the pipe, each a line or two")]
 pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), ProtocolError> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -732,6 +748,9 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             KIND_ARRIVED
         }
         FromDecoder::Frame { page, palette, screen, indices } => return write_frame_to_core(out, *page, palette, *screen, indices),
+        FromDecoder::FrameArea { page, palette, screen, area, indices } => {
+            return frame::write_frame_area_to_core(out, *page, palette, *screen, *area, indices);
+        }
         FromDecoder::Updated { page } => page_alone(&mut payload, *page, KIND_UPDATED),
         FromDecoder::Regis { page, sub, picture, pick } => return frame::write_regis_to_core(out, *page, *sub, picture, pick.as_ref()),
         #[cfg(feature = "links")]
@@ -848,6 +867,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             let offset = payload.len().saturating_sub(PAGE_DOTS);
             return Ok(Some(FromDecoder::Frame { page, palette, screen, indices: crate::tail(payload, offset) }));
         }
+        kinds::KIND_FRAME_AREA => frame::read_frame_area(&mut fields)?,
         KIND_UPDATED => FromDecoder::Updated { page: fields.channel_page()? },
         KIND_REGIS => {
             let page = fields.channel_page()?;

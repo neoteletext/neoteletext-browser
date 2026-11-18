@@ -44,6 +44,11 @@ pub(crate) struct RegisImage {
     /// Which picture of its page the decoder sent it as: a part is laid
     /// over the picture it names as its base and no other.
     sequence: u32,
+    /// Its sixteen colours and each pixel's index into them: a part that
+    /// changes only the colours, as a NAPLPS BLINK does, carries no pixels
+    /// and the picture is coloured again here (animation.md ANIM-5).
+    palette: [[u8; 3]; REGIS_COLOURS],
+    indices: Vec<u8>,
 }
 
 /// Which pixels of a ReGIS picture a message carries (REQ-6399): a whole
@@ -70,6 +75,16 @@ impl RegisPart {
     pub const fn whole(number: u32) -> Self {
         Self { number, base: 0, x: 0, y: 0, width: REGIS_SIZE.0, height: REGIS_SIZE.1 }
     }
+}
+
+/// A picture's pixels in colour: each index's colour of `palette`, opaque.
+fn coloured(indices: &[u8], palette: &[[u8; 3]; REGIS_COLOURS]) -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(indices.len().saturating_mul(RGBA_BYTES));
+    for &index in indices {
+        let [red, green, blue] = palette.get(usize::from(index)).copied().unwrap_or_default();
+        rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
+    }
+    rgba
 }
 
 impl RegisImage {
@@ -163,35 +178,61 @@ impl Painter {
         let [[red, green, blue], ..] = *palette;
         let background = Colour { red, green, blue };
         if !whole {
-            let Some(held) = self.regis.get_mut(&key).filter(|held| held.sequence == part.base && held.background == background) else { return Ok(()) };
+            let Some(held) = self.regis.get_mut(&key).filter(|held| held.sequence == part.base) else { return Ok(()) };
             held.sequence = part.number;
-            if packed.is_empty() {
-                return Ok(());
+            // The part's pixels into the picture's indices.
+            for (row, line) in packed.chunks_exact((across / 2).max(1)).enumerate() {
+                let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left);
+                let Some(place) = held.indices.get_mut(start..start.saturating_add(across)) else { return Err(PageError::RegisSize) };
+                for (pixel, index) in place.iter_mut().zip(line.iter().flat_map(|byte| [byte >> 4, byte & 0x0F])) {
+                    *pixel = index;
+                }
             }
-            let data = Arc::make_mut(&mut held.pixmap).data_as_u8_slice_mut();
-            let row_bytes = across.saturating_mul(RGBA_BYTES);
-            for (row, line) in packed.chunks_exact(across / 2).enumerate() {
-                let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left).saturating_mul(RGBA_BYTES);
-                let Some(place) = data.get_mut(start..start.saturating_add(row_bytes)) else { return Err(PageError::RegisSize) };
-                for (pixel, index) in place.as_chunks_mut::<RGBA_BYTES>().0.iter_mut().zip(line.iter().flat_map(|byte| [byte >> 4, byte & 0x0F])) {
-                    let [red, green, blue] = colour(index);
-                    *pixel = [red, green, blue, OPAQUE];
+            let mut changed = DeviceBox { x0: part.x, y0: part.y, x1: part.x.saturating_add(part.width), y1: part.y.saturating_add(part.height) };
+            if held.palette == *palette {
+                if packed.is_empty() {
+                    return Ok(());
+                }
+                let data = Arc::make_mut(&mut held.pixmap).data_as_u8_slice_mut();
+                let row_bytes = across.saturating_mul(RGBA_BYTES);
+                for row in 0..down {
+                    let start = top.saturating_add(row).saturating_mul(usize::from(REGIS_SIZE.0)).saturating_add(left);
+                    let (Some(place), Some(line)) = (
+                        data.get_mut(start.saturating_mul(RGBA_BYTES)..start.saturating_mul(RGBA_BYTES).saturating_add(row_bytes)),
+                        held.indices.get(start..start.saturating_add(across)),
+                    ) else {
+                        return Err(PageError::RegisSize);
+                    };
+                    for (pixel, &index) in place.as_chunks_mut::<RGBA_BYTES>().0.iter_mut().zip(line) {
+                        let [red, green, blue] = colour(index);
+                        *pixel = [red, green, blue, OPAQUE];
+                    }
+                }
+            } else {
+                // New colours: every pixel is coloured again from its index,
+                // and what changed colour is drawn again.
+                let rgba = coloured(&held.indices, palette);
+                changed = changed.union(crate::damage::changed_pixels(&held.pixmap, &rgba, REGIS_SIZE.0));
+                let metadata = PixelMetadata { may_have_transparency: false, alpha_type: ImageAlphaType::Alpha };
+                held.pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
+                held.palette = *palette;
+                if held.background != background {
+                    // Colour 0 is drawn around the picture too.
+                    held.background = background;
+                    self.changed.insert(key, DeviceBox::whole(PAGE_WIDTH, PAGE_HEIGHT));
                 }
             }
             held.number = self.next_image;
             self.next_image = self.next_image.wrapping_add(1);
-            let pixels = DeviceBox { x0: part.x, y0: part.y, x1: part.x.saturating_add(part.width), y1: part.y.saturating_add(part.height) };
-            let since = self.regis_changed.get(&key).copied().unwrap_or_default();
-            self.regis_changed.insert(key, since.union(pixels));
+            if !changed.is_empty() {
+                let since = self.regis_changed.get(&key).copied().unwrap_or_default();
+                self.regis_changed.insert(key, since.union(changed));
+            }
             return Ok(());
         }
-        let mut rgba = Vec::with_capacity(REGIS_PIXELS * RGBA_BYTES);
-        for byte in packed {
-            for index in [byte >> 4, byte & 0x0F] {
-                let [red, green, blue] = colour(index);
-                rgba.extend_from_slice(&[red, green, blue, OPAQUE]);
-            }
-        }
+        let mut indices = Vec::with_capacity(REGIS_PIXELS);
+        indices.extend(packed.iter().flat_map(|byte| [byte >> 4, byte & 0x0F]));
+        let rgba = coloured(&indices, palette);
         // Only where a whole picture differs from the one held is drawn
         // again; a picture on another background, or the first, is drawn
         // whole, with what lies around it.
@@ -201,6 +242,8 @@ impl Painter {
                 if pixels.is_empty() {
                     // The same picture again: only its number is new.
                     held.sequence = part.number;
+                    held.palette = *palette;
+                    held.indices = indices;
                     return Ok(());
                 }
                 let since = self.regis_changed.get(&key).copied().unwrap_or_default();
@@ -214,7 +257,7 @@ impl Painter {
         let pixmap = Arc::new(Pixmap::from_parts(rgba, REGIS_SIZE.0, REGIS_SIZE.1, metadata));
         let number = self.next_image;
         self.next_image = number.wrapping_add(1);
-        self.regis.insert(key, RegisImage { pixmap, background, number, sequence: part.number });
+        self.regis.insert(key, RegisImage { pixmap, background, number, sequence: part.number, palette: *palette, indices });
         Ok(())
     }
 

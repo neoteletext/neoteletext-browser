@@ -23,6 +23,11 @@ const DECODER_RESTART_WINDOW: std::time::Duration = super::SLEEP_CHECK;
 
 impl Core {
     pub(super) fn tell(&mut self, channel: u32, message: ToDecoder) {
+        // A decoder forgets the frames of pages it stops showing, and sends
+        // them whole when shown again: so does this (ANIM-5).
+        if let ToDecoder::Showing(pages) = &message {
+            self.decoded.retain(|key, _| key.channel != channel || pages.contains(&key.page));
+        }
         if let Some(decoder) = self.decoders.get_mut(&channel) {
             // A decoder that cannot be written to has stopped; its reader
             // reports that, and its pages stay as they were.
@@ -102,6 +107,9 @@ impl Core {
                     let _ = decoder.tell(&ToDecoder::PaintGradually(false));
                 }
                 self.rules_decoder_gone(*id);
+                // A new decoder has sent no frame: a rectangle is laid only
+                // over one it sent (ANIM-5).
+                self.decoded.retain(|key, _| key.channel != *id);
                 self.decoders.insert(*id, decoder);
                 // And the interface's frames, to paint and tick just
                 // before a composition (page-rules.md RULE-98 item 2).

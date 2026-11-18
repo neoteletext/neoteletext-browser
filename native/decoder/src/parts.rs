@@ -112,10 +112,10 @@ pub(crate) struct Figures {
 /// The parts to send of a picture whose `pixels`, one byte each, `palette`
 /// and `pick` record are given, and whether its pick record differs from
 /// the one last sent: the areas that changed since `sent`, each a part of
-/// the one before it; or the whole picture when nothing was sent, the
-/// receiver holds another sub-page's (`same_sub` false) or its colours
-/// changed. A picture that changed nowhere is a part of no pixels, which
-/// carries its new figures. `sent` is brought up to date. `None` when the
+/// the one before it; or the whole picture when nothing was sent or the
+/// receiver holds another sub-page's (`same_sub` false). A picture that
+/// changed nowhere is a part of no pixels, which carries its new figures
+/// and its colours: new colours alone send no pixels (ANIM-5). `sent` is brought up to date. `None` when the
 /// pixels are not a whole picture of colours below sixteen.
 pub(crate) fn parts_to_send(
     sent: &mut Option<Sent>,
@@ -125,7 +125,10 @@ pub(crate) fn parts_to_send(
     pick: &RegisPick,
     figures: Figures,
 ) -> Option<(Vec<RegisPicture>, bool)> {
-    let base = sent.as_mut().filter(|sent| same_sub && sent.palette == palette && sent.pixels.len() == pixels.len());
+    // A part may carry new colours: the interface colours the picture
+    // again from the pixels it holds, so a change of colours alone, as a
+    // NAPLPS BLINK makes, sends no pixels (animation.md ANIM-5).
+    let base = sent.as_mut().filter(|sent| same_sub && sent.pixels.len() == pixels.len());
     let (areas, base_number, pick_changed) = match &base {
         Some(sent) => (changed_areas(&sent.pixels, pixels), sent.number, sent.pick != *pick),
         None => (vec![RegisArea::WHOLE], 0, true),
@@ -141,6 +144,7 @@ pub(crate) fn parts_to_send(
     match base {
         Some(sent) => {
             sent.pixels.copy_from_slice(pixels);
+            sent.palette = palette;
             sent.number = number;
             if pick_changed {
                 sent.pick.clone_from(pick);
@@ -149,4 +153,29 @@ pub(crate) fn parts_to_send(
         None => *sent = Some(Sent { pixels: pixels.to_vec(), palette, number, pick: pick.clone() }),
     }
     Some((parts, pick_changed))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
+mod tests {
+    use super::*;
+    use protocol::regis::REGIS_HEIGHT;
+
+    /// ANIM-5: a picture whose colours alone changed, as a NAPLPS BLINK
+    /// makes, is sent as a part of no pixels carrying the new colours.
+    #[test]
+    fn new_colours_alone_send_no_pixels() {
+        let pixels = vec![1_u8; REGIS_WIDTH * REGIS_HEIGHT];
+        let mut palette = [[0_u8; 3]; REGIS_COLOURS];
+        palette[1] = [255, 255, 255];
+        let figures = Figures { commits: 0, work: 0, language: PictureLanguage::Naplps };
+        let mut sent = None;
+        let (first, _) = parts_to_send(&mut sent, false, &pixels, palette, &RegisPick::default(), figures).unwrap();
+        assert!(first[0].whole());
+        palette[1] = [255, 0, 0];
+        let (blinked, _) = parts_to_send(&mut sent, true, &pixels, palette, &RegisPick::default(), figures).unwrap();
+        assert_eq!(blinked.len(), 1);
+        assert!(!blinked[0].whole() && blinked[0].packed.is_empty() && blinked[0].area == RegisArea::default(), "no pixels");
+        assert_eq!(blinked[0].palette, palette, "the new colours");
+    }
 }

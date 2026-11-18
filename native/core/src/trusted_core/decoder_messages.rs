@@ -55,7 +55,12 @@ impl Core {
                     self.send(&ToInterface::Updated { channel, page })?;
                 }
             }
-            FromDecoder::Frame { page, palette, screen, indices } => self.frame(PageKey { channel, page }, palette, screen, indices)?,
+            FromDecoder::Frame { page, palette, screen, indices } => {
+                let key = PageKey { channel, page };
+                self.decoded.insert(key, super::DecodedFrame { palette: palette.clone(), screen, dots: indices.clone() });
+                self.frame(key, palette, screen, indices)?;
+            }
+            FromDecoder::FrameArea { page, palette, screen, area, indices } => self.frame_area(PageKey { channel, page }, palette, screen, area, &indices)?,
             // A page drawn in ReGIS (DEC-6335): its pick record stays here,
             // for PICK, and its picture goes to the interface, which shows
             // it in the page's place.
@@ -169,6 +174,19 @@ impl Core {
         self.send_controls()
     }
 
+    /// ANIM-5: the rectangle of a page that changed, laid over the frame
+    /// the decoder last sent of it; one with no such frame, or in other
+    /// colours, is the decoder's fault and is dropped.
+    fn frame_area(&mut self, key: PageKey, palette: Vec<[u8; 3]>, screen: u8, area: protocol::decoder::PageArea, indices: &[u8]) -> Result<(), String> {
+        let Some(held) = self.decoded.get_mut(&key).filter(|held| held.palette == palette && held.screen == screen) else {
+            self.note(Level::Warning, Some(key.channel), &format!("page {:03X}: a changed rectangle of no frame held, dropped", key.page));
+            return Ok(());
+        };
+        lay_area(&mut held.dots, area, indices);
+        let whole = held.dots.clone();
+        self.frame(key, palette, screen, whole)
+    }
+
     /// Sends a page's frame to the interface (`architecture.md` section 10).
     pub(super) fn send_frame(&mut self, key: PageKey, version: u32, image: Vec<u8>) -> Result<(), String> {
         // The image's links first, so the interface has them when the
@@ -178,5 +196,48 @@ impl Core {
         self.send(&ToInterface::Frame { key, version, image })?;
         // The page drew: its tab's visit is recorded (requirement 20.1).
         self.record_pending(key.channel)
+    }
+}
+
+/// Lays `indices`, the dots of `area` row by row, over a page's `dots`.
+/// The protocol's reader checked that the area lies in the page and that
+/// the indices are its own.
+fn lay_area(dots: &mut [u8], area: protocol::decoder::PageArea, indices: &[u8]) {
+    let width = usize::from(interface_core::canvas::PAGE_WIDTH);
+    let across = usize::from(area.width);
+    for (row, line) in indices.chunks_exact(across.max(1)).enumerate() {
+        let start = usize::from(area.y).saturating_add(row).saturating_mul(width).saturating_add(usize::from(area.x));
+        if let Some(place) = dots.get_mut(start..start.saturating_add(across)) {
+            place.copy_from_slice(line);
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, clippy::naive_bytecount, reason = "a test")]
+mod area_tests {
+    use super::super::test_support::test_core;
+    use super::*;
+
+    /// ANIM-5: a changed rectangle is laid over the frame the decoder last
+    /// sent of the page, and dropped when there is none or its colours are
+    /// other.
+    #[test]
+    fn a_changed_rectangle_is_laid_over_the_frame_held() {
+        let mut core = test_core();
+        let palette = vec![[0, 0, 0], [255, 255, 255]];
+        let key = PageKey { channel: 1, page: 0x100 };
+        let area = protocol::decoder::PageArea { x: 36, y: 40, width: 12, height: 20 };
+        core.decoded(1, FromDecoder::FrameArea { page: 0x100, palette: palette.clone(), screen: 0, area, indices: vec![1; 240] }).unwrap();
+        assert!(!core.decoded.contains_key(&key), "no frame to lay it over");
+        core.decoded(1, FromDecoder::Frame { page: 0x100, palette: palette.clone(), screen: 0, indices: vec![0; protocol::frame::PAGE_DOTS] }).unwrap();
+        core.decoded(1, FromDecoder::FrameArea { page: 0x100, palette: palette.clone(), screen: 0, area, indices: vec![1; 240] }).unwrap();
+        let width = usize::from(interface_core::canvas::PAGE_WIDTH);
+        let dots = &core.decoded[&key].dots;
+        assert_eq!(dots.iter().filter(|&&dot| dot == 1).count(), 240);
+        assert!((40..60).all(|y| (36..48).all(|x| dots[y * width + x] == 1)), "in its place");
+        let other = vec![[0, 0, 0], [255, 0, 0]];
+        core.decoded(1, FromDecoder::FrameArea { page: 0x100, palette: other, screen: 0, area, indices: vec![0; 240] }).unwrap();
+        assert_eq!(core.decoded[&key].dots.iter().filter(|&&dot| dot == 1).count(), 240, "other colours are not laid over it");
     }
 }

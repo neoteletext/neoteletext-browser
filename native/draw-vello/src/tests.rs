@@ -463,6 +463,30 @@ fn a_regis_picture_whose_pixels_changed_redraws_only_them_and_matches_a_whole_fr
     assert_eq!(frame(&mut painter, &mut browser, SETTLED).0, [], "the same picture again changes nothing");
 }
 
+/// ANIM-5: a part that changes only the colours, as a NAPLPS BLINK does,
+/// carries no pixels; the picture is coloured again from the pixels held,
+/// only what changed colour is drawn again, and the window is what a whole
+/// picture in the new colours gives.
+#[test]
+fn a_part_of_new_colours_alone_recolours_the_picture() {
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    painter.set_regis(FRONT, &regis_palette(), RegisPart::whole(1), &regis_packed(Some((300, 5, 12)))).unwrap();
+    frame(&mut painter, &mut browser, SETTLED);
+    frame(&mut painter, &mut browser, SETTLED);
+    let mut blinked = regis_palette();
+    blinked[7] = [255, 0, 0];
+    let part = RegisPart { number: 2, base: 1, x: 0, y: 0, width: 0, height: 0 };
+    painter.set_regis(FRONT, &blinked, part, &[]).unwrap();
+    let (damage, words) = frame(&mut painter, &mut browser, SETTLED);
+    let whole = covered(&[DeviceBox::whole(WIDTH, HEIGHT)]);
+    assert!(!damage.is_empty() && covered(&damage) < whole / 100, "only the pixels whose colour changed: {damage:?}");
+    let whole_picture =
+        |painter: &mut Painter, _: &mut Browser| painter.set_regis(FRONT, &blinked, RegisPart::whole(2), &regis_packed(Some((300, 5, 12)))).unwrap();
+    assert_eq!(differing(&words, &fresh(&pages, SETTLED, whole_picture)), 0, "the same as the whole picture in its new colours");
+}
+
 /// One frame of a ReGIS picture alone in a window, drawn across `area`.
 #[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
 fn regis_alone(size: (u16, u16), area: Rect, lit: (usize, usize, usize)) -> Vec<u32> {

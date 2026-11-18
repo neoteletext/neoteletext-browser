@@ -95,3 +95,7 @@ pub(super) const KIND_PAINT_GRADUALLY: u8 = 188;
 pub(super) const KIND_CONNECTION_ENDED: u8 = 189;
 pub(super) const KIND_CUE_HEARD: u8 = 190;
 pub(super) const KIND_FRAME_PHASE: u8 = 191;
+// Decoder to trusted core: the rectangle of a teletext page that changed
+// (animation.md ANIM-5), in the next number free across every pipe after
+// the interface's 192.
+pub(super) const KIND_FRAME_AREA: u8 = 193;
