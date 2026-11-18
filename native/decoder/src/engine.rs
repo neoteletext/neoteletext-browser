@@ -212,6 +212,9 @@ pub struct Engine {
     /// The platform asks for reduced motion (REQ-754, renderer parity
     /// PAR-33): flash shows its characters steadily in the on phase.
     reduced_motion: bool,
+    /// The picture sub-pages' sources kept for back and forward (renderer
+    /// parity PAR-34).
+    pictures: crate::page_cache::PictureSources,
     /// The area of a page under the pointer and whether it is pressed:
     /// drawn in its look (DOC-1947).
     #[cfg(feature = "links")]
@@ -304,6 +307,7 @@ impl Engine {
             views: BTreeMap::new(),
             held: BTreeMap::new(),
             reduced_motion: false,
+            pictures: crate::page_cache::PictureSources::default(),
             #[cfg(feature = "links")]
             looks: BTreeMap::new(),
             #[cfg(feature = "interaction")]

@@ -236,6 +236,72 @@ fn a_held_pictures_records_are_read_and_shown_only_at_the_release() {
     assert_eq!((receiver.at(105, 55), receiver.at(405, 305)), (0, 3));
 }
 
+/// Renderer parity PAR-34: twenty ReGIS sub-pages visited, more than the
+/// four live terminals hold, are each shown again from the source kept,
+/// with no record sent again; so is a NAPLPS sub-page with its objects and
+/// its cursor; and a sub-page's drawing links go to the trusted core again.
+#[test]
+fn twenty_picture_sub_pages_visited_are_shown_again_from_the_sources_kept() {
+    use neoteletext_web::records::drawing_links::{DrawingLink, encode};
+    const VISITED: u16 = 20;
+    let mut engine = Engine::new();
+    let take = |engine: &mut Engine, page: u16| {
+        engine.show_pictures_again(page);
+        let (regis, naplps) = engine.take_pictures(page, None, 0);
+        regis.or(naplps).map(|drawn| unpack(&drawn.picture.packed))
+    };
+    for page in PAGE..PAGE + VISITED {
+        let scene = format!("D(B1)W(I3)F(V[0,0][19,0][19,19][0,19])D(E)D(S1(X{},Y50),C)", 100 + (page - PAGE) * 10);
+        engine.feed_whole(true, true, &regis(page, 1, 0, scene.as_bytes()));
+        assert!(take(&mut engine, page).is_some(), "page {page:x} visited");
+    }
+    let mut packets = Vec::new();
+    encode(address(PAGE), SubCode::new(0), &[DrawingLink { drawing: 1, target: b"200" }], 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes))
+        .unwrap();
+    engine.feed_whole(true, true, &packets);
+    let _ = engine.regis().take_links();
+    assert!(!engine.regis().has(PAGE), "the live terminals no longer hold the first");
+    for page in PAGE..PAGE + VISITED {
+        let pixels = take(&mut engine, page).unwrap_or_else(|| panic!("page {page:x} shown again"));
+        let x = 105 + usize::from(page - PAGE) * 10;
+        assert_eq!(pixels[55 * REGIS_WIDTH + x], 3, "page {page:x}: its own picture");
+    }
+    assert_eq!(engine.regis().take_links(), [(PAGE, 0, vec![(1, "200".to_owned())])], "its links again, for the trusted core");
+
+    // A NAPLPS sub-page with its objects and its cursor.
+    let mut bytes = vec![DEF_MACRO, 0x20];
+    bytes.extend(rectangle(3, 0, 0, 32, 32));
+    bytes.extend([END, 0x3E, 0x40]);
+    let naplps_page = 0x300;
+    engine.feed_whole(true, true, &naplps(naplps_page, 1, 0, &bytes));
+    let mut packets = Vec::new();
+    neoteletext_web::records::naplps_objects::encode(
+        (address(naplps_page), SubCode::new(0), 1),
+        &[object(1, ObjectKind::Macro, (100, 100), &[0x20])],
+        0,
+        0,
+        &mut |packet| {
+            packets.extend_from_slice(&packet.bytes);
+        },
+    )
+    .unwrap();
+    engine.feed_whole(true, true, &packets);
+    let mut packets = Vec::new();
+    let cursor = neoteletext_web::records::regis_cursor::RegisCursorRecord { page: address(naplps_page), subcode: SubCode::new(0), drawing: 1 };
+    neoteletext_web::records::regis_cursor::encode(cursor, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+    engine.feed_whole(true, true, &packets);
+    let first = take(&mut engine, naplps_page).unwrap();
+    // Its live terminal goes, as a page closed drops it (RULE-111).
+    engine.naplps().forget(naplps_page, 0);
+    assert!(!engine.naplps().has(naplps_page));
+    assert_eq!(take(&mut engine, naplps_page), Some(first), "drawn again from its stream and objects");
+    assert_eq!(engine.naplps().cursor(naplps_page, 0), 1, "with its cursor");
+    // The channel sends the same stream again on the page's next selection:
+    // it is drawn again from its first byte, not lost as a gap.
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, b"D(B1)W(I5)F(V[0,0][19,0][19,19][0,19])D(E)D(S1(X100,Y50),C)"));
+    assert_eq!(take(&mut engine, PAGE).unwrap()[55 * REGIS_WIDTH + 105], 5, "the stream sent again is drawn");
+}
+
 /// RULE-26, ANIM-6 (REQ-6536): through the picture the rule table's host
 /// is given, a rule's actions hide, show and re-look a ReGIS drawing, and
 /// set its frame; its conditions read the state back; an operation on a

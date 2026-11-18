@@ -128,6 +128,20 @@ impl Engine {
         if self.held(page) {
             return (None, None);
         }
+        // A picture sub-page no live terminal holds is drawn again from its
+        // kept source at once (PAR-34), as a teletext page is from the store.
+        if !self.regis.holds(page, sub)
+            && !self.naplps.holds(page, sub)
+            && let Some((records, links)) = self.pictures.restore(page, sub, now_us)
+        {
+            self.apply_held_kept(records, false);
+            #[cfg(feature = "links")]
+            if let Some(links) = links {
+                self.regis.give_links(links);
+            }
+            #[cfg(not(feature = "links"))]
+            let _ = links;
+        }
         (self.regis.take(page, sub, now_us), self.naplps.take(page, sub))
     }
 

@@ -456,7 +456,10 @@ impl RegisPages {
     pub fn read(&mut self, record: &RegisRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
         self.records = self.records.saturating_add(1);
-        let fresh = self.pages.get(&key).is_none_or(|page| page.generation != record.generation);
+        // A first byte again, of the same generation, is the stream sent
+        // again whole, as a channel does when the page is selected again
+        // after it was drawn from its kept source (PAR-34): it starts over.
+        let fresh = self.pages.get(&key).is_none_or(|page| page.generation != record.generation || (record.offset == 0 && page.next != 0));
         if fresh {
             // A stream is followed from its first byte: one joined part
             // way through waits for the next generation.
@@ -537,20 +540,18 @@ impl RegisPages {
     /// a drawing named twice, or a link past the most a sub-page has,
     /// drops the whole sending, as does a part out of its place.
     #[cfg(feature = "links")]
-    pub fn read_links(&mut self, record: &neoteletext_web::records::drawing_links::DrawingLinksRecord<'_>) {
+    pub fn read_links(&mut self, record: &neoteletext_web::records::drawing_links::DrawingLinksRecord<'_>) -> Option<&DrawingLinks> {
         let key = (record.page.mpp(), record.subcode.value());
         if record.part == 0 {
             self.link_parts = Some(LinkParts { key, next: 0, parts: record.parts, links: Vec::new() });
         }
-        let Some(mut parts) = self.link_parts.take().filter(|parts| parts.key == key && parts.next == record.part && parts.parts == record.parts) else {
-            return;
-        };
+        let mut parts = self.link_parts.take().filter(|parts| parts.key == key && parts.next == record.part && parts.parts == record.parts)?;
         for link in record.links() {
             let named_twice = parts.links.iter().any(|(drawing, _)| *drawing == link.drawing);
             // A target is printable ASCII, as the reader checked.
-            let Ok(target) = core::str::from_utf8(link.target) else { return };
+            let target = core::str::from_utf8(link.target).ok()?;
             if named_twice || parts.links.len() >= protocol::regis::MAX_REGIS_LINKS {
-                return;
+                return None;
             }
             parts.links.push((link.drawing, target.to_owned()));
         }
@@ -559,9 +560,19 @@ impl RegisPages {
             // Only the latest of a sub-page's links is waiting to be sent.
             self.links.retain(|(page, sub, _)| (*page, *sub) != key);
             self.links.push((key.0, key.1, parts.links));
+            self.links.last()
         } else {
             self.link_parts = Some(parts);
+            None
         }
+    }
+
+    /// A sub-page's drawing links, kept with its picture's source, for the
+    /// trusted core again as the picture is drawn again (PAR-34).
+    #[cfg(feature = "links")]
+    pub(crate) fn give_links(&mut self, links: DrawingLinks) {
+        self.links.retain(|(page, sub, _)| (*page, *sub) != (links.0, links.1));
+        self.links.push(links);
     }
 
     /// The drawing links received whole since they were last taken.

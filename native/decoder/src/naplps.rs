@@ -677,7 +677,10 @@ impl NaplpsPages {
     pub fn read(&mut self, record: &RegisRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
         self.records = self.records.saturating_add(1);
-        let fresh = self.pages.get(&key).is_none_or(|page| page.generation != record.generation);
+        // A first byte again, of the same generation, is the stream sent
+        // again whole, as a channel does when the page is selected again
+        // after it was drawn from its kept source (PAR-34): it starts over.
+        let fresh = self.pages.get(&key).is_none_or(|page| page.generation != record.generation || (record.offset == 0 && page.next != 0));
         if fresh {
             // A stream is followed from its first byte: one joined part
             // way through waits for the next generation.

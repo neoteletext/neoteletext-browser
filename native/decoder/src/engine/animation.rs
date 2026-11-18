@@ -140,8 +140,19 @@ impl Engine {
     /// when its page has no frame open, or all together at its frame's
     /// end (ANIM-2).
     fn apply_held(&mut self, items: Vec<Held>) {
+        self.apply_held_kept(items, true);
+    }
+
+    /// [`Self::apply_held`]; with `keep`, each picture record is kept as its
+    /// sub-page's source too (renderer parity PAR-34), as a record from the
+    /// channel is and one drawn again from the source is not.
+    pub(super) fn apply_held_kept(&mut self, items: Vec<Held>, keep: bool) {
         let place = |page: u16, sub: u16| PageAddress::from_mpp(page).map(|page| (page, SubCode::new(sub)));
+        let now = self.now_us();
         for item in items {
+            if keep {
+                self.pictures.record(&item, now);
+            }
             match item {
                 Held::Packet(packet, meta) => self.animation.released.push((packet, meta)),
                 Held::Stream { language, page: number, sub, generation, offset, data } => {

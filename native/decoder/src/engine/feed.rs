@@ -188,7 +188,10 @@ impl Engine {
                     // engine's REQ-6370), for the trusted core.
                     #[cfg(feature = "links")]
                     neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) => {
-                        self.regis.read_links(&record);
+                        // Kept with the sub-page's picture source (PAR-34).
+                        if let Some((page, sub, links)) = self.regis.read_links(&record) {
+                            self.pictures.record_links(*page, *sub, links);
+                        }
                     }
                     _ => {}
                 }
