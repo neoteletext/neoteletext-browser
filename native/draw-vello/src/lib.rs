@@ -236,6 +236,11 @@ impl Painter {
         for &area in damage.boxes() {
             self.draw_box(&frame, area);
         }
+        // The context holds the paints it drew with, the ReGIS pictures'
+        // pixel buffers among them, until it is reset: reset now, so that
+        // the next part laid over a picture changes its buffer in place and
+        // does not copy all 800 by 480 pixels of it first (RULE-65).
+        self.context.reset();
         self.last = frame;
         damage
     }
