@@ -18,9 +18,11 @@ impl App {
         Modifiers { shift: self.modifiers.shift_key(), command, alt: self.modifiers.alt_key(), control: self.modifiers.control_key(), repeat: false }
     }
 
-    /// The wheel: the channel's over its page when it asked for the mouse
-    /// (`interaction.md` section 7.3), in lines positive right and down; otherwise
-    /// the browser's, to scroll. Returns whether the window needs drawing.
+    /// The wheel: the page's where its rule table claims it, in lines
+    /// positive right and down; otherwise the browser's, to step sub-pages
+    /// or pages or to scroll, as the interface core's one decision of whose
+    /// the wheel is says (REQ-6632). Returns whether the window needs
+    /// drawing.
     fn wheel(&mut self, event_loop: &ActiveEventLoop, delta: MouseScrollDelta, now: u64) -> bool {
         let scale = self.scale();
         // A mouse wheel's notches go the other way when the viewer's
