@@ -671,3 +671,56 @@ fn a_sub_pages_drawing_links_are_replaced_whole() {
     links.channel_gone(CHANNEL);
     assert!(!links.is_drawing_link(on(1)));
 }
+
+/// Renderer parity PAR-28 (REQ-6376 for NAPLPS objects): a `DRAWING_LINKS`
+/// record for a sub-page drawn in NAPLPS makes the named objects links. The
+/// object under the pointer comes from the NAPLPS pick record, of the
+/// teletext raster; the hand shows over it though keys go to no channel,
+/// the strip shows its destination, and a click on it follows only after
+/// the dwell time. The path was already blind to the picture's language
+/// (PAR-2 says a browser built before this work may already follow them);
+/// this test holds it to that.
+#[test]
+fn a_click_on_a_linked_naplps_object_follows_after_the_dwell_time() {
+    use crate::regis::PickRecords;
+    use crate::regis_pointer::{Pointing, Say};
+    use protocol::regis::{PictureLanguage, RegisPick, RegisPointer};
+
+    let language = PictureLanguage::Naplps;
+    let width = usize::from(language.width());
+    // Object 5 over the raster's columns 100 to 149 of lines 200 to 249.
+    let mut record = vec![0_u16; language.pixels()];
+    for row in record.chunks_mut(width).skip(200).take(50) {
+        row[100..150].fill(5);
+    }
+    let mut records = PickRecords::default();
+    records.hold(OPEN, 0, 1, language, Some(RegisPick::of(&record, [(5, 100, 200)].into_iter(), language)));
+    let mut links = links_with_drawings(&[(5, "200")]);
+    let mut pointing = Pointing::default();
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: false, finger: false }, &records);
+    let under = pointing.under(&records);
+    assert_eq!(under, Some((OPEN, 0, 5)), "the object under the pointer, from the NAPLPS pick record");
+    let linked = under.is_some_and(|under| links.is_drawing_link(under));
+    assert!(linked);
+    assert_eq!(pointing.decide(&records, None, linked), [Say::Over { key: OPEN, over: true }], "the hand, though keys go to no channel");
+    let shown = links.point_drawing(under).unwrap().unwrap();
+    assert_eq!((shown.kind, shown.text.as_str()), (LinkKind::Page, "Page 200"), "the strip shows its destination");
+    // A press and a release on it.
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((120, 220)), pressed: true, finger: false }, &records);
+    pointing.pointer(RegisPointer { key: OPEN, at: Some((121, 221)), pressed: false, finger: false }, &records);
+    let (key, object) = pointing.take_click().unwrap();
+    assert_eq!(links.click_drawing((key, 0, object), Some(CHANNEL), LATER - 1), Err(Refusal::Changed), "not within the dwell time");
+    assert_eq!(links.click_drawing((key, 0, object), Some(CHANNEL), LATER), Ok(Follow::Page(0x200)));
+}
+
+/// Renderer parity PAR-28 and DEC-2385: hover, pressed looks and the
+/// touch rule on a real touch screen, for a ReGIS drawing and a NAPLPS
+/// object, cannot be checked unattended. Run by hand on a touch screen:
+/// a finger on a linked drawing and on a linked object presses it, shows
+/// its pressed look and no hover look, and a lift on it follows its link
+/// after the dwell time. Record the result and the date in TODO-6778.
+#[test]
+#[ignore = "needs a real touch screen and a person: PAR-28's touch looks are checked by hand (DEVELOPMENT.md section 8)"]
+fn touch_looks_on_regis_drawings_and_naplps_objects_are_checked_by_hand() {
+    panic!("run by hand on a touch screen, as the comment says, and record the result in TODO-6778");
+}
