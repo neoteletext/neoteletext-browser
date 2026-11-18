@@ -35,7 +35,7 @@
 //! pulled voices' samples (`local.rs`); while one plays, the device runs,
 //! so that a note never waits for it to start. What a page's rules watch
 //! (RULE-32, RULE-33) is metered after each buffer and told the trusted
-//! core once a sixtieth of a second of frames was rendered: each watched
+//! core once half a tick of frames was rendered: each watched
 //! audio channel's peak before the master volume and the mute, and a local
 //! sound's envelope and voice count. Neither a condition nor a rule is
 //! known here.
@@ -66,9 +66,18 @@ pub use local::{LOCAL_MIDI_QUEUE, LOCAL_OVERRUN_BUFFERS};
 /// buffers' worth for every view; one that finds no room is dropped, and
 /// the next takes its place.
 pub const TOLD_QUEUE: usize = 64;
-/// The parts of a second after which what is watched is reported: a tick
-/// of a page's rules (RULE-33 item 3).
-const REPORTS_PER_SECOND: u32 = neoteletext_rules::limits::TICKS_PER_SECOND;
+/// The parts of a second after which what is watched is reported: half a
+/// tick of a page's rules. RULE-33 item 3 says a sixtieth of a second, by
+/// which a device buffer of 10 milliseconds is reported only every second
+/// time and RULE-65's 45 milliseconds from a key to its level is missed
+/// by a buffer; RULE-65 counts on "the level of the device buffer in
+/// which the note began [being] reported at that buffer's end". With half
+/// a tick every buffer of 400 frames or more at 48 kHz is reported at its
+/// end, and smaller buffers are still held to this many reports a second
+/// (DEC-6573, TODO-6575).
+const REPORTS_PER_SECOND: u32 = HALF_TICKS_PER_TICK * neoteletext_rules::limits::TICKS_PER_SECOND;
+/// The halves of a tick.
+const HALF_TICKS_PER_TICK: u32 = 2;
 /// The parts of a second of silence after which a view whose local sound
 /// plays nothing no longer shows as sounding (RULE-62: a view's speaker
 /// mark follows what is heard).
@@ -260,9 +269,9 @@ impl Mixers {
         }
     }
 
-    /// Reports what each view's watch list reads, once a sixtieth of a
-    /// second of output frames was rendered since the last report (RULE-33
-    /// item 3). On the audio thread: it never allocates or waits.
+    /// Reports what each view's watch list reads, once half a tick of
+    /// output frames was rendered since the last report (RULE-33 item 3,
+    /// as [`REPORTS_PER_SECOND`] reads it). On the audio thread: it never allocates or waits.
     fn report_watched(&mut self, frames: usize) {
         self.since_report = self.since_report.saturating_add(frames);
         let due = usize::try_from(self.rate_hz.checked_div(REPORTS_PER_SECOND).unwrap_or(0)).unwrap_or(usize::MAX);

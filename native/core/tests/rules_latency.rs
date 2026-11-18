@@ -59,15 +59,6 @@ const SOUND_MEDIAN: Duration = Duration::from_millis(20);
 /// 30 in the median.
 const LEVEL_MOST: Duration = Duration::from_millis(45);
 const LEVEL_MEDIAN: Duration = Duration::from_millis(30);
-/// What RULE-33 item 3 adds to RULE-65's greatest on a device buffer of
-/// 480 frames: the sound helper reports once at least a sixtieth of a
-/// second of frames, 800, was rendered since its last report, which with
-/// buffers of 480 is after every second buffer, so the level of the
-/// buffer a note began in may wait one buffer more than RULE-65 counted.
-/// The two requirements cannot both hold at this buffer size; the test
-/// holds the level to their sum and says when RULE-65's own figure is
-/// passed.
-const LEVEL_REPORT_WAIT: Duration = BUFFER;
 /// After a note ends: three reports of the meter and three ticks.
 const SETTLE: Duration = Duration::from_millis(60);
 /// How long anything may take before the test gives up.
@@ -379,5 +370,7 @@ fn a_key_sounds_and_lights_its_level_within_the_budgets() {
     assert!(sound_median <= SOUND_MEDIAN, "RULE-64: the median from a key to its sound is {sound_median:?}");
     assert!(sound_most <= SOUND_MOST, "RULE-64: nineteen in twenty keys sound within {sound_most:?}");
     assert!(level_median <= LEVEL_MEDIAN, "RULE-65: the median from a key to its level is {level_median:?}");
-    assert!(level_most <= LEVEL_MOST + LEVEL_REPORT_WAIT, "RULE-65 with RULE-33 item 3: nineteen in twenty keys light their level within {level_most:?}");
+    // The sound helper reports after every device buffer of half a tick
+    // of frames or more (DEC-6573), so RULE-65's own figure holds.
+    assert!(level_most <= LEVEL_MOST, "RULE-65: nineteen in twenty keys light their level within {level_most:?}");
 }

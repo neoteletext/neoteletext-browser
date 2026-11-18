@@ -123,14 +123,15 @@ fn a_local_sound_keeps_the_device_running_and_shows_only_when_heard() {
     assert!(mixers.sounding().is_empty());
 }
 
-/// RULE-32, RULE-33 item 3 (REQ-6535): what a view's watch list reads is
-/// reported once a sixtieth of a second of frames was rendered, in the
+/// RULE-32, RULE-33 item 3, RULE-65 (REQ-6535, DEC-6573): what a view's
+/// watch list reads is reported once half a tick of frames was rendered,
+/// so that a device buffer of 10 milliseconds is reported at its end, in the
 /// list's order: the audio channel's level, and the local sound's
 /// envelope stage, envelope level and voice count; nothing is reported
 /// with no list, and nothing is metered for an audio channel no slot
 /// watches.
 #[test]
-fn a_watch_list_is_metered_once_a_tick_and_only_what_it_names() {
+fn a_watch_list_is_metered_each_half_tick_and_only_what_it_names() {
     let (mixers, told) = mixers();
     start(&mixers, 14, 0);
     buffer(&mixers, 2 * BUFFER);
@@ -149,13 +150,14 @@ fn a_watch_list_is_metered_once_a_tick_and_only_what_it_names() {
         assert!(mixer.is_metered(0), "the watched audio channel's peak is kept");
         assert!((1..4).all(|voice| !mixer.is_metered(voice)), "an unwatched channel costs no meter (RULE-32)");
     }
-    // 800 frames are a sixtieth of a second at 48,000: one report.
-    buffer(&mixers, 400);
-    assert_eq!(metered(&told), [] as [Vec<u8>; 0], "less than a tick of frames");
-    buffer(&mixers, 400);
+    // 400 frames are half a tick at 48,000: one report.
+    buffer(&mixers, 200);
+    assert_eq!(metered(&told), [] as [Vec<u8>; 0], "less than half a tick of frames");
+    buffer(&mixers, 200);
     assert_eq!(metered(&told), [vec![0, 0, 0, 0, 0]], "nothing sounds: zeros, in the list's order");
     midi(&mixers, 0x90, 60, 127);
-    buffer(&mixers, 800);
+    // A device buffer of 10 milliseconds is reported at its own end.
+    buffer(&mixers, BUFFER);
     let reports = metered(&told);
     let [report] = reports.as_slice() else { panic!("{reports:?}") };
     assert!(report[0] > 0, "the level of the buffer in which the note began: {report:?}");
