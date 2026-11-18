@@ -162,6 +162,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // The paint point painted at in the last wake, and when on the
     // engine's own clock the painting began (RULE-98 item 5).
     let mut painting: Option<u64> = None;
+    // A message read while rule messages were being taken, of another
+    // kind, for the next turn of the loop.
+    let mut waiting: Option<Received> = None;
     // RULE-66's hops: when the loop last woke, to mark a wake whose work
     // kept a message waiting.
     #[cfg(feature = "timed-test")]
@@ -181,7 +184,11 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         engine.slew_clock();
         let now = engine.now_us();
         let deadline = next_deadline(&mut engine, &flashing, &showing, &sent, now);
-        let received = match wait(&incoming, deadline, now) {
+        let woken = match waiting.take() {
+            Some(message) => Woken::Message(message),
+            None => wait(&incoming, deadline, now),
+        };
+        let received = match woken {
             Woken::Message(message) => Some(message),
             Woken::Deadline => {
                 // RULE-98 item 5: how late the loop woke for a deadline it
@@ -207,6 +214,25 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         #[cfg(feature = "timed-test")]
         let received = held.hold(&engine, received);
         let received = take_rule_message(&mut engine, received, &mut output)?;
+        // RULE-96: the rule messages already waiting behind it, an input
+        // among them, are handled now too, before the tick's work and the
+        // paint, up to the first message of another kind, which waits for
+        // the next turn so that the order of the pipe is kept.
+        while received.is_none() {
+            let Ok(next) = incoming.try_recv().map(as_read) else { break };
+            #[cfg(feature = "timed-test")]
+            if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &next {
+                protocol::timed_test::mark("decoder", "input-taken", Instant::now(), format_args!("{sequence}"));
+            }
+            #[cfg(feature = "timed-test")]
+            let next = held.hold(&engine, Some(next));
+            #[cfg(not(feature = "timed-test"))]
+            let next = Some(next);
+            if let Some(other) = take_rule_message(&mut engine, next, &mut output)? {
+                waiting = Some(other);
+                break;
+            }
+        }
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
         #[cfg(feature = "timed-test")]
