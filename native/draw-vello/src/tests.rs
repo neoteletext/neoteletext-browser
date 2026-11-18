@@ -671,17 +671,24 @@ fn a_still_is_the_page_as_drawn_and_stays_as_it_was() {
 /// once the context let it go after each frame, 28 with each pixel's
 /// colour taken from a table of the sixteen.
 const PARTS_TAKEN_MEDIAN: std::time::Duration = std::time::Duration::from_micros(60);
-/// The most drawing the frame of the two parts may cost in the median, in
-/// an optimised build: measured at 130 to 240 microseconds on chunko at a
-/// load average of 7 to 11, against RULE-98's lead of 4 milliseconds for
-/// the decoder's compose and the interface's drawing together.
+/// The most drawing the frame of the two parts and the cost line may cost
+/// in the median, in an optimised build: measured at 355 to 755
+/// microseconds on chunko at a load average of 6 to 11, against RULE-98's
+/// lead of 4 milliseconds for the decoder's compose and the interface's
+/// drawing together. In this window the picture is shown at 0.92 of its
+/// size, so `vello_cpu` samples it smoothly; sampled with gdb, that
+/// sampling is about a third of the frame and the cost line's text, laid
+/// out and its glyphs filled again for each new figure, about a sixth.
 const PARTS_DRAWN_MEDIAN: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// The music player's key-and-meter frame as the interface draws it
-/// (RULE-65, REQ-6535 item 6): in the timed test's window of 1440 by 900,
-/// two parts of a ReGIS picture, the key A's column at the left and the
-/// meter's at the right, 64 and 56 pixels wide and 227 tall, as the
-/// decoder sends them, each laid over the picture and drawn. Prints the
+/// (RULE-65, REQ-6535 item 6): in the timed test's window of 1280 by 900,
+/// showing the page alone as a new window does, two parts of a ReGIS
+/// picture, the key A's column at the left and the meter's at the right,
+/// 64 and 56 pixels wide and 227 tall, as the decoder sends them, each
+/// laid over the picture, and the cost line above the picture told the
+/// repaint's work, as the interface tells it with every picture; each
+/// frame draws those three boxes. Prints the
 /// time of taking the parts and of drawing the frame, and in an optimised
 /// build holds the taking to [`PARTS_TAKEN_MEDIAN`] in the median and the
 /// drawing to [`PARTS_DRAWN_MEDIAN`].
@@ -689,11 +696,15 @@ const PARTS_DRAWN_MEDIAN: std::time::Duration = std::time::Duration::from_millis
 #[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
 fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
     use std::time::{Duration, Instant};
-    const WINDOW: (u16, u16) = (1440, 900);
+    const WINDOW: (u16, u16) = (1280, 900);
     const FRAMES: usize = 1000;
     let pages = pages();
     let mut painter = Painter::new(Family::Roboto);
     let mut browser = browser(&mut painter, &pages);
+    // As a new window shows it: the page alone, no overview (decision 126).
+    browser.toggle_overview_shown();
+    browser.wall_mut().toggle_single(0);
+    browser.set_regis(FRONT, 1, 825_754);
     let mut palette = regis_palette();
     for (index, colour) in palette.iter_mut().enumerate() {
         let shade = u8::try_from(index * 16).unwrap();
@@ -717,6 +728,9 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
             painter.set_regis(FRONT, &palette, part, &vec![ink; usize::from(width) * 227 / 2]).unwrap();
             number += 1;
         }
+        // The cost line above the picture shows what the repaint cost, as
+        // the interface tells it with every picture (DEC-6335 item 4).
+        browser.set_regis(FRONT, number, 52_706 + u64::try_from(frame % 7).unwrap() * 6_436);
         let between = Instant::now();
         // As the interface draws a frame: the scene, its damage drawn, and
         // that copied to a surface that holds the last frame.
@@ -727,7 +741,7 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
         drawn.push(between.elapsed());
         let damage = damage.boxes();
         taken.push(between - started);
-        assert_eq!(damage.len(), 2, "a box for each part: {damage:?}");
+        assert_eq!(damage.len(), 3, "a box for each part and one for the cost line: {damage:?}");
     }
     taken.sort_unstable();
     drawn.sort_unstable();
