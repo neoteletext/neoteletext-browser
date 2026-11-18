@@ -210,10 +210,6 @@ struct Core {
     /// (page-rules.md RULE-33 item 4).
     #[cfg(feature = "interaction")]
     watching: BTreeMap<u32, (protocol::rules::PageSub, usize)>,
-    /// What each channel's open page last counted skipped, dropped and
-    /// overrun (RULE-72).
-    #[cfg(feature = "interaction")]
-    rule_counters: BTreeMap<u32, protocol::rules::RuleCounters>,
     /// What each tab's page costs the machine (REQ-6626).
     page_cost: page_cost::PageCost,
     /// The tiles of the wall being selected in turn (REQ-1559).
@@ -374,8 +370,6 @@ impl Core {
             typing: neoteletext::typing::Typing::default(),
             #[cfg(feature = "interaction")]
             watching: BTreeMap::new(),
-            #[cfg(feature = "interaction")]
-            rule_counters: BTreeMap::new(),
             page_cost: page_cost::PageCost::default(),
             #[cfg(feature = "interaction")]
             wall_fill: wall_fill::WallFill::default(),

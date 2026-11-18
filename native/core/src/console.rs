@@ -32,6 +32,9 @@ struct Log {
     /// the selection it is counted for, none while what came did so before
     /// the tab's page was known, as a channel's first page does.
     downloaded: Option<(Option<Selection>, u64)>,
+    /// The Stats tab's "Page cost" section for the tab's open page
+    /// (REQ-6626), as the trusted core last made it.
+    page_cost: Vec<Stat>,
 }
 
 /// What a tab shows of its channel: a page, and the sub-page of it chosen,
@@ -205,6 +208,16 @@ impl Console {
         &mut self.channels.entry(channel).or_default().counts
     }
 
+    /// The "Page cost" section of `channel`'s Stats tab (REQ-6626),
+    /// replacing the one before; shown at the next update when it changed.
+    pub fn set_page_cost(&mut self, channel: u32, figures: Vec<Stat>) {
+        let log = self.channels.entry(channel).or_default();
+        if log.page_cost != figures {
+            log.page_cost = figures;
+            self.counted = true;
+        }
+    }
+
     /// `channel`'s counts as they are.
     #[must_use]
     pub fn counted(&self, channel: u32) -> Counts {
@@ -342,7 +355,12 @@ impl Console {
         if !replace && !self.changed && !self.counted {
             return Vec::new();
         }
-        let stats = (replace || self.counted).then(|| self.counted(channel).stats());
+        let stats = (replace || self.counted).then(|| {
+            let mut stats = self.counted(channel).stats();
+            stats.extend(self.channels.get(&channel).map(|log| log.page_cost.clone()).unwrap_or_default());
+            stats.truncate(protocol::console::MAX_STATS);
+            stats
+        });
         self.changed = false;
         self.counted = false;
         let new = |(number, _): &&(u64, ConsoleEntry)| after.is_none_or(|last| *number > last);

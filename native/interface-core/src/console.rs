@@ -102,8 +102,9 @@ pub struct Stat {
     pub value: String,
 }
 
-/// The most figures the Stats tab shows.
-pub const MAX_STATS: usize = 24;
+/// The most figures the Stats tab shows: the channel's twelve, and the
+/// "Page cost" section of REQ-6626 with room to spare.
+pub const MAX_STATS: usize = 48;
 
 /// New entries for a channel's tabs.
 #[derive(Clone, Debug, PartialEq, Eq)]

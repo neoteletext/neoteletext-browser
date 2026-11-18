@@ -55,9 +55,7 @@ impl Core {
             // The receiver's own counts, for the page's author (RULE-72):
             // kept for the developer console's Stats tab, whose "Page
             // cost" section shows them (REQ-6626), and shown nowhere else.
-            FromDecoder::RuleCounters(counters) => {
-                self.rule_counters.insert(channel, counters);
-            }
+            FromDecoder::RuleCounters(counters) => self.rule_counted(channel, counters),
             _ => {}
         }
         Ok(())
@@ -124,7 +122,7 @@ impl Core {
     /// metered for it.
     pub(super) fn rules_decoder_gone(&mut self, channel: u32) {
         self.typing.decoder_gone(channel);
-        self.rule_counters.remove(&channel);
+        self.page_cost_gone(channel);
         if self.watching.remove(&channel).is_some() {
             self.tell_sound(&protocol::sound::ToSound::Audio { channel, audio: protocol::audio::Audio::Watch(Vec::new()) });
         }
