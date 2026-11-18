@@ -19,9 +19,9 @@ use std::process::Command;
 
 /// RULE-66: it needs a machine with Xvfb, `PipeWire`, `xdotool` and Python, a
 /// server at program protocol 15 and the music player, which no gate has
-/// on every machine, and it takes a quarter of an hour.
+/// on every machine, and it takes twenty minutes (20 on 19 November 2026, with 800 milliseconds between keys).
 #[test]
-#[ignore = "needs Linux, Xvfb, PipeWire, xdotool, a protocol 15 server and the music player (TIMED_RUN, TIMED_SERVER, TIMED_PLAYER), and a quarter of an hour"]
+#[ignore = "needs Linux, Xvfb, PipeWire, xdotool, a protocol 15 server and the music player (TIMED_RUN, TIMED_SERVER, TIMED_PLAYER), and twenty minutes"]
 fn the_timed_test_between_the_real_processes() {
     let needed = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} names what the timed test needs (see this file)"));
     let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/timed-test.sh");
