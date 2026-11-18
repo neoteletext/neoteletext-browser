@@ -21,8 +21,9 @@ use crate::theme::{BLACK, BUTTON, CAPTION, GLYPH, MUTED, ROW_STATUS, RULE, SELEC
 const PICTURES_ACROSS: f64 = 5.0;
 /// The room at the row's ends, at its start and when slid to an end.
 pub(super) const MARGIN: f64 = 16.0;
-/// The room between two pictures.
-const GAP: f64 = 16.0;
+/// The room between two pictures: more than a caption's gap to its page
+/// number, so that each caption reads as its own picture's.
+const GAP: f64 = 24.0;
 /// A caption's height: one line of the caption style with room around it.
 const CAPTION_HEIGHT: f64 = 26.0;
 /// The room above the captions and below the pictures.
@@ -31,7 +32,7 @@ const PANEL_BOTTOM: f64 = 16.0;
 /// How dark the panel's ground makes the window beneath: dark enough for
 /// white captions to read on any page, light enough that the window shows
 /// faintly through (DEC-6637 item 1, "slightly transparent").
-const GROUND: f32 = 0.82;
+const GROUND: f32 = 0.92;
 /// The panel's edge at its foot, in the selection's colour, and the shadow
 /// below it, each band and how much it darkens, fading out: the overflow
 /// panel's, which told it apart from the window (decision 102).
@@ -105,6 +106,10 @@ impl Browser {
         let top = panel.y1 - layout.panel + PANEL_TOP;
         let offset = f64::from(self.filmstrip.slide.value(now));
         canvas.push_clip(Rect::new(0.0, panel.y0, width, panel.y1 - EDGE));
+        // The row slides under a still pointer: the picture it rests on is
+        // found again as each is laid out.
+        let shown = self.filmstrip.shown();
+        self.filmstrip.hovered = None;
         for index in 0..self.tabs.len() {
             #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
             let x = MARGIN + index as f64 * layout.step + offset;
@@ -113,6 +118,9 @@ impl Browser {
             }
             let caption = Rect::new(x, top, x + layout.picture, top + CAPTION_HEIGHT);
             let picture = Rect::new(x, caption.y1, x + layout.picture, caption.y1 + layout.height);
+            if shown && Rect::new(caption.x0, caption.y0, picture.x1, picture.y1).contains(self.pointer) {
+                self.filmstrip.hovered = Some(index);
+            }
             let drawn = self.draw_picture(canvas, index, caption, picture);
             self.filmstrip.pictures.push(drawn);
         }
@@ -129,14 +137,17 @@ impl Browser {
         let region = Picture { index, rect: Rect::new(caption.x0, caption.y0, picture.x1, picture.y1), close, speaker };
         let Some(tab) = self.tabs.get(index) else { return region };
         let still = self.filmstrip.still(tab.channel).copied();
-        // The caption: the title, and the page number at the right.
+        // The caption: the title, cut to leave room for the page number,
+        // which follows it, so that each reads as the picture's below.
         let number = still.map(|still| format!("P{:03X}", still.page)).unwrap_or_default();
         let number_width = canvas.text_width(&number, ROW_STATUS);
-        let title = Rect::new(caption.x0, caption.y0, caption.x1 - number_width - CAPTION_GAP, caption.y1);
+        let room = if number.is_empty() { caption.width() } else { caption.width() - number_width - CAPTION_GAP };
+        let title_width = canvas.text_width(&tab.title, CAPTION).min(room.max(0.0));
+        let title = Rect::new(caption.x0, caption.y0, caption.x0 + title_width, caption.y1);
         canvas.push_clip(title);
         left_centred(canvas, title, 0.0, &tab.title, CAPTION, WHITE);
         canvas.pop_clip();
-        let number_area = Rect::new(caption.x1 - number_width, caption.y0, caption.x1, caption.y1);
+        let number_area = Rect::new(title.x1 + CAPTION_GAP, caption.y0, title.x1 + CAPTION_GAP + number_width, caption.y1);
         left_centred(canvas, number_area, 0.0, &number, ROW_STATUS, MUTED);
         draw_still(canvas, tab.channel, still, picture);
         let active = index == self.active;

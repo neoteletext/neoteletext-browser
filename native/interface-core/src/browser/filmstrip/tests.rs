@@ -327,3 +327,19 @@ fn a_rested_picture_shows_its_tabs_tip_and_the_strips_do_not_cover_it() {
     browser.settle(now + 1_000);
     assert_eq!(browser.tip_shown(), Some("Channel 1\nhttps://tab1.invalid/"));
 }
+
+/// REQ-6640 item 7: the picture the pointer rests on is the one under it
+/// after the row slides beneath a still pointer, and only it shows its
+/// buttons. Seen on a private display: the picture rested on before the
+/// slide kept its buttons.
+#[test]
+fn the_rested_picture_follows_the_slide_under_a_still_pointer() {
+    let (mut browser, mut canvas) = browser_of(8);
+    let now = open(&mut browser, &mut canvas, 0);
+    let first = browser.filmstrip.pictures[0].rect;
+    point_at(&mut browser, first, now);
+    assert_eq!(browser.filmstrip.hovered, Some(0));
+    browser.wheel_lines(1.0, now);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, now.saturating_add(1_000));
+    assert_eq!(browser.filmstrip.hovered, Some(1), "the next picture has slid under the pointer");
+}
