@@ -205,11 +205,24 @@ impl App {
             return None;
         }
         let graphics = self.view.graphics.as_ref()?;
-        if graphics.window.is_maximized() || graphics.window.fullscreen().is_some() {
+        let frame = self.window_frame()?;
+        if frame.maximized || frame.full_screen {
             return None;
         }
-        let size = graphics.window.inner_size().to_logical::<f64>(graphics.window.scale_factor());
+        let size = frame.size.to_logical::<f64>(graphics.window.scale_factor());
         resize_edge(x, y, size.width, size.height)
+    }
+
+    /// The window at hand's size and state, asked of the window system
+    /// only when it was resized, moved or rescaled since last asked.
+    pub(super) fn window_frame(&self) -> Option<super::WindowFrame> {
+        if let Some(frame) = self.view.window_frame.get() {
+            return Some(frame);
+        }
+        let window = &self.view.graphics.as_ref()?.window;
+        let frame = super::WindowFrame { size: window.inner_size(), maximized: window.is_maximized(), full_screen: window.fullscreen().is_some() };
+        self.view.window_frame.set(Some(frame));
+        Some(frame)
     }
 
     /// A press at the window's edge resizes it. Returns whether it did.

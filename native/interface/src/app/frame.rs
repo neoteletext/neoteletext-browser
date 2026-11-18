@@ -117,8 +117,9 @@ impl App {
         #[cfg(feature = "timed-test")]
         protocol::timed_test::mark("interface", "redraw", Instant::now(), format_args!(""));
         let now = self.now();
+        let Some(frame) = self.window_frame() else { return };
         let Some(graphics) = self.view.graphics.as_mut() else { return };
-        let size = graphics.window.inner_size();
+        let size = frame.size;
         let (Ok(width), Ok(height)) = (u16::try_from(size.width), u16::try_from(size.height)) else { return };
         let (Some(surface_width), Some(surface_height)) = (NonZeroU32::new(size.width), NonZeroU32::new(size.height)) else { return };
         if graphics.surface.resize(surface_width, surface_height).is_err() {
@@ -138,7 +139,7 @@ impl App {
         self.view.painter.set_regis_keyed(self.view.browser.regis_keyed());
         self.view.painter.begin(width, height, graphics.window.scale_factor());
         let logical = (f64::from(width) / self.view.painter.scale, f64::from(height) / self.view.painter.scale);
-        self.view.browser.set_window_maximised(graphics.window.is_maximized());
+        self.view.browser.set_window_maximised(frame.maximized);
         self.view.browser.draw(&mut self.view.painter, logical.0, logical.1, now);
         self.view.browser.draw_window_border(&mut self.view.painter, logical.0, logical.1);
         // The input method's candidates sit beside the caret of the field

@@ -85,6 +85,18 @@ enum Heard {
 
 /// One window and what it shows (`multiple-windows.md`): the interface
 /// holds the window at hand in [`App::view`] and sets the others aside.
+/// A window's size in its own pixels and whether it is maximized or full
+/// screen. On X11 asking any of these is a round trip to the X server,
+/// which held a key up to 2.7 milliseconds on its way to the trusted core
+/// and each frame up to 1.8 in the timed test (DEC-6753): they are asked
+/// once and kept until the window is resized, moved or rescaled.
+#[derive(Clone, Copy)]
+struct WindowFrame {
+    size: winit::dpi::PhysicalSize<u32>,
+    maximized: bool,
+    full_screen: bool,
+}
+
 struct View {
     graphics: Option<Graphics>,
     browser: Browser,
@@ -99,6 +111,9 @@ struct View {
     pointer_shape: (Cursor, bool),
     /// The window's edge the pointer is on, whose shape it then has.
     pointer_edge: Option<winit::window::ResizeDirection>,
+    /// The window's size and state as last asked of the window system,
+    /// kept until it is resized, moved or rescaled ([`WindowFrame`]).
+    window_frame: std::cell::Cell<Option<WindowFrame>>,
     /// The wheel pointer's pictures as the windowing system holds them,
     /// by state and by whether the wheel is lit: made with the window.
     wheel_pointers: HashMap<(interface_core::wheel_cursor::WheelCursor, bool), winit::window::CustomCursor>,
@@ -150,6 +165,7 @@ impl View {
             pace: pace::Pace::default(),
             pointer_shape: (Cursor::Arrow, false),
             pointer_edge: None,
+            window_frame: std::cell::Cell::new(None),
             wheel_pointers: HashMap::new(),
             opened: None,
             #[cfg(feature = "interaction")]
@@ -356,6 +372,9 @@ impl ApplicationHandler<Incoming> for App {
             self.show_tabs();
             // The viewer may have changed it while away (REQ-754).
             self.follow_reduced_motion();
+        }
+        if matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved(_) | WindowEvent::ScaleFactorChanged { .. }) {
+            self.view.window_frame.set(None);
         }
         if matches!(event, WindowEvent::Resized(_)) {
             self.full_screen_resized();
