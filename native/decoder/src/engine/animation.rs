@@ -157,7 +157,13 @@ impl Engine {
                         }
                     }
                 }
-                Held::Cursor { page, sub, drawing } => self.regis.set_cursor(page, sub, drawing),
+                // A drawing of a ReGIS sub-page or an object of a NAPLPS
+                // one (renderer parity PAR-2): each store takes it only for
+                // a sub-page it draws.
+                Held::Cursor { page, sub, drawing } => {
+                    self.regis.set_cursor(page, sub, drawing);
+                    self.naplps.set_cursor(page, sub, drawing);
+                }
                 Held::Animate { page, sub, operations } => self.animate_record(page, sub, &operations),
                 Held::Sprites { page, sub, sprites } => self.animation.teletext.set_sprites(page, sub, &sprites),
                 Held::Objects { page, sub, generation, scope, title, objects } => {

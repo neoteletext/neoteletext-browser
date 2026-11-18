@@ -676,6 +676,21 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     assert_eq!(REGIS_HEIGHT, 480);
 }
 
+/// Renderer parity PAR-2 and PAR-27: a `REGIS_CURSOR` record, the same
+/// bytes a ReGIS sub-page's cursor comes in, read from the channel's pushed
+/// message, names an object of a NAPLPS sub-page as its cursor.
+#[test]
+fn a_regis_cursor_record_names_a_naplps_sub_pages_cursor_object() {
+    use neoteletext_web::records::regis_cursor::{RegisCursorRecord, encode};
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, b"A"));
+    let mut packets = Vec::new();
+    encode(RegisCursorRecord { page: address(PAGE), subcode: SubCode::new(0), drawing: 4 }, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes))
+        .unwrap();
+    engine.feed_whole(true, true, &packets);
+    assert_eq!(engine.naplps().cursor(PAGE, 0), 4);
+}
+
 /// DEC-6638 item 3, TODO-6694 step 3: a `NAPLPS_OBJECTS` record's labels
 /// and title, read from the channel's pushed message, reach the renderer;
 /// a record of one object, sent after, redefines that object alone and

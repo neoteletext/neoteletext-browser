@@ -210,7 +210,35 @@ struct Page {
     /// core said (REQ-6374, DEC-6638 item 2): the hovered object is drawn
     /// with its hover look and the pressed one with its pressed look.
     viewer: RegisViewer,
+    /// The object that is its cursor, and its blink (renderer parity
+    /// PAR-27).
+    cursor: Cursor,
 }
+
+/// The object a `REGIS_CURSOR` record names as a NAPLPS sub-page's cursor
+/// (renderer parity PAR-2, PAR-27), and where its blink stands: shown and
+/// hidden in turn, each for the half period the ReGIS cursor drawing
+/// blinks at (REQ-6378), on the presentation clock (ANIM-1), while keys
+/// go to the channel.
+#[derive(Clone, Copy, Debug, Default)]
+struct Cursor {
+    /// The object's number, or 0 for none.
+    number: u16,
+    /// The tick the blink began at; `None` while it does not blink.
+    from: Option<u32>,
+    /// The blink is to begin again, shown, at the next tick it is brought
+    /// to: the cursor changed, or the stream drew more, as a key typed
+    /// makes it draw.
+    again: bool,
+    /// The renderer is holding it hidden for the blink.
+    hidden: bool,
+    /// Motion is reduced (PAR-33): it shows steadily.
+    steady: bool,
+}
+
+/// The half period of a cursor's blink in presentation ticks: the ReGIS
+/// cursor drawing's (REQ-6378), as PAR-27 asks.
+const BLINK_HALF_TICKS: u32 = interface_core::regis::BLINK_HALF_TICKS;
 
 /// What a sub-page's animation is owed.
 #[derive(Clone, Copy, Default)]
@@ -265,6 +293,7 @@ impl Page {
             motion: Motion::default(),
             counters: Counters::default(),
             viewer: RegisViewer::default(),
+            cursor: Cursor::default(),
         })
     }
 
@@ -290,8 +319,12 @@ impl Page {
             return false;
         }
         self.objects = objects;
-        // The renderer forgets every pointer look with the objects it had.
+        // The renderer forgets every pointer look with the objects it had,
+        // and every animation state: the cursor is shown, and its blink
+        // begins again if the object is still there.
         self.point_again();
+        self.cursor.hidden = false;
+        self.cursor.again = true;
         true
     }
 
@@ -301,12 +334,18 @@ impl Page {
         if self.terminal.replace_object(on_canvas(&object)).is_err() {
             return false;
         }
-        match self.objects.iter_mut().find(|held| held.number == object.number) {
+        let number = object.number;
+        match self.objects.iter_mut().find(|held| held.number == number) {
             Some(held) => *held = object,
             None => self.objects.push(object),
         }
-        // The renderer forgets the redefined object's pointer look.
+        // The renderer forgets the redefined object's pointer look, and its
+        // animation state: a cursor redefined is shown, and blinks afresh.
         self.point_again();
+        if number == self.cursor.number {
+            self.cursor.hidden = false;
+            self.cursor.again = true;
+        }
         true
     }
 
@@ -399,10 +438,13 @@ impl Page {
     /// takes it away when none is held.
     fn give(&mut self, number: u16) {
         let before = self.terminal.animation(number);
+        // The cursor in the hidden half of its blink is hidden over whatever
+        // state the rules gave it (PAR-27), which it keeps for when it shows.
+        let blinked_off = (number != 0 && number == self.cursor.number && self.cursor.hidden).then_some(false);
         match self.animation.get(Target::object(number)).copied() {
             Some(state) => {
                 let given = Animation {
-                    shown: state.shown,
+                    shown: blinked_off.or(state.shown),
                     position: state.position.map(|(x, y)| (canvas_x(x), canvas_y(y))),
                     layer: state.layer,
                     order: state.order,
@@ -410,6 +452,9 @@ impl Page {
                     look: Look::from_code(state.look).unwrap_or(Look::Normal),
                 };
                 let _ = self.terminal.set_animation(number, given);
+            }
+            None if blinked_off.is_some() => {
+                let _ = self.terminal.set_animation(number, Animation { shown: blinked_off, ..Animation::default() });
             }
             None => {
                 let _ = self.terminal.clear_animation(number);
@@ -440,6 +485,7 @@ impl Page {
     /// reach their phase (ANIM-20), and each cycling object whose frame
     /// is due is given it (ANIM-14).
     fn advance(&mut self, tick: u32) {
+        self.blink(tick);
         let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
         if self.told != Some(tick) {
             self.painted = 0;
@@ -459,12 +505,71 @@ impl Page {
     }
 
     /// The next presentation tick after `tick` this sub-page needs the
-    /// loop at: a WAIT's end, a blink's change, a cycle's next frame, or
-    /// the next tick while a repaint of its animation waits for budget.
+    /// loop at: a WAIT's end, a blink's change, a cycle's next frame, the
+    /// cursor's next showing or hiding, or the next tick while a repaint
+    /// of its animation waits for budget.
     fn next_tick(&self, tick: u32) -> Option<u32> {
         let player = self.player.ticks_to_next(&self.terminal).map(|ticks| tick.saturating_add(ticks.max(1)));
         let waiting = self.motion.slowed.then(|| tick.saturating_add(1));
-        [player, next_cycle_tick(self.animation.entries(), tick), waiting].into_iter().flatten().min()
+        // A blink begun, or begun again, waits for the tick that begins it.
+        let cursor = if !self.blinks() {
+            None
+        } else if self.cursor.again || self.cursor.from.is_none() {
+            Some(tick.saturating_add(1))
+        } else {
+            self.next_blink_tick(tick)
+        };
+        [player, next_cycle_tick(self.animation.entries(), tick), waiting, cursor].into_iter().flatten().min()
+    }
+
+    /// Whether the cursor blinks (PAR-27): keys go to the channel, the
+    /// sub-page names a cursor object that exists, and motion is not
+    /// reduced (PAR-33: the cursor then shows steadily).
+    fn blinks(&self) -> bool {
+        !self.cursor.steady && self.viewer.typing && self.cursor.number != 0 && self.object(self.cursor.number).is_some()
+    }
+
+    /// Brings the cursor's blink to presentation tick `tick`: hidden
+    /// through every second half period from the tick the blink began
+    /// at, shown otherwise and whenever it does not blink. The renderer
+    /// is told only when that changes.
+    fn blink(&mut self, tick: u32) {
+        let hidden = if self.blinks() {
+            let from = match self.cursor.from {
+                Some(from) if !self.cursor.again => from,
+                _ => tick,
+            };
+            self.cursor.from = Some(from);
+            !tick.saturating_sub(from).checked_div(BLINK_HALF_TICKS).unwrap_or(0).is_multiple_of(2)
+        } else {
+            self.cursor.from = None;
+            false
+        };
+        self.cursor.again = false;
+        if hidden != self.cursor.hidden {
+            self.cursor.hidden = hidden;
+            self.give(self.cursor.number);
+        }
+    }
+
+    /// The tick the cursor next shows or hides at, if it blinks.
+    fn next_blink_tick(&self, tick: u32) -> Option<u32> {
+        let from = self.cursor.from?;
+        let halves = tick.saturating_sub(from).checked_div(BLINK_HALF_TICKS).unwrap_or(0);
+        Some(from.saturating_add(halves.saturating_add(1).saturating_mul(BLINK_HALF_TICKS)))
+    }
+
+    /// Makes `number` the cursor, or none for 0: an old cursor hidden for
+    /// its blink is shown, and the new one's blink begins.
+    fn set_cursor(&mut self, number: u16) {
+        if number == self.cursor.number {
+            return;
+        }
+        let steady = self.cursor.steady;
+        let old = core::mem::replace(&mut self.cursor, Cursor { number, from: None, again: true, hidden: false, steady });
+        if old.hidden {
+            self.give(old.number);
+        }
     }
 
     /// The state of an object for a rule table's conditions (RULE-26,
@@ -502,6 +607,9 @@ pub struct NaplpsPages {
     /// No WAIT delays anything: the viewer's setting "Paint drawings
     /// gradually" is off (ANIM-15, ANIM-20).
     at_once: bool,
+    /// The platform asks for reduced motion (REQ-754, renderer parity
+    /// PAR-33): what only the receiver moves stays still.
+    reduced: bool,
     /// Each sub-page's sheet (ANIM-17): its generation and bytes, and
     /// whether a record of it was lost. A sub-page is a page (page-rules.md
     /// RULE-112): no sheet is fed to another sub-code.
@@ -576,9 +684,13 @@ impl NaplpsPages {
             }
             let sheet = self.sheets.get(&key).map(|(_, bytes, _)| bytes.as_slice());
             // What the pointer is doing stays with the sub-page, as for ReGIS.
-            let viewer = self.pages.get(&key).map(|page| page.viewer).unwrap_or_default();
+            // So does the object that is its cursor (PAR-27), as for ReGIS:
+            // it is not the stream's to change.
+            let (viewer, cursor) = self.pages.get(&key).map(|page| (page.viewer, page.cursor.number)).unwrap_or_default();
             let Some(mut page) = Page::new(record.generation, sheet, self.at_once) else { return };
             page.viewer = viewer;
+            page.cursor.number = cursor;
+            page.cursor.steady = self.reduced;
             // The objects sent ahead of this generation are its own; those
             // of any other are dropped (ANIM-11).
             if let Some(waiting) = self.waiting.remove(&key).filter(|waiting| waiting.generation == record.generation) {
@@ -603,6 +715,19 @@ impl NaplpsPages {
         page.records = page.records.saturating_add(1);
         page.bytes = page.bytes.saturating_add(u64::try_from(record.data.len()).unwrap_or(u64::MAX));
         page.changed = true;
+        // The channel draws after each key typed: the cursor is shown again
+        // at once, never hidden where the viewer looks for it (REQ-6378).
+        page.cursor.again = true;
+    }
+
+    /// The channel named the object that is a NAPLPS sub-page's cursor,
+    /// or 0 for none (a `REGIS_CURSOR` record, renderer parity PAR-2 and
+    /// PAR-27). A sub-page with no NAPLPS yet has nothing to blink; its
+    /// channel names the cursor again with its NAPLPS, as for ReGIS.
+    pub fn set_cursor(&mut self, page: u16, sub: u16, object: u16) {
+        if let Some(held) = self.pages.get_mut(&(page, sub)) {
+            held.set_cursor(object);
+        }
     }
 
     /// Takes a `NAPLPS_OBJECTS` record for a sub-page. A whole record
@@ -658,6 +783,12 @@ impl NaplpsPages {
         }
     }
 
+    /// The object that is a sub-page's cursor, or 0.
+    #[cfg(test)]
+    pub(crate) fn cursor(&self, page: u16, sub: u16) -> u16 {
+        self.pages.get(&(page, sub)).map_or(0, |held| held.cursor.number)
+    }
+
     /// The trusted core said what the viewer's pointer is doing to a
     /// sub-page's picture (REQ-6374; DEC-6638 item 2: NAPLPS objects are
     /// controls as ReGIS drawings are): the hovered object is drawn with
@@ -667,6 +798,12 @@ impl NaplpsPages {
     pub fn set_viewer(&mut self, page: u16, sub: u16, viewer: RegisViewer) {
         if let Some(held) = self.pages.get_mut(&(page, sub)) {
             held.point(viewer);
+            // Keys stopped going to the channel: the cursor is shown at
+            // once, not at the next tick.
+            if !viewer.typing && held.cursor.hidden {
+                held.cursor.hidden = false;
+                held.give(held.cursor.number);
+            }
         }
     }
 
@@ -1176,6 +1313,66 @@ mod tests {
         pages.read(&record(0x100, 2, 0, b"B"));
         assert_eq!((pages.title(0x100), pages.labels(0x100, 0)), (Some("Later"), vec![(9, "Nine")]));
         assert!(pages.target_state(0x100, Some(0), 7).is_some());
+    }
+
+    /// Renderer parity PAR-27: the object a `REGIS_CURSOR` record names is
+    /// a NAPLPS sub-page's cursor, shown and hidden in turn at the ReGIS
+    /// cursor's half period while keys go to the channel; it does not
+    /// blink without keys, number 0 stops it, and so do objects given again
+    /// without it; the stream drawing more shows it again at once.
+    #[test]
+    fn the_cursor_object_blinks_at_the_regis_cursors_period_while_keys_go_to_the_channel() {
+        const HALF: u32 = BLINK_HALF_TICKS;
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, b"A"));
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![square(7, ""), Object { x: 0, y: 0, ..square(8, "") }]);
+        let shown = |pages: &NaplpsPages, number: u16| pages.pages.get(&(0x100, 0)).unwrap().terminal.bounds(number).is_some();
+        pages.set_cursor(0x100, 0, 7);
+        pages.advance(0x100, Some(0), 10);
+        pages.advance(0x100, Some(0), 10 + HALF);
+        assert!(shown(&pages, 7), "keys do not go to the channel: it does not blink");
+        let typing = RegisViewer { hovered: 0, pressed: 0, typing: true };
+        pages.set_viewer(0x100, 0, typing);
+        let start = 100;
+        pages.advance(0x100, Some(0), start);
+        assert!(shown(&pages, 7), "shown for the first half period");
+        assert_eq!(pages.next_tick(0x100, Some(0), start), Some(start + HALF), "the loop wakes when it is to hide");
+        pages.advance(0x100, Some(0), start + HALF - 1);
+        assert!(shown(&pages, 7));
+        pages.advance(0x100, Some(0), start + HALF);
+        assert!(!shown(&pages, 7), "hidden for the second");
+        assert!(shown(&pages, 8), "no other object blinks");
+        pages.advance(0x100, Some(0), start + 2 * HALF);
+        assert!(shown(&pages, 7), "and shown again");
+        pages.advance(0x100, Some(0), start + 3 * HALF);
+        assert!(!shown(&pages, 7));
+        // The channel draws after a key: shown at once, for a full half period.
+        pages.read(&record(0x100, 1, 1, b"B"));
+        let typed = start + 3 * HALF + 5;
+        pages.advance(0x100, Some(0), typed);
+        assert!(shown(&pages, 7), "shown again when the stream draws");
+        pages.advance(0x100, Some(0), typed + HALF - 1);
+        assert!(shown(&pages, 7));
+        pages.advance(0x100, Some(0), typed + HALF);
+        assert!(!shown(&pages, 7));
+        // Number 0 stops it, shown.
+        pages.set_cursor(0x100, 0, 0);
+        assert!(shown(&pages, 7), "no cursor: shown at once");
+        pages.advance(0x100, Some(0), typed + 3 * HALF);
+        assert!(shown(&pages, 7) && pages.next_tick(0x100, Some(0), typed + 3 * HALF).is_none());
+        // Objects given again without it: nothing blinks.
+        pages.set_cursor(0x100, 0, 7);
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { x: 0, y: 0, ..square(8, "") }]);
+        pages.advance(0x100, Some(0), 1000);
+        pages.advance(0x100, Some(0), 1000 + HALF);
+        assert!(shown(&pages, 8) && pages.next_tick(0x100, Some(0), 1000 + HALF).is_none(), "the cursor object is gone: nothing blinks");
+        // Keys stopping while it is hidden show it at once.
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![square(7, "")]);
+        pages.advance(0x100, Some(0), 2000);
+        pages.advance(0x100, Some(0), 2000 + HALF);
+        assert!(!shown(&pages, 7));
+        pages.set_viewer(0x100, 0, RegisViewer::default());
+        assert!(shown(&pages, 7), "keys stopped: shown");
     }
 
     /// As for ReGIS: one sub-page more than are kept, and the one fed
