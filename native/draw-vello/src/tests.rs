@@ -663,3 +663,85 @@ fn a_still_is_the_page_as_drawn_and_stays_as_it_was() {
     painter.forget_still(1);
     assert!(!painter.still(1, whole), "forgotten");
 }
+
+/// The most taking the key and meter parts may cost in the median, in an
+/// optimised build. Measured on chunko (Ubuntu, 20 processors), one build
+/// after the other: 84 microseconds when each part copied the whole
+/// picture's pixel buffer because the drawing context still held it, 41
+/// once the context let it go after each frame, 28 with each pixel's
+/// colour taken from a table of the sixteen.
+const PARTS_TAKEN_MEDIAN: std::time::Duration = std::time::Duration::from_micros(60);
+/// The most drawing the frame of the two parts may cost in the median, in
+/// an optimised build: measured at 130 to 240 microseconds on chunko at a
+/// load average of 7 to 11, against RULE-98's lead of 4 milliseconds for
+/// the decoder's compose and the interface's drawing together.
+const PARTS_DRAWN_MEDIAN: std::time::Duration = std::time::Duration::from_millis(1);
+
+/// The music player's key-and-meter frame as the interface draws it
+/// (RULE-65, REQ-6535 item 6): in the timed test's window of 1440 by 900,
+/// two parts of a ReGIS picture, the key A's column at the left and the
+/// meter's at the right, 64 and 56 pixels wide and 227 tall, as the
+/// decoder sends them, each laid over the picture and drawn. Prints the
+/// time of taking the parts and of drawing the frame, and in an optimised
+/// build holds the taking to [`PARTS_TAKEN_MEDIAN`] in the median and the
+/// drawing to [`PARTS_DRAWN_MEDIAN`].
+#[test]
+#[allow(clippy::arithmetic_side_effects, reason = "a test's own sizes and places, far inside usize")]
+fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
+    use std::time::{Duration, Instant};
+    const WINDOW: (u16, u16) = (1440, 900);
+    const FRAMES: usize = 1000;
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    let mut palette = regis_palette();
+    for (index, colour) in palette.iter_mut().enumerate() {
+        let shade = u8::try_from(index * 16).unwrap();
+        *colour = [shade, 255 - shade, shade / 2];
+    }
+    // A picture with something in every row, as page 101's has.
+    let mut packed = regis_packed(None);
+    for (index, byte) in packed.iter_mut().enumerate() {
+        *byte = u8::try_from((index / 400) % 16).unwrap() * 0x11;
+    }
+    painter.set_regis(FRONT, &palette, RegisPart::whole(1), &packed).unwrap();
+    sized_frame(&mut painter, &mut browser, WINDOW, SETTLED);
+    let mut surface = sized_frame(&mut painter, &mut browser, WINDOW, SETTLED).1;
+    let (mut taken, mut drawn) = (Vec::<Duration>::new(), Vec::<Duration>::new());
+    let mut number = 1;
+    for frame in 0..FRAMES {
+        let ink = if frame % 2 == 0 { 0x55 } else { 0xAA };
+        let started = Instant::now();
+        for (x, width) in [(72, 64), (700, 56)] {
+            let part = RegisPart { number: number + 1, base: number, x, y: 201, width, height: 227 };
+            painter.set_regis(FRONT, &palette, part, &vec![ink; usize::from(width) * 227 / 2]).unwrap();
+            number += 1;
+        }
+        let between = Instant::now();
+        // As the interface draws a frame: the scene, its damage drawn, and
+        // that copied to a surface that holds the last frame.
+        painter.begin(WINDOW.0, WINDOW.1, 1.0);
+        browser.draw(&mut painter, f64::from(WINDOW.0), f64::from(WINDOW.1), SETTLED);
+        let damage = painter.render();
+        painter.copy_to(&mut surface, &damage, 1);
+        drawn.push(between.elapsed());
+        let damage = damage.boxes();
+        taken.push(between - started);
+        assert_eq!(damage.len(), 2, "a box for each part: {damage:?}");
+    }
+    taken.sort_unstable();
+    drawn.sort_unstable();
+    if !cfg!(debug_assertions) {
+        assert!(taken[FRAMES / 2] <= PARTS_TAKEN_MEDIAN, "taken in {:?}", taken[FRAMES / 2]);
+        assert!(drawn[FRAMES / 2] <= PARTS_DRAWN_MEDIAN, "drawn in {:?}", drawn[FRAMES / 2]);
+    }
+    println!(
+        "the key and meter parts in a window of {} by {}, {FRAMES} frames: taken in {:?} in the median and {:?} at most; drawn in {:?} and {:?}",
+        WINDOW.0,
+        WINDOW.1,
+        taken[FRAMES / 2],
+        taken[FRAMES - 1],
+        drawn[FRAMES / 2],
+        drawn[FRAMES - 1]
+    );
+}
