@@ -35,6 +35,9 @@ protocol.workspace = true
 neoteletext-input.workspace = true
 interface-core = { workspace = true, optional = true }
 rustls.workspace = true
+# Each WebSocket frame's mask from the system's cryptographic random
+# source (RFC 6455 section 5.3, TODO-6472); approved by name (DEC-6478).
+ring.workspace = true
 # The reader thread, the TLS pump and the handshake, shared with the
 # engine's own clients.
 neoteletext-transport.workspace = true

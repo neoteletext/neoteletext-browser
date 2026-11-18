@@ -2011,6 +2011,7 @@ dependencies = [
  "neoteletext-transport",
  "neoteletext-web",
  "protocol",
+ "ring",
  "rustls",
 ]
 
