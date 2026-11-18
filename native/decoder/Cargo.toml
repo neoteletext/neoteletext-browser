@@ -35,7 +35,7 @@ neoteletext-input = { workspace = true, optional = true }
 # synth6581 and synth7, and the five analogue synthesizers (DEC-6429),
 # under NeoTeletext's own names (DEC-6461; which instrument each models is
 # in neoteletext-common/docs/audio/synthesizers.md).
-neoteletext-audio = { workspace = true, features = ["synth6581", "synth7", "synth106", "synthd", "synth53", "synth8", "synth80"] }
+neoteletext-audio = { workspace = true, features = ["synth6581", "synth7", "synth106", "synthd", "synth53", "synth8", "synth80", "watch"] }
 # The engine's "modern-classic" profile (its decision E.71) with the Colour
 # Map of Levels 2.5 and 3.5, which that profile leaves out: decision 6 is
 # 32 colours, and decision 60 restores them. And `extended-sets`, so that a

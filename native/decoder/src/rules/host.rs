@@ -18,7 +18,7 @@ use neoteletext_rules::evaluator::{
 };
 use neoteletext_rules::limits::{MAX_POINTER_OBJECTS, MAX_RECTS, MAX_STATE_BYTES, TICKS_PER_SECOND};
 use neoteletext_rules::state::PageState;
-use neoteletext_rules::table::{Table, Target};
+use neoteletext_rules::table::{SPACE_SYNTH, Table, Target};
 use neoteletext_rules::{Evaluator, World};
 use protocol::audio::{Audio, WatchSlot};
 use protocol::decoder::FromDecoder;
@@ -171,11 +171,26 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
     }
 
     fn sound(&self, channel: u8) -> SoundState {
-        self.parts.heard.state(channel)
+        let mut state = self.parts.heard.state(channel);
+        // A synthesizer sound played from the server's blocks is rendered
+        // by the receiver, which holds its family and variant (RULE-28).
+        if state.playing
+            && !state.local
+            && let Some(entry) = self.parts.audio.store().entry(state.handle)
+        {
+            (state.family, state.variant) = family_of(entry);
+        }
+        state
     }
 
     fn synth(&self, channel: u8, part: u8, class: u8, index: u16) -> i32 {
-        self.parts.heard.synth(channel, part, class, index)
+        if self.parts.heard.is_local(channel) {
+            return self.parts.heard.synth(channel, part, class, index);
+        }
+        // RULE-30: of a sound whose blocks the server sends, the tracker
+        // of the instrument the receiver renders it with, at the position
+        // rendered; 0 where no such sound plays there.
+        self.parts.audio.tracked(channel, class, part, index).unwrap_or(0)
     }
 
     fn sound_operation(&mut self, operation: SoundOperation) -> bool {
@@ -244,6 +259,24 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
             self.out.push(answer);
         }
     }
+}
+
+/// The family (its codec code) and variant of a stored sound as a rule
+/// names them (RULE-28): the chip is synth6581's variant, 0 or 1, and the
+/// OBJECT record's variant that of a family with several.
+fn family_of(entry: &neoteletext_audio::store::Entry) -> (u8, u8) {
+    let variant = match entry.codec {
+        neoteletext_audio::Codec::Synth6581 => u8::from(entry.setting & neoteletext_audio::record::SYNTH6581_CHIP_8580 != 0),
+        codec if codec.variants() > 1 => entry.setting,
+        _ => 0,
+    };
+    (entry.codec.code(), variant)
+}
+
+/// The audio channels whose synthesizer values the open page's table
+/// reads (RULE-28), which the receiver is asked to watch (RULE-30).
+fn synth_channels(evaluator: &Evaluator) -> impl Iterator<Item = u8> + '_ {
+    evaluator.index().values.iter().filter(|value| value.space == SPACE_SYNTH).map(|value| value.a)
 }
 
 /// A state answer as the trusted core takes it (RULE-47).
@@ -500,6 +533,10 @@ impl Rules {
             open.evaluator.close(&mut world);
         }
         self.out.splice(0..0, urgent);
+        // No table reads the channel's sounds any more (RULE-30).
+        for channel in 0..neoteletext_audio::CHANNELS {
+            parts.audio.watch(channel, false);
+        }
         let locals: Vec<u8> = parts.heard.locals().collect();
         for channel in locals {
             let control = Control {
@@ -562,6 +599,11 @@ impl Rules {
             counters_told: None,
         };
         open.told = open.asks(parts.picture.size());
+        // The receiver keeps what the table reads of a sound played from
+        // blocks only for the channels it reads (RULE-30).
+        for channel in synth_channels(&open.evaluator) {
+            parts.audio.watch(channel, true);
+        }
         self.out.push(FromDecoder::RulesOpen(open.told.clone()));
         self.open = Some(open);
     }

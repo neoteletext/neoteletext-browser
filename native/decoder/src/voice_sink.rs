@@ -137,6 +137,14 @@ impl VoiceSink for Outbox<'_> {
     }
 
     fn end_stream(&mut self, channel: u8, id: SoundId) {
+        // A streamed sound that reached its end plays no longer (RULE-27),
+        // as rendered: what is heard follows by the stream's buffer.
+        if let Some(heard) = self.heard.channel(channel)
+            && heard.sound == Some(id)
+            && heard.local.is_none()
+        {
+            *heard = ChannelSound { gain: heard.gain, ..ChannelSound::default() };
+        }
         self.sounds.push(Audio::EndStream { channel, sound: sound(id) });
     }
 

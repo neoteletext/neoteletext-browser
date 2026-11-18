@@ -514,3 +514,66 @@ fn held_back_repaints_are_told_as_the_animation_slowed() {
     let later: Vec<FromDecoder> = (3..=2 + neoteletext_rules::limits::TICKS_PER_SECOND).flat_map(|tick| engine.run_rules(after(tick))).collect();
     assert!(later.contains(&FromDecoder::RulesFault { page: PAGE, generation: 1, fault: 8, count: 2 }), "{later:?}");
 }
+
+/// RULE-27, RULE-28, RULE-30 (REQ-6534, TODO-6576 item 2): of a
+/// synthesizer sound played from the server's blocks a rule reads the
+/// family, and the tracked values from the receiver that renders it, at
+/// the position rendered: a controller the sound's first block sets reads
+/// its value, and `playing` is false again once the stream has ended.
+#[test]
+fn a_streamed_sounds_values_are_read_from_the_receiver_and_it_stops_playing_at_its_end() {
+    use neoteletext_audio_instruments::synth106::{Model, Patch, interface};
+    use neoteletext_rules::table::{CLASS_CONTROLLER, SOUND_PLAYING};
+    /// The controller the sound's first block sets: the modulation wheel.
+    const CONTROLLER: u16 = 1;
+    const HANDLE: u8 = 9;
+    const BANK: u8 = 2;
+    let controller = Value::synth(CHANNEL, SYNTH106, 0, 0, CLASS_CONTROLLER, CONTROLLER);
+    let playing = Value::sound(CHANNEL, SOUND_PLAYING);
+    let rules = table(&[
+        becomes(controller, Operator::Equal, 99, &[Action::Send(Some(controller))]),
+        becomes(playing, Operator::Equal, 1, &[Action::Send(Some(playing))]),
+        becomes(playing, Operator::Equal, 0, &[Action::Send(Some(playing))]),
+    ]);
+    let (mut engine, _) = opened(&rules);
+    engine.run_rules(after(1));
+
+    // Two seconds of 20 ms blocks, more than the receiver renders ahead:
+    // the first sets the modulation wheel, controller 1, to 99 at time 0.
+    let mut blocks = vec![Vec::new(); 100];
+    blocks[0] = vec![0, 0xB0, 1, 99];
+    let mut patch = [0; interface::MOST_PATCH_BYTES];
+    let length = interface::pack_patch(Model::Synth106, &Patch::DEFAULT, 0, 0, &mut patch);
+    let bank = Writer::bank(BANK, 1, neoteletext_audio::Codec::Synth106, &patch[..length]).unwrap();
+    let mut stored = Writer::events(HANDLE, 1, neoteletext_audio::Codec::Synth106, &blocks).unwrap();
+    stored.banks = vec![BANK];
+    let play =
+        Command { channel: CHANNEL, sequence: 1, operation: 1, handle: HANDLE, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: Some(PAGE) };
+    let mut records = vec![bank.object_record().unwrap()];
+    records.extend(bank.data_records());
+    records.push(stored.object_record().unwrap());
+    records.extend(stored.data_records());
+    records.push(play.record());
+    engine.open_page(Some(PAGE));
+    engine.tick_audio(1_000);
+    engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+    let sounds = engine.take_sounds();
+    assert!(!sounds.iter().any(|audio| matches!(audio, Audio::EndStream { .. })), "it is still being rendered: {:?}", sounds.last());
+    let mut seen = reports(&engine.run_rules(after(2)));
+    seen.extend(reports(&engine.run_rules(after(3))));
+    let read: Vec<(u8, Reported)> = seen.iter().map(|report| (report.rule, report.what)).collect();
+    assert_eq!(
+        read,
+        [(0, Reported::Value { value: controller.to_bytes(), reading: 99 }), (1, Reported::Value { value: playing.to_bytes(), reading: 1 })],
+        "the controller is read from the receiver's tracker, and the sound plays"
+    );
+
+    // The receiver renders the rest: the stream ends, and so does `playing`.
+    for second in 2..6 {
+        engine.tick_audio(second * 1_000);
+    }
+    assert!(engine.take_sounds().iter().any(|audio| matches!(audio, Audio::EndStream { .. })));
+    let seen = reports(&engine.run_rules(after(4)));
+    assert!(matches!(seen.as_slice(), [Report { rule: 2, what: Reported::Value { reading: 0, .. }, .. }]), "{seen:?}");
+}
