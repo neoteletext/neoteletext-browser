@@ -711,6 +711,40 @@ fn a_naplps_objects_records_labels_title_and_one_object_reach_the_renderer() {
     assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "Weather".to_owned())]);
 }
 
+/// TODO-6748, DEC-6638 item 3: a NAPLPS title that comes after its page
+/// has arrived, or a new one, is reported for the page list with the
+/// latest title; one that comes before arrives with the page and is not
+/// reported again, and the same title again is not reported.
+#[test]
+fn a_naplps_title_after_its_page_arrived_is_reported() {
+    use neoteletext_web::records::naplps_objects::{Contents, LabelledObject, encode_contents};
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, b"A"));
+    let send = |engine: &mut Engine, title: &str| {
+        let mut packets = Vec::new();
+        let objects = [LabelledObject { object: object(2, ObjectKind::Region, (320, 100), &[]), label: "" }];
+        let contents = Contents::Whole { objects: &objects, title: Some(title) };
+        encode_contents((address(PAGE), SubCode::new(0), 1), &contents, 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes)).unwrap();
+        engine.feed_whole(true, true, &packets);
+    };
+    send(&mut engine, "Early");
+    assert_eq!(engine.take_retitled(), [], "a page not yet arrived arrives with its title");
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "Early".to_owned())]);
+    send(&mut engine, "Early");
+    assert_eq!(engine.take_retitled(), [], "the same title again");
+    send(&mut engine, "Weather map");
+    send(&mut engine, "Weather maps");
+    assert_eq!(engine.take_retitled(), [(PAGE, "Weather maps".to_owned())], "the latest title, once");
+    assert_eq!(engine.take_retitled(), []);
+
+    // A page that arrived before its picture had a title.
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &naplps(PAGE, 1, 0, b"A"));
+    assert_eq!(engine.feed_whole(true, true, &tti(b"PN,10000\nSC,0000\nPS,C000\nOL,1,ROW TEXT\n")), [(PAGE, "ROW TEXT".to_owned())]);
+    send(&mut engine, "Weather map");
+    assert_eq!(engine.take_retitled(), [(PAGE, "Weather map".to_owned())]);
+}
+
 /// ANIM-7, ANIM-6, ANIM-13 (REQ-6536): a teletext sub-page's SPRITES
 /// record gives its sprites; the rule table reads each one's cells and
 /// its rectangle in dots; an ANIMATE record moves and hides them, and the

@@ -311,3 +311,19 @@ fn a_refused_address_says_why_in_the_strip() {
     let _no_broker = test.core.intent(ToCore::Navigate("https://other.invalid/".into()));
     assert_eq!(test.core.strip().notice, "", "an address that opens ends the reason");
 }
+
+// TODO-6748, DEC-6638 item 3: a picture's title that comes after its page
+// arrived goes to the page list, for a page the index does not title; one
+// the index titles keeps the index's.
+#[test]
+fn a_pictures_late_title_reaches_the_page_list_unless_the_index_titles_the_page() {
+    let (mut test, channel) = arrived("picture-title");
+    test.core.decoded(channel, FromDecoder::Arrived { page: 0x104, title: "ROW TEXT".into() }).unwrap();
+    test.sent();
+    test.core.decoded(channel, FromDecoder::PictureTitle { page: 0x104, title: "Weather map".into() }).unwrap();
+    assert_eq!(test.sent(), [ToInterface::Page { channel, page: 0x104, title: "Weather map".into() }]);
+    test.core.decoded(channel, FromDecoder::PictureTitle { page: 0x104, title: "Weather map".into() }).unwrap();
+    assert_eq!(test.sent(), [], "the same title again");
+    test.core.decoded(channel, FromDecoder::PictureTitle { page: 0x200, title: "Picture".into() }).unwrap();
+    assert_eq!(test.sent(), [], "page 200's title is the index's");
+}

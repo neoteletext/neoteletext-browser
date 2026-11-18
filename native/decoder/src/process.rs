@@ -593,6 +593,10 @@ fn report(engine: &mut Engine, arrived: &[(u16, String)], output: &mut Output<'_
     for (page, title) in arrived {
         write_to_core(output, &FromDecoder::Arrived { page: *page, title: title.clone() })?;
     }
+    // A picture's title that came after its page (TODO-6748).
+    for (page, title) in engine.take_retitled() {
+        write_to_core(output, &FromDecoder::PictureTitle { page, title })?;
+    }
     let updated = engine.take_updated();
     for &page in &updated {
         write_to_core(output, &FromDecoder::Updated { page })?;

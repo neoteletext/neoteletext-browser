@@ -99,3 +99,8 @@ pub(super) const KIND_FRAME_PHASE: u8 = 191;
 // (animation.md ANIM-5), in the next number free across every pipe after
 // the interface's 192.
 pub(super) const KIND_FRAME_AREA: u8 = 193;
+// Decoder to trusted core: a picture's title that came after its page
+// arrived (DEC-6638 item 3, TODO-6748), in a number clear of the fetcher's
+// 200 and of what other work in flight on 19 November 2026 may take
+// below it.
+pub(super) const KIND_PICTURE_TITLE: u8 = 201;

@@ -225,6 +225,15 @@ pub enum FromDecoder {
         /// Its title.
         title: String,
     },
+    /// A page already reported as arrived has a picture's title it did
+    /// not arrive with, or a new one (DEC-6638 item 3): a NAPLPS picture's
+    /// title came after its page, or changed. Not yet cleaned.
+    PictureTitle {
+        /// The page number.
+        page: u16,
+        /// The picture's title.
+        title: String,
+    },
     /// A rendered page: palette indices, 480 by 500, into `palette`.
     Frame {
         /// The page number.
@@ -747,6 +756,13 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
             KIND_ARRIVED
         }
+        FromDecoder::PictureTitle { page, title } => {
+            payload.extend_from_slice(&page.to_be_bytes());
+            // Untrusted as an arrival's title: checked for length here and
+            // cleaned by the trusted core.
+            push_raw_text(&mut payload, title, MAX_PAGE_TITLE);
+            kinds::KIND_PICTURE_TITLE
+        }
         FromDecoder::Frame { page, palette, screen, indices } => return write_frame_to_core(out, *page, palette, *screen, indices),
         FromDecoder::FrameArea { page, palette, screen, area, indices } => {
             return frame::write_frame_area_to_core(out, *page, palette, *screen, *area, indices);
@@ -860,6 +876,10 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         KIND_ARRIVED => {
             let page = fields.channel_page()?;
             FromDecoder::Arrived { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "title too long")? }
+        }
+        kinds::KIND_PICTURE_TITLE => {
+            let page = fields.channel_page()?;
+            FromDecoder::PictureTitle { page, title: raw_text(&mut fields, MAX_PAGE_TITLE, "picture title too long")? }
         }
         KIND_FRAME => {
             let (page, palette, screen) = frame::read_frame(&mut fields)?;

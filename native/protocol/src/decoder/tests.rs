@@ -154,6 +154,8 @@ fn every_kind_round_trips() {
     indices[7] = 1;
     for message in [
         FromDecoder::Arrived { page: 0x100, title: "Headlines".into() },
+        // TODO-6748: a picture's title after its page arrived.
+        FromDecoder::PictureTitle { page: 0x104, title: "Weather map".into() },
         FromDecoder::Updated { page: 0x302 },
         FromDecoder::Confined,
         FromDecoder::AudioReceiver(AudioReceiver { store_bytes: 4_194_304, objects: 256, records_in_flight: 8 }),
