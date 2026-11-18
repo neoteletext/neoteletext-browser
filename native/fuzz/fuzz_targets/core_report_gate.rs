@@ -20,12 +20,13 @@ use neoteletext_input::control::{Control, MAX_BODY, write_body};
 use neoteletext_input::event::{Action, Event, Item, KeyCode, is_page_input, read_message};
 use neoteletext_input::rules::RuleBody;
 use protocol::interaction::{InputIntent, Intent};
-use protocol::rules::{INTEREST_ALL, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET};
+use protocol::rules::{INTEREST_ALL, NO_RULE, PageSub, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET};
 
 /// The view's channel.
 const CHANNEL: u32 = 7;
-/// The pages the viewer opens and the decoder names: two of the channel.
-const PAGES: [u16; 2] = [0x100, 0x200];
+/// The pages the viewer opens and the decoder names: two sub-pages of one
+/// page, each exactly a page of its own (RULE-112, DEC-6599).
+const PAGES: [PageSub; 2] = [PageSub::new(0x100, 0), PageSub::new(0x100, 1)];
 /// Microseconds in a second.
 const SECOND: u64 = 1_000_000;
 
@@ -33,19 +34,19 @@ const SECOND: u64 = 1_000_000;
 #[derive(Default)]
 struct Seen {
     /// Each key the trusted core gave a decoder: the page and the character.
-    given: BTreeSet<(u16, u32)>,
+    given: BTreeSet<(PageSub, u32)>,
     /// The pages whose decoder was given that the page gained or lost the
     /// keyboard.
-    focus_given: BTreeSet<u16>,
+    focus_given: BTreeSet<PageSub>,
     /// Reports sent that carry an input event, and those that carry none.
     with_input: u64,
     without: u64,
     /// The pages a decoder was accepted as having a table for.
-    asked: BTreeSet<u16>,
+    asked: BTreeSet<PageSub>,
     /// The pages that stopped being the open page while they had a table,
     /// and when: their decoder's final tick may still report, for
     /// `SEND_WINDOW_TICKS` (RULE-5's `close` rules).
-    closing: Vec<(u16, u64)>,
+    closing: Vec<(PageSub, u64)>,
     /// The script's time.
     now_us: u64,
 }
@@ -71,8 +72,9 @@ impl Seen {
                     let read = read_message(bytes, &mut |item: Item<'_>| {
                         assert!(!is_page_input(&item), "a viewer's input outside a report");
                         let Item::Event(Event::RuleEvent(rule)) = item else { return };
-                        let closing = self.closing.iter().any(|(page, at)| *page == rule.on.page && self.now_us.saturating_sub(*at) <= CLOSING_US);
-                        assert!(self.asked.contains(&rule.on.page) || closing, "a report for a page with no table");
+                        let on = PageSub::new(rule.on.page, rule.on.sub);
+                        let closing = self.closing.iter().any(|(page, at)| *page == on && self.now_us.saturating_sub(*at) <= CLOSING_US);
+                        assert!(self.asked.contains(&on) || closing, "a report for a page with no table");
                         match rule.body {
                             RuleBody::Input(_) => {
                                 self.with_input += 1;
@@ -83,11 +85,11 @@ impl Seen {
                                 match rule.input() {
                                     Some((Item::Event(Event::Key(key)), None)) => {
                                         let KeyCode::Character(character) = key.key else { panic!("a key the viewer did not press") };
-                                        assert_eq!(key.on.page, rule.on.page);
-                                        assert!(self.given.contains(&(key.on.page, u32::from(character))), "a key that was not given for the page");
+                                        assert_eq!(key.on, rule.on);
+                                        assert!(self.given.contains(&(on, u32::from(character))), "a key that was not given for the page");
                                     }
                                     Some((Item::Event(Event::FocusIn | Event::FocusOut), None)) => {
-                                        assert!(self.focus_given.contains(&rule.on.page), "a focus change that was not given for the page");
+                                        assert!(self.focus_given.contains(&on), "a focus change that was not given for the page");
                                     }
                                     other => panic!("a report of something the viewer did not do: {other:?}"),
                                 }
@@ -107,12 +109,12 @@ fuzz_target!(|data: &[u8]| {
     let mut typing = Typing::default();
     typing.input(CHANNEL, true, true, 0);
     let mut open = Some(PAGES[0]);
-    typing.opened(Some(CHANNEL), Some(PageKey { channel: CHANNEL, page: PAGES[0] }), 0);
+    typing.opened(Some(CHANNEL), Some(PageKey { channel: CHANNEL, page: PAGES[0].page }), 0);
     let welcome = Control::Welcome { version: neoteletext_input::VERSION, caps: neoteletext_input::caps::SELECT_CAP, resume: None };
     let mut body = [0_u8; MAX_BODY];
     let Ok(length) = write_body(&welcome, &mut body) else { return };
     typing.control(CHANNEL, body.get(..length).unwrap_or(&[]), 0);
-    typing.drawn(PageKey { channel: CHANNEL, page: PAGES[0] }, 0);
+    typing.drawn(PageKey { channel: CHANNEL, page: PAGES[0].page }, PAGES[0].sub);
 
     let mut seen = Seen::default();
     let mut now_us = 1_u64;
@@ -127,7 +129,7 @@ fuzz_target!(|data: &[u8]| {
                 let Some(letter) = next() else { break };
                 let character = char::from(b'a' + letter % 26);
                 let intent = Intent::Key { action: Action::Press, key: KeyCode::Character(character), mods: 0, text: Some(character.to_string()), base: None };
-                let sends = typing.input_intent(&InputIntent { key: PageKey { channel: CHANNEL, page }, intent }, now_us);
+                let sends = typing.input_intent(&InputIntent { key: PageKey { channel: CHANNEL, page: page.page }, intent }, now_us);
                 seen.take(&sends);
             }
             // The decoder says what a page's table asks for.
@@ -140,7 +142,7 @@ fuzz_target!(|data: &[u8]| {
                     watch: Vec::new(),
                     wheel: Vec::new(),
                 };
-                let (sends, accepted) = typing.rules_open(CHANNEL, &told, now_us);
+                let (sends, accepted) = typing.rules_told(CHANNEL, &told, now_us);
                 // Taken only for the open page: a decoder cannot make
                 // another page the one whose input is given.
                 assert!(!accepted || open == Some(page));
@@ -156,13 +158,15 @@ fuzz_target!(|data: &[u8]| {
             }
             // The decoder asks for a report: every field its own.
             2 => {
-                let (Some(generation), Some(rule), Some(kind), Some(sequence)) = (next(), next(), next(), next()) else { break };
+                let (Some(generation), Some(rule), Some(kind), Some(sequence), Some(row)) = (next(), next(), next(), next(), next()) else { break };
                 let what = match kind % 3 {
                     0 => Reported::Fired,
                     1 => Reported::Input { sequence: u32::from(sequence) },
                     _ => Reported::Value { value: [1, sequence % 32, 0, 0, 0, 0, 0, 0], reading: i32::from(kind) },
                 };
-                let report = Report { page, generation: u16::from(generation), rule: rule % 64, tick: u32::from(kind), target_kind: 0, target_number: 0, what };
+                // RULE-46: a run no rule made has neither rule nor row.
+                let (rule, row) = if rule == NO_RULE { (NO_RULE, NO_RULE) } else { (rule % 64, row % 64) };
+                let report = Report { page, generation: u16::from(generation), rule, row, tick: u32::from(kind), target_kind: 0, target_number: 0, what };
                 seen.take(&typing.report(CHANNEL, &report, now_us));
             }
             // The decoder answers a state query nobody asked, or one asked.
@@ -189,7 +193,7 @@ fuzz_target!(|data: &[u8]| {
             _ => {
                 let before = open;
                 open = (command & 0x40 == 0).then_some(page);
-                let key = open.map(|page| PageKey { channel: CHANNEL, page });
+                let key = open.map(|page| PageKey { channel: CHANNEL, page: page.page });
                 let sends = typing.opened(Some(CHANNEL), key, now_us);
                 // What is held on the page left goes up, lost, for its
                 // table's rules (RULE-8), before the page has no table.
@@ -201,8 +205,9 @@ fuzz_target!(|data: &[u8]| {
                     let left = core::mem::take(&mut seen.asked);
                     seen.closing.extend(left.into_iter().map(|page| (page, now_us)));
                 }
-                if let Some(key) = key {
-                    seen.take(&typing.drawn(key, 0));
+                // The sub-page on screen is the one the page is drawn with.
+                if let (Some(key), Some(page)) = (key, open) {
+                    seen.take(&typing.drawn(key, page.sub));
                 }
             }
         }

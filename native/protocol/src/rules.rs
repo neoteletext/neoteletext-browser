@@ -11,8 +11,12 @@
 //! report names a sequence number, and the trusted core builds the
 //! `RULE_EVENT` from its own kept copy.
 
+/// The greatest cue number (RULE-109), which a cue and a cue heard carry.
+pub use neoteletext_rules::limits::MAX_CUE;
+/// The rule and row of a run no rule made (RULE-46), as a report carries them.
+pub use neoteletext_rules::limits::NO_RULE;
 use neoteletext_rules::limits::VARIABLES;
-use neoteletext_rules::limits::{LAST_SUBCODE, MAX_CONTROL, MAX_RECTS, MAX_ROWS, MAX_RULES, MAX_STATE_BYTES, NO_RULE};
+use neoteletext_rules::limits::{LAST_SUBCODE, MAX_CONTROL, MAX_RECTS, MAX_ROWS, MAX_RULES, MAX_STATE_BYTES};
 use neoteletext_rules::table::VALUE_BYTES;
 
 use crate::audio::{MAX_WATCH_SLOTS, WatchSlot};
@@ -209,7 +213,7 @@ pub const fn is_fault(fault: u8) -> bool {
 
 /// Checks a heard cue's audio channel and number (RULE-109).
 pub(crate) fn check_cue(audio_channel: u8, number: u8) -> Result<(), ProtocolError> {
-    if usize::from(audio_channel) >= neoteletext_rules::limits::AUDIO_CHANNELS || number > neoteletext_rules::limits::MAX_CUE {
+    if usize::from(audio_channel) >= neoteletext_rules::limits::AUDIO_CHANNELS || number > MAX_CUE {
         return Err(ProtocolError::BadValue("cue"));
     }
     Ok(())
@@ -789,7 +793,7 @@ mod tests {
         assert!(to_decoder(&ToDecoder::RulesPage(Some(PageSub::new(0x101, 0x3F7F)))).is_err(), "3F7F names no sub-page (RULE-112)");
         for message in [
             ToDecoder::ConnectionEnded,
-            ToDecoder::CueHeard { audio_channel: 3, number: neoteletext_rules::limits::MAX_CUE },
+            ToDecoder::CueHeard { audio_channel: 3, number: MAX_CUE },
             ToDecoder::FramePhase(FramePhase { period_us: LEAST_REFRESH_MICROSECONDS, next_in_us: LEAST_REFRESH_MICROSECONDS - 1 }),
             ToDecoder::FramePhase(FramePhase { period_us: MOST_REFRESH_MICROSECONDS, next_in_us: 0 }),
         ] {

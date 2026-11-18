@@ -261,3 +261,33 @@ fn the_cost_of_a_buffer_of_eight_held_notes_is_measured() {
         }
     }
 }
+
+/// RULE-97 item 2 (REQ-6535): when the device's buffer changes from 480
+/// frames to 256 and back while a note sounds, the note's samples are
+/// unbroken: the scripted device's buffers of each size, laid end to end,
+/// are sample for sample what one device of a single size gives, since the
+/// mixers and every voice in them are kept across the change.
+#[test]
+fn a_notes_samples_are_unbroken_across_a_change_of_buffer() {
+    const SMALL: usize = 256;
+    let played = |sizes: &[usize]| {
+        let (mixers, _told) = mixers();
+        start(&mixers, FAMILIES[1].1, FAMILIES[1].2);
+        midi(&mixers, 0x90, 60, 100);
+        sizes.iter().flat_map(|&frames| buffer(&mixers, frames)).collect::<Vec<i16>>()
+    };
+    // 480, 480, then nine of 256 after the change to the small buffer, then
+    // 480 again after the fallback: 3,744 frames.
+    let mut changing = vec![BUFFER, BUFFER];
+    changing.extend([SMALL; 9]);
+    changing.push(BUFFER);
+    let total: usize = changing.iter().sum();
+    // The same frames in buffers of one size, a quarter of a block, which
+    // neither 480 nor 256 is.
+    let steady_frames = LOCAL_BLOCK_SAMPLES / 4;
+    let steady = vec![steady_frames; total / steady_frames];
+    assert_eq!(total % steady_frames, 0);
+    let (changed, unchanged) = (played(&changing), played(&steady));
+    assert!(changed.iter().any(|&sample| sample != 0), "the note sounds");
+    assert_eq!(changed, unchanged, "not a sample lost, repeated or moved across the changes");
+}

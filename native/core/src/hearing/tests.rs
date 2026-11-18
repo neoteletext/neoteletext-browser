@@ -154,3 +154,29 @@ fn local_sounds_are_bounded_and_midi_goes_only_to_one() {
     assert!(hearing.decoded(7, local(2), 0).is_some(), "and there is room for another");
     assert!(hearing.decoded(7, Audio::Watch(vec![WatchSlot { channel: 0, kind: 1, part: 0 }]), 0).is_none(), "only the trusted core gives a watch list");
 }
+
+/// RULE-52 item 5 (REQ-6535): a hostile decoder that writes 10,000 sound
+/// commands in one tick has only `SOUND_COMMAND_BUDGET` passed to the sound
+/// helper; the rest are dropped and counted, other operations are not
+/// counted against it, and the next tick has the budget again.
+#[test]
+fn ten_thousand_sound_commands_in_a_tick_pass_only_the_budget() {
+    use protocol::audio::LocalStart;
+    const FLOOD: u32 = 10_000;
+    let mut hearing = Hearing::default();
+    let local = Audio::Local {
+        channel: 0,
+        start: LocalStart { sound: SOUND, family: 14, variant: 0, option: 0, split: 0, gain: 100, fade_ms: 5, duck_percent: 100, setup: vec![0, 0xC0, 0] },
+    };
+    assert!(hearing.decoded(7, Audio::LocalBank { channel: 0, sound: SOUND, index: 0, image: vec![1; 64] }, 0).is_some(), "a bank is no sound command");
+    assert!(hearing.decoded(7, local, 0).is_some());
+    let midi = |data1: u8| Audio::LocalMidi { channel: 0, status: 0x90, data1, data2: 100 };
+    // All within one tick of the presentation clock: microseconds 0 to 9,999.
+    let passed = (0..FLOOD).filter(|&at| hearing.decoded(7, midi(u8::try_from(at % 128).unwrap()), u64::from(at)).is_some()).count();
+    assert_eq!(u32::try_from(passed).unwrap() + 1, protocol::rules::SOUND_COMMAND_BUDGET, "the Local and the notes share the tick's budget");
+    assert_eq!(hearing.take_commands_dropped(7), FLOOD + 1 - protocol::rules::SOUND_COMMAND_BUDGET);
+    assert!(hearing.decoded(7, define(10), 1_000).is_some(), "an operation that is no sound command still passes");
+    assert!(hearing.decoded(8, start(), 1_000).is_none() || hearing.take_commands_dropped(8) == 0, "another view has a budget of its own");
+    let next_tick = neoteletext_core::consts::presentation_tick_due_us(1);
+    assert!(hearing.decoded(7, midi(60), next_tick).is_some(), "the next tick has the budget again");
+}

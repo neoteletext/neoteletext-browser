@@ -1,13 +1,16 @@
 //! The voice operations of a local sound and of metering (neoteletext-common's
 //! page-rules.md RULE-63, RULE-83): whatever bytes a decoder or the
 //! trusted core's pipe to the sound helper carries, an operation that is
-//! read holds every bound, a decoder's is never a watch list, and it
-//! writes back to the bytes that read as it.
+//! read holds every bound, a decoder's is never a watch list or a pause,
+//! and it writes back to the bytes that read as it; the second form's cue
+//! points and the sound helper's cues heard and time spent hold theirs
+//! (RULE-109, RULE-111, REQ-6626).
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use protocol::audio::{Audio, MAX_BANK_IMAGE, MAX_LOCAL_SETUP, MAX_WATCH_SLOTS};
 use protocol::decoder::{FromDecoder, read_from_decoder, write_to_core};
+use protocol::rules::MAX_CUE;
 use protocol::sound::{FromSound, ToSound, read_from_sound, read_to_sound, write_from_sound, write_to_sound};
 
 /// The audio channels of a view.
@@ -45,6 +48,8 @@ fn check(audio: &Audio, from_decoder: bool) {
                 assert!(slot.kind != 1 || slot.part == 0, "a level has no part");
             }
         }
+        Audio::Cue { channel, number, .. } => assert!(*channel < CHANNELS && *number <= MAX_CUE),
+        Audio::Pause(_) => assert!(!from_decoder, "only the trusted core pauses a view's local sounds"),
         _ => {}
     }
 }
@@ -72,10 +77,13 @@ fuzz_target!(|data: &[u8]| {
     // list's bound.
     let mut input = data;
     while let Ok(Some(message)) = read_from_sound(&mut input) {
-        if let FromSound::Metered { values, .. } = &message {
-            assert!(values.len() <= MAX_WATCH_SLOTS);
+        match &message {
+            FromSound::Metered { values, .. } => assert!(values.len() <= MAX_WATCH_SLOTS),
+            FromSound::CueHeard { audio_channel, number, .. } => assert!(*audio_channel < CHANNELS && *number <= MAX_CUE),
+            _ => {}
         }
         let mut written = Vec::new();
         assert!(write_from_sound(&mut written, &message).is_ok());
+        assert_eq!(read_from_sound(&mut written.as_slice()).ok().flatten().as_ref(), Some(&message), "it reads back as itself");
     }
 });
