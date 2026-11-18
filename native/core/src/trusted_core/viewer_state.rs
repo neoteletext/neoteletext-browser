@@ -109,6 +109,9 @@ impl Core {
     }
 
     /// The viewer acted on the tab whose fetcher is `channel` (VS-212).
+    /// Only input to a channel is such an act, so a build with typing
+    /// compiled out has no caller but the tests.
+    #[cfg(any(feature = "interaction", test))]
     pub(crate) fn viewer_gesture(&mut self, channel: u32) {
         self.viewer_state.gestures.insert(channel, Instant::now());
     }
