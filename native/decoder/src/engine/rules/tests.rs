@@ -564,3 +564,42 @@ fn a_groups_animate_is_applied_as_the_record_is() {
     assert!(receiver.regis_of(&mut engine, PAGE, 0));
     assert_eq!(receiver.at(105, 55), 5, "the group's ANIMATE showed it");
 }
+
+/// Renderer parity PAR-20, RULE-119 (TODO-6794 step 3): a group's
+/// `DRAWING_LINKS`, one whole sending, and its `REGIS_CURSOR` are applied as
+/// the records the server sends directly are: a key's group makes a ReGIS
+/// picture's drawing a link, told to the trusted core, and its cursor.
+#[cfg(feature = "links")]
+#[test]
+fn a_groups_picture_links_and_cursor_are_applied_as_the_records_are() {
+    use crate::engine::animation_tests::{regis, square};
+    use neoteletext_rules::command::{TYPE_DRAWING_LINKS, TYPE_REGIS_CURSOR};
+    /// The drawing that becomes a link and the cursor.
+    const DRAWING: u16 = 7;
+    let page = PageSub::new(PAGE, 0);
+    let target = b"200";
+    let mut links = PAGE.to_be_bytes().to_vec();
+    links.extend_from_slice(&0_u16.to_be_bytes());
+    // Part 0 of 1, one link.
+    links.extend_from_slice(&[0, 1, 1]);
+    links.extend_from_slice(&DRAWING.to_be_bytes());
+    links.extend_from_slice(&u16::try_from(target.len()).unwrap().to_be_bytes());
+    links.extend_from_slice(target);
+    let mut cursor = PAGE.to_be_bytes().to_vec();
+    cursor.extend_from_slice(&0_u16.to_be_bytes());
+    cursor.extend_from_slice(&DRAWING.to_be_bytes());
+    let builder = Builder::new(page).rule(on_key('a', false), &[], &[(TYPE_DRAWING_LINKS, links), (TYPE_REGIS_CURSOR, cursor)]);
+    let mut engine = Engine::new();
+    let scene = format!("{}D(S{DRAWING}(X100,Y50),C)", square(DRAWING, 5));
+    engine.feed_whole(true, true, &regis(PAGE, 1, 0, scene.as_bytes()));
+    set_open(&mut engine, Some(page), T0);
+    send_table(&mut engine, page, 1, Some(&builder.table));
+    run(&mut engine, T0);
+    let _ = engine.regis().take_links();
+    assert_eq!(engine.regis().cursor(PAGE, 0), 0, "no cursor before the key");
+    run(&mut engine, after(1));
+    input(&mut engine, page, 1, key(KeyAction::Press, 'a'), after(1) + 10);
+    run(&mut engine, after(2));
+    assert_eq!(engine.regis().take_links(), [(PAGE, 0, vec![(DRAWING, "200".to_owned())])], "the group's link, for the trusted core");
+    assert_eq!(engine.regis().cursor(PAGE, 0), DRAWING, "the group's cursor");
+}

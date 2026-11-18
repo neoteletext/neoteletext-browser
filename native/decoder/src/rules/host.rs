@@ -21,7 +21,9 @@
 use neoteletext_audio::receiver::Receiver;
 use neoteletext_audio::record::{Control, Operation as ControlOperation, Record};
 use neoteletext_rules::clock::Clock;
-use neoteletext_rules::command::{self, Command, TYPE_ANIMATE, TYPE_CONTROL, TYPE_LOCAL_MIDI, TYPE_NAPLPS_OBJECTS, TYPE_SPRITES};
+use neoteletext_rules::command::{
+    self, Command, TYPE_ANIMATE, TYPE_CONTROL, TYPE_DRAWING_LINKS, TYPE_LOCAL_MIDI, TYPE_NAPLPS_OBJECTS, TYPE_REGIS_CURSOR, TYPE_SPRITES,
+};
 use neoteletext_rules::evaluator::{
     Bounds, Counters, Event, Input, InputEvent, KeyAction, KeyIdentity, PointerAction, Report, Reported, SoundState, TargetState,
 };
@@ -55,8 +57,10 @@ const CONTROL_FRAME_BYTES: usize = neoteletext_audio::RECORD_HEADER + neoteletex
 const MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 
 /// A picture command a group gave the world (RULE-118: `ANIMATE`,
-/// `SPRITES`, `NAPLPS_OBJECTS`), with its amounts resolved: applied by the
-/// engine with the code that applies the same record from the server.
+/// `SPRITES`, `NAPLPS_OBJECTS`, and since renderer parity PAR-20 a
+/// picture's `DRAWING_LINKS` and `REGIS_CURSOR`, RULE-119), with its
+/// amounts resolved: applied by the engine with the code that applies the
+/// same record from the server.
 pub(crate) type PictureCommand = (u8, Vec<u8>);
 
 /// The one table the host holds and the evaluator running it.
@@ -265,7 +269,7 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
         match kind {
             TYPE_CONTROL => self.control(body),
             TYPE_LOCAL_MIDI => self.local_midi(body),
-            TYPE_ANIMATE | TYPE_SPRITES | TYPE_NAPLPS_OBJECTS => self.picture_command(kind, body),
+            TYPE_ANIMATE | TYPE_SPRITES | TYPE_NAPLPS_OBJECTS | TYPE_DRAWING_LINKS | TYPE_REGIS_CURSOR => self.picture_command(kind, body),
             _ => false,
         }
     }

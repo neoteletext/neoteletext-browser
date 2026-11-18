@@ -1,7 +1,7 @@
 //! The engine's part in the open page's rule table (page-rules.md
 //! RULE-58): the calls the decoder's loop makes for it.
 
-use neoteletext_rules::command::{TYPE_ANIMATE, TYPE_NAPLPS_OBJECTS, TYPE_SPRITES};
+use neoteletext_rules::command::{TYPE_ANIMATE, TYPE_DRAWING_LINKS, TYPE_NAPLPS_OBJECTS, TYPE_REGIS_CURSOR, TYPE_SPRITES};
 use neoteletext_web::records::{ChannelRecord, Read};
 use protocol::decoder::{FromDecoder, ToDecoder};
 use protocol::rules::{PageSub, RuleInput};
@@ -34,6 +34,11 @@ fn picture_record(kind: u8, body: &[u8]) -> Option<ChannelRecord<'_>> {
         TYPE_ANIMATE => ChannelRecord::Animate(neoteletext_web::records::animate::read(body).ok()?),
         TYPE_SPRITES => ChannelRecord::Sprites(neoteletext_web::records::sprites::read(body).ok()?),
         TYPE_NAPLPS_OBJECTS => ChannelRecord::NaplpsObjects(neoteletext_web::records::naplps_objects::read(body).ok()?),
+        // A picture's links and cursor (renderer parity PAR-20, RULE-119):
+        // the links one whole sending, part 0 of 1, which the engine's
+        // table check holds a group to.
+        TYPE_DRAWING_LINKS => ChannelRecord::DrawingLinks(neoteletext_web::records::drawing_links::read(body).ok()?),
+        TYPE_REGIS_CURSOR => ChannelRecord::RegisCursor(neoteletext_web::records::regis_cursor::read(body).ok()?),
         _ => return None,
     })
 }
@@ -201,7 +206,16 @@ impl Engine {
     fn after_rules(&mut self) -> Vec<FromDecoder> {
         let commands: Vec<PictureCommand> = self.rules.take_picture();
         for (kind, body) in &commands {
-            if let Some(taken) = picture_record(*kind, body).map(Read::Record).as_ref().and_then(Taken::of) {
+            let read = picture_record(*kind, body).map(Read::Record);
+            // A group's drawing links are kept and told as the record's
+            // are (PAR-20); they are no change the animation takes.
+            #[cfg(feature = "links")]
+            if let Some(Read::Record(ChannelRecord::DrawingLinks(record))) = &read
+                && let Some((page, sub, links)) = self.regis.read_links(record)
+            {
+                self.pictures.record_links(*page, *sub, links);
+            }
+            if let Some(taken) = read.as_ref().and_then(Taken::of) {
                 self.take_animation(taken);
             }
         }

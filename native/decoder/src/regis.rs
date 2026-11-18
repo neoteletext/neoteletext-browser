@@ -583,6 +583,12 @@ impl RegisPages {
         self.links.push(links);
     }
 
+    /// The drawing that is a sub-page's cursor, 0 for none.
+    #[cfg(test)]
+    pub(crate) fn cursor(&self, page: u16, sub: u16) -> u16 {
+        self.pages.get(&(page, sub)).map_or(0, |held| held.cursor)
+    }
+
     /// The drawing links received whole since they were last taken.
     #[cfg(feature = "links")]
     pub fn take_links(&mut self) -> Vec<DrawingLinks> {
