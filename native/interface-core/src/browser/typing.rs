@@ -189,6 +189,9 @@ impl Browser {
             || self.bookmarks_open()
             || self.star_open()
             || self.popup_open()
+            // The open filmstrip lies over the page: Escape closes it and
+            // the wheel slides it (REQ-6640 items 6 and 9).
+            || self.filmstrip_open()
     }
 
     /// Whether the input method's preedit goes to the channel (`interaction.md` section 7.3):
