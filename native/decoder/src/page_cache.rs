@@ -273,14 +273,14 @@ impl PictureSources {
     }
 
     /// The bytes kept.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "page-cache"))]
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.bytes
     }
 
     /// Whether a source is kept for `page`'s sub-page `sub`.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "page-cache"))]
     #[must_use]
     pub fn keeps(&self, page: u16, sub: u16) -> bool {
         self.sources.get(&(page, sub)).is_some_and(|source| source.stream.is_some())
@@ -341,14 +341,18 @@ mod tests {
         assert!(cache.draw(PAGE, SUB, 2 * CACHED_PAGE_LIFETIME_US));
     }
 
+    #[cfg(feature = "page-cache")]
     use crate::animation::frames::Language;
 
+    #[cfg(feature = "page-cache")]
     fn stream(page: u16, generation: u16, offset: u32, data: Vec<u8>) -> Held {
         Held::Stream { language: Language::Regis, page, sub: SUB, generation, offset, data }
     }
 
     // PAR-34: a stream is kept from its first byte, its records joined in
     // order; a new generation replaces it; a gap loses it.
+    // Without the feature nothing is kept (REQ-1558 item 7).
+    #[cfg(feature = "page-cache")]
     #[test]
     fn a_stream_is_kept_whole_and_replaced_by_the_next_generation() {
         let mut sources = PictureSources::default();
@@ -367,6 +371,8 @@ mod tests {
 
     // PAR-34: past MAX_KEPT_PICTURE_SOURCE_BYTES the source drawn longest
     // ago is dropped; one larger than the whole budget is not kept.
+    // Without the feature nothing is kept (REQ-1558 item 7).
+    #[cfg(feature = "page-cache")]
     #[test]
     fn a_source_over_the_budget_drops_the_oldest() {
         const MEBIBYTE: usize = 1 << 20;
@@ -388,6 +394,8 @@ mod tests {
     }
 
     // PAR-34: the cache's lifetime applies to picture sources.
+    // Without the feature nothing is kept (REQ-1558 item 7).
+    #[cfg(feature = "page-cache")]
     #[test]
     fn a_picture_source_past_its_lifetime_is_not_shown_again() {
         let mut sources = PictureSources::default();
