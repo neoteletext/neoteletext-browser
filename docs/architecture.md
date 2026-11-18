@@ -159,8 +159,8 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 | **Broker** | Nothing of the user's | Everything the user may; it does only what section 7 of `sandboxing.md` lists | The user's rights; this is why it parses only the trusted core's few bounded requests and reads nothing else from outside |
 | **Trusted core** | Everything the user trusts in the browser | Its settings folder; through the broker, starting the browser's own helpers, reading file channels and opening the web browser | The browser's state and the strip, but not the user's files or the network, which its sandbox denies (decision 56); this is why it reads no network or teletext format and contains no web engine |
 | **Fetcher** | One channel's network connections; no cookies (decision 62: it asks the trusted core for each request's) | The network, which is its job | The ability to send and receive on the network, and the cookies the trusted core gives its channel's requests; no other channel's cookies, no history, no screen |
-| **Decoder** | One channel's pages | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway |
-| **Sound helper** | The sound now playing | The audio output alone | Sound of its choosing, and a false report of which tabs sound |
+| **Decoder** | One channel's pages; and, for the one page of it that is the open page of the active tab, that page's rule table, its rule state (variables, timers, which rules are on) and the viewer's input events its table asked for, as what the evaluator matches and never as their bytes (neoteletext-common's `docs/page-rules.md` RULE-58) | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway; and the viewer's own input on that channel's open page sent to that channel, within the trusted core's budgets, which the channel's table could have asked for (RULE-52) |
+| **Sound helper** | The sound now playing; and the instruments of the open page's local sounds, with their bank images and the MIDI messages waiting for them (RULE-60, RULE-62) | The audio output alone | Sound of its choosing, a false report of which tabs sound, and false levels for the views that watch them, at most 32 bytes a tick for each (RULE-33; `security-analysis.md` section 5.10, threat 8) |
 | **Interface process** | What is on screen | The window and input; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
 
 **The trusted strip and the interface process.** The strip is drawn by the interface process, in its own window, outside the page area (design section 5.2, option 1). That keeps the strip out of reach of every page image and every other process's window. It does not keep it out of reach of a fault in the interface process itself: a compromised interface process can draw a false strip and send strip input. Reaching it needs a fault in NeoTeletext's own interface code or its drawing libraries, fed only by our own images and cleaned text (`security-analysis.md` section 5.6). Requirement 3.9's hostile interface harness tests every other property with an attacker's interface in its place.
@@ -198,6 +198,10 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Opened | The page the user opened, or none: its sounds play while it is open |
 | Whole | A whole page file, bundle or pushed message, TTI or 42-byte packets, whose pages are complete as it ends; a fetched copy of a page the channel pushed is dropped (`interaction.md` section 17 item 4) |
 | View | How the open page is drawn: its reveal, hold, mix and sub-page (decision 67) |
+| RulesPage | The page of the channel that is the open page of the active tab, or none: only its rule table is evaluated, and only it plays a local sound (`page-rules.md` RULE-58) |
+| RuleInput | One input event of the viewer for the open page, of a class its table asked for: what the evaluator matches (a key's identity and modifiers, the pointer's pixel, button and control, the wheel, a focus change, a ReGIS drawing entered or left) under the sequence number a report names it by. The event's bytes stay in the trusted core (RULE-52 items 1 and 2) |
+| Metered | The sound helper's newest report for the open page's watch list, one byte for each slot, passed only at that list's length (RULE-33 item 4) |
+| RulesQuery | A state query the channel sent for the open page (RULE-47) |
 
 **From a decoder to the trusted core:**
 
@@ -208,7 +212,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Arrived | A page was received completely for the first time: its number and a title from its first text row |
 | Updated | A page already held arrived again with different rows |
 | Frame | A rendered page: 480 by 500 palette indices and a palette of at most 32 colours, every index checked against the palette on arrival |
-| Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, announce a live sound and give its next samples, or start, stop or ramp one of four channels; every field bounded (requirement 16.4) |
+| Audio | One voice operation of the channel's audio receiver: define a sound, its 16-bit samples (at most 32 768 a message), forget it, announce a live sound and give its next samples, or start, stop or ramp one of four channels; and for a local sound (RULE-63) one of its bank images (at most 16,384 bytes), its start (family, variant, option, split, gain, fade, duck and a setup block of at most 1,005 bytes) or one MIDI message of a rule's `midi` action; every field bounded (requirement 16.4), the bank image and the setup block passed on unread, as samples are |
 | Links | The links found in a page, before its image when they change: at most 32 runs (page numbers in its text and its `LT` lines, each a place and either a page number or a target as written, at most 256 bytes, never cut) and its `LK` lines; and whether an image follows (`hyperlinks.md` section 8.1) |
 | StoreFull | The page store is full and the oldest pages are being forgotten |
 | SubPages | The sub-pages of a page on screen and the one drawn, whenever they change (decision 67) |
@@ -216,6 +220,11 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | InputControl | An input control record (WELCOME; the withdrawn mode records are ignored), untrusted (REQ-INT-111) |
 | ChannelLog | A log line the channel wrote (an `LG` line), untrusted, for the console's Log alone (decision 70) |
 | Bookmark, BookmarksRead | A folder, its end or a bookmark found in another browser's bookmark file, and how many were left out, from a decoder started with `--bookmarks` (decision 71) |
+| RulesOpen | What the open page's table asks for: its generation (0 for no table), its interest mask (keys, text, pointer buttons, pointer moves, the wheel, focus changes), its watch list of at most 32 metered values, and at most 16 rectangles of the picture inside which an enabled `wheel` rule applies (RULE-52 item 1, RULE-33 item 1, RULE-51 item 4). Untrusted: taken only for the open page |
+| Report | A request to report a rule's `send` or `echo`: the page, the table's generation, the rule, the tick, the target, and either an input event's sequence number, a value and its reading, or nothing. It never carries an event's bytes: the trusted core builds the `RULE_EVENT` from its own copy (RULE-52 item 3) |
+| PageState | The answer to a state query, at most 1,800 bytes, passed once, only in answer to a query the fetcher received (RULE-52 item 6) |
+| RulesFault | A fault of the page's table, by its code and count (RULE-48), passed to the channel at most once a second for each code |
+| RuleCounters | The open page's counts of ticks, rules fired, actions run and skipped, events dropped, reports asked for and overruns, for the channel's log (RULE-72) |
 
 **From a fetcher to the trusted core** (`protocol::fetcher`):
 
@@ -230,7 +239,8 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Pushing | The push connection opened or was lost (decision 47) |
 | Exchange | One exchange the agent made, for the developer console (requirement 19.9) |
 | ProxyFailed | The proxy refused, failed or did not answer; it carries nothing (requirement 19.10) |
-| Input | The push WebSocket of a channel that takes input opened or closed, and whether it is `wss` |
+| Input | The push WebSocket of a channel whose push address may take messages opened or closed, and whether it is `wss`. The descriptor's `push.input` and `push.wheel` are withdrawn: a page's rule table is the only thing that asks for input (RULE-49) |
+| RulesQuery | A `RULES_QUERY` record the channel pushed: its page and identifier (RULE-47), so that the trusted core passes a page's state only in answer to one |
 | CookieQuestion, ReachedQuestion | Asks for a request's `Cookie` header, or whether a host was reached securely with a live cookie (decision 62) |
 | CookieSet | A `Set-Cookie` value a response carried, as typed fields the fetcher read (DEC-1765) |
 | ClearSiteData | A host's encrypted response said `Clear-Site-Data: "cookies"` |
@@ -239,15 +249,15 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 
 | Message | Meaning |
 |---|---|
-| Send | One input message for the channel's push WebSocket, at most 4,096 bytes (requirement 4.7) |
+| Send | One message of the input stream for the channel's push WebSocket (requirement 4.7): the session's own (HELLO, RESIZE, SELECT, RESUME, viewer state's) or a `RULE_EVENT`, `PAGE_STATE` or `RULES_FAULT`. Under push protocol 9 a viewer's input goes only inside a `RULE_EVENT`, and the protocol crate refuses to write one outside it (RULE-46) |
 | CookieAnswer, ReachedAnswer | The answers to the fetcher's two questions |
 
 **Between the trusted core and the sound helper** (`protocol::sound`), **the phone keyboard** (`protocol::keyboard`) **and the updater** (`update::wire`):
 
 | Direction | Message | Meaning |
 |---|---|---|
-| Core to sound helper | Audio, Settings, Close | A checked voice operation of a channel; page sounds and their volume; stop |
-| Sound helper to core | Sounding | The channels sounding now |
+| Core to sound helper | Audio, Settings, Close | A checked voice operation of a channel, a local sound's among them, and, from the trusted core alone, a view's watch list (operation 15, `Watch`: at most 32 slots of an audio channel, a kind and a part); page sounds and their volume; stop |
+| Sound helper to core | Sounding, Metered, LocalOverrun | The channels sounding now; the values of one view's watch list, one byte for each slot, once a sixtieth of a second of frames was rendered (RULE-33 item 3); a view's local sounds stopped for overrunning their time (RULE-62) |
 | Keyboard to core | Join, State, Key, Text | The QR and PIN; the session's state; a key down or up; typed text |
 | Core to keyboard | Finish | End the session |
 | Core to updater | Check, Download | Look for a newer version; download and stage the one the user accepted |
@@ -289,6 +299,18 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Interface to core | History, bookmarks, star, bar, suggest, suggestion, tab list, go to, new private tab, window | The panels' requests, the address field's text and a chosen suggestion, a Back or Forward list and a step in it, a private tab, the window's place and size |
 | Interface to core | Cookies, page control | Strip input from the cookies tab; a key of the open page's controls |
 | Interface to core | From, new window, tab to window, close window | Which window the intents that follow are from; open a window, move a tab to another or a new one, close the window (decision 72) |
+
+#### 6.4.1 A page's rule table between the processes
+
+A page's rule table (neoteletext-common's `docs/page-rules.md`, DEC-6522) binds the viewer's input, timers and conditions to local actions, sixty times a second. It is untrusted, so the processes divide it as follows.
+
+- **The decoder evaluates** (RULE-58). The decoder of the page's channel reads the RULES record, decodes it with the engine's `neoteletext-rules` (a table is accepted whole or refused whole and reported as fault 1), keeps what the channel last said of each page's table (at most 64 pages) and runs the evaluator for the one page the trusted core names with RulesPage. Its loop wakes for the next tick only while a table is being evaluated (`decoder/src/rules/host.rs`, `decoder/src/engine/rules.rs`). The evaluator's world is the decoder's own: what plays on each audio channel as its voice sink was told, a local sound's program, notes and patch fields from the family's tracker fed with every `midi` action (RULE-30), and the page's picture through the trait `decoder::rules::Picture`.
+- **The trusted core gates** (RULE-52; `core/src/typing/gate.rs`). It reads no table and calls neither the decoder nor the evaluator of `neoteletext-rules`, which is in its tree only for the names of a target and a value that a `RULE_EVENT` carries. Every input event still passes the one place that encoded and sent it; there it now goes to the open page's decoder, only while that decoder has said the page has a table and only of a class in its interest mask, and a copy as encoded is kept, the last 64. A decoder's report names a sequence number; the `RULE_EVENT` is built from the kept copy, only for an event given for that page within 4 ticks and not yet reported for that rule, on the session of that page's own channel, within 120 reports a second of which 20 with no input event. A page with no table is given nothing and sent nothing (RULE-50, REQ-6523). For 4 ticks after a page stops being the open page its decoder's final tick may still report, so that a `close` rule's `send` goes.
+- **What stays the browser's own** (RULE-51): the wheel is the page's only while the pointer is inside a rectangle the decoder said an enabled `wheel` rule applies in; the trusted core tells the interface as the pointer crosses one and gives the wheel nowhere else.
+- **The sound helper plays local sounds** (RULE-60, RULE-62; `sound/src/audio/local.rs`). A local sound has no blocks from the server: its instrument is held in the sound helper and rendered inside the audio callback, as the engine mixer asks for its pulled voice's samples in blocks of 128. A rule's MIDI message waits at most one block. The helper links the engine's instruments for this, every family that plays notes.
+- **Metering** (RULE-32, RULE-33): the decoder tells the watch list with RulesOpen, the trusted core passes it to the sound helper for the open page alone, the helper reports the watched values once a tick's worth of frames was rendered, and the trusted core gives a report to that view's decoder only at the length of the list it passed.
+
+The path of a key to its sound is then: the interface's intent, the trusted core's gate, the decoder's next tick, `LocalMidi` to the trusted core and on to the sound helper, the next block, the device's buffer. Measured by `core/tests/rules_latency.rs` on 18 November 2026: a median of 12 to 15 ms and at most 27 ms from the key to the first sample handed to a device of 10 ms buffers (RULE-64 asks for 20 and 34), and a median of 27 ms from the key to the tick in which a rule on the metered level fires (RULE-65 asks for 30); the greatest of that was 50 ms, 5 ms over RULE-65's 45, because the sound helper reports after every second buffer of 480 frames (RULE-33 item 3).
 
 ### 6.5 Isolation on each platform
 
@@ -443,6 +465,8 @@ Each file is its own channel, with no cookies. It is read by the trusted core an
 4. **The trusted core sends the image to the interface process,** with the page's key and a frame version.
 5. **The interface process reads it** with the same module's strict reader, against the frame of the page it holds: at most 32 colours, the screen colour and every dot within them, the dots filling 480 by 500 exactly. It keeps the page's image until a newer frame replaces it whole (decision 8), and draws the page scaled into its rectangle with nearest-neighbour sampling, inside a border of its screen colour one character cell wide (decision 60). A frame of the page keys go to, or of the page under the pointer, is drawn as it arrives; other changes at most every 16 ms while keys go to a channel and every 100 ms otherwise, counted from the last frame that changed the window (requirement 18.11, decision 122).
 6. **Flash** is rendered by the decoder at the engine's timing, by its own clock: when a shown page has flashing cells it wakes at the next flash unit at which a rate a shown page uses changes phase (one second in twelve, the engine's decision E.48; a page with slow flash alone is drawn twice a second, not seven times) and draws the page again if its phase changed, and step 3 passes on only the frames that changed (decision 47). The decoder also wakes when its audio receiver next needs the time (the engine's decision E.98); otherwise it sleeps until the trusted core writes to it.
+
+**A page's rules act before its picture.** Each wake of a decoder first evaluates the open page's rule table for every tick due and writes what its rules produced, a local sound's MIDI messages first, before anything is drawn (`page-rules.md` RULE-64); an input event given to the decoder marks the page's next frame as the answer to input, which the frame interval does not hold (RULE-65). Flash is timed by the same presentation clock's ticks, 57 shown and 19 hidden for the Level 1 flash (`docs/animation.md` ANIM-1).
 
 **Showing many pages at once (decision 7).** The interface knows exactly which pages its layout puts on screen and reports them; the trusted core asks the decoder only for those, of the active channel only. A channel of 800 pages costs what is visible.
 
@@ -667,6 +691,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - Builds and tests on Windows, in a virtual machine, and on Linux (`DEVELOPMENT.md` section 12).
 - Transport Layer Security and `https` channels (decision 41); fuzz targets for every reader of another process's messages and of every file the browser keeps (requirement 4.6).
 - The address rules of section 9.6; tabs.
+- A page's rule table (18 November 2026; neoteletext-common's `docs/page-rules.md`, DEC-6522; REQ-6534, REQ-6535), on the branch `rules`: push protocol 9, in which a viewer's input goes only inside a `RULE_EVENT`; the decoder as the evaluator's host; the trusted core as the gate, with the wheel rule; local sounds in the sound helper and metering; the fuzz targets `core_report_gate` and `protocol_audio_local`; and the timed test of a key to its sound and its level (section 6.4.1). Not built there: the picture side of a table (animation objects, sprites, frames, sheets, paint rate, WAIT and BLINK: REQ-6536), the developer console's panel of a page's counts (they are written to the channel's log), the tracked values of a synthesizer sound whose blocks the server sends, and the timed test with the real, confined processes.
 - Sound: every tab heard and each muted (decisions 37, 38 and 40); on macOS the Dock menu (decision 39).
 - The wall on a live channel (31 October 2026; REQ-1558, REQ-1559): each tab's decoder keeps, over the engine's store, which pushed pages and sub-pages it holds, at most 128, how old each is and when it was last drawn (`native/decoder/src/page_cache.rs`, the `page-cache` feature). The source is the store's packets; nothing is an image. An entry older than 24 hours is dropped as it is about to be drawn. The decoder tells the trusted core which pages on screen it cannot draw, and the core selects them with the ordinary SELECT, one at a time in screen order, each after its frame or the channel's 5-second limit for answering, then SELECT page 0 (`native/core/src/trusted_core/wall_fill.rs`). The wall lays out at most 128 tiles. An entry dropped leaves its store slot until the engine reuses it: the engine's store has no removal, so the store's own size bounds that memory, not the cache's.
 - Hyperlinks, phases 1 and 2 of `hyperlinks.md` (20 October 2026), behind the `links` feature, on by default: page numbers found in the text and `LT`, `LK` and descriptor links, decided by the trusted core; the underline drawn by the interface; the destination and the web-browser prompt in the strip; the hand-off to the system's web browser (`web-opener`); `#302` page addresses.
