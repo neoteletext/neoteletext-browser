@@ -43,6 +43,7 @@ mod provided;
 pub mod regis;
 pub mod rules;
 pub mod sample;
+pub mod snapshot;
 mod title;
 mod voice_sink;
 

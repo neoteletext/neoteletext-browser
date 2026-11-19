@@ -268,7 +268,7 @@ impl Engine {
     }
 
     /// The grid of `stored`, a sub-page of `page`, as `view` draws it.
-    fn compose(&self, page: u16, stored: &StoredPage, view: View) -> Grid {
+    pub(super) fn compose(&self, page: u16, stored: &StoredPage, view: View) -> Grid {
         let address = stored.key.address;
         let config = self.decoder.config();
         let magazine = self.decoder.magazine_data(address.magazine);

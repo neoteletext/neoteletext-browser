@@ -308,3 +308,10 @@ path = "fuzz_targets/snapshot_messages.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "decoder_snapshot"
+path = "fuzz_targets/decoder_snapshot.rs"
+test = false
+doc = false
+bench = false

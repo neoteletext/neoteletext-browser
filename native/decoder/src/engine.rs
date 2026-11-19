@@ -37,6 +37,9 @@ mod feed;
 mod font_tests;
 mod render;
 mod rules;
+mod snapshot;
+#[cfg(test)]
+mod snapshot_tests;
 #[cfg(test)]
 mod sprite_pixel_tests;
 #[cfg(test)]
@@ -46,6 +49,7 @@ mod wire_vectors_tests;
 
 use feed::ReceiverRow;
 pub(crate) use render::GLYPHS;
+pub use snapshot::Snapshot;
 
 /// A log line the channel wrote for its author.
 #[derive(Clone, Debug, PartialEq, Eq)]

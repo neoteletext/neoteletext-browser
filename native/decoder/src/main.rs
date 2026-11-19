@@ -43,6 +43,7 @@ fn main() -> ExitCode {
         Ok(Mode::Bookmarks) => read_bookmarks(),
         Ok(Mode::Picture) => convert_picture(),
         Ok(Mode::Font) => check_font(),
+        Ok(Mode::Snapshot) => decoder::snapshot::run(),
         Err(usage) => {
             eprintln!("neoteletext-decoder: {usage}");
             return ExitCode::FAILURE;

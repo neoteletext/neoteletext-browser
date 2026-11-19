@@ -28,6 +28,8 @@ pub enum Mode {
     /// To check one font for pictures the viewer chose, and end (renderer
     /// parity PAR-35).
     Font,
+    /// To draw one snapshot and end (REQ-6885).
+    Snapshot,
 }
 
 /// The mode the trusted core asked for: a channel's store size,
@@ -44,7 +46,10 @@ pub fn mode() -> Result<Mode, String> {
         (Some("--bookmarks"), None) => Ok(Mode::Bookmarks),
         (Some("--picture"), None) => Ok(Mode::Picture),
         (Some("--font"), None) => Ok(Mode::Font),
-        _ => Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks | --picture | --font]")),
+        (Some("--snapshot"), None) => Ok(Mode::Snapshot),
+        _ => {
+            Err(format!("usage: neoteletext-decoder [--store-pages {FIRST_STORE_PAGES} to {MAX_STORE_PAGES} | --bookmarks | --picture | --font | --snapshot]"))
+        }
     }
 }
 
