@@ -14,6 +14,7 @@
 )]
 
 use neoteletext_core::types::{PageAddress, SubCode};
+#[cfg(feature = "interaction")]
 use neoteletext_input::control::{Control, MAX_BODY, write_body};
 use neoteletext_web::records::regis::{RegisRecord, encode, encode_naplps};
 use neoteletext_web::wire_vectors::{bytes_of, vectors};
@@ -60,7 +61,9 @@ pub(crate) fn picture_stream(page: u16, sub: u16, naplps: bool, data: &[u8]) -> 
 }
 
 /// PAR-1: the shared WELCOME agreeing both picture languages reaches the
-/// trusted core as its control body, with both bits.
+/// trusted core as its control body, with both bits. Only a build with
+/// typing (`interaction`) passes controls on.
+#[cfg(feature = "interaction")]
 #[test]
 fn the_shared_welcome_of_the_picture_languages_is_passed_on() {
     let mut engine = Engine::new();
