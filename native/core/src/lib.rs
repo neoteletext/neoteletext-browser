@@ -59,6 +59,7 @@ pub use private_file::make_folder;
 pub mod session_file;
 pub mod settings;
 pub mod sleep;
+pub mod snapshots;
 pub mod start_page;
 pub mod subpages;
 #[cfg(feature = "interaction")]

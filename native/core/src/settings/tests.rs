@@ -24,10 +24,24 @@ fn settings_round_trip_through_their_file() {
         channels_may_know: false,
         state_block: vec!["https://news.example/teletext/".into()],
         remote: RemotePlace { mode: RemoteMode::Floating, x: 900, y: 140 },
+        tab_pictures: false,
     };
     let (read, dropped) = Settings::read(&settings.text());
     assert_eq!((read, dropped), (settings, Dropped::default()));
     assert_eq!(Settings::read("").0, Settings::default());
+}
+
+/// REQ-6886 item 9: tab pictures are on by default, in a file that has
+/// no line for them too; kept as `tab-pictures off` and read strictly.
+#[test]
+fn the_tab_pictures_line_is_read_and_written() {
+    assert!(Settings::default().tab_pictures);
+    assert!(Settings::default().text().contains("tab-pictures on\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.tab_pictures, dropped.len()), (true, 0), "a file written before it");
+    assert!(!Settings::read(&format!("{VERSION_LINE}\ntab-pictures off\n")).0.tab_pictures);
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\ntab-pictures maybe\n"));
+    assert_eq!((read.tab_pictures, dropped.len()), (true, 1));
 }
 
 /// REQ-6351 item 3: normal by default, in a file that has no line for it
