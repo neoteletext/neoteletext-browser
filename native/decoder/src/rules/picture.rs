@@ -20,7 +20,7 @@ use neoteletext_rules::table::Target;
 /// nothing is answered `None` or `false`, never an error.
 pub trait Picture {
     /// The picture's width and height in pixels (RULE-13): 480 by 500 for
-    /// a teletext page, 800 by 480 for ReGIS, 640 by 480 for NAPLPS.
+    /// a teletext page and a NAPLPS one (RAS-5), 800 by 480 for ReGIS.
     fn size(&self) -> (u16, u16);
 
     /// The state of one control or object on the sub-page shown, or

@@ -122,10 +122,11 @@ pub const PICTURE_MAX_HEIGHT: u16 = if REGIS_HEIGHT > PAGE_HEIGHT { REGIS_HEIGHT
 /// Where the parts of a page drawn as a picture in `language` sit in its
 /// image drawn in `image`. A NAPLPS picture is the teletext raster
 /// (REQ-5819), so it fills the image as a teletext page does, whatever the
-/// fit; row 0 of its teletext page is drawn over the raster's lines 0 to
-/// 19 and the row of coloured-key prompts, when shown, over lines 480 to
-/// 499, where the teletext page has them, covering the picture's first and
-/// last lines (renderer parity PAR-31). A ReGIS picture is laid out by
+/// fit; row 0 of its teletext page is drawn on the raster's lines 0 to 19
+/// and the row of coloured-key prompts, when shown, on lines 480 to 499,
+/// where the teletext page has them: both wholly outside the picture's
+/// display area, lines 20 to 479, which neither covers (renderer parity
+/// PAR-31, DEC-6857 item 2). A ReGIS picture is laid out by
 /// [`regis_layout`].
 #[must_use]
 pub fn picture_layout(language: PictureLanguage, image: Rect, contain: bool, keyed: bool) -> RegisLayout {

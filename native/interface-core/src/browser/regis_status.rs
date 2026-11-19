@@ -317,12 +317,15 @@ mod key_row_tests {
         assert_eq!(cell_in(area, within).map(|(_, row)| row), Some(24));
     }
 
-    /// Renderer parity PAR-31: a NAPLPS picture, the teletext raster, has
-    /// row 0 over the raster's lines 0 to 19 and the row of prompts over
-    /// lines 480 to 499, where the teletext page has them, in either fit.
+    /// Renderer parity PAR-31 with DEC-6857: a NAPLPS picture, the
+    /// teletext raster, has row 0 on the raster's lines 0 to 19 and the
+    /// row of prompts on lines 480 to 499, where the teletext page has
+    /// them, in either fit; at the raster's size and at whole multiples of
+    /// it neither reaches the display area, lines 20 to 479, which lies
+    /// exactly between them.
     #[test]
     fn a_naplps_pictures_row_0_and_row_24_lie_on_the_rasters_first_and_last_twenty_lines() {
-        use crate::canvas::{PictureLanguage, picture_layout};
+        use crate::canvas::{NAPLPS_DISPLAY_LINES, NAPLPS_TOP_LINE, PictureLanguage, picture_layout};
         let area = Rect::new(0.0, 0.0, 480.0, 500.0);
         for contain in [true, false] {
             let layout = picture_layout(PictureLanguage::Naplps, area, contain, true);
@@ -330,6 +333,16 @@ mod key_row_tests {
             assert_eq!(layout.header, Rect::new(0.0, 0.0, 480.0, 20.0), "row 0: lines 0 to 19");
             assert_eq!(layout.keys, Some(Rect::new(0.0, 480.0, 480.0, 500.0)), "row 24: lines 480 to 499");
             assert!(!layout.stacked);
+        }
+        for scale in [1.0, 2.0, 3.0] {
+            let image = Rect::new(16.0, 8.0, 16.0 + 480.0 * scale, 8.0 + 500.0 * scale);
+            let layout = picture_layout(PictureLanguage::Naplps, image, false, true);
+            let display_top = image.y0 + f64::from(NAPLPS_TOP_LINE) * scale;
+            let display_bottom = display_top + f64::from(NAPLPS_DISPLAY_LINES) * scale;
+            let keys = layout.keys.unwrap();
+            assert!(close(layout.header.y1, display_top), "row 0 ends where the display area begins, at {scale}");
+            assert!(close(keys.y0, display_bottom), "row 24 begins where it ends, at {scale}");
+            assert!(close(keys.y1, image.y1) && close(layout.header.y0, image.y0));
         }
     }
 

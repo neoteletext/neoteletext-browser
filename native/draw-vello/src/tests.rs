@@ -551,6 +551,11 @@ fn a_naplps_picture_covers_the_whole_page_image_dot_for_dot() {
     pixels[20 * width] = 7;
     pixels[250 * width + 13] = 7;
     pixels[499 * width..].fill(7);
+    // And down the last column of the display area, lines 20 to 479
+    // (DEC-6857): its last display pixels are drawn, with no gap.
+    for line in 20..480 {
+        pixels[line * width + width - 1] = 7;
+    }
     let packed: Vec<u8> = pixels.as_chunks::<2>().0.iter().map(|[left, right]| (left << 4) | right).collect();
     let mut painter = Painter::new(Family::Roboto);
     let pages = pages();
@@ -571,8 +576,11 @@ fn a_naplps_picture_covers_the_whole_page_image_dot_for_dot() {
             assert_eq!(at(2 * x + dx, 2 * y + dy), WHITE_WORD, "dot {x}, {y} at +{dx}, +{dy}");
         }
     }
-    for (x, y) in [(1, 20), (12, 250), (14, 250), (13, 249), (479, 498)] {
+    for (x, y) in [(1, 20), (12, 250), (14, 250), (13, 249), (479, 498), (478, 250)] {
         assert_eq!(at(2 * x, 2 * y), 0, "dot {x}, {y} is colour 0, the picture's own");
+    }
+    for y in 2 * 20..2 * 480 {
+        assert_eq!((at(2 * 479, y), at(2 * 479 + 1, y)), (WHITE_WORD, WHITE_WORD), "the last column's two display pixels on line {y}");
     }
 }
 
