@@ -189,6 +189,25 @@ fn a_tab_playing_sound_shows_a_speaker_that_mutes_it() {
     assert!(browser.regions.tabs[0].speaker.is_some() && browser.regions.tabs[1].speaker.is_none());
 }
 
+/// With as many tabs as the owner keeps open, more than the strip shows,
+/// the active tab playing sound shows its speaker on the strip, and the
+/// speaker mutes it, as the filmstrip's picture of it does.
+#[test]
+fn among_many_tabs_the_sounding_active_tab_shows_its_speaker() {
+    const TABS: usize = 18;
+    const ACTIVE: usize = 17;
+    let mut browser = browser_with(TABS, ACTIVE);
+    let mut canvas = Recorder::new();
+    browser.take_outputs();
+    browser.set_sounding(BTreeSet::from([3, u32::try_from(ACTIVE).unwrap()]));
+    browser.draw(&mut canvas, 1440.0, 900.0, 0);
+    let region = browser.regions.tabs.iter().find(|region| region.index == ACTIVE).expect("the active tab is on the strip");
+    let speaker = region.speaker.expect("the active tab plays sound");
+    assert!(speaker.x0 < speaker.x1, "the speaker is not cut off");
+    press_at(&mut browser, &mut canvas, speaker);
+    assert_eq!(browser.take_outputs(), [Output::MuteTab(ACTIVE)]);
+}
+
 #[test]
 fn the_mute_all_button_mutes_every_tab_until_all_are_muted() {
     let (mut browser, mut canvas) = browser();
