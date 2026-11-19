@@ -6,8 +6,10 @@
 //! between the agent and the sockets, and sends what arrives to the
 //! trusted core on standard output.
 //!
-//! Usage: `neoteletext-fetcher <channel address> [--allow-local <ip>]...
-//! [--proxy <url>]`. A server on this computer or the local network is
+//! Usage: `neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>]
+//! [--allow-local <ip>]... [--proxy <url>]`; with `--snapshot` it fetches
+//! one page as a stranger would and speaks only `protocol::snapshot`
+//! (REQ-6884). A server on this computer or the local network is
 //! refused unless named with `--allow-local` (the engine's REQ-SEC-006).
 //! With `--proxy http://host:port` or `socks5://host:port` every
 //! connection goes through that proxy (requirement 19.10); it is given only
@@ -33,7 +35,7 @@
 
 use std::process::ExitCode;
 
-use fetcher::{arguments, run};
+use fetcher::{arguments, run, snapshot};
 
 fn main() -> ExitCode {
     // First, before any thread: the network and nothing else (requirement 3.3).
@@ -51,7 +53,13 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match run(&read.channel, &read.allowed, read.proxy) {
+    // A snapshot is fetched by a process started for it alone, speaking
+    // only protocol::snapshot (REQ-6884).
+    let ran = match read.snapshot {
+        Some((page, sub)) => snapshot(&read.channel, page, sub, &read.allowed, read.proxy),
+        None => run(&read.channel, &read.allowed, read.proxy),
+    };
+    match ran {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("neoteletext-fetcher: {error}");

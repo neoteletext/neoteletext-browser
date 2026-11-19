@@ -538,7 +538,7 @@ fn send_part(output: &CorePipe, page: PageAddress, part: PartNumber, bytes: Opti
 
 /// The agent's settings for a channel that may reach the local addresses
 /// `allowed`, through a proxy when `proxied`.
-fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
+pub(crate) fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
     // Proxied, local names are refused before the proxy is asked (REQ-WEB-032).
     let mut config = Config { tls_available: true, redirects_within_channel: true, product: product(), proxied, page_limit: PAGE_LIMIT, ..Config::default() };
     for (slot, &ip) in config.allowed_local.iter_mut().zip(allowed.iter().take(ALLOWED_LOCAL)) {
