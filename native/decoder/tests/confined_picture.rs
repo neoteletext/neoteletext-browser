@@ -7,6 +7,7 @@ use std::io::{BufReader, Write as _};
 use std::path::Path;
 
 use confine::{Role, Spawn};
+use interface_core::canvas::PictureLanguage;
 use interface_core::picture::PictureChoice;
 use protocol::decoder::{FromDecoder, ToDecoder, read_from_decoder, write_to_decoder};
 
@@ -54,13 +55,23 @@ fn converted(picture: &[u8]) -> Vec<FromDecoder> {
     said
 }
 
+/// The page made, then the picture in ReGIS and in NAPLPS (renderer parity
+/// PAR-36 item 2), each written.
 #[test]
 fn a_confined_decoder_converts_a_picture() {
     let said = converted(&bmp());
-    let [FromDecoder::PictureConverted { tti, t42, summary }] = said.as_slice() else { panic!("{said:?}") };
+    let [
+        FromDecoder::PictureConverted { tti, t42, summary },
+        FromDecoder::PictureOutput { language: PictureLanguage::Regis, output: Ok(regis) },
+        FromDecoder::PictureOutput { language: PictureLanguage::Naplps, output: Ok(naplps) },
+    ] = said.as_slice()
+    else {
+        panic!("{said:?}")
+    };
     assert!(String::from_utf8_lossy(tti).lines().any(|line| line == "PN,10000"));
     assert!(!t42.is_empty() && t42.len().is_multiple_of(42));
     assert!(summary.contains("colours"), "{summary}");
+    assert!(!regis.is_empty() && !naplps.is_empty());
 }
 
 #[test]
