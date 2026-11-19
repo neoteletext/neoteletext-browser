@@ -75,6 +75,7 @@ impl Core {
             self.sleep.forget(id);
             self.console.forget(id);
             self.invalid.remove(&id);
+            self.naplps_gates.remove(&id);
         }
         let open = |id: &u32| channels.iter().any(|(used, ..)| used == id);
         self.given_up.retain(open);

@@ -78,6 +78,9 @@ pub struct Counts {
     /// Pushed packets discarded as invalid since the push connection
     /// opened, as the engine counts them (neoteletext-common's REQ-1462).
     invalid_packets: u64,
+    /// `NAPLPS` and `NAPLPS_OBJECTS` records dropped because the push
+    /// connection's WELCOME did not agree `NAPLPS_CAP` (RAS-9).
+    naplps_dropped: u64,
 }
 
 /// Digits between the commas of a large number.
@@ -125,6 +128,7 @@ impl Counts {
             stat("  by fetch (HTTP)", format!("{} in {} requests", bytes_text(self.fetched_bytes), grouped(self.fetches))),
             stat("Packets received", grouped(self.packets)),
             stat("  invalid, discarded", grouped(self.invalid_packets)),
+            stat("NAPLPS records dropped (no NAPLPS_CAP)", grouped(self.naplps_dropped)),
             stat("Audio received", format!("{} in {} packets", bytes_text(packet_bytes(self.audio_packets)), grouped(self.audio_packets))),
             stat("Cursor records received", format!("{} in {} packets", bytes_text(packet_bytes(self.input_packets)), grouped(self.input_packets))),
             stat("Input events sent", grouped(self.events_sent)),
@@ -298,6 +302,13 @@ impl Console {
     /// The engine's count of invalid packets the push connection carried.
     pub fn invalid(&mut self, channel: u32, total: u64) {
         self.counts(channel).invalid_packets = total;
+    }
+
+    /// Counts `records` NAPLPS records dropped because the connection's
+    /// WELCOME did not agree `NAPLPS_CAP` (RAS-9).
+    pub fn naplps_dropped(&mut self, channel: u32, records: u64) {
+        let counts = self.counts(channel);
+        counts.naplps_dropped = counts.naplps_dropped.saturating_add(records);
     }
 
     /// Counts the push connection opening.

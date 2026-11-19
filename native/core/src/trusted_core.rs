@@ -183,6 +183,8 @@ struct Core {
     console: Console,
     /// Each live channel's invalid packets and their report (REQ-1462).
     invalid: BTreeMap<u32, invalid_packets::InvalidReport>,
+    /// Each push connection's gate on NAPLPS records (RAS-9).
+    naplps_gates: BTreeMap<u32, neoteletext::naplps_cap::NaplpsGate>,
     events: Sender<Event>,
     frames: frames::Frames,
     /// The pick records of the pages drawn in ReGIS (DEC-6335).
@@ -386,6 +388,7 @@ impl Core {
             loopback_exemption: loopback::this_computers_exemption(),
             notice: None,
             invalid: BTreeMap::new(),
+            naplps_gates: BTreeMap::new(),
             console: Console::default(),
             events,
             frames: frames::Frames::default(),

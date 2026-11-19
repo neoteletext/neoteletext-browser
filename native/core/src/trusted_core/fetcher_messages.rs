@@ -65,6 +65,7 @@ impl Core {
                 if bytes.len() <= MAX_WHOLE {
                     let packets = matches!(origin, Origin::PushedPackets | Origin::FetchedPackets);
                     let pushed = matches!(origin, Origin::PushedPackets);
+                    let bytes = if pushed { self.naplps_gated(channel, &bytes) } else { bytes };
                     self.tell(channel, ToDecoder::Whole { packets, pushed, bytes });
                 }
             }
@@ -90,6 +91,10 @@ impl Core {
             }
             FromFetcher::Pushing(open) => {
                 self.sleep.set_pushing(channel, open);
+                // A new connection agrees its capabilities afresh (RAS-9).
+                if open {
+                    self.naplps_gates.entry(channel).or_default().connected();
+                }
                 // A live channel wakes at once, not at the next look.
                 if open {
                     self.match_decoders()?;
@@ -290,6 +295,20 @@ impl Core {
             }
         }
         Ok(())
+    }
+
+    /// A pushed message of `channel` as its decoder is given it: without
+    /// its `NAPLPS` and `NAPLPS_OBJECTS` records while the connection's
+    /// WELCOME has not agreed `NAPLPS_CAP` (RAS-9), each one dropped
+    /// counted in the console.
+    fn naplps_gated(&mut self, channel: u32, bytes: &[u8]) -> Vec<u8> {
+        let gated = self.naplps_gates.entry(channel).or_default().pass(bytes);
+        if gated.dropped > 0 {
+            self.console.naplps_dropped(channel, gated.dropped);
+            let text = format!("push: {} NAPLPS records dropped: the connection's WELCOME did not agree NAPLPS_CAP", gated.dropped);
+            self.console.add(channel, ConsoleTab::Network, self.now(), &text);
+        }
+        gated.bytes
     }
 
     /// What a fetcher said, as the console's entries: exchanges and push
@@ -829,5 +848,88 @@ mod tests {
         let mut asked = core::mem::take(&mut test.core.controls.told_fetchers);
         asked.sort_by_key(|(channel, _)| *channel);
         assert_eq!(asked, [(first, ToFetcher::FetchPage { page: 0x100 }), (second, ToFetcher::FetchPage { page: 0x200 })]);
+    }
+
+    /// RAS-9: on a push connection whose WELCOME did not agree
+    /// `NAPLPS_CAP` the trusted core takes a type-17 and a type-25 record
+    /// out of the pushed message before its decoder is given it, counting
+    /// each in the console, so the decoder holds no NAPLPS for the
+    /// sub-page and draws its teletext page; on one that agreed the
+    /// decoder is given them and holds the object at its raster dots.
+    #[cfg(unix)]
+    #[test]
+    fn naplps_records_reach_the_decoder_only_when_welcome_agreed_naplps_cap() {
+        use neoteletext_core::types::{PageAddress, SubCode};
+        use neoteletext_input::caps::{CURSOR_CAP, NAPLPS_CAP};
+        use neoteletext_input::control::{Control, packet_of};
+        use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind, encode};
+        use neoteletext_web::records::regis::{RegisRecord, encode_naplps};
+        use protocol::decoder::read_from_core;
+        use protocol::fetcher::FromFetcher;
+        let (page, sub) = (PageAddress::from_mpp(0x101).unwrap(), SubCode::new(0));
+        let message = |caps: u32| {
+            let mut bytes = packet_of(&Control::Welcome { version: neoteletext_input::VERSION, caps, resume: None }, 0, 1).unwrap().bytes.to_vec();
+            let record = RegisRecord { page, subcode: sub, generation: 1, offset: 0, data: b"A" };
+            encode_naplps(record, 0, 2, &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
+            let object = NaplpsObject {
+                number: 1,
+                kind: ObjectKind::Region,
+                shown: true,
+                detectable: true,
+                layer: 1,
+                order: 0,
+                x: 120,
+                y: 100,
+                width: 24,
+                height: 20,
+                origin: (0, 0),
+                cover: 0,
+                looks: [0; 3],
+                frames: &[],
+            };
+            encode((page, sub, 1), &[object], 0, 3, &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
+            bytes
+        };
+        let decoded = |caps: u32| {
+            let mut test = Test::new(&format!("naplps cap {caps}"));
+            test.core.session.open("news.invalid").unwrap();
+            let channel = test.core.session.tabs[0].channel.id;
+            let written = super::super::test_support::decoder_watched(&mut test.core, channel);
+            // A new connection's gate, as `Pushing(true)` makes it (which
+            // would start helpers this core has no broker for).
+            test.core.naplps_gates.entry(channel).or_default().connected();
+            test.core.fetched(channel, FromFetcher::Page { origin: Origin::PushedPackets, bytes: message(caps) }).unwrap();
+            test.core.flush().unwrap();
+            let mut told = Vec::new();
+            while let Ok(chunk) = written.recv_timeout(std::time::Duration::from_millis(50)) {
+                told.extend(chunk);
+            }
+            let mut engine = decoder::Engine::new();
+            let mut input = told.as_slice();
+            while let Some(message) = read_from_core(&mut input).unwrap() {
+                if let ToDecoder::Whole { packets, pushed, bytes } = message {
+                    engine.feed_whole(packets, pushed, &bytes);
+                }
+            }
+            let mut found = [0; neoteletext_rules::limits::MAX_POINTER_OBJECTS];
+            let at_dot = engine.naplps().objects_at(0x101, Some(0), 130, 110, &mut found);
+            let held = engine.naplps().has(0x101);
+            test.core.console.set_open(true);
+            let said = test
+                .core
+                .console
+                .updates(Some(channel))
+                .iter()
+                .flat_map(|update| update.entries.iter())
+                .any(|entry| entry.text.contains("2 NAPLPS records dropped"));
+            (
+                held,
+                at_dot,
+                test.core.console.counted(channel).stats().iter().any(|stat| stat.label.starts_with("NAPLPS records dropped") && stat.value == "2"),
+                said,
+            )
+        };
+        assert_eq!(decoded(CURSOR_CAP), (false, 0, true, true), "not agreed: both records dropped and counted; the teletext page stands");
+        assert_eq!(decoded(CURSOR_CAP | NAPLPS_CAP), (true, 1, false, false), "agreed: drawn, the object at its dot (130, 110)");
     }
 }

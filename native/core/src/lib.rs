@@ -8,7 +8,8 @@
 //! (`console`); the viewer keys and their sealed file (`viewer_keys`); which
 //! frames are sent (`frames`, measured by the latency test); what of each
 //! channel's sound is heard (`hearing`); history and `history.txt`
-//! (`history`); hyperlinks (`links`); the pipes written by threads of
+//! (`history`); hyperlinks (`links`); the NAPLPS records a push connection may carry
+//! only with `NAPLPS_CAP` agreed (`naplps_cap`); the pipes written by threads of
 //! their own (`outbox`); the session file, `session.txt` (`restore`); the
 //! settings and `settings.txt` (`settings`); sleeping tabs (`sleep`); the
 //! start page (`start_page`); and typing into a page (`typing`). The
@@ -47,6 +48,7 @@ pub mod launch;
 pub mod links;
 #[cfg(test)]
 mod longest_address_tests;
+pub mod naplps_cap;
 pub mod outbox;
 mod private_file;
 pub mod recording;

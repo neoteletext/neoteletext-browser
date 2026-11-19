@@ -294,3 +294,10 @@ path = "fuzz_targets/protocol_audio_local.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "naplps_cap_gate"
+path = "fuzz_targets/naplps_cap_gate.rs"
+test = false
+doc = false
+bench = false
