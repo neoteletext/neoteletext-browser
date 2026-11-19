@@ -137,11 +137,37 @@ fn a_live_sound_plays_once_its_buffer_fills() {
     assert!((5_800..=6_200).contains(&data[300]), "{}", data[300]);
 }
 
-/// The watcher is woken once when a sound starts and once when the
-/// last ends, never while sounds come and go in between, and it
-/// reports the sounding channels each time they change.
+/// A tab that starts sounding while another plays on is reported, so
+/// its speaker shows: the owner's "audio is playing on
+/// <https://app.neottx.com/audio/113> but there is no speaker icon on the
+/// tab", with another tab already playing. The device was already
+/// running, and the watcher was woken only when it was to start or stop.
 #[test]
-fn the_watcher_is_woken_only_when_silence_starts_or_ends() {
+fn a_second_tab_sounding_is_reported_while_the_first_plays_on() {
+    let (wake, wakes) = std::sync::mpsc::sync_channel(1);
+    let mut mixers = Mixers::new(8_000);
+    mixers.wake = Some(wake.clone());
+    let mixers = Mutex::new(mixers);
+    play(&mixers, 1, 8_000);
+    assert!(wakes.try_recv().is_ok(), "the first tab's sound wakes the watcher");
+    play(&mixers, 2, 8_000);
+    assert!(wakes.try_recv().is_ok(), "the second tab's sound wakes the watcher too, though the device already runs");
+    // The watcher, so woken, reports both tabs.
+    wake.send(()).unwrap();
+    let mut reported = Vec::new();
+    watch(&mixers, &wakes, |sounding| {
+        reported.push(sounding);
+        false
+    });
+    assert_eq!(reported, [BTreeSet::from([1, 2])], "both tabs show their speakers");
+}
+
+/// The watcher is woken when a sound starts, when the last ends and
+/// when the set of sounding tabs changes, never while the same tabs go
+/// on sounding, and it reports the sounding channels each time they
+/// change.
+#[test]
+fn the_watcher_is_woken_only_when_the_sounding_tabs_change() {
     let (wake, wakes) = std::sync::mpsc::sync_channel(1);
     let mut mixers = Mixers::new(8_000);
     mixers.wake = Some(wake);
@@ -151,7 +177,7 @@ fn the_watcher_is_woken_only_when_silence_starts_or_ends() {
     play(&mixers, 1, 8_000);
     assert!(wakes.try_recv().is_ok(), "the first sound wakes the watcher");
     play(&mixers, 2, 4_000);
-    assert!(wakes.try_recv().is_err(), "a second channel sounding changes nothing for the device");
+    assert!(wakes.try_recv().is_ok(), "a second channel sounding changes what the tabs show");
     // The sounds last half a second: a quarter rendered, then another.
     let mut data = vec![0_i16; 2_000];
     render(&mixers, &mut data, 1, &mut [0; 512]);

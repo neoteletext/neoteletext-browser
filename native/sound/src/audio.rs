@@ -20,7 +20,8 @@
 //! mixer, a ring the mixer refused) it frees after letting go.
 //!
 //! The device runs only while a channel sounds. Whichever thread finds
-//! that the channels went from silent to sounding or back wakes a watcher
+//! that the channels went from silent to sounding or back, or that one
+//! tab started or stopped showing it sounds, wakes a watcher
 //! through a channel (decision 46: a program waits on what it needs, never
 //! by looking again on a timer); the watcher tells the window, which
 //! starts or stops the device. Idle, the browser then costs the audio
@@ -150,11 +151,15 @@ struct Channel {
     silent_frames: usize,
     /// Microseconds spent rendering it since last told (REQ-6626).
     spent_us: u64,
+    /// Whether its tab showed as sounding when the watcher was last woken:
+    /// a tab that starts or stops sounding while another sounds on changes
+    /// the set the tabs' speakers show, though not whether the device runs.
+    noted: bool,
 }
 
 impl Channel {
     fn new(rate_hz: u32) -> Self {
-        Self { mixer: Mixer::new(rate_hz), names: Names::default(), locals: Locals::default(), heard: false, silent_frames: 0, spent_us: 0 }
+        Self { mixer: Mixer::new(rate_hz), names: Names::default(), locals: Locals::default(), heard: false, silent_frames: 0, spent_us: 0, noted: false }
     }
 
     /// Whether the view's tab shows it sounds: something plays or is about
@@ -174,8 +179,9 @@ pub struct Mixers {
     volume: u8,
     /// The channels whose tabs are muted.
     muted: BTreeSet<u32>,
-    /// Whether any channel sounded when last looked, and how many of the
-    /// views with a local sound showed as sounding.
+    /// Whether any channel sounded when last looked, and how many channels
+    /// showed as sounding: a channel removed while sounding changes the
+    /// count, as one starting or stopping changes its own mark.
     active: bool,
     shown: usize,
     /// Each view's watch list (RULE-33 item 2), kept apart from its mixer,
@@ -238,14 +244,25 @@ impl Mixers {
     }
 
     /// Wakes the watcher when the channels went from silent to sounding or
-    /// back. Called with the lock held, on the audio thread too: it never
-    /// blocks or allocates.
+    /// back, or when any one channel's tab started or stopped showing that
+    /// it sounds. Called with the lock held, on the audio thread too: it
+    /// never blocks or allocates.
     fn note_activity(&mut self) {
         let active = self.channels.values().any(|channel| channel.mixer.active());
+        // Every tab's own mark, not only whether anything sounds: a second
+        // tab that starts while the first plays on leaves the device as it
+        // was, and its speaker was never shown when only that was watched.
         // A view with a local sound shows as sounding only while it is
-        // heard: its tab's mark changes while the device runs on.
-        let shown = self.channels.values().filter(|channel| channel.locals.any() && channel.sounding()).count();
-        if active == self.active && shown == self.shown {
+        // heard, so its mark changes while the device runs on.
+        let mut flipped = false;
+        let mut shown = 0_usize;
+        for channel in self.channels.values_mut() {
+            let sounding = channel.sounding();
+            flipped |= sounding != channel.noted;
+            channel.noted = sounding;
+            shown = shown.saturating_add(usize::from(sounding));
+        }
+        if active == self.active && shown == self.shown && !flipped {
             return;
         }
         self.active = active;
@@ -396,7 +413,8 @@ impl Mixers {
     }
 }
 
-/// Waits for the channels to go from silent to sounding or back, and tells
+/// Waits for the channels to go from silent to sounding or back, or for a
+/// tab to start or stop showing it sounds, and tells
 /// `changed` which channels sound, muted or not, each time that set
 /// changes. Returns when the mixers are gone or `changed` says to stop.
 pub fn watch(mixers: &Mutex<Mixers>, wakes: &Receiver<()>, mut changed: impl FnMut(BTreeSet<u32>) -> bool) {
