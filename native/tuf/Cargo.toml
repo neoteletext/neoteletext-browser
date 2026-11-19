@@ -45,7 +45,7 @@ rustls = { version = "=0.23.46", default-features = false, features = ["std", "a
 webpki-roots = "=1.0.10"
 # The engine's HTTP reader and proxy handshake (requirement 2.1), at the
 # browser's pin.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "62af44b52f9e0b90865ebd0ddd5ba74a4e9b832a", default-features = false, features = ["std"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "33851966f5c335fdea1bd58a95b9637ba02dab55", default-features = false, features = ["std"] }
 # The release tool's own keys and signatures: Ed25519, as the browser's.
 ring = { version = "=0.17.14", default-features = false }
 

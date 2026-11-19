@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(pixel_under(PictureLanguage::Regis, rect, Point::new(201.0, 121.0)), Some((402, 242)));
     }
 
-    /// REQ-5819, DEC-6667: a NAPLPS picture is the teletext raster, so a
+    /// REQ-5819, DEC-6853: a NAPLPS picture is the teletext raster, so a
     /// page image drawn at its own size names each dot of the raster, and
     /// its far corner is the raster's last pixel, 479 by 499: the cell of
     /// a dot is the teletext page's cell there.
@@ -177,6 +177,7 @@ mod tests {
         assert_eq!(pixel_under(PictureLanguage::Naplps, rect, Point::new(12.5, 20.5)), Some((12, 20)), "the first dot of cell (1, 1)");
         assert_eq!(pixel_under(PictureLanguage::Naplps, rect, Point::new(479.9, 499.9)), Some((479, 499)));
         let twice = Rect::new(0.0, 0.0, 960.0, 1000.0);
-        assert_eq!(pixel_under(PictureLanguage::Naplps, twice, Point::new(241.0, 39.0)), Some((120, 19)), "the display area's first line");
+        assert_eq!(pixel_under(PictureLanguage::Naplps, twice, Point::new(241.0, 39.0)), Some((120, 19)), "row 0's last line, outside the display area");
+        assert_eq!(pixel_under(PictureLanguage::Naplps, twice, Point::new(241.0, 41.0)), Some((120, 20)), "the display area's first line (DEC-6857)");
     }
 }

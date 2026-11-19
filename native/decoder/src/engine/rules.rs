@@ -10,23 +10,6 @@ use super::Engine;
 use crate::animation::frames::Taken;
 use crate::rules::host::{Parts, PictureCommand};
 
-/// A rule input of a NAPLPS page, with its pointer in the pixels of the
-/// 640 by 480 picture (RULE-13) under the dot of the teletext raster the
-/// page is drawn on (REQ-5819), which is where the trusted core gives it.
-fn naplps_input(input: RuleInput) -> RuleInput {
-    match input {
-        RuleInput::Pointer { action, button, x, y, control } => {
-            let (x, y) = crate::naplps::design_point(x, y);
-            RuleInput::Pointer { action, button, x, y, control }
-        }
-        RuleInput::Wheel { x, y, control } => {
-            let (x, y) = crate::naplps::design_point(x, y);
-            RuleInput::Wheel { x, y, control }
-        }
-        other => other,
-    }
-}
-
 /// Reads a picture command's body as the record from the server is read,
 /// for the code that applies it (RULE-118).
 fn picture_record(kind: u8, body: &[u8]) -> Option<ChannelRecord<'_>> {
@@ -123,8 +106,8 @@ impl Engine {
     /// core (RULE-52 item 1), decided at once (RULE-96): what it produced
     /// for the trusted core leaves before any other work.
     fn rule_input(&mut self, page: PageSub, sequence: u32, input: RuleInput) -> Vec<FromDecoder> {
-        let facts = self.picture_facts_of(page.page, Some(page.sub));
-        let input = if facts.is_naplps(&self.regis, &self.naplps) { naplps_input(input) } else { input };
+        // A NAPLPS page's pointer is a dot of the raster, as its rule
+        // table's places are (RAS-5): it passes unchanged.
         let mut produced = with_parts!(self, page, |rules, parts| rules.input(page, sequence, input, &mut parts));
         produced.extend(self.after_rules());
         produced

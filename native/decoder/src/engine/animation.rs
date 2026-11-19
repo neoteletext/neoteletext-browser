@@ -46,12 +46,6 @@ pub(super) struct PictureFacts {
 }
 
 impl PictureFacts {
-    /// True when the picture is a NAPLPS one in `naplps`, and no ReGIS
-    /// picture of the sub-page comes before it.
-    pub(super) fn is_naplps(&self, regis: &crate::regis::RegisPages, naplps: &crate::naplps::NaplpsPages) -> bool {
-        !regis.holds(self.page, self.sub) && naplps.holds(self.page, self.sub)
-    }
-
     /// The picture, over the renderers' state.
     pub(super) fn picture<'a>(
         self,

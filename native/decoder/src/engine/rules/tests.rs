@@ -625,3 +625,61 @@ fn a_groups_picture_links_and_cursor_are_applied_as_the_records_are() {
     assert_eq!(engine.regis().take_links(), [(PAGE, 0, vec![(DRAWING, "200".to_owned())])], "the group's link, for the trusted core");
     assert_eq!(engine.regis().cursor(PAGE, 0), DRAWING, "the group's cursor");
 }
+
+/// RAS-5 (DEC-6853, DEC-6856 item 3): a NAPLPS page's pointer is a dot of
+/// the teletext raster, passed to the evaluator unchanged, as its objects'
+/// bounds are: a press at the dot (130, 110) on an object of (120, 100,
+/// 24, 20) fires that object's rule, and at (100, 10), a dot of row 0, it
+/// fires the object whose bounds reach line 10 and no other; a press on
+/// neither fires nothing; and the evaluator's world is 480 by 500.
+#[test]
+fn a_naplps_pages_pointer_is_a_raster_dot_the_rules_take_unchanged() {
+    use crate::engine::wire_vectors_tests::picture_stream;
+    use crate::rules::Picture as _;
+    use neoteletext_rules::table::{Target, TriggerTarget};
+    use neoteletext_web::records::naplps_objects::{NaplpsObject, ObjectKind, encode};
+    use protocol::rules::PointerAction;
+    let region = |number, x, y| NaplpsObject {
+        number,
+        kind: ObjectKind::Region,
+        shown: true,
+        detectable: true,
+        layer: 1,
+        order: 0,
+        x,
+        y,
+        width: 24,
+        height: 20,
+        origin: (0, 0),
+        cover: 0,
+        looks: [0; 3],
+        frames: &[],
+    };
+    let press = |number| Trigger::Press { target: TriggerTarget::of(Target::object(number)), button: 0 };
+    let builder = Builder::new(OPEN);
+    let report = builder.report(None);
+    let builder = builder.rule(press(1), &[], core::slice::from_ref(&report)).rule(press(2), &[], &[report]);
+    let mut engine = Engine::new();
+    engine.feed_whole(true, true, &picture_stream(PAGE, SUB, true, b"A"));
+    let mut packets = Vec::new();
+    encode((address(OPEN).0, address(OPEN).1, 1), &[region(1, 120, 100), region(2, 90, 0)], 0, 0, &mut |packet| packets.extend_from_slice(&packet.bytes))
+        .unwrap();
+    engine.feed_whole(true, true, &packets);
+    set_open(&mut engine, Some(OPEN), T0);
+    send_table(&mut engine, OPEN, 1, Some(&builder.table));
+    run(&mut engine, T0);
+    run(&mut engine, after(1));
+    let mut sequence = 0;
+    let mut fired = |engine: &mut Engine, x, y, tick| {
+        sequence += 1;
+        let at = after(tick) + 10;
+        let mut sent = input(engine, OPEN, sequence, RuleInput::Pointer { action: PointerAction::Press, button: 0, x, y, control: 0 }, at);
+        sent.extend(input(engine, OPEN, sequence + 100, RuleInput::Pointer { action: PointerAction::Release, button: 0, x, y, control: 0 }, at + 1));
+        sent.extend(run(engine, after(tick + 1)));
+        reports(&sent).iter().map(|report| report.rule).collect::<Vec<_>>()
+    };
+    assert_eq!(fired(&mut engine, 130, 110, 1), [0], "object 1's rule, at its own dot");
+    assert_eq!(fired(&mut engine, 100, 10, 3), [1], "object 2's rule, at a dot of row 0 its bounds reach");
+    assert_eq!(fired(&mut engine, 100, 30, 5), [] as [u8; 0], "neither object holds the dot (100, 30)");
+    assert_eq!(engine.animation_picture(PAGE).size(), (480, 500), "the evaluator's world: the teletext raster");
+}

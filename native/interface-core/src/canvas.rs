@@ -58,14 +58,20 @@ pub const REGIS_LINES: u16 = 288;
 pub const REGIS_TOP_LINE: u16 = (PAGE_HEIGHT - REGIS_LINES) / 2;
 
 /// The lines of the teletext raster a NAPLPS page's display area is drawn
-/// on (the NAPLPS renderer's REQ-5819, DEC-6667): 480 by 462 pixels, which
-/// on the raster's pixels, 16/13 as wide as they are high (DEC-2049), keep
-/// the NAPLPS display's shape of 1.28 to 1.
-pub const NAPLPS_DISPLAY_LINES: u16 = 462;
-/// The raster's line a NAPLPS display area's top row is drawn on: the 38
-/// lines left over are shared equally above and below it (REQ-5819).
-pub const NAPLPS_TOP_LINE: u16 = (PAGE_HEIGHT - NAPLPS_DISPLAY_LINES) / 2;
-const _: () = assert!(NAPLPS_TOP_LINE == 19 && NAPLPS_TOP_LINE * 2 + NAPLPS_DISPLAY_LINES == PAGE_HEIGHT, "REQ-5819: 19 border lines above and below");
+/// on: 460, teletext rows 1 to 23 (the owner's DEC-6857, REQ-5819 version
+/// 2; neoteletext-common's `naplps-raster.md` RAS-11). The NAPLPS
+/// renderer's `naplps::limits::DISPLAY_LINES`, which the decoder asserts
+/// equal: this crate does not depend on the renderer.
+pub const NAPLPS_DISPLAY_LINES: u16 = 460;
+/// The raster's line a NAPLPS display area's top row is drawn on: the
+/// first line of teletext row 1, so rows 0 and 24 are the teletext page's
+/// own and wholly outside the picture (DEC-6857 item 2). The renderer's
+/// `naplps::limits::DISPLAY_FIRST_LINE`, asserted equal in the decoder.
+pub const NAPLPS_TOP_LINE: u16 = CELL_HEIGHT;
+const _: () = assert!(
+    NAPLPS_TOP_LINE + NAPLPS_DISPLAY_LINES == PAGE_HEIGHT - CELL_HEIGHT && NAPLPS_DISPLAY_LINES.is_multiple_of(CELL_HEIGHT),
+    "DEC-6857: the display area is rows 1 to 23 exactly"
+);
 
 /// The language a page's picture is drawn in, which says its size: which
 /// renderer made it.
@@ -76,8 +82,8 @@ pub enum PictureLanguage {
     Regis,
     /// NAPLPS, ANSI X3.110-1983 (the NAPLPS renderer's REQ-6408): the
     /// teletext raster itself, 480 by 500, the page's display area on
-    /// lines 19 to 480 and the lines above and below it in the page's
-    /// background colour (REQ-5819, DEC-6667).
+    /// lines 20 to 479 (rows 1 to 23) and rows 0 and 24 the teletext
+    /// page's (REQ-5819, DEC-6857).
     Naplps,
 }
 

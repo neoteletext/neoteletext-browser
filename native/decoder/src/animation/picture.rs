@@ -21,11 +21,13 @@ use crate::rules::Picture;
 const TELETEXT_SIZE: (u16, u16) = (interface_core::canvas::PAGE_WIDTH, interface_core::canvas::PAGE_HEIGHT);
 /// A ReGIS picture's size in pixels (RULE-13).
 const REGIS_SIZE: (u16, u16) = (800, 480);
-/// A NAPLPS picture's size in pixels (RULE-13, ANIM-11).
-const NAPLPS_SIZE: (u16, u16) = (neoteletext_web::records::naplps_objects::PICTURE_WIDTH, neoteletext_web::records::naplps_objects::PICTURE_HEIGHT);
+/// A NAPLPS picture's size in dots: the teletext raster (RULE-13, ANIM-11,
+/// RAS-5).
+const NAPLPS_SIZE: (u16, u16) = (neoteletext_web::records::naplps_objects::RASTER_WIDTH, neoteletext_web::records::naplps_objects::RASTER_HEIGHT);
 
 const _: () = assert!(REGIS_SIZE.0 as usize == protocol::regis::REGIS_WIDTH && REGIS_SIZE.1 as usize == protocol::regis::REGIS_HEIGHT);
 const _: () = assert!(TELETEXT_SIZE.0 == 480 && TELETEXT_SIZE.1 == 500, "RULE-13: a teletext page is 480 by 500");
+const _: () = assert!(NAPLPS_SIZE.0 == TELETEXT_SIZE.0 && NAPLPS_SIZE.1 == TELETEXT_SIZE.1, "RAS-5: a NAPLPS page's places are the teletext raster's dots");
 
 /// For each page with a rule table, the presentation tick its page tick
 /// 0 fell on (ANIM-1: a page's rule tick 0 falls on a clock tick). The

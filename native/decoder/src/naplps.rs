@@ -5,22 +5,22 @@
 //!
 //! NAPLPS (ANSI X3.110-1983) draws on a unit screen whose visible part is
 //! 1 wide by 25/32 high. NeoTeletext draws it on its teletext raster (the
-//! NAPLPS renderer's REQ-5819, the owner's DEC-6667): the canvas is 480 by
-//! 462 pixels, which on the raster's pixels, 16/13 as wide as they are
-//! high, keep the page's shape, and the picture the browser's processes
-//! carry is the whole raster, 480 by 500, the canvas on lines 19 to 480
-//! and the 19 lines above and below it in the page's own background colour
-//! (`Terminal::screen_colour`, DEC-6667 item 4). The 40 NAPLPS text columns
-//! are the raster's 12-pixel columns, so a pointer's dot of the picture is
-//! a dot of the teletext page and its cell the teletext page's cell.
+//! owner's DEC-6853 and DEC-6857; neoteletext-common's `naplps-raster.md`
+//! RAS-11): the canvas is the renderer's receiver canvas, 480 by 460
+//! dots, placed on the raster's lines 20 to 479, exactly teletext rows 1
+//! to 23, and the picture the browser's processes carry is the whole
+//! raster, 480 by 500, rows 0 and 24 in the page's own background colour
+//! (`Terminal::screen_colour`) where the teletext page beneath draws
+//! nothing (DEC-6512). The 40 NAPLPS text columns are the raster's
+//! 12-dot columns, so a pointer's dot of the picture is a dot of the
+//! teletext page and its cell the teletext page's cell.
 //!
-//! Objects and a rule table's pointer and rectangles are in the pixels of
-//! a 640 by 480 picture (animation.md ANIM-11, page-rules.md RULE-13, the
-//! engine's `naplps_objects::PICTURE_WIDTH`), the shape of the display at
-//! square pixels. Each object is given to the renderer scaled to the
-//! canvas, and each rectangle the renderer gives back is scaled to that
-//! picture again; a pointer's dot of the raster is that picture's pixel
-//! under it ([`design_point`]).
+//! Every place NeoTeletext defines on a NAPLPS page is a dot of that
+//! raster (DEC-6853, RAS-4, RAS-5): an object's rectangle, its moves, its
+//! bounds, a rule table's rectangles and the pointer's place. The renderer
+//! takes objects in dots and gives their bounds in dots, so the decoder
+//! passes both through unchanged, and the pick record holds each object's
+//! bounds dot for dot.
 //!
 //! The decoder gives every terminal the glyphs of the engine's 55 teletext
 //! character sets, from the Noto Teletext glyphs it has compiled in, so
@@ -41,13 +41,15 @@
 use std::collections::BTreeMap;
 
 use interface_core::canvas::{NAPLPS_DISPLAY_LINES, NAPLPS_TOP_LINE, PAGE_HEIGHT, PAGE_WIDTH, PictureLanguage};
-use naplps::limits::{MAX_ANIMATED_OBJECTS, MAX_ANIMATION_PIXELS_PER_TICK, MAX_CYCLING_OBJECTS, OBJECT_PICTURE_HEIGHT, OBJECT_PICTURE_WIDTH};
+use naplps::limits::{
+    DISPLAY_FIRST_LINE, DISPLAY_LINES, MAX_ANIMATED_OBJECTS, MAX_ANIMATION_PIXELS_PER_TICK, MAX_CYCLING_OBJECTS, RASTER_HEIGHT, RASTER_WIDTH,
+    RECEIVER_CANVAS_HEIGHT, RECEIVER_CANVAS_WIDTH,
+};
 use naplps::{Animation, Canvas, Look, Object, Player, StrokeFont, Terminal};
 use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
 use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::limits::MAX_POINTER_OBJECTS;
 use neoteletext_rules::table::{Target, TargetKind};
-use neoteletext_web::records::naplps_objects::{PICTURE_HEIGHT, PICTURE_WIDTH};
 use neoteletext_web::records::regis::RegisRecord;
 use protocol::regis::{REGIS_COLOURS, RegisPick, RegisViewer};
 
@@ -57,28 +59,21 @@ use crate::regis::Drawn;
 
 /// The colour map's address bits: sixteen entries, the picture's colours.
 const PALETTE_BITS: u32 = 4;
-/// The canvas: the raster's full width and 462 of its lines (REQ-5819).
-/// The renderer draws at this size, not a multiple of it (DEC-6667 item 2
-/// leaves the choice to the implementer): one canvas pixel is one dot of
-/// the raster, so the teletext sets' 12 by 20 glyphs draw dot for dot in
-/// the default character field and the picture message stays the raster's.
-pub(crate) const WIDTH: usize = PAGE_WIDTH as usize;
+/// The canvas: the renderer's receiver canvas, the raster's full width
+/// and its 460 lines of rows 1 to 23 (RAS-11). The renderer draws at this
+/// size: one canvas pixel is one dot of the raster, so the teletext sets'
+/// 12 by 20 glyphs draw dot for dot and the picture message stays the
+/// raster's.
+pub(crate) const WIDTH: usize = RECEIVER_CANVAS_WIDTH as usize;
 /// See [`WIDTH`].
-pub(crate) const HEIGHT: usize = NAPLPS_DISPLAY_LINES as usize;
+pub(crate) const HEIGHT: usize = RECEIVER_CANVAS_HEIGHT as usize;
 /// The picture carried: the teletext raster.
 const PICTURE: PictureLanguage = PictureLanguage::Naplps;
-/// The picture's lines above the canvas, and as many below it.
-const TOP: usize = NAPLPS_TOP_LINE as usize;
-/// The picture objects and a rule table's pointer are given in (ANIM-11,
-/// RULE-13): 640 by 480.
-const DESIGN_WIDTH: i64 = PICTURE_WIDTH as i64;
-/// See [`DESIGN_WIDTH`].
-const DESIGN_HEIGHT: i64 = PICTURE_HEIGHT as i64;
-/// [`WIDTH`] and [`HEIGHT`] for arithmetic with places, which may be
-/// negative.
-const CANVAS_WIDTH: i64 = PAGE_WIDTH as i64;
-/// See [`CANVAS_WIDTH`].
-const CANVAS_HEIGHT: i64 = NAPLPS_DISPLAY_LINES as i64;
+/// The raster's line the canvas's first line is drawn on: row 0's 20
+/// lines lie above it.
+const TOP: usize = DISPLAY_FIRST_LINE as usize;
+/// The raster places are dots of: 480 by 500 (RAS-4).
+const RASTER: (u16, u16) = (PAGE_WIDTH, PAGE_HEIGHT);
 /// The most sub-pages whose NAPLPS is kept, as for ReGIS: one more, and
 /// the one fed longest ago is forgotten.
 pub const MAX_NAPLPS_PAGES: usize = crate::regis::MAX_REGIS_PAGES;
@@ -87,46 +82,18 @@ pub const MAX_NAPLPS_PAGES: usize = crate::regis::MAX_REGIS_PAGES;
 const MAX_WAITING: usize = MAX_NAPLPS_PAGES;
 
 const _: () = assert!((1 << PALETTE_BITS) == REGIS_COLOURS);
-const _: () = assert!(WIDTH == PICTURE.width() as usize && HEIGHT + 2 * TOP == PICTURE.height() as usize && PAGE_HEIGHT as usize == HEIGHT + 2 * TOP);
-// ANIM-11: the record's picture and the renderer's are one, 640 by 480,
-// and the canvas lies within it, so a scaled object's size is one the
-// renderer takes.
+// RAS-11: the interface's figures, which it has without the renderer, are
+// the renderer's own, and the canvas with rows 0 and 24 is the raster.
 const _: () = assert!(
-    DESIGN_WIDTH == OBJECT_PICTURE_WIDTH as i64
-        && DESIGN_HEIGHT == OBJECT_PICTURE_HEIGHT as i64
-        && CANVAS_WIDTH <= DESIGN_WIDTH
-        && CANVAS_HEIGHT <= DESIGN_HEIGHT
+    NAPLPS_DISPLAY_LINES as u32 == DISPLAY_LINES
+        && NAPLPS_TOP_LINE as u32 == DISPLAY_FIRST_LINE
+        && RECEIVER_CANVAS_WIDTH == RASTER_WIDTH
+        && PAGE_WIDTH as u32 == RASTER_WIDTH
+        && PAGE_HEIGHT as u32 == RASTER_HEIGHT
+        && WIDTH == PICTURE.width() as usize
+        && RASTER_HEIGHT as usize == PICTURE.height() as usize
+        && TOP + HEIGHT + TOP == PICTURE.height() as usize
 );
-
-/// The pixel of the 640 by 480 picture (RULE-13) under the dot (`x`, `y`)
-/// of the raster a NAPLPS page is drawn on. A dot of the border lines
-/// above or below the display area is given as the first row past the
-/// picture's bottom, which no rectangle (cut to the picture, RULE-13) and
-/// no object holds: the press, release or move is still followed
-/// (RULE-8), on nothing.
-/// The pixel of the display area is the renderer's own rule for where a
-/// canvas pixel lies in the design picture, `naplps::design_pixel`, so the
-/// browser and the renderer share one (the NAPLPS renderer's TODO-6814).
-#[must_use]
-pub(crate) fn design_point(x: u16, y: u16) -> (u16, u16) {
-    let Some(line) = y.checked_sub(NAPLPS_TOP_LINE).filter(|line| i64::from(*line) < CANVAS_HEIGHT) else {
-        return (design_x(x), u16::try_from(DESIGN_HEIGHT).unwrap_or(u16::MAX));
-    };
-    let (across, down) = naplps::design_pixel(u32::from(x), u32::from(line), CANVAS, CANVAS_LINES);
-    (u16::try_from(across).unwrap_or(u16::MAX), u16::try_from(down).unwrap_or(u16::MAX))
-}
-
-/// The design picture's column of the raster's column `x`, for a dot of
-/// the border lines, which lies on no object.
-fn design_x(x: u16) -> u16 {
-    let (across, _) = naplps::design_pixel(u32::from(x), 0, CANVAS, CANVAS_LINES);
-    u16::try_from(across).unwrap_or(u16::MAX)
-}
-
-/// The canvas's width and height as the renderer takes them.
-const CANVAS: u32 = PAGE_WIDTH as u32;
-/// See [`CANVAS`].
-const CANVAS_LINES: u32 = NAPLPS_DISPLAY_LINES as u32;
 
 /// One sub-page's NAPLPS.
 struct Page {
@@ -137,9 +104,8 @@ struct Page {
     /// A record was lost: nothing more of this generation is drawn.
     lost: bool,
     terminal: Terminal,
-    /// Its objects as the channel defined them, in the 640 by 480
-    /// picture's pixels (ANIM-11), with their labels; the terminal holds
-    /// each scaled to the canvas.
+    /// Its objects as the channel defined them, in raster dots (ANIM-11,
+    /// RAS-4), with their labels.
     objects: Vec<Object>,
     /// The stream's own picture: the background its objects lie over
     /// (ANIM-12).
@@ -315,9 +281,10 @@ impl Page {
     }
 
     /// The picture as the browser's processes carry it, one byte a pixel:
-    /// the teletext raster, the picture presented on its lines 19 to 480
-    /// and the lines above and below in the colour the page last cleared
-    /// its display to, its own background (REQ-5819, DEC-6667 item 4).
+    /// the teletext raster, the picture presented on its lines 20 to 479
+    /// and rows 0 and 24 in the colour the page last cleared its display
+    /// to, its own background (RAS-11, DEC-6667 item 4), which the
+    /// teletext page's own rows are drawn over (PAR-31).
     fn pixels(&self) -> Vec<u8> {
         let mut pixels = vec![self.terminal.screen_colour(); PICTURE.pixels()];
         let start = TOP.saturating_mul(WIDTH);
@@ -327,10 +294,9 @@ impl Page {
         pixels
     }
 
-    /// Gives the terminal all the sub-page's objects, defined in the 640 by
-    /// 480 picture's pixels, which the renderer places on the canvas itself
-    /// (ANIM-11; the NAPLPS renderer's TODO-6814); false, changing nothing,
-    /// when it refuses them.
+    /// Gives the terminal all the sub-page's objects, defined in raster
+    /// dots, which the renderer places on the canvas itself (ANIM-11,
+    /// RAS-4); false, changing nothing, when it refuses them.
     fn set_objects(&mut self, objects: Vec<Object>) -> bool {
         if self.terminal.set_objects(&objects).is_err() {
             return false;
@@ -426,11 +392,11 @@ impl Page {
         (state.and_then(|state| state.layer).unwrap_or(object.layer), state.and_then(|state| state.order).unwrap_or(object.order), object.number)
     }
 
-    /// The pick record (ANIM-11, "Picking"): for each dot of the raster
-    /// carried, the object drawn last of those that are shown, detectable
-    /// and hold the dot in their rectangle on the canvas, or 0; the place
-    /// within an object is in the raster's dots. Nothing else of a NAPLPS
-    /// picture can be picked.
+    /// The pick record (ANIM-11, "Picking"; RAS-4): for each dot of the
+    /// raster carried, the object drawn last of those that are shown,
+    /// detectable and hold the dot in their bounds, or 0; the place within
+    /// an object is in the raster's dots. Nothing else of a NAPLPS picture
+    /// can be picked.
     fn pick(&self) -> RegisPick {
         let mut objects: Vec<&Object> = self.terminal.objects().iter().filter(|object| object.detectable).collect();
         if objects.is_empty() {
@@ -440,18 +406,19 @@ impl Page {
         let mut record = vec![0_u16; PICTURE.pixels()];
         let mut origins = Vec::new();
         for object in objects {
-            // No rectangle while it is not shown; on the canvas, as the
-            // renderer clips the object when it composes it, so the record
-            // picks exactly what is drawn (TODO-6814).
-            let Some(bounds) = self.terminal.bounds(object.number).and_then(|bounds| bounds.on_canvas(CANVAS, CANVAS_LINES)) else { continue };
+            // No rectangle while it is not shown. The bounds are raster
+            // dots cut to the raster, as the record's are: they are held dot
+            // for dot, with no conversion and no offset (RAS-4), so a dot of
+            // rows 0 and 24 picks an object whose bounds reach it (DEC-6856
+            // item 3) though nothing of it is drawn there.
+            let Some(bounds) = self.terminal.bounds(object.number) else { continue };
             let place = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
-            let top = TOP.saturating_add(place(bounds.y));
-            for row in record.as_chunks_mut::<WIDTH>().0.iter_mut().skip(top).take(place(bounds.height)) {
+            for row in record.as_chunks_mut::<WIDTH>().0.iter_mut().skip(place(bounds.y)).take(place(bounds.height)) {
                 for pixel in row.iter_mut().skip(place(bounds.x)).take(place(bounds.width)) {
                     *pixel = object.number;
                 }
             }
-            origins.push((object.number, i32::try_from(bounds.x).unwrap_or(i32::MAX), i32::try_from(top).unwrap_or(i32::MAX)));
+            origins.push((object.number, i32::try_from(bounds.x).unwrap_or(i32::MAX), i32::try_from(bounds.y).unwrap_or(i32::MAX)));
         }
         RegisPick::of(&record, origins.into_iter(), PICTURE)
     }
@@ -603,8 +570,8 @@ impl Page {
     }
 
     /// The state of an object for a rule table's conditions (RULE-26,
-    /// ANIM-13), in the 640 by 480 picture's pixels, or `None` when the
-    /// sub-page has no such object.
+    /// ANIM-13), in raster dots (RAS-5), or `None` when the sub-page has
+    /// no such object.
     fn target_state(&self, number: u16) -> Option<TargetState> {
         let object = self.object(number)?;
         let state = self.animation.get(Target::object(number)).copied().unwrap_or_default();
@@ -618,7 +585,7 @@ impl Page {
             order: state.order.unwrap_or(object.order),
             x,
             y,
-            // The renderer's bounds are the design picture's already.
+            // The renderer's bounds are raster dots, as the rules' are.
             bounds: self.terminal.bounds(number).map(|bounds| {
                 let edge = |value: u32| i32::try_from(value).unwrap_or(i32::MAX);
                 let (left, top) = (edge(bounds.x), edge(bounds.y));
@@ -801,8 +768,8 @@ impl NaplpsPages {
     /// them their animation state (ANIM-6), and its title, or none; a
     /// record of one object redefines or adds that object alone, its own
     /// animation state forgotten and every other object's, and the
-    /// title, kept (DEC-6638 item 3). Objects are in the 640 by 480
-    /// picture's pixels and carry their labels, which the renderer keeps
+    /// title, kept (DEC-6638 item 3). Objects are in raster dots
+    /// (RAS-4) and carry their labels, which the renderer keeps
     /// for the screen-reader tree. Objects for a generation of the stream
     /// that is not the one shown are kept until that generation begins.
     /// What the renderer refuses changes nothing.
@@ -1037,18 +1004,16 @@ impl NaplpsPages {
         self.shown(page, sub).and_then(|key| self.pages.get(&key))?.target_state(number)
     }
 
-    /// The objects a pixel of the 640 by 480 picture is inside (RULE-12,
-    /// ANIM-11): shown, detectable, the pixel in its rectangle, which the
-    /// renderer holds on the canvas. The count written to the front of
-    /// `objects`.
+    /// The objects a dot of the raster is inside (RULE-12, ANIM-11, RAS-4):
+    /// shown, detectable, the dot in its bounds. The count written to the
+    /// front of `objects`.
     #[must_use]
     pub fn objects_at(&self, page: u16, sub: Option<u16>, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize {
         let Some(held) = self.shown(page, sub).and_then(|key| self.pages.get(&key)) else { return 0 };
-        // A pixel past the picture is on nothing (RULE-13).
-        if i64::from(x) >= DESIGN_WIDTH || i64::from(y) >= DESIGN_HEIGHT {
+        // A dot past the raster is on nothing (RULE-13).
+        if x >= RASTER.0 || y >= RASTER.1 {
             return 0;
         }
-        // The rectangles are the design picture's, as the pixel is.
         let found = held.terminal.objects_at(u32::from(x), u32::from(y));
         let mut count = 0_usize;
         for (slot, number) in objects.iter_mut().zip(found) {
@@ -1163,7 +1128,7 @@ mod tests {
         let notes = pages.take_notes();
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert_eq!((notes[0].page, notes[0].sub), (0x100, 0));
-        assert!(notes[0].text.contains("pixel work allowance (WORK_CAP 28385280 and WORK_PER_BYTE 16 a byte)"), "{}", notes[0].text);
+        assert!(notes[0].text.contains("pixel work allowance (WORK_CAP 28262400 and WORK_PER_BYTE 16 a byte)"), "{}", notes[0].text);
         let spent = pages.pages.get(&(0x100, 0)).unwrap().terminal.work_spent();
         let offset = u32::try_from(stream.len()).unwrap();
         pages.read(&record(0x100, 1, offset, &whole_screen_fills(10)[1..]));
@@ -1191,11 +1156,11 @@ mod tests {
         assert!(chosen < compiled_in, "the chosen font's H, a dot, is drawn: {chosen} against {compiled_in}");
     }
 
-    /// REQ-5819, DEC-6667 (REQ-6408 item 5): a sub-page's records draw a
-    /// picture of the teletext raster, 480 by 500, whose lines 19 to 480
-    /// are the 480 by 462 NAPLPS canvas, with text drawn in the font built
-    /// in, and whose 19 lines above and below are the colour the page
-    /// cleared its display to; it is NAPLPS's, with no pick record's
+    /// RAS-11, DEC-6857 (REQ-6408 item 5): a sub-page's records draw a
+    /// picture of the teletext raster, 480 by 500, whose lines 20 to 479
+    /// are the 480 by 460 NAPLPS canvas, with text drawn in the font built
+    /// in, and whose rows 0 and 24 are the colour the page cleared its
+    /// display to; it is NAPLPS's, with no pick record's
     /// objects; more bytes are sent as the parts that changed, and a new
     /// generation starts again.
     #[test]
@@ -1215,13 +1180,13 @@ mod tests {
         let line = |y: usize| &pixels[y * 480..(y + 1) * 480];
         let screen = pages.pages.get(&(0x100, 0)).unwrap().terminal.screen_colour();
         assert_ne!(screen, 0, "the page cleared its display to another colour than nominal black");
-        assert!((0..19).chain(481..500).all(|y| line(y).iter().all(|&pixel| pixel == screen)), "the border lines are the page's background colour");
+        assert!((0..20).chain(480..500).all(|y| line(y).iter().all(|&pixel| pixel == screen)), "rows 0 and 24 are the page's background colour");
         // The text is drawn at the cursor's place after RESET, the
         // display's bottom left (section 5.3.2.9): in its last 23.1 lines,
-        // which on the raster end at line 480.
+        // which on the raster end at line 479.
         let inked_lines: Vec<usize> = (0..500).filter(|&y| line(y).iter().any(|&pixel| pixel != screen)).collect();
-        assert!(inked_lines.iter().all(|&y| (481 - 24..481).contains(&y)), "the canvas ends at line 480: {inked_lines:?}");
-        let inked = pixels[19 * 480..481 * 480].iter().filter(|&&pixel| pixel != screen).count();
+        assert!(inked_lines.iter().all(|&y| (480 - 24..480).contains(&y)), "the canvas ends at line 479: {inked_lines:?}");
+        let inked = pixels[20 * 480..480 * 480].iter().filter(|&&pixel| pixel != screen).count();
         assert!(inked > 50, "the text is drawn, in the font built in: {inked} pixels");
         assert!(pages.take(0x100, Some(0)).is_none(), "nothing changed since");
 
@@ -1238,20 +1203,26 @@ mod tests {
         assert_eq!((again.picture.commits, again.picture.work), (1, 5), "a new generation starts the picture again");
     }
 
-    /// RULE-13 on the raster (REQ-5819): a dot of the display area is the
-    /// pixel of the 640 by 480 picture under it, with no 80-pixel offset;
-    /// a dot of the border lines is past the picture's bottom.
+    /// RAS-11 (DEC-6857): a fill of the unit screen past its top draws
+    /// exactly the raster's lines 20 to 479, rows 1 to 23, each across;
+    /// rows 0 and 24 are left to the teletext page.
     #[test]
-    fn a_dot_of_the_raster_is_the_640_by_480_pixel_under_it() {
-        assert_eq!(design_point(0, 19), (0, 0));
-        assert_eq!(design_point(12, 19), (16, 0), "column 1 of the raster is the picture's 16th pixel");
-        assert_eq!(design_point(479, 480), (639, 479), "the last dot's centre lies in the last design pixel (naplps::design_pixel)");
-        assert_eq!(design_point(240, 250), (320, 240), "the middle");
-        assert_eq!(design_point(100, 18), (133, 480), "above the display area: on nothing");
-        assert_eq!(design_point(100, 481), (133, 480), "below it: on nothing");
+    fn a_naplps_picture_is_drawn_on_lines_20_to_479_and_no_other() {
+        let mut pages = NaplpsPages::default();
+        // SELECT COLOR entry 2, POINT SET at the origin, RECTANGLE filled by
+        // (255, 255) 256ths, three bytes (sections 5.3.2.5, 5.3.3.1, 5.3.3.4);
+        // a command is drawn when the next begins, so SELECT COLOR again.
+        pages.read(&record(0x100, 1, 0, &[0x0e, 0x3e, 0x48, 0x24, 0x40, 0x40, 0x40, 0x31, 0x5b, 0x7f, 0x7f, 0x3e, 0x40]));
+        let pixels = unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed);
+        let screen = pages.pages.get(&(0x100, 0)).unwrap().terminal.screen_colour();
+        let line = |y: usize| &pixels[y * 480..(y + 1) * 480];
+        let inked: Vec<usize> = (0..500).filter(|&y| line(y).iter().any(|&pixel| pixel != screen)).collect();
+        assert_eq!(inked, (20..480).collect::<Vec<_>>(), "the first drawn line is 20 and the last 479");
+        // The far corner, 255/256 across, is dot 478 (478.1 of 480).
+        assert!((20..480).all(|y| line(y)[..=478].iter().all(|&pixel| pixel != screen)), "every line of rows 1 to 23 is drawn across");
     }
 
-    /// An object of the 640 by 480 picture, 64 by 48 at (320, 240).
+    /// An object of 48 by 40 raster dots at the dot (240, 250).
     fn square(number: u16, label: &str) -> Object {
         Object {
             number,
@@ -1260,10 +1231,10 @@ mod tests {
             detectable: true,
             layer: 1,
             order: 0,
-            x: 320,
-            y: 240,
-            width: 64,
-            height: 48,
+            x: 240,
+            y: 250,
+            width: 48,
+            height: 40,
             origin_x: 0,
             origin_y: 0,
             cover: 3,
@@ -1275,58 +1246,65 @@ mod tests {
         }
     }
 
-    /// ANIM-11 on the raster (REQ-5819): an object placed in the 640 by
-    /// 480 picture is drawn and picked where that place lies on the
-    /// raster, its rectangle read back in the 640 by 480 picture's pixels,
-    /// and the objects a pixel of that picture is inside are found.
+    /// RAS-4 (DEC-6853): an object placed at raster dots is drawn on
+    /// exactly those dots, picked on exactly those dots, its bounds read
+    /// back as the same dots, and `objects_at` takes the same dots: nothing
+    /// is converted anywhere.
     #[test]
-    fn an_object_of_the_640_by_480_picture_lies_where_that_place_is_on_the_raster() {
+    fn an_object_in_raster_dots_is_drawn_picked_and_bounded_on_those_dots() {
         let mut pages = NaplpsPages::default();
         pages.read(&record(0x100, 1, 0, b"A"));
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..square(7, "") }]);
-        let drawn = pages.take(0x100, Some(0)).unwrap();
-        let pixels = unpack(&drawn.picture.packed);
-        // (320, 240), 64 by 48, lies on the canvas where the renderer's own
-        // rule puts it (`Rect::on_canvas`), the raster's lines 19 lower.
-        let on = naplps::Rect { x: 320, y: 240, width: 64, height: 48 }.on_canvas(480, 462).unwrap();
-        let (left, top) = (on.x as usize, on.y as usize + TOP);
-        let (right, bottom) = (left + on.width as usize, top + on.height as usize);
-        // An object has the canvas pixels whose centre lies in its design
-        // rectangle (`naplps::design_pixel`): canvas row 230's centre is
-        // design row 239 (230.5 x 480 / 462), outside it, and row 231's is
-        // design row 240, so its top is canvas row 231, raster line 250.
-        assert_eq!((left, top), (240, 250), "the raster's (240, 250)");
-        assert_eq!(pixels[top * 480 + left], 3, "the hidden region's cover, at its place");
-        assert_eq!(pixels[top * 480 + right - 1], 3);
-        assert_eq!(pixels[top * 480 + right], 0, "past its right edge");
-        assert_eq!(pixels[(top - 1) * 480 + left], 0, "above its top");
-        assert_eq!(pixels[(bottom - 1) * 480 + left], 3);
-        assert_eq!(pixels[bottom * 480 + left], 0, "past its bottom");
+        let pixels = unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed);
+        let covered: Vec<(usize, usize)> = (0..500).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| pixels[y * 480 + x] == 3).collect();
+        let expected: Vec<(usize, usize)> = (250..290).flat_map(|y| (240..288).map(move |x| (x, y))).collect();
+        assert_eq!(covered, expected, "the hidden region's cover lies on dots 240 to 287 of lines 250 to 289");
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![square(7, "")]);
         let pick = pages.take(0x100, Some(0)).unwrap().pick.unwrap();
-        assert_eq!(pick.at(PictureLanguage::Naplps, 240, 250).drawing, 7, "picked at its dot of the raster");
-        assert_eq!(pick.at(PictureLanguage::Naplps, 239, 250).drawing, 0);
+        let picked: Vec<(usize, usize)> =
+            (0..500).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| pick.at(PictureLanguage::Naplps, x, y).drawing == 7).collect();
+        assert_eq!(picked, expected, "picked on exactly its dots");
         let state = pages.target_state(0x100, Some(0), 7).unwrap();
-        assert_eq!((state.x, state.y), (320, 240));
-        assert_eq!(state.bounds, Some(Bounds { left: 320, top: 240, right: 384, bottom: 288 }), "its rectangle in the 640 by 480 picture");
+        assert_eq!((state.x, state.y), (240, 250));
+        assert_eq!(state.bounds, Some(Bounds { left: 240, top: 250, right: 288, bottom: 290 }), "its bounds in the same dots");
         let mut found = [0; MAX_POINTER_OBJECTS];
-        assert_eq!(pages.objects_at(0x100, Some(0), 330, 250, &mut found), 1);
+        assert_eq!(pages.objects_at(0x100, Some(0), 240, 250, &mut found), 1);
         assert_eq!(found[0], 7);
-        assert_eq!(pages.objects_at(0x100, Some(0), 310, 250, &mut found), 0);
-        assert_eq!(pages.objects_at(0x100, Some(0), 330, 480, &mut found), 0, "past the picture's bottom: the border lines");
+        assert_eq!(pages.objects_at(0x100, Some(0), 287, 289, &mut found), 1, "its last dot");
+        assert_eq!(pages.objects_at(0x100, Some(0), 288, 289, &mut found), 0, "past its right edge");
+        assert_eq!(pages.objects_at(0x100, Some(0), 240, 290, &mut found), 0, "past its bottom");
+        assert_eq!(pages.objects_at(0x100, Some(0), 480, 250, &mut found), 0, "past the raster");
     }
 
-    /// The NAPLPS renderer's TODO-6814 on the 480 by 462 raster: an object
-    /// of a component-library page's row 7, design rows 126 to 145, is
-    /// drawn whole on canvas rows 121 to 140 (raster lines 140 to 159), and
-    /// the pick record names it on exactly those lines. The browser scaled
-    /// objects to the canvas itself before, so the renderer scaled them a
-    /// second time, and its own rounding drew the object a line short.
+    /// RAS-4 with DEC-6856 item 3: an object reaching into row 0 is drawn
+    /// only on the display area, but its bounds are cut to the raster, so
+    /// a dot of row 0 within them picks it and a rule there finds it.
+    #[test]
+    fn an_object_reaching_row_0_is_drawn_below_it_and_picked_on_it() {
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, b"A"));
+        let top = Object { x: 120, y: 0, width: 24, height: 40, ..square(7, "") };
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..top.clone() }]);
+        let pixels = unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed);
+        let lines: Vec<usize> = (0..500).filter(|&line| pixels[line * 480 + 130] == 3).collect();
+        assert_eq!(lines, (20..40).collect::<Vec<_>>(), "drawn on row 1 only: nothing over row 0");
+        pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![top]);
+        let pick = pages.take(0x100, Some(0)).unwrap().pick.unwrap();
+        let picked: Vec<usize> = (0..500).filter(|&line| pick.at(PictureLanguage::Naplps, 130, line).drawing == 7).collect();
+        assert_eq!(picked, (0..40).collect::<Vec<_>>(), "picked on its bounds, row 0 included");
+        let mut found = [0; MAX_POINTER_OBJECTS];
+        assert_eq!(pages.objects_at(0x100, Some(0), 130, 10, &mut found), 1, "a dot of row 0");
+        assert_eq!(pages.target_state(0x100, Some(0), 7).unwrap().bounds, Some(Bounds { left: 120, top: 0, right: 144, bottom: 40 }));
+    }
+
+    /// RAS-7's cell on the raster: an object of a component-library page's
+    /// row 7, lines 140 to 159, is drawn whole on exactly those lines and
+    /// the pick record names it on exactly those lines.
     #[test]
     fn an_object_on_a_row_of_cells_is_drawn_whole_and_picked_where_drawn() {
         let mut pages = NaplpsPages::default();
         pages.read(&record(0x100, 1, 0, b"A"));
-        let cell_row = Object { x: 0, y: 126, width: 64, height: 20, ..square(7, "") };
+        let cell_row = Object { x: 0, y: 140, width: 64, height: 20, ..square(7, "") };
         // Hidden, a region shows its cover; shown, it is picked.
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![Object { shown: false, ..cell_row.clone() }]);
         let pixels = unpack(&pages.take(0x100, Some(0)).unwrap().picture.packed);
@@ -1337,7 +1315,7 @@ mod tests {
         let picked: Vec<usize> = (0..500).filter(|&line| pick.at(PictureLanguage::Naplps, 10, line).drawing == 7).collect();
         assert_eq!(picked, lines, "picked on exactly the lines drawn");
         let state = pages.target_state(0x100, Some(0), 7).unwrap();
-        assert_eq!(state.bounds, Some(Bounds { left: 0, top: 126, right: 64, bottom: 146 }), "its rectangle in the design picture");
+        assert_eq!(state.bounds, Some(Bounds { left: 0, top: 140, right: 64, bottom: 160 }), "its bounds in raster dots");
     }
 
     /// A filled rectangle of colour-map entry `entry` over the bottom left
@@ -1463,10 +1441,10 @@ mod tests {
         let mut set = BitmapSet::new(12, 20).unwrap();
         set.set_glyph(0x44, &delta).unwrap();
         terminal.set_teletext_set(17, set).unwrap();
-        let mut canvas = Canvas::new(480, 462).unwrap();
+        let mut canvas = Canvas::new(480, 460).unwrap();
         let _ = terminal.feed(&mut canvas, b"\x1b\x28\x21\x31D");
         let _ = terminal.finish(&mut canvas);
-        let display = &greek[19 * 480..481 * 480];
+        let display = &greek[20 * 480..480 * 480];
         assert!(canvas.pixels().iter().any(|&pixel| pixel != 0), "the delta draws");
         assert_eq!(display, canvas.pixels(), "the engine's Greek glyph, as the renderer draws it");
         assert_ne!(greek, drawn(b"D"), "not the primary set's D");
@@ -1501,7 +1479,7 @@ mod tests {
         assert_eq!(pages.labels(0x100, 0), [(7, "Pause"), (8, "Stop")]);
         assert_eq!(pages.title(0x100), Some("Weather map"), "the title kept");
         let canvas_object = pages.pages.get(&(0x100, 0)).unwrap().terminal.object(7).unwrap().clone();
-        assert_eq!((canvas_object.x, canvas_object.y), (100, 50), "in the design picture: the renderer places it on the canvas (TODO-6814)");
+        assert_eq!((canvas_object.x, canvas_object.y), (100, 50), "in raster dots, as given (RAS-4)");
         pages.set_objects(0x100, 0, 1, Scope::Whole, None, vec![other]);
         assert_eq!(pages.title(0x100), None, "a whole record without a title takes it away");
         // For generation 2, not yet begun: a whole set and one object more.

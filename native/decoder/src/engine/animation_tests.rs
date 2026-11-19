@@ -822,10 +822,7 @@ fn reduced_motion_stills_the_naplps_cursor_and_cycles() {
     engine.feed_whole(true, true, &packets);
     let mut receiver = Receiver::default();
     assert!(receiver.naplps(&mut engine));
-    let at = |receiver: &Receiver| {
-        let (x, y) = raster(110, 110);
-        receiver.at(x, y)
-    };
+    let at = |receiver: &Receiver| receiver.at(110, 110);
     // Frames 1 and 2, colours 6 and 9: frame 1 shows, and stays.
     engine.feed_whole(true, true, &animate(PAGE, &[on(1, OperationKind::Cycle { first: 1, last: 2, period: 4, once: false })]));
     for tick in [10, 14, 18, 100] {
@@ -844,14 +841,10 @@ fn reduced_motion_stills_the_naplps_cursor_and_cycles() {
     assert_eq!(engine.animation_due_us(&[PAGE], due_at(296)), None, "no wake for a blink or a cycle");
 }
 
-/// The dot of the teletext raster a NAPLPS picture is carried as (REQ-5819)
-/// that shows the pixel (`x`, `y`) of the 640 by 480 picture objects are
-/// placed in: its canvas of 480 by 462 lies on lines 19 to 480.
-fn raster(x: usize, y: usize) -> (usize, usize) {
-    ((x * 480 + 320) / 640, (y * 462 + 240) / 480 + 19)
-}
-
-/// A NAPLPS object as its record holds it.
+/// A NAPLPS object as its record holds it, in raster dots (RAS-4): 60 by
+/// 60 at (`x`, `y`). A macro object's macro fills the bottom left eighth
+/// of the unit screen, dots 0 to 59 of lines 406 to 479, so its origin is
+/// the dot (0, 420), the top left of the 60 by 60 dots it shows.
 fn object(number: u16, kind: ObjectKind, (x, y): (i16, i16), frames: &[u8]) -> NaplpsObject<'_> {
     let region = kind == ObjectKind::Region;
     NaplpsObject {
@@ -863,7 +856,7 @@ fn object(number: u16, kind: ObjectKind, (x, y): (i16, i16), frames: &[u8]) -> N
         order: 0,
         x,
         y,
-        width: 80,
+        width: 60,
         height: 60,
         origin: (0, if region { 0 } else { 420 }),
         cover: if region { 5 } else { 0 },
@@ -881,7 +874,7 @@ fn object(number: u16, kind: ObjectKind, (x, y): (i16, i16), frames: &[u8]) -> N
 #[test]
 fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     // Macro 2/0 fills in entry 3 and macro 2/1 in entry 6, each a rectangle
-    // of 80 by 60 pixels at the bottom left of the unit screen; then the
+    // over the bottom left eighth of the unit screen; then the
     // stream's own picture, a rectangle of entry 2.
     let mut bytes = vec![DEF_MACRO, 0x20];
     bytes.extend(rectangle(3, 0, 0, 32, 32));
@@ -905,16 +898,9 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     let pick = drawn.pick.clone().unwrap();
     receiver.lay(&drawn.picture);
     assert!(receiver.take_sent().1, "the first picture is whole");
-    let (at, picked) = (
-        |x, y| {
-            let (x, y) = raster(x, y);
-            receiver.at(x, y)
-        },
-        |x, y| {
-            let (x, y) = raster(x, y);
-            pick.at(PictureLanguage::Naplps, x, y).drawing
-        },
-    );
+    // Every place is a raster dot, as the picture's and the pick record's
+    // are (RAS-4): nothing is converted.
+    let (at, picked) = (|x, y| receiver.at(x, y), |x, y| pick.at(PictureLanguage::Naplps, x, y).drawing);
     assert_eq!(at(110, 110), 3, "the macro object's frame 0, at its place");
     assert_eq!(picked(110, 110), 1, "the object can be picked");
     assert_eq!(picked(330, 110), 2, "and the region");
@@ -923,12 +909,13 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
 
     let mut found = [0; MAX_POINTER_OBJECTS];
     let picture = engine.animation_picture(PAGE);
-    assert_eq!(picture.size(), (640, 480), "RULE-13: a NAPLPS picture");
+    assert_eq!(picture.size(), (480, 500), "RULE-13, RAS-5: a NAPLPS picture is the teletext raster");
     assert_eq!(picture.objects_at(330, 110, &mut found), 1);
     assert_eq!(found[0], 2);
     let state = picture.target(Target::object(1)).unwrap();
     assert_eq!((state.x, state.y, state.layer), (100, 100, 2));
-    assert_eq!(state.bounds, Some(Bounds { left: 100, top: 100, right: 180, bottom: 160 }));
+    assert_eq!(state.bounds, Some(Bounds { left: 100, top: 100, right: 160, bottom: 160 }));
+    assert_eq!((picked(100, 100), picked(159, 159), picked(160, 159), picked(159, 160)), (1, 1, 0, 0), "picked on exactly its dots");
 
     // Hide the region, move the object and cycle its frames.
     let operations = [
@@ -938,10 +925,7 @@ fn naplps_objects_are_composed_picked_hidden_moved_and_cycled() {
     ];
     engine.feed_whole(true, true, &animate(PAGE, &operations));
     assert!(receiver.naplps(&mut engine));
-    let at = |receiver: &Receiver, x, y| {
-        let (x, y) = raster(x, y);
-        receiver.at(x, y)
-    };
+    let at = |receiver: &Receiver, x, y| receiver.at(x, y);
     assert_eq!(at(&receiver, 330, 110), 5, "the hidden region is its cover");
     assert_eq!((at(&receiver, 110, 110), at(&receiver, 410, 310)), (0, 3), "the object moved");
     assert!(!receiver.take_sent().1, "only what changed was sent");
