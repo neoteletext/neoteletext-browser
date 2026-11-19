@@ -301,3 +301,10 @@ path = "fuzz_targets/naplps_cap_gate.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "snapshot_messages"
+path = "fuzz_targets/snapshot_messages.rs"
+test = false
+doc = false
+bench = false
