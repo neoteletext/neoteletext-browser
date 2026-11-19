@@ -242,6 +242,7 @@ fn every_message_to_the_interface_round_trips() {
             wheel_inverted: true,
             regis_contain: true,
             paint_gradually: true,
+            tab_pictures: true,
             regis_font: String::new(),
             naplps_font: String::new(),
             refusal: None,

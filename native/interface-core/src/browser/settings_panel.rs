@@ -22,7 +22,7 @@ const PANEL_WIDTH: f64 = 600.0;
 /// Room for its heading, twelve rows, two rows of chips and the trusted
 /// core's word, and the two rows of fonts for pictures (renderer parity
 /// PAR-35).
-const PANEL_HEIGHT: f64 = 648.0 + 7.0 * ROW + GAP + 6.0 * ROW_GAP;
+const PANEL_HEIGHT: f64 = 648.0 + 10.0 * ROW + GAP + 7.0 * ROW_GAP;
 /// Room added, on Windows, for the loopback exemption: a line saying why
 /// with its Copy button, and the command on two lines (TODO-1251).
 const EXEMPTION_ROOM: f64 = 3.0 * ROW + GAP;
@@ -96,6 +96,8 @@ struct Controls {
     regis_teletext: Rect,
     paint_gradual: Rect,
     paint_whole: Rect,
+    tab_pictures_on: Rect,
+    tab_pictures_off: Rect,
     /// Each picture language's font: choose a file, or the one compiled in
     /// (renderer parity PAR-35); ReGIS, then NAPLPS.
     font_choose: [Rect; 2],

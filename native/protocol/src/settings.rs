@@ -59,6 +59,8 @@ const CHANGE_PAINT_GRADUALLY: u8 = 16;
 // The font compiled in again for a picture language (renderer parity
 // PAR-35), the next number free among the changes.
 const CHANGE_BUILT_IN_FONT: u8 = 17;
+/// "Tab pictures" (REQ-6886 item 9), the next number free.
+const CHANGE_TAB_PICTURES: u8 = 18;
 // Far from the others, so changes added beside this one elsewhere do not
 // meet it (installation-and-updates.md section 3.4).
 const CHANGE_CHECK_UPDATES: u8 = 40;
@@ -109,6 +111,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     push_flag(payload, view.wheel_inverted);
     push_flag(payload, view.regis_contain);
     push_flag(payload, view.paint_gradually);
+    push_flag(payload, view.tab_pictures);
     push_text(payload, &view.regis_font, MAX_FONT_NAME)?;
     push_text(payload, &view.naplps_font, MAX_FONT_NAME)?;
     match &view.refusal {
@@ -141,6 +144,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let wheel_inverted = fields.flag("flag")?;
     let regis_contain = fields.flag("flag")?;
     let paint_gradually = fields.flag("flag")?;
+    let tab_pictures = fields.flag("flag")?;
     let regis_font = fields.text(MAX_FONT_NAME)?;
     let naplps_font = fields.text(MAX_FONT_NAME)?;
     let refusal = if fields.flag("flag")? { Some(fields.text(MAX_REFUSAL)?) } else { None };
@@ -157,6 +161,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
         wheel_inverted,
         regis_contain,
         paint_gradually,
+        tab_pictures,
         regis_font,
         naplps_font,
         refusal,
@@ -222,6 +227,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_PAINT_GRADUALLY);
             push_flag(payload, *on);
         }
+        SettingChange::TabPictures(on) => {
+            payload.push(CHANGE_TAB_PICTURES);
+            push_flag(payload, *on);
+        }
         SettingChange::BuiltInFont(language) => {
             payload.push(CHANGE_BUILT_IN_FONT);
             push_flag(payload, *language == crate::regis::PictureLanguage::Naplps);
@@ -269,6 +278,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_WHEEL_INVERTED => SettingChange::WheelInverted(fields.flag("flag")?),
         CHANGE_REGIS_CONTAIN => SettingChange::RegisContain(fields.flag("flag")?),
         CHANGE_PAINT_GRADUALLY => SettingChange::PaintGradually(fields.flag("flag")?),
+        CHANGE_TAB_PICTURES => SettingChange::TabPictures(fields.flag("flag")?),
         CHANGE_BUILT_IN_FONT => {
             SettingChange::BuiltInFont(if fields.flag("flag")? { crate::regis::PictureLanguage::Naplps } else { crate::regis::PictureLanguage::Regis })
         }
