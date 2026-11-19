@@ -37,6 +37,7 @@ impl Browser {
 
     /// Draws the whole window; `width` and `height` are logical pixels.
     pub fn draw<C: Canvas + ?Sized>(&mut self, canvas: &mut C, width: f64, height: f64, now: u64) {
+        self.drawn_at = now;
         self.follow_field_drag(canvas);
         self.regions.clear();
         // The page alone (decision 85), unless something needs the window.

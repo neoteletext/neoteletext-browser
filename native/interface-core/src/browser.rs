@@ -220,6 +220,9 @@ pub struct Browser {
     tab_strip: tab_strip::TabsUi,
     /// The tab filmstrip, and the strip's slide (REQ-6640).
     filmstrip: filmstrip::Filmstrip,
+    /// When the last frame was drawn: a move still under way then wants
+    /// one more frame, at its end, however late the host asks.
+    drawn_at: u64,
     /// Full screen, the page only (decision 85).
     full_screen: full_screen::FullScreenUi,
     /// The bookmarks manager (requirement 20.17).
@@ -320,6 +323,7 @@ impl Browser {
             refused: certificate_refused::RefusedUi::default(),
             tab_strip: tab_strip::TabsUi::default(),
             filmstrip: filmstrip::Filmstrip::default(),
+            drawn_at: 0,
             full_screen: full_screen::FullScreenUi::default(),
             bookmarks: bookmarks::BookmarksUi::default(),
             star: star::StarUi::default(),

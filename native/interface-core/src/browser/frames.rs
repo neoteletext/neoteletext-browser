@@ -50,7 +50,14 @@ impl Browser {
             .chain(self.subpages_deadline(now))
             .chain(self.held_label_deadline(now))
             .min();
-        if self.wall.animating(now) || self.remote_animating(now) || self.filmstrip_animating(now) {
+        // A move still under way when the last frame was drawn wants one
+        // more frame, drawn at its end: the host asks after drawing, and
+        // a move that ended in between would otherwise be left short of
+        // its end until something else is drawn (DEC-6920 item 6: the
+        // filmstrip's picture alone, left a fraction of a pixel short of
+        // its slide out, moved when the row appeared).
+        let moving = |at: u64| self.wall.animating(at) || self.remote_animating(at) || self.filmstrip_animating(at);
+        if moving(now) || moving(self.drawn_at) {
             Some(SMOOTH_FRAME_MILLISECONDS)
         } else if deadline.is_some() {
             deadline

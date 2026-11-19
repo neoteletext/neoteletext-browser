@@ -671,3 +671,23 @@ fn moving_to_another_tab_moves_the_lone_picture_under_it() {
     browser.draw(&mut canvas, WIDTH, HEIGHT, FILMSTRIP_DELAY_MILLISECONDS + FILMSTRIP_ALONE_MILLISECONDS);
     assert_eq!(browser.filmstrip.pictures.len(), 5);
 }
+
+/// DEC-6920 item 6: a frame drawn while the picture alone was still
+/// sliding out wants one more, at the slide's end, even when the host asks
+/// only after the slide has ended; otherwise the picture stays a fraction
+/// of a pixel short until the row appears and draws it at its end, so that
+/// it moves. Before, the next frame asked for was the row's, 500
+/// milliseconds on, as seen on a private display on 20 November 2026.
+#[test]
+fn a_frame_drawn_mid_slide_out_is_followed_by_one_at_its_end() {
+    let (mut browser, mut canvas) = browser_of(5);
+    let tab = browser.regions.tabs.iter().find(|region| region.index == 2).unwrap().tab;
+    point_at(&mut browser, tab, 0);
+    let opened = FILMSTRIP_DELAY_MILLISECONDS;
+    assert!(browser.settle(opened));
+    let slid_out = opened + FILMSTRIP_OPEN_MILLISECONDS;
+    browser.draw(&mut canvas, WIDTH, HEIGHT, slid_out - 5);
+    assert_eq!(browser.frame_interval(slid_out + 1), Some(crate::browser::frames::SMOOTH_FRAME_MILLISECONDS), "one more frame, though the slide has ended");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, slid_out + 1);
+    assert_eq!(browser.frame_interval(slid_out + 2), Some(FILMSTRIP_ALONE_MILLISECONDS - FILMSTRIP_OPEN_MILLISECONDS - 2), "then only the row's wait");
+}
