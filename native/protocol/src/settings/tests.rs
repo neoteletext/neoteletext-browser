@@ -16,6 +16,7 @@ fn view() -> SettingsView {
         wheel_inverted: true,
         regis_contain: false,
         paint_gradually: false,
+        tab_pictures: false,
         regis_font: "myfont.regisfont".into(),
         naplps_font: String::new(),
         refusal: Some("Not an address on this computer or the local network".into()),

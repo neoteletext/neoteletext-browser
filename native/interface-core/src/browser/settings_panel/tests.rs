@@ -19,6 +19,7 @@ fn view() -> SettingsView {
         wheel_inverted: false,
         regis_contain: true,
         paint_gradually: true,
+        tab_pictures: true,
         regis_font: String::new(),
         naplps_font: String::new(),
         refusal: None,
@@ -119,6 +120,10 @@ fn each_control_asks_for_its_change() {
     let (gradual, whole) = (browser.settings.controls.paint_gradual, browser.settings.controls.paint_whole);
     assert_eq!(press(&mut browser, whole), [Output::Setting(SettingChange::PaintGradually(false))]);
     assert_eq!(press(&mut browser, gradual), [Output::Setting(SettingChange::PaintGradually(true))]);
+    // REQ-6886 item 9: tab pictures on or off.
+    let (on, off) = (browser.settings.controls.tab_pictures_on, browser.settings.controls.tab_pictures_off);
+    assert_eq!(press(&mut browser, off), [Output::Setting(SettingChange::TabPictures(false))]);
+    assert_eq!(press(&mut browser, on), [Output::Setting(SettingChange::TabPictures(true))]);
     // VS-112 and open question Q16: Allow and Never ask for the change;
     // "Which…" shows the list in the panel, and its close button goes back
     // to the settings.

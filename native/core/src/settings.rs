@@ -88,6 +88,9 @@ pub struct Settings {
     pub state_block: Vec<String>,
     /// Where the remote control is (`remote-control.md`, decision 68).
     pub remote: RemotePlace,
+    /// Tabs not looked at this run show snapshots fetched without saying
+    /// who the viewer is, kept on this computer (REQ-6886 item 9).
+    pub tab_pictures: bool,
 }
 
 impl Default for Settings {
@@ -108,6 +111,7 @@ impl Default for Settings {
             channels_may_know: true,
             state_block: Vec::new(),
             remote: RemotePlace::default(),
+            tab_pictures: true,
         }
     }
 }
@@ -216,6 +220,7 @@ impl Settings {
             .map(|gradual| self.paint_gradually = gradual)
             .is_some(),
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
+            "tab-pictures" => switch(value).map(|on| self.tab_pictures = on).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
             "updates" => switch(value).map(|on| self.check_updates = on).is_some(),
             STATE_ALLOWED => match value {
@@ -270,6 +275,7 @@ impl Settings {
         lines.push(format!("drawings {}", if self.paint_gradually { "gradual" } else { "whole" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
+        lines.push(format!("tab-pictures {}", if self.tab_pictures { "on" } else { "off" }));
         lines.push(format!("updates {}", if self.check_updates { "on" } else { "off" }));
         lines.push(format!("{STATE_ALLOWED} {}", if self.channels_may_know { "allow" } else { "never" }));
         lines.extend(self.state_block.iter().map(|identity| format!("{STATE_BLOCK} {identity}")));

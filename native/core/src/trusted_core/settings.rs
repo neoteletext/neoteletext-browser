@@ -74,6 +74,7 @@ impl Core {
             wheel_inverted: self.settings.wheel_inverted,
             regis_contain: self.settings.regis_contain,
             paint_gradually: self.settings.paint_gradually,
+            tab_pictures: self.settings.tab_pictures,
             regis_font: clean(&self.fonts.names().0, protocol::settings::MAX_FONT_NAME),
             naplps_font: clean(&self.fonts.names().1, protocol::settings::MAX_FONT_NAME),
             refusal: self.refusal.as_deref().map(|refusal| clean(refusal, protocol::settings::MAX_REFUSAL)),
@@ -110,11 +111,15 @@ impl Core {
         let checking = if let SettingChange::CheckUpdates(on) = change { Some(on) } else { None };
         let home = matches!(change, SettingChange::Home(_));
         let painting = if let SettingChange::PaintGradually(on) = change { Some(on) } else { None };
+        let pictures_off = change == SettingChange::TabPictures(false);
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
                 self.save_settings();
                 self.others_stale();
+                if pictures_off {
+                    self.tab_pictures_off();
+                }
                 if let Some(allowed) = may_know {
                     self.channels_may_know_changed(allowed);
                 }
@@ -223,6 +228,12 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.paint_gradually = on;
             Ok(None)
         }
+        // Whether tabs not looked at show snapshots (REQ-6886 item 9): off,
+        // the store is emptied by the caller.
+        SettingChange::TabPictures(on) => {
+            settings.tab_pictures = on;
+            Ok(None)
+        }
         // Taken before this, by the fonts for pictures (PAR-35).
         SettingChange::BuiltInFont(_) => Ok(None),
         // And whether to check for updates (`installation-and-updates.md`
@@ -329,6 +340,8 @@ mod tests {
         assert_eq!(change(SettingChange::WheelInverted(true)), Ok(None));
         assert_eq!(change(SettingChange::RegisContain(false)), Ok(None));
         assert_eq!(change(SettingChange::PaintGradually(false)), Ok(None));
+        assert_eq!(change(SettingChange::TabPictures(false)), Ok(None));
+        assert!(!settings.tab_pictures, "REQ-6886 item 9");
         assert!(!settings.restore);
         assert!(settings.wheel_inverted, "REQ-6351");
         assert!(!settings.regis_contain, "REQ-6363");

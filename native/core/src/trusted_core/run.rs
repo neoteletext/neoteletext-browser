@@ -75,6 +75,8 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
         Event::BookmarksRead(read) => core.bookmarks_read(read)?,
         Event::PictureConverted(generation, result) => core.picture_converted(generation, result)?,
         Event::FontChecked(generation, refusal) => core.font_checked(generation, refusal)?,
+        Event::SnapshotFetched(job, fetched) => core.snapshot_fetched(job, fetched),
+        Event::SnapshotDrawn(job, drawn) => core.snapshot_drawn(job, *drawn)?,
         Event::Opening(opening) => {
             core.session.now = neoteletext::calendar::utc_now();
             core.opening(opening)?;
@@ -144,6 +146,10 @@ pub(crate) fn run(broker: &Arc<Broker>, given: impl Iterator<Item = String>, con
     #[cfg(not(feature = "interaction"))]
     let _ = input_trace;
     core.viewer_state_at_start();
+    // Tab pictures off keep no snapshot (REQ-6886 item 9).
+    if !core.settings.tab_pictures {
+        core.tab_pictures_off();
+    }
     core.keep_session();
     core.start_sound();
     // Updates: the launcher's state, then the updater, when the settings

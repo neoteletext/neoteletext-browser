@@ -67,6 +67,7 @@ impl Browser {
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_painting(canvas, view.as_ref(), &mut controls, row(y), field_left);
+        y = draw_settings_tab_pictures(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_font(canvas, view.as_ref(), &mut controls, row(y), field_left, false);
         y = draw_settings_font(canvas, view.as_ref(), &mut controls, row(y), field_left, true);
         y = draw_settings_known(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -310,6 +311,35 @@ fn draw_settings_painting<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Sett
     button(canvas, controls.paint_gradual, "Gradually", gradual);
     button(canvas, controls.paint_whole, "At once", !gradual);
     y + ROW + ROW_GAP
+}
+
+/// What "Tab pictures" does, as the panel explains it (REQ-6886 item 9),
+/// a sentence a line.
+const TAB_PICTURES_EXPLAINED: [&str; 2] = [
+    "Show pictures of tabs you have not looked at since NeoTeletext started.",
+    "The pictures are fetched without saying who you are, only for tabs in view, and kept on this computer.",
+];
+
+/// Whether tabs not looked at this run show snapshots, On or Off, with
+/// what that means (REQ-6886 item 9), in `line`. Returns where the next
+/// row starts.
+fn draw_settings_tab_pictures<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+    let y = line.y0;
+    let on = view.is_none_or(|view| view.tab_pictures);
+    left_centred(canvas, line, 0.0, "Tab pictures", ROW_TITLE, WHITE);
+    controls.tab_pictures_on = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 1.5, y + ROW);
+    controls.tab_pictures_off = Rect::new(controls.tab_pictures_on.x1 + GAP, y, controls.tab_pictures_on.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
+    button(canvas, controls.tab_pictures_on, "On", on);
+    button(canvas, controls.tab_pictures_off, "Off", !on);
+    let mut below = y + ROW;
+    for sentence in TAB_PICTURES_EXPLAINED {
+        let text = Rect::new(line.x0, below, line.x1, below + ROW);
+        canvas.push_clip(text);
+        left_centred(canvas, text, 0.0, sentence, ROW_STATUS, MUTED);
+        canvas.pop_clip();
+        below += ROW;
+    }
+    below + ROW_GAP
 }
 
 /// Whether channels may ask to know the viewer, Allow or Never, and the

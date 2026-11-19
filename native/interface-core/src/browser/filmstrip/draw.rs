@@ -5,16 +5,17 @@
 //! close and mute buttons.
 
 use alloc::format;
+use alloc::string::String;
 
 use super::{Picture, Still};
 use crate::browser::Browser;
 use crate::browser::banks::BANK_BORDER;
 use crate::browser::glyphs::speaker_glyph;
 use crate::browser::tab_strip::STRIP_HEIGHT;
-use crate::canvas::{Canvas, image_within, regis_contained};
+use crate::canvas::{Canvas, Style, image_within};
 use crate::geometry::Rect;
 use crate::text::{border, centred, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, CAPTION, GLYPH, MUTED, ROW_STATUS, RULE, SELECTED, WHITE, WINDOW};
+use crate::theme::{BLACK, BLUE, BUTTON, CAPTION, CYAN, GLYPH, MUTED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, WHITE, WINDOW, YELLOW};
 
 /// Pictures across the window: each about a fifth of its width (DEC-6637
 /// item 7).
@@ -91,6 +92,7 @@ impl Browser {
         self.filmstrip.panel = Rect::ZERO;
         let reveal = f64::from(self.filmstrip.reveal.value(now)).clamp(0.0, 1.0);
         if reveal <= 0.0 {
+            self.ask_thumbnails(now);
             return;
         }
         let shown = layout.panel * reveal;
@@ -126,6 +128,7 @@ impl Browser {
         }
         canvas.pop_clip();
         self.filmstrip.panel = panel;
+        self.ask_thumbnails(now);
     }
 
     /// One tab's caption and picture, with its buttons while the pointer
@@ -139,7 +142,7 @@ impl Browser {
         let still = self.filmstrip.still(tab.channel).copied();
         // The caption: the title, cut to leave room for the page number,
         // which follows it, so that each reads as the picture's below.
-        let number = still.map(|still| format!("P{:03X}", still.page)).unwrap_or_default();
+        let number = still.map(|still| still.page).or(tab.page).map(|page| format!("P{page:03X}")).unwrap_or_default();
         let number_width = canvas.text_width(&number, ROW_STATUS);
         let room = if number.is_empty() { caption.width() } else { caption.width() - number_width - CAPTION_GAP };
         let title_width = canvas.text_width(&tab.title, CAPTION).min(room.max(0.0));
@@ -149,7 +152,9 @@ impl Browser {
         canvas.pop_clip();
         let number_area = Rect::new(title.x1 + CAPTION_GAP, caption.y0, title.x1 + CAPTION_GAP + number_width, caption.y1);
         left_centred(canvas, number_area, 0.0, &number, ROW_STATUS, MUTED);
-        draw_still(canvas, tab.channel, still, picture);
+        if !draw_still(canvas, tab.channel, still, picture) {
+            draw_card(canvas, tab, picture);
+        }
         let active = index == self.active;
         let hovered = self.filmstrip.hovered == Some(index);
         if active {
@@ -174,16 +179,98 @@ impl Browser {
     }
 }
 
-/// A tab's still in `picture`, or its stand-in (REQ-6640 item 3): black in
-/// the picture's shape for a page drawn in ReGIS, else a blank page with
-/// its screen, as the wall stands in for a page not yet drawn; a page drawn
-/// in NAPLPS has the teletext page's shape (REQ-5819).
-fn draw_still<C: Canvas + ?Sized>(canvas: &mut C, channel: u32, still: Option<Still>, picture: Rect) {
-    if still.is_some_and(|still| still.kept) && canvas.still(channel, picture) {
-        return;
-    }
+/// A tab's still in `picture`; false, drawing nothing, when it has none.
+fn draw_still<C: Canvas + ?Sized>(canvas: &mut C, channel: u32, still: Option<Still>, picture: Rect) -> bool {
+    still.is_some_and(|still| still.kept) && canvas.still(channel, picture)
+}
+
+/// The teletext page's rows and columns, as the card lays them out
+/// (EN 300 706 clause 2: 25 rows of 40 characters).
+const CARD_ROWS: f64 = 25.0;
+const CARD_COLUMNS: f64 = 40.0;
+/// The most characters on one of the card's rows: the row's 40 less a
+/// cell at each side, as a page leaves for its attributes.
+const CARD_LINE: usize = 38;
+/// The card's rows (`docs/tab-thumbnails.md` section 12), counted from 0
+/// as teletext counts them.
+const CARD_NAME_ROW: f64 = 1.0;
+const CARD_PAGE_ROW: f64 = 9.0;
+const CARD_TITLE_ROW: f64 = 13.0;
+const CARD_TITLE_ROWS: usize = 2;
+const CARD_NOTE_ROW: f64 = 23.0;
+/// How much the card is darkened: a stand-in at the filmstrip's dimmed
+/// strength, so it reads as no picture of the page (REQ-6887 item 2).
+const CARD_DIM: f32 = 0.35;
+/// The dashed border's dash and gap, and its width, in points.
+const DASH: f64 = 6.0;
+const DASH_GAP: f64 = 4.0;
+const DASH_WIDTH: f64 = 2.0;
+/// What the card says at its foot.
+const NO_PICTURE: &str = "No picture yet";
+
+/// `text` cut to at most `count` characters.
+fn cut(text: &str, count: usize) -> &str {
+    text.char_indices().nth(count).map_or(text, |(at, _)| text.get(..at).unwrap_or(text))
+}
+
+/// The stand-in card of a tab with no still (REQ-6887): drawn as a
+/// teletext page from what the browser knows of the tab, the channel's
+/// name in a band of the tab's colour, the page number in double height,
+/// the page's title and "No picture yet", darkened and in a dashed border
+/// so that it is never taken for a picture of the page. Nothing of it is
+/// kept.
+fn draw_card<C: Canvas + ?Sized>(canvas: &mut C, tab: &crate::browser::TabInfo, picture: Rect) {
     canvas.fill(picture, 0.0, WINDOW);
-    let image = image_within(picture);
-    let shape = if still.is_some_and(|still| still.picture) { regis_contained(image) } else { image };
-    canvas.fill(shape, 0.0, BLACK);
+    let page = image_within(picture);
+    canvas.fill(page, 0.0, BLACK);
+    let row = page.height() / CARD_ROWS;
+    let column = page.width() / CARD_COLUMNS;
+    let at = |line: f64, rows: f64| Rect::new(page.x0 + column, page.y0 + line * row, page.x1 - column, page.y0 + (line + rows) * row);
+    let style = |rows: f64| Style { size: narrow_size(row * rows), monospace: true, bold: false, caps: false };
+    let (band, ink) = TAB_COLOURS.get(usize::from(tab.colour)).copied().unwrap_or((BLUE, WHITE));
+    let name = at(CARD_NAME_ROW, 1.0);
+    canvas.fill(Rect::new(page.x0, name.y0, page.x1, name.y1), 0.0, band);
+    canvas.push_clip(page);
+    canvas.text(name, cut(&tab.title, CARD_LINE), style(1.0), ink);
+    let number = match (tab.page, tab.subpage) {
+        (Some(page), Some(sub)) => format!("P{page:03X}/{sub:04X}"),
+        (Some(page), None) => format!("P{page:03X}"),
+        (None, _) => String::from("Start page"),
+    };
+    canvas.text(at(CARD_PAGE_ROW, 2.0), &number, style(2.0), YELLOW);
+    let mut rest = tab.page_title.as_str();
+    for line in 0..CARD_TITLE_ROWS {
+        let shown = cut(rest, CARD_LINE);
+        #[allow(clippy::cast_precision_loss, reason = "a row of two")]
+        canvas.text(at(CARD_TITLE_ROW + line as f64, 1.0), shown, style(1.0), WHITE);
+        rest = rest.get(shown.len()..).unwrap_or_default().trim_start();
+    }
+    canvas.text(at(CARD_NOTE_ROW, 1.0), NO_PICTURE, style(1.0), CYAN);
+    canvas.pop_clip();
+    canvas.dim(picture, CARD_DIM);
+    dashed_border(canvas, picture);
+}
+
+/// A dashed border just inside `rect`, in the panel's edge colour.
+fn dashed_border<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect) {
+    let mut x = rect.x0;
+    while x < rect.x1 {
+        let end = (x + DASH).min(rect.x1);
+        canvas.fill(Rect::new(x, rect.y0, end, rect.y0 + DASH_WIDTH), 0.0, SELECTED);
+        canvas.fill(Rect::new(x, rect.y1 - DASH_WIDTH, end, rect.y1), 0.0, SELECTED);
+        x = end + DASH_GAP;
+    }
+    let mut y = rect.y0;
+    while y < rect.y1 {
+        let end = (y + DASH).min(rect.y1);
+        canvas.fill(Rect::new(rect.x0, y, rect.x0 + DASH_WIDTH, end), 0.0, SELECTED);
+        canvas.fill(Rect::new(rect.x1 - DASH_WIDTH, y, rect.x1, end), 0.0, SELECTED);
+        y = end + DASH_GAP;
+    }
+}
+
+/// A text size in points, held within `f32`.
+#[expect(clippy::cast_possible_truncation, reason = "a row's height, far within f32")]
+fn narrow_size(points: f64) -> f32 {
+    points as f32
 }

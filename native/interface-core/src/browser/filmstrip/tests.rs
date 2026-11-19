@@ -8,7 +8,6 @@ use super::draw::{Layout, MARGIN};
 use super::*;
 use crate::browser::fixture::{HEIGHT, WIDTH, channel, middle};
 use crate::browser::{Frame, Key, Modifiers, TabInfo};
-use crate::canvas::REGIS_HEIGHT_PER_WIDTH;
 use crate::test_canvas::{Painted, Recorder};
 use crate::theme::{BLACK, WHITE};
 
@@ -190,22 +189,108 @@ fn stills_are_taken_when_a_tab_is_left_and_when_the_filmstrip_opens() {
     assert!(!canvas.stills.iter().any(|&(still, _)| still == FIRST + 1), "a closed tab's still is forgotten");
 }
 
-/// REQ-6640 item 3: a page known to be a ReGIS or NAPLPS picture whose
-/// image is not held stands in black, in the picture's shape.
+/// REQ-6887: a tab without a still shows its card, in place of REQ-6640
+/// item 3's blank stand-ins: the channel's name on a band in the tab's
+/// colour, its page number, its page's title and "No picture yet", in
+/// the teletext page's shape, darkened and in a dashed border.
 #[test]
-fn a_picture_page_not_yet_drawn_stands_in_black_in_its_shape() {
+fn a_tab_without_a_still_shows_its_card_with_name_page_and_title() {
     let (mut browser, mut canvas) = browser_of(2);
-    let shown = browser.wall.shown().next().map(|(key, _)| key).unwrap();
-    browser.set_regis(shown, 1, 1, crate::canvas::PictureLanguage::Regis);
-    canvas.has_images = false;
-    browser.set_tabs(tabs(2), 1);
-    browser.draw(&mut canvas, WIDTH, HEIGHT, 10);
+    let mut infos = tabs(2);
+    infos[1].page = Some(0x302);
+    infos[1].subpage = Some(0x0002);
+    infos[1].page_title = alloc::string::String::from("Weather for the whole country");
+    infos[1].colour = 4;
+    browser.set_tabs(infos, 0);
+    canvas.texts.clear();
     canvas.fills.clear();
+    canvas.dims.clear();
     open(&mut browser, &mut canvas, 100);
-    let left = browser.filmstrip.pictures.iter().find(|picture| picture.index == 0).unwrap();
-    let inside = |rect: Rect| left.rect.contains(Point::new(rect.x0, rect.y0)) && left.rect.contains(Point::new(rect.x1 - 0.5, rect.y1 - 0.5));
-    let black = canvas.fills.iter().find(|&&(rect, colour)| colour == BLACK && inside(rect)).map(|&(rect, _)| rect).unwrap();
-    assert!((black.height() / black.width() - REGIS_HEIGHT_PER_WIDTH).abs() < 1e-6, "the picture's shape: {black:?}");
+    let card = browser.filmstrip.pictures.iter().find(|picture| picture.index == 1).unwrap().rect;
+    let inside = |rect: &Rect| card.contains(middle(*rect));
+    let said: Vec<&str> = canvas.texts.iter().filter(|(rect, _)| inside(rect)).map(|(_, text)| text.as_str()).collect();
+    for expected in ["Channel 1", "P302/0002", "Weather for the whole country", "No picture yet"] {
+        assert!(said.contains(&expected), "{expected:?} on the card: {said:?}");
+    }
+    let inks: Vec<(&str, crate::theme::Colour)> = canvas.inks.iter().map(|(text, colour)| (text.as_str(), *colour)).collect();
+    assert!(inks.contains(&("P302/0002", crate::theme::YELLOW)) && inks.contains(&("No picture yet", crate::theme::CYAN)));
+    assert!(canvas.fills.iter().any(|(rect, colour)| inside(rect) && *colour == crate::theme::TAB_COLOURS[4].0), "the band in the tab's colour");
+    assert!(canvas.dims.iter().any(|(rect, _)| (rect.x0, rect.y0) == (card.x0, card.y1 - rect.height()) || inside(rect)), "darkened");
+    let dashes = canvas.fills.iter().filter(|(rect, colour)| inside(rect) && *colour == crate::theme::SELECTED).count();
+    assert!(dashes > 8, "a dashed border: {dashes} dashes");
+}
+
+/// REQ-6887 item 1: the card of an address naming no page says
+/// "Start page".
+#[test]
+fn the_card_names_the_start_page_for_an_address_without_a_page() {
+    let (mut browser, mut canvas) = browser_of(2);
+    canvas.texts.clear();
+    open(&mut browser, &mut canvas, 100);
+    let card = browser.filmstrip.pictures.iter().find(|picture| picture.index == 1).unwrap().rect;
+    assert!(canvas.texts.iter().any(|(rect, text)| card.contains(middle(*rect)) && text == "Start page"));
+}
+
+/// REQ-6883: the open filmstrip asks for the tabs in view without stills,
+/// left to right, once its slide has settled, and again when they change;
+/// and empty when it closes.
+#[test]
+fn the_filmstrip_asks_for_the_tabs_in_view_without_stills() {
+    let (mut browser, mut canvas) = browser_of(3);
+    browser.take_outputs();
+    let out = open(&mut browser, &mut canvas, 100);
+    // The active tab's still is taken as it opens: the others are asked for.
+    assert_eq!(browser.take_outputs(), [Output::Thumbnails(alloc::vec![FIRST + 1, FIRST + 2])]);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, out + 10);
+    assert_eq!(browser.take_outputs(), [], "asked once while nothing changes");
+    browser.thumbnail_kept(FIRST + 1, 0x100, false, true);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, out + 20);
+    assert_eq!(browser.take_outputs(), [Output::Thumbnails(alloc::vec![FIRST + 2])], "a still made: no longer asked");
+    assert!(browser.filmstrip_escape(out + 30));
+    browser.draw(&mut canvas, WIDTH, HEIGHT, out + 30 + FILMSTRIP_OPEN_MILLISECONDS);
+    assert_eq!(browser.take_outputs(), [Output::Thumbnails(Vec::new())], "empty as it closes");
+}
+
+/// REQ-6883: a thumbnail becomes a still of its tab, which replaces the
+/// card; a still as seen this run replaces it, and is never replaced by one.
+#[test]
+fn a_thumbnail_becomes_a_still_and_a_seen_still_replaces_it() {
+    let (mut browser, mut canvas) = browser_of(2);
+    assert!(browser.thumbnail_wanted(FIRST + 1, 0x100, 0));
+    browser.thumbnail_kept(FIRST + 1, 0x100, false, true);
+    canvas.stills.push((FIRST + 1, PageKey { channel: 0, page: 0 }));
+    canvas.painted.clear();
+    canvas.texts.clear();
+    open(&mut browser, &mut canvas, 100);
+    assert!(canvas.painted.iter().any(|painted| matches!(painted, Painted::Still(still, _) if *still == FIRST + 1)), "the still drawn");
+    assert!(!canvas.texts.iter().any(|(_, text)| text == "No picture yet"), "no card");
+    assert!(browser.thumbnail_wanted(FIRST + 1, 0x100, 0), "a newer snapshot may replace a snapshot's still");
+    // Seen: the viewer goes to the tab and leaves it.
+    browser.set_tabs(tabs(2), 1);
+    let mut other = channel();
+    other.channel = FIRST + 1;
+    browser.set_channel(other);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 1_000);
+    browser.set_tabs(tabs(2), 0);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 1_100);
+    assert!(!browser.filmstrip.still(FIRST + 1).unwrap().snapshot, "the still as seen replaced it");
+    assert!(!browser.thumbnail_wanted(FIRST + 1, 0x100, 0), "and no thumbnail replaces it");
+}
+
+/// REQ-6883: a thumbnail of a tab gone, or of a place the tab no longer
+/// shows, is dropped.
+#[test]
+fn a_thumbnail_of_a_tab_gone_or_moved_is_dropped() {
+    let (mut browser, _) = browser_of(2);
+    assert!(!browser.thumbnail_wanted(FIRST + 5, 0x100, 0), "no such tab");
+    let mut infos = tabs(2);
+    infos[1].page = Some(0x200);
+    browser.set_tabs(infos.clone(), 0);
+    assert!(!browser.thumbnail_wanted(FIRST + 1, 0x100, 0), "the tab moved to page 200");
+    assert!(browser.thumbnail_wanted(FIRST + 1, 0x200, 3));
+    infos[1].subpage = Some(4);
+    browser.set_tabs(infos, 0);
+    assert!(!browser.thumbnail_wanted(FIRST + 1, 0x200, 3), "another sub-page");
 }
 
 /// REQ-5819, DEC-6667: a page known to be a NAPLPS picture is the

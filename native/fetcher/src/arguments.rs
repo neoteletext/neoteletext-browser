@@ -13,20 +13,54 @@ pub struct Arguments {
     pub allowed: Vec<IpAddr>,
     /// The proxy every connection goes through, if one.
     pub proxy: Option<Proxy>,
+    /// In snapshot mode, the page and the sub-code to fetch as a stranger
+    /// would (REQ-6884): `--snapshot <PPP> <SSSS>`.
+    pub snapshot: Option<(u16, u16)>,
 }
 
-/// Reads the fetcher's arguments, `<channel address> [--allow-local
-/// <ip>]... [--proxy <url>]`.
+/// The digits of a page number and of a sub-code on the command line.
+const PAGE_DIGITS: usize = 3;
+/// See [`PAGE_DIGITS`].
+const SUB_DIGITS: usize = 4;
+/// The highest sub-code: 3F7F, the page as a whole (EN 300 706 clause
+/// 9.3.1.3 gives S1 4 bits, S2 3, S3 4 and S4 2).
+const SUB_ANY: u16 = 0x3F7F;
+
+/// A number of exactly `digits` hexadecimal capitals or digits.
+fn hexadecimal(text: &str, digits: usize) -> Option<u16> {
+    let well_formed = text.len() == digits && text.bytes().all(|byte| byte.is_ascii_digit() || (b'A'..=b'F').contains(&byte));
+    if well_formed { u16::from_str_radix(text, 16).ok() } else { None }
+}
+
+/// The place a snapshot is asked for: a display page (both digits of its
+/// number decimal) and a sub-code
+/// within the page's range, 3F7F for the page as a whole.
+fn snapshot_place(page: &str, sub: &str) -> Result<(u16, u16), String> {
+    let page = hexadecimal(page, PAGE_DIGITS)
+        .filter(|&page| neoteletext_core::types::PageAddress::from_mpp(page).is_some_and(|address| address.page.is_decimal()))
+        .ok_or_else(|| format!("{page}: not a display page"))?;
+    let sub = hexadecimal(sub, SUB_DIGITS)
+        .filter(|&sub| sub <= SUB_ANY && neoteletext_core::types::SubCode::new(sub).value() == sub)
+        .ok_or_else(|| format!("{sub}: not a sub-code"))?;
+    Ok((page, sub))
+}
+
+/// Reads the fetcher's arguments, `<channel address> [--snapshot <PPP>
+/// <SSSS>] [--allow-local <ip>]... [--proxy <url>]`.
 ///
 /// # Errors
 /// The usage or what is wrong, when the arguments are not these.
 pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut given = given.into_iter();
-    let channel = given.next().ok_or("usage: neoteletext-fetcher <channel address> [--allow-local <ip>]... [--proxy <url>]")?;
-    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None };
+    let channel = given.next().ok_or("usage: neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>] [--allow-local <ip>]... [--proxy <url>]")?;
+    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None, snapshot: None };
     while let Some(argument) = given.next() {
         let value = given.next().ok_or_else(|| format!("{argument} needs a value"))?;
         match argument.as_str() {
+            "--snapshot" if read.snapshot.is_none() => {
+                let sub = given.next().ok_or("--snapshot needs a page and a sub-code")?;
+                read.snapshot = Some(snapshot_place(&value, &sub)?);
+            }
             "--allow-local" => read.allowed.push(value.parse::<IpAddr>().map_err(|_| format!("{value}: not an IP address"))?),
             "--proxy" if read.proxy.is_none() => read.proxy = Some(Proxy::parse(&value).map_err(|error| error.to_string())?),
             _ => return Err(format!("{argument}: not understood")),
@@ -57,5 +91,33 @@ mod tests {
         assert!(read(&["https://a.example/", "--proxy"]).is_err());
         assert!(read(&["https://a.example/", "--proxy", "http://p:1", "--proxy", "http://q:1"]).is_err(), "one proxy");
         assert!(read(&[]).is_err());
+    }
+
+    /// REQ-6884: `--snapshot <PPP> <SSSS>` is read strictly: three
+    /// hexadecimal capitals of a display page and four of a sub-code, 3F7F
+    /// the page as a whole, once.
+    #[test]
+    fn the_snapshot_arguments_are_read_strictly() {
+        assert!(read(&["https://a.example/"]).unwrap().snapshot.is_none());
+        let given = read(&["https://a.example/", "--snapshot", "100", "3F7F", "--allow-local", "10.0.0.2"]).unwrap();
+        assert_eq!(given.snapshot, Some((0x100, 0x3F7F)));
+        assert_eq!(read(&["https://a.example/", "--snapshot", "899", "0001"]).unwrap().snapshot, Some((0x899, 1)));
+        for wrong in [
+            ["100", "3f7f"],
+            ["10", "0000"],
+            ["1000", "0000"],
+            ["0FF", "0000"],
+            ["9AA", "0000"],
+            ["1FF", "0000"],
+            ["100", "000"],
+            ["100", "4000"],
+            ["100", "3F80"],
+            ["100", "+001"],
+            ["100", "00 1"],
+        ] {
+            assert!(read(&["https://a.example/", "--snapshot", wrong[0], wrong[1]]).is_err(), "{wrong:?}");
+        }
+        assert!(read(&["https://a.example/", "--snapshot", "100"]).is_err(), "a page needs its sub-code");
+        assert!(read(&["https://a.example/", "--snapshot", "100", "0000", "--snapshot", "101", "0000"]).is_err(), "once");
     }
 }

@@ -241,7 +241,11 @@ impl Browser {
         let mut core = Core::new(
             Session::new(Bookmarks::default()),
             vec![String::from(LOCAL)],
-            (Settings::default(), Some(folder.clone())),
+            // Tab pictures off: the filmstrip's anonymous snapshots are
+            // REQ-687's fifth exception, which the stand-in harness checks
+            // (`watch.rs`); this run compares every request each channel
+            // heard with a quiet run's, which a snapshot would add to.
+            (Settings { tab_pictures: false, ..Settings::default() }, Some(folder.clone())),
             events,
             Outbox::new(Sink(sender)),
             Some(broker),

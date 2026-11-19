@@ -89,6 +89,13 @@ impl Core {
             ClearRange::All => Range::All,
         };
         let removed = self.library.history.clear(range);
+        // The snapshots fetched in that time, and every miss (REQ-6886
+        // item 7).
+        self.thumbnails.store.clear(match range {
+            Range::All => None,
+            Range::Since(since) => Some(since),
+        });
+        self.thumbnails.forget_misses();
         // The tabs' and closed tabs' entries of that time go too.
         let changed = match range {
             Range::All => self.session.remove_entries(|_| true),

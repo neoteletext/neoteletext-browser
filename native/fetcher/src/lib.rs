@@ -24,8 +24,10 @@ mod arguments;
 mod live;
 mod pictured;
 mod process;
+mod snapshot;
 mod state;
 mod transport;
 
 pub use arguments::{Arguments, arguments};
 pub use process::run;
+pub use snapshot::run as snapshot;

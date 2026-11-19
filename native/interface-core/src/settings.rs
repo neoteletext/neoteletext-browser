@@ -58,6 +58,8 @@ pub struct SettingsView {
     /// delays what follows it; off, everything appears at once
     /// (animation.md ANIM-15, DEC-6525 item 27).
     pub paint_gradually: bool,
+    /// Tabs not looked at this run show snapshots (REQ-6886 item 9).
+    pub tab_pictures: bool,
     /// The file name of the font the viewer chose for alphabet 0 of every
     /// ReGIS picture, or empty for the one compiled in (renderer parity
     /// PAR-35).
@@ -109,6 +111,8 @@ pub enum SettingChange {
     /// Drawings painted gradually (true) or at once (animation.md
     /// ANIM-15).
     PaintGradually(bool),
+    /// Tab pictures on or off (REQ-6886 item 9).
+    TabPictures(bool),
     /// Pictures of this language drawn in the font compiled in again, not
     /// one the viewer chose (renderer parity PAR-35). A font is chosen
     /// through the file dialog, not as a change.
