@@ -54,11 +54,23 @@ fn first_words(helper: &Started) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     match helper.program {
         Program::Decoder if is_bookmark_reader(helper) => return None,
+        // A snapshot fetcher says it is confined and that the server did
+        // not offer snapshots: a miss (REQ-6884).
+        Program::Fetcher if is_snapshot(&helper.arguments) => {
+            use protocol::snapshot::{FromSnapshot, SnapshotEnd, write_to_core};
+            write_to_core(&mut bytes, &FromSnapshot::Confined).ok()?;
+            write_to_core(&mut bytes, &FromSnapshot::Ended(SnapshotEnd::NotOffered)).ok()?;
+        }
         Program::Decoder => protocol::decoder::write_to_core(&mut bytes, &FromDecoder::Confined).ok()?,
         Program::Fetcher => protocol::fetcher::write_to_core(&mut bytes, &FromFetcher::Confined).ok()?,
         Program::Interface | Program::Keyboard | Program::Sound | Program::Updater => {}
     }
     Some(bytes)
+}
+
+/// Whether a helper was started for one snapshot (REQ-6884, REQ-6885).
+fn is_snapshot(arguments: &[String]) -> bool {
+    arguments.iter().any(|argument| argument == "--snapshot")
 }
 
 fn is_bookmark_reader(helper: &Started) -> bool {
@@ -68,7 +80,7 @@ fn is_bookmark_reader(helper: &Started) -> bool {
 /// Whether the core makes a new generation of a channel's helper when it
 /// starts this one: a channel's decoder or its fetcher.
 fn has_generation(helper: &Started) -> bool {
-    helper.program == Program::Fetcher || (helper.program == Program::Decoder && !is_bookmark_reader(helper))
+    !is_snapshot(&helper.arguments) && (helper.program == Program::Fetcher || (helper.program == Program::Decoder && !is_bookmark_reader(helper)))
 }
 
 /// The broker the harness's core is given, and what it watches.
@@ -261,7 +273,7 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
             Program::Interface | Program::Sound => panic!("{described} started the {}", program.name()),
             Program::Decoder => {
                 let store = match arguments.as_slice() {
-                    [flag] if flag == "--bookmarks" || flag == "--picture" || flag == "--font" => true,
+                    [flag] if flag == "--bookmarks" || flag == "--picture" || flag == "--font" || flag == "--snapshot" => true,
                     [flag, pages] if flag == "--store-pages" => {
                         pages.parse::<usize>().is_ok_and(|pages| (FIRST_STORE_PAGES..=MAX_STORE_PAGES).contains(&pages))
                     }
@@ -269,6 +281,18 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
                 };
                 assert!(store, "{described} started a decoder with {arguments:?}");
                 assert!(!local_network, "{described} let a decoder reach the local network");
+            }
+            // REQ-687's fifth exception: a snapshot only of the place a tab
+            // of a window that is not private shows, taken from the core's
+            // own state of it, with the setting on.
+            Program::Fetcher if is_snapshot(arguments) => {
+                let place = |tab: &crate::session::Tab| tab.address().and_then(neoteletext::snapshots::Place::of);
+                let asked = core.session.all_tabs().filter(|tab| !tab.private).filter_map(place).any(|place| {
+                    arguments.get(..4)
+                        == Some(&[place.channel.clone(), String::from("--snapshot"), format!("{:03X}", place.page_asked()), format!("{:04X}", place.sub)][..])
+                });
+                assert!(asked && core.settings.tab_pictures, "{described} started a snapshot fetcher with {arguments:?}, which no tab's place is");
+                assert_eq!(*local_network, arguments.iter().any(|argument| argument == "--allow-local"), "{described}: a snapshot fetcher's local network");
             }
             Program::Fetcher => {
                 let address = arguments.first().map(String::as_str).unwrap_or_default();

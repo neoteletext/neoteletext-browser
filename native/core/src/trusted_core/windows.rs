@@ -283,6 +283,8 @@ impl Core {
         if text == self.kept_session {
             return;
         }
+        // A place no tab shows any more keeps no snapshot (REQ-6886 item 7).
+        self.keep_shown_snapshots();
         match Saved::save(folder, &text) {
             Ok(()) => self.kept_session = text,
             Err(error) => self.log(Level::Error, None, &format!("the session could not be kept in {}: {error}", folder.display())),

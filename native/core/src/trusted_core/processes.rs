@@ -410,6 +410,140 @@ pub(super) fn start_fetcher(
     Ok(Fetcher::new(child, generation, input))
 }
 
+/// A snapshot drawn by a snapshot decoder (REQ-6885): the sub-code drawn,
+/// its image, and its source with concealed text blanked, untrusted until
+/// the trusted core checks the image as it checks a page's frame.
+pub(super) struct SnapshotDrawn {
+    pub(super) page: u16,
+    pub(super) sub: u16,
+    pub(super) image: protocol::decoder::SnapshotImage,
+    pub(super) source: Vec<u8>,
+}
+
+/// Starts a fetcher in snapshot mode for `page`'s `sub` of the channel at
+/// `address` (REQ-6884, `docs/tab-thumbnails.md` section 9): a fresh
+/// process given the address, the place and a tab's transport rules, and
+/// nothing of the viewer. Its answer's bytes, counted against
+/// `MAX_SNAPSHOT_BYTES`, or why it has none, arrive as one event of `job`;
+/// it is ended at once after, or at `SNAPSHOT_FETCH_LIMIT`.
+pub(super) fn start_snapshot_fetch(
+    broker: &Arc<Broker>,
+    address: &str,
+    page: u16,
+    sub: u16,
+    reach: &Reach,
+    job: u64,
+    events: Sender<Event>,
+) -> Result<(), String> {
+    let mut arguments = vec![address.to_owned(), String::from("--snapshot"), format!("{page:03X}"), format!("{sub:04X}")];
+    for ip in &reach.allow_local {
+        arguments.push(String::from("--allow-local"));
+        arguments.push(ip.clone());
+    }
+    if let Some(proxy) = &reach.proxy {
+        arguments.push(String::from("--proxy"));
+        arguments.push(proxy.clone());
+    }
+    let child = spawn(broker, Program::Fetcher, &arguments, !reach.allow_local.is_empty())?;
+    fetch_snapshot_with(child, job, events, neoteletext::snapshots::SNAPSHOT_FETCH_LIMIT);
+    Ok(())
+}
+
+/// Reads a snapshot fetcher's answer: `Confined`, then pieces within the
+/// bound, then `Answered`; anything else is a miss.
+fn read_snapshot_answer(output: impl Read) -> Result<Vec<u8>, String> {
+    use protocol::snapshot::{FromSnapshot, MAX_SNAPSHOT_BYTES, SnapshotEnd, read_from_fetcher};
+    let mut output = BufReader::new(output);
+    if read_from_fetcher(&mut output).map_err(|error| error.to_string())? != Some(FromSnapshot::Confined) {
+        return Err(String::from("the snapshot fetcher did not say it was confined"));
+    }
+    let mut bytes = Vec::new();
+    loop {
+        match read_from_fetcher(&mut output).map_err(|error| error.to_string())? {
+            Some(FromSnapshot::Piece(piece)) => {
+                if bytes.len().saturating_add(piece.len()) > MAX_SNAPSHOT_BYTES {
+                    return Err(String::from("the snapshot passed its bound"));
+                }
+                bytes.extend_from_slice(&piece);
+            }
+            Some(FromSnapshot::Ended(SnapshotEnd::Answered)) if !bytes.is_empty() => return Ok(bytes),
+            Some(FromSnapshot::Ended(end)) => return Err(format!("no snapshot: {end:?}")),
+            Some(FromSnapshot::Confined) | None => return Err(String::from("the snapshot fetcher ended without an answer")),
+        }
+    }
+}
+
+/// [`start_snapshot_fetch`]'s exchange with the fetcher `child`, ended at
+/// `deadline`.
+fn fetch_snapshot_with(mut child: Helper, job: u64, events: Sender<Event>, deadline: std::time::Duration) {
+    let output = child.stdout.take();
+    let (answer, answered) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let read = output.map_or_else(|| Err(String::from("the snapshot fetcher has no output")), read_snapshot_answer);
+        let _ = answer.send(read);
+    });
+    thread::spawn(move || {
+        let read = answered.recv_timeout(deadline).unwrap_or_else(|_| Err(String::from("the snapshot fetcher took too long")));
+        // Its input closed is Close; it is killed rather than waited for.
+        drop(child.stdin.take());
+        end(&mut child);
+        let _ = events.send(Event::SnapshotFetched(job, read));
+    });
+}
+
+/// Starts a decoder in snapshot mode to draw `page`'s `sub` from `bytes`
+/// (REQ-6885): a fresh process given the bytes and the place, whose
+/// answer, or why it drew nothing, arrives as one event of `job`; it is
+/// ended after, or at `SNAPSHOT_DRAW_LIMIT`.
+pub(super) fn start_snapshot_draw(broker: &Arc<Broker>, bytes: Arc<Vec<u8>>, page: u16, sub: u16, job: u64, events: Sender<Event>) -> Result<(), String> {
+    let child = spawn(broker, Program::Decoder, &[String::from("--snapshot")], false)?;
+    draw_snapshot_with(child, bytes, page, sub, job, events, neoteletext::snapshots::SNAPSHOT_DRAW_LIMIT);
+    Ok(())
+}
+
+/// [`start_snapshot_draw`]'s exchange with the decoder `child`, ended at
+/// `deadline`.
+fn draw_snapshot_with(mut child: Helper, bytes: Arc<Vec<u8>>, page: u16, sub: u16, job: u64, events: Sender<Event>, deadline: std::time::Duration) {
+    let output = child.stdout.take();
+    let input = child.stdin.take();
+    let (answer, answered) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let exchange = move || -> Result<SnapshotDrawn, String> {
+            let mut input = input.ok_or("the snapshot decoder has no input")?;
+            let output = output.ok_or("the snapshot decoder has no output")?;
+            for piece in bytes.chunks(protocol::decoder::MAX_WHOLE) {
+                write_to_decoder(&mut input, &ToDecoder::Whole { packets: false, pushed: false, bytes: piece.to_vec() }).map_err(|error| error.to_string())?;
+            }
+            write_to_decoder(&mut input, &ToDecoder::Snapshot { page, sub }).map_err(|error| error.to_string())?;
+            input.flush().map_err(|error| error.to_string())?;
+            let mut output = BufReader::new(output);
+            let mut source = Vec::new();
+            loop {
+                match read_from_decoder(&mut output).map_err(|error| error.to_string())? {
+                    Some(FromDecoder::SnapshotSource(piece)) => {
+                        if source.len().saturating_add(piece.len()) > protocol::snapshot::MAX_SNAPSHOT_BYTES {
+                            return Err(String::from("the snapshot's source passed its bound"));
+                        }
+                        source.extend_from_slice(&piece);
+                    }
+                    Some(FromDecoder::SnapshotDrawn { page: drawn, sub, image }) if drawn == page && !source.is_empty() => {
+                        return Ok(SnapshotDrawn { page, sub, image, source });
+                    }
+                    Some(FromDecoder::SnapshotRefused { reason, .. }) => return Err(format!("the snapshot was not drawn: {reason:?}")),
+                    Some(_) => return Err(String::from("the snapshot decoder said what it may not")),
+                    None => return Err(String::from("the snapshot decoder ended without an answer")),
+                }
+            }
+        };
+        let _ = answer.send(exchange());
+    });
+    thread::spawn(move || {
+        let drawn = answered.recv_timeout(deadline).unwrap_or_else(|_| Err(String::from("the snapshot decoder took too long")));
+        end(&mut child);
+        let _ = events.send(Event::SnapshotDrawn(job, Box::new(drawn)));
+    });
+}
+
 pub(super) fn read_interface(child: &mut Helper, events: Sender<Event>) -> Result<(), String> {
     let output = child.stdout.take().ok_or("the interface has no output")?;
     #[cfg(feature = "timed-test")]

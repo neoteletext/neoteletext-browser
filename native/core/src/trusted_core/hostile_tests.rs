@@ -218,6 +218,9 @@ fn samples(start_page: PageKey, private: u32) -> Vec<Vec<u8>> {
         ToCore::Opened(Some(start_page)),
         ToCore::TabToWindow { tab: 0, window: private, index: 0 },
         ToCore::From(private),
+        // The filmstrip's tabs in view (REQ-687's fifth exception): a tab,
+        // the private window's number and no tab's.
+        ToCore::Thumbnails(vec![start_page.channel, private, u32::MAX]),
     ];
     #[cfg(feature = "links")]
     messages.extend([ToCore::Point(None), ToCore::Typed { number: 0x200, opened: None }, ToCore::Confirm(1), ToCore::Cancel(1)]);

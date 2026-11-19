@@ -39,6 +39,7 @@ mod startup;
 mod strip;
 #[cfg(test)]
 mod test_support;
+mod thumbnails;
 mod timing;
 #[cfg(feature = "interaction")]
 mod typing;
@@ -143,6 +144,12 @@ enum Event {
     /// that generation (renderer parity PAR-35): the parser's refusal,
     /// untrusted.
     FontChecked(u64, Result<(), String>),
+    /// A snapshot fetcher's answer for the job given, or why it has none
+    /// (REQ-6884): the bytes are untrusted and go unread to a decoder.
+    SnapshotFetched(u64, Result<Vec<u8>, String>),
+    /// A snapshot decoder's drawing for the job given, or why it drew none
+    /// (REQ-6885), untrusted.
+    SnapshotDrawn(u64, Box<Result<processes::SnapshotDrawn, String>>),
     /// The updater said something, untrusted (`installation-and-updates.md`).
     Updater(update::wire::FromUpdater),
     /// The updater ended.
@@ -311,6 +318,9 @@ struct Core {
     picture: picture::PictureState,
     /// The fonts the viewer chose for pictures (renderer parity PAR-35).
     fonts: fonts::PictureFonts,
+    /// The filmstrip's thumbnails: the store, the misses and what is
+    /// fetched and drawn for them (REQ-6883, REQ-6886).
+    thumbnails: thumbnails::Thumbnails,
 }
 
 impl Core {
@@ -374,6 +384,7 @@ impl Core {
         broker: Option<Arc<Broker>>,
     ) -> Self {
         let (settings, settings_folder) = kept;
+        let thumbnails = thumbnails::Thumbnails::new(settings_folder.as_deref());
         Self {
             session,
             decoders: BTreeMap::new(),
@@ -447,6 +458,7 @@ impl Core {
             outside_links: neoteletext::launch::OutsideLinks::default(),
             picture: picture::PictureState::default(),
             fonts: fonts::PictureFonts::default(),
+            thumbnails,
         }
     }
 }
