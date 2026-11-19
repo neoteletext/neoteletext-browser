@@ -13,7 +13,8 @@ const FLAG_CURSOR: u8 = 4;
 const FLAG_ROUND_TRIP: u8 = 8;
 const FLAG_REFUSED: u8 = 16;
 const FLAG_WHEEL: u8 = 32;
-const ALL_FLAGS: u8 = FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_REFUSED | FLAG_WHEEL;
+const FLAG_ASKS: u8 = 64;
+const ALL_FLAGS: u8 = FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_REFUSED | FLAG_WHEEL | FLAG_ASKS;
 
 pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -25,7 +26,8 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
             | flag(typing.cursor.is_some(), FLAG_CURSOR)
             | flag(typing.round_trip_us.is_some(), FLAG_ROUND_TRIP)
             | flag(typing.refused, FLAG_REFUSED)
-            | flag(typing.wheel, FLAG_WHEEL),
+            | flag(typing.wheel, FLAG_WHEEL)
+            | flag(typing.asks, FLAG_ASKS),
     );
     let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, flags: 0 });
     check_cursor(typing.page, typing.cursor)?;
@@ -69,5 +71,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         cursor,
         round_trip_us: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),
         wheel: flags & FLAG_WHEEL != 0,
+        asks: flags & FLAG_ASKS != 0,
     })
 }

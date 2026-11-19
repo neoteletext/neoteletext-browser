@@ -69,6 +69,7 @@ impl App {
             cursor,
             round_trip_us: typing.round_trip_us,
             wheel: typing.wheel,
+            asks: typing.asks,
         };
         self.view.browser.set_typing(view, now);
         self.sync_ime();

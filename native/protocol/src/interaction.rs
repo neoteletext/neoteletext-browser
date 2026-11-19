@@ -127,7 +127,7 @@ pub struct CursorState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "on, secure, refused and wheel are independent facts about the channel's input, each its own flag on the wire, not states of one thing"
+    reason = "on, secure, refused, wheel and asks are independent facts about the channel's input, each its own flag on the wire, not states of one thing"
 )]
 pub struct Typing {
     /// The channel whose page is open.
@@ -150,6 +150,11 @@ pub struct Typing {
     /// DEC-6447); otherwise, over a page with sub-pages, the wheel steps
     /// them.
     pub wheel: bool,
+    /// The open page's rule table asks for input of some class (its
+    /// interest mask is not empty, RULE-52 item 1), while keys go to its
+    /// channel: the wheel over its picture is then the page's, not the
+    /// browser's to step (DEC-6633 item 2, REQ-6632).
+    pub asks: bool,
 }
 
 /// An input message for the fetcher to write: whole items of the engine's

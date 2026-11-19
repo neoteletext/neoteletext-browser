@@ -311,7 +311,17 @@ mod tests {
         browser.draw(&mut canvas, crate::browser::fixture::WIDTH, crate::browser::fixture::HEIGHT, 0);
         let key = browser.opened().expect("a page is open");
         browser.set_typing(
-            TypingView { channel: key.channel, page: key.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false },
+            TypingView {
+                channel: key.channel,
+                page: key.page,
+                on: true,
+                secure: false,
+                refused: false,
+                cursor: None,
+                round_trip_us: None,
+                wheel: false,
+                asks: false,
+            },
             0,
         );
         assert_eq!(browser.typing_target(), Some(key), "keys go to the channel");

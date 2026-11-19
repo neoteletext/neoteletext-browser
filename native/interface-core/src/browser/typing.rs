@@ -61,7 +61,7 @@ pub struct CursorView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "on, secure, refused and wheel are independent facts the trusted core reports (protocol::interaction::Typing), not states of one thing"
+    reason = "on, secure, refused, wheel and asks are independent facts the trusted core reports (protocol::interaction::Typing), not states of one thing"
 )]
 pub struct TypingView {
     /// The channel.
@@ -83,6 +83,9 @@ pub struct TypingView {
     /// DEC-6447); otherwise, over a page with sub-pages, the wheel steps
     /// them.
     pub wheel: bool,
+    /// The open page's rule table asks for input of some class: the wheel
+    /// over its picture is then the page's (DEC-6633 item 2, REQ-6632).
+    pub asks: bool,
 }
 
 /// The browser's typing state.
@@ -499,6 +502,17 @@ impl Browser {
     /// rectangle (RULE-51 item 4, DEC-6573 item 8).
     pub(in crate::browser) fn page_claims_wheel(&self) -> bool {
         self.mouse_target().is_some() && self.typing.typing.is_some_and(|typing| typing.wheel) && self.pointer_on_page().is_some()
+    }
+
+    /// Whether the open page's rule table asks for input, so that the
+    /// wheel over its picture is the page's and not the browser's to step:
+    /// the page takes the mouse, the pointer is on its picture, and the
+    /// trusted core last said its table's interest mask is not empty
+    /// (RULE-52 item 1; the owner, 18 November 2026: "if events have not
+    /// been requested by the server then that behaviour is true when also
+    /// over the window", DEC-6633 item 2).
+    pub(in crate::browser) fn page_asks_input(&self) -> bool {
+        self.mouse_target().is_some() && self.typing.typing.is_some_and(|typing| typing.asks) && self.pointer_on_page().is_some()
     }
 
     /// While a cursor shows, the window draws again at its blink.
