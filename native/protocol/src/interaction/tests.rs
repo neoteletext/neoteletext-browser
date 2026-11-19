@@ -117,11 +117,12 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
         cursor: Some(CursorState { row: 5, column: 6, flags: cursor::BLOCK }),
         round_trip_us: Some(12_345),
         wheel: true,
+        asks: true,
     };
     let mut payload = Vec::new();
     push_typing(&mut payload, &typing).unwrap();
     assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), typing);
-    let refused = Typing { on: false, refused: true, cursor: None, ..typing.clone() };
+    let refused = Typing { on: false, refused: true, cursor: None, asks: false, ..typing.clone() };
     let mut payload = Vec::new();
     push_typing(&mut payload, &refused).unwrap();
     assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), refused);

@@ -150,7 +150,17 @@ fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
     browser.wall.zoom(KEY, 0);
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
     browser.set_typing(
-        TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false },
+        TypingView {
+            channel: KEY.channel,
+            page: KEY.page,
+            on: true,
+            secure: false,
+            refused: false,
+            cursor: None,
+            round_trip_us: None,
+            wheel: false,
+            asks: false,
+        },
         10_000,
     );
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);

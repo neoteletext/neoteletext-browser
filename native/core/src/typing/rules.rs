@@ -19,11 +19,13 @@ impl Typing {
     pub fn rules_told(&mut self, channel: u32, told: &RulesOpen, now_us: u64) -> (Vec<Send>, bool) {
         let mut sends = Vec::new();
         let open = self.rules_page_open(channel, told.page);
+        let before = self.state();
         let Some(state) = self.channels.get_mut(&channel) else { return (sends, false) };
-        let before = state.gate.wheel_here();
         state.rules_told(told, open);
         state.give_focus_owed(channel, now_us, &mut sends);
-        if state.gate.wheel_here() != before {
+        // A table taken or ended changes whether the page asks for input
+        // and where it claims the wheel (REQ-6632).
+        if self.state() != before {
             self.tell_interface(&mut sends);
         }
         (together(sends), open && told.generation != 0)

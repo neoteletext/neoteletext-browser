@@ -367,6 +367,10 @@ impl Typing {
             // The wheel is the page's only where an enabled `wheel` rule
             // applies under the pointer (RULE-51 item 4).
             wheel: on && state.is_some_and(|state| state.gate.wheel_here()),
+            // The owner, 18 November 2026: "if events have not been
+            // requested by the server then that behaviour is true when also
+            // over the window" (DEC-6633 item 2).
+            asks: on && state.is_some_and(|state| state.gate.asks_input()),
         })
     }
 
@@ -548,12 +552,17 @@ impl Typing {
     pub fn drawn(&mut self, key: PageKey, sub: u16) -> Vec<Send> {
         let mut sends = Vec::new();
         let holds = self.takes_keys(key);
+        let told = self.state();
         if let Some(state) = self.channels.get_mut(&key.channel) {
             state.on_screen = Stamp::new(key.page, sub);
         }
         // Another sub-code on screen is another page (RULE-112): the one
-        // left is closed and this one opened.
+        // left is closed and this one opened, and the interface hears that
+        // the table it had asks for nothing now.
         self.settle_rules_page(0, &mut sends);
+        if self.state() != told {
+            self.tell_interface(&mut sends);
+        }
         if holds && let Some(state) = self.channels.get_mut(&key.channel) {
             state.give_focus_owed(key.channel, 0, &mut sends);
         }
@@ -647,6 +656,7 @@ impl Typing {
                 cursor: None,
                 round_trip_us: None,
                 wheel: false,
+                asks: false,
             }));
         }
         self.tell_interface(&mut sends);
