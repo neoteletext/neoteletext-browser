@@ -9,7 +9,7 @@ use super::{View, Wall, WallPage};
 use crate::canvas::{Canvas, PageKey};
 use crate::geometry::{Point, Rect};
 use crate::text::{cross, fitted_text, label, outline};
-use crate::theme::{BLACK, BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE};
+use crate::theme::{BLACK, BUTTON, CAPTION, CAPTION_TITLE, MUTED, PANEL, RULE, WHITE, WINDOW};
 use crate::tween::{STANDARD, Tween};
 
 /// The zoom from the wall and back: Material 3's medium duration of 300
@@ -208,7 +208,7 @@ impl Wall {
         let rect = Rect::new(between(start.x0, target.x0), between(start.y0, target.y0), between(start.x1, target.x1), between(start.y1, target.y1));
         #[allow(clippy::cast_possible_truncation, reason = "a share between 0 and 1")]
         canvas.dim(self.area, (progress * ZOOM_DIM) as f32);
-        self.draw_page(canvas, key, rect);
+        self.draw_page(canvas, key, rect, WINDOW);
         outline(canvas, Rect::new(rect.x0 - FRAME, rect.y0 - FRAME, rect.x1 + FRAME, rect.y1 + FRAME), RULE);
     }
 
@@ -244,6 +244,13 @@ impl Wall {
     fn draw_sliding<C: Canvas + ?Sized>(&mut self, canvas: &mut C, pages: &[WallPage<'_>], current: usize, rect: Rect, framed: bool, now: u64) {
         let area = self.area;
         let slide = f64::from(self.slide.value(now));
+        // On the wall a page not yet drawn stands in as the wall's dark
+        // frame. Alone it stands on the area's black and in black, so no
+        // box of the teletext page's shape shows before a page that may be
+        // a picture of another shape (the owner's reports of 18 and 20
+        // November 2026): the area is black while the page has no image,
+        // since its screen colour comes with the image.
+        let stand_in = if framed { WINDOW } else { BLACK };
         // A full area apart, so at rest no neighbour shows.
         let pitch = area.height();
         for neighbour in -SLIDE_REACH..=SLIDE_REACH {
@@ -253,7 +260,7 @@ impl Wall {
                 continue;
             }
             let Some(other) = current.checked_add_signed(neighbour as isize).and_then(|index| pages.get(index)) else { continue };
-            let image = self.draw_page(canvas, other.key, shifted);
+            let image = self.draw_page(canvas, other.key, shifted, stand_in);
             if neighbour == 0 && slide.abs() < f64::from(f32::EPSILON) {
                 self.open = Some((other.key, image));
             }

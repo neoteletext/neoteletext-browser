@@ -11,7 +11,7 @@ use crate::geometry::{Point, Rect};
 use crate::size::grid_width;
 use crate::text::{border, fitted_text, label, outline};
 use crate::theme::{CAPTION, CAPTION_TITLE, MUTED, ROW_NUMBER, ROW_TITLE, RULE, RULE_SOFT, SELECTED, WHITE};
-use crate::theme::{UPDATED, mix};
+use crate::theme::{UPDATED, WINDOW, mix};
 
 pub(super) const WALL_PADDING: f64 = 16.0;
 const COLUMN_GAP: f64 = 12.0;
@@ -79,7 +79,7 @@ impl Wall {
                 continue;
             }
             let rect = Rect::new(left, card_top, left + card_width, card_top + page_height);
-            self.draw_page(canvas, page.key, rect);
+            self.draw_page(canvas, page.key, rect, WINDOW);
             // A frame, so a page's black edges stand apart from the panel;
             // amber and thick just after the page was updated, fading back.
             let glowing = glow(page.updated, now);
@@ -139,7 +139,7 @@ impl Wall {
             canvas.fill(Rect::new(left, row.y1 - 1.0, right, row.y1), 0.0, RULE_SOFT);
             let rect =
                 Rect::new(left + LIST_ROW_PADDING, row_top + LIST_ROW_PADDING, left + LIST_ROW_PADDING + page_width, row_top + LIST_ROW_PADDING + page_height);
-            self.draw_page(canvas, page.key, rect);
+            self.draw_page(canvas, page.key, rect, WINDOW);
             let text_left = rect.x1 + LIST_GAP;
             let middle = rect.y0 + page_height / 2.0;
             label(canvas, Point::new(text_left, middle - LIST_TITLE_RISE), &format!("{:03X}", page.key.page), ROW_NUMBER, WHITE);

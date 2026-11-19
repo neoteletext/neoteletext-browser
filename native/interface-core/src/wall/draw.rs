@@ -9,7 +9,7 @@ use crate::canvas::{Canvas, PageKey, draw_page_on_screen, image_within, picture_
 use crate::geometry::Rect;
 use crate::size::{Layout, clamp_width, max_width_for_window};
 use crate::text::outline;
-use crate::theme::{BLACK, PANEL, RULE, WINDOW};
+use crate::theme::{BLACK, Colour, PANEL, RULE};
 
 impl Wall {
     /// Draws the panel in `panel`, with `pages` on the wall and `selected`
@@ -88,13 +88,18 @@ impl Wall {
     }
 
     /// Draws a page with its screen around it; returns where its image is.
-    pub(super) fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect) -> Rect {
+    /// `stand_in` fills the page's place while it has no image and is not
+    /// known to be drawn as a picture.
+    pub(super) fn draw_page<C: Canvas + ?Sized>(&mut self, canvas: &mut C, key: PageKey, rect: Rect, stand_in: Colour) -> Rect {
         // With no image yet something stands in, and the page still counts
         // as visible, so that the trusted core renders it. For a page known
         // to be drawn as a picture (ReGIS or NAPLPS) it is black, in the
         // place and shape its picture will take, so nothing changes shape
         // when the picture comes (the owner's request of 18 November 2026);
-        // for a teletext page, a dark frame of the page with its screen.
+        // for any other page, `stand_in` over the page with its screen.
+        // Whether a page is a picture is learnt only from its first
+        // picture, so a picture page seen for the first time stands in as
+        // any other page does until then.
         if let Some(language) = self.picture_language(key).filter(|_| canvas.screen(key).is_none()) {
             let image = image_within(rect);
             let picture = picture_layout(language, image, self.pictures.contains(&key), self.keyed.contains(&key)).picture;
@@ -102,7 +107,7 @@ impl Wall {
             self.drawn.push(Drawn { key, rect, image });
             return image;
         }
-        let image = draw_page_on_screen(canvas, key, rect, WINDOW);
+        let image = draw_page_on_screen(canvas, key, rect, stand_in);
         self.drawn.push(Drawn { key, rect, image });
         image
     }

@@ -653,3 +653,34 @@ fn a_picture_page_without_its_picture_stands_in_black_in_the_pictures_place() {
         assert!(canvas.fills.contains(&(place(teletext).0, WINDOW)), "a teletext page keeps its frame");
     }
 }
+
+/// The owner's report of 20 November 2026, "before a regis screen shows
+/// there is a grey square shown": the page area shows the open page alone,
+/// and a page seen for the first time is not known to be a picture until
+/// its first picture comes, so it stood in as the wall's dark frame of a
+/// teletext page, a box of the browser's grey in the teletext page's
+/// shape on the area's black. Alone, a page with no image stands in black
+/// on black, so nothing of any shape shows before the picture; it still
+/// counts as visible, so that the trusted core renders it. On the wall the
+/// frame stays.
+#[test]
+fn a_page_alone_without_its_image_shows_no_grey_box() {
+    use crate::theme::{BLACK, WINDOW};
+    let pages = pages(3);
+    let key = pages[0].key;
+    let mut wall = Wall::new();
+    assert!(wall.single(), "a new wall shows the page alone");
+    let mut canvas = Recorder::new();
+    canvas.screen = None;
+    wall.draw(&mut canvas, PANEL, &pages, Some(key), 10_000);
+    let rect = wall.drawn.iter().find(|drawn| drawn.key == key).map(|drawn| drawn.rect).unwrap();
+    assert!(canvas.fills.iter().all(|&(_, colour)| colour != WINDOW), "no fill in the browser's grey: {:?}", canvas.fills);
+    assert!(canvas.fills.contains(&(rect, BLACK)), "black in the page's place {rect:?}: {:?}", canvas.fills);
+    assert!(wall.visible().contains(&key), "still visible, so that it is rendered");
+    let mut wall = on_wall();
+    let mut canvas = Recorder::new();
+    canvas.screen = None;
+    wall.draw(&mut canvas, PANEL, &pages, None, 10_000);
+    let rect = wall.drawn.iter().find(|drawn| drawn.key == key).map(|drawn| drawn.rect).unwrap();
+    assert!(canvas.fills.contains(&(rect, WINDOW)), "on the wall, the dark frame");
+}

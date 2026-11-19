@@ -6,7 +6,7 @@ use super::grid::FRAME;
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::text::outline;
-use crate::theme::WHITE;
+use crate::theme::{WHITE, WINDOW};
 use crate::tween::{EASE_OUT, Tween};
 
 /// A page under the pointer pops out: 6% larger, over 150 milliseconds
@@ -61,7 +61,7 @@ impl Wall {
             let drop = HOVER_SHADOW * amount;
             #[allow(clippy::cast_possible_truncation, reason = "a share between 0 and 1")]
             canvas.dim(Rect::new(rect.x0 + drop, rect.y0 + drop, rect.x1 + drop, rect.y1 + drop), (HOVER_SHADOW_DARKNESS * amount) as f32);
-            self.draw_page(canvas, key, rect);
+            self.draw_page(canvas, key, rect, WINDOW);
             outline(canvas, Rect::new(rect.x0 - FRAME, rect.y0 - FRAME, rect.x1 + FRAME, rect.y1 + FRAME), WHITE);
         }
     }
