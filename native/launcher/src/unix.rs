@@ -42,8 +42,9 @@ impl<R: std::io::BufRead> TakeLine for R {
 }
 
 /// macOS and Linux: `--uninstall` on the terminal removes the program, its
-/// menu entry, its icons and its update files, and asks before removing the settings,
-/// bookmarks, history and cookies (requirement 13.20).
+/// menu entry, its icons and its update files, and asks before removing the settings
+/// folder: the settings, bookmarks, history, saved tabs, page thumbnails and
+/// remembered viewer keys (requirement 13.20).
 ///
 /// # Errors
 /// When the browser is running, or something cannot be removed.
@@ -108,7 +109,7 @@ fn remove(launcher: &Launcher, ask: &dyn Fn(&str) -> bool) -> Result<(), String>
     drop(lock);
     files::remove_tree(&layout.root).map_err(|error| io_text(&layout.root, &error))?;
     if let Some(settings) = settings_folder().filter(|folder| folder.exists())
-        && ask(&format!("Also remove your settings, bookmarks, history and cookies in {}?", settings.display()))
+        && ask(&format!("Also remove your settings, bookmarks, history, saved tabs, page thumbnails and remembered viewer keys in {}?", settings.display()))
     {
         files::remove_tree(&settings).map_err(|error| io_text(&settings, &error))?;
     }

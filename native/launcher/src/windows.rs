@@ -82,7 +82,12 @@ pub fn uninstall(launcher: &Launcher) -> Result<(), String> {
     }
     drop(lock);
     let settings = settings_folder().filter(|folder| folder.exists()).is_some_and(|folder| {
-        os_install::ask("Remove NeoTeletext", &format!("Also remove your settings, bookmarks, history and cookies in {}?", folder.display()), "Remove", "Keep")
+        os_install::ask(
+            "Remove NeoTeletext",
+            &format!("Also remove your settings, bookmarks, history, saved tabs, page thumbnails and remembered viewer keys in {}?", folder.display()),
+            "Remove",
+            "Keep",
+        )
     });
     let copy = std::env::temp_dir().join(format!("neoteletext-uninstall-{}.exe", std::process::id()));
     std::fs::copy(&launcher.own, &copy).map_err(|error| io_text(&copy, &error))?;
