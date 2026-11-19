@@ -156,6 +156,7 @@ impl App {
             Output::Recording(request) => ToCore::Recording(request),
             Output::MuteTab(index) => ToCore::MuteTab(u8::try_from(index).ok()?),
             Output::MuteAll(muted) => ToCore::MuteAll(muted),
+            Output::Thumbnails(channels) => ToCore::Thumbnails(channels),
             Output::Window(action) => {
                 self.window_action(event_loop, action);
                 return None;

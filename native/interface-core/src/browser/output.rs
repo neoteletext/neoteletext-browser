@@ -180,6 +180,10 @@ pub enum Output {
     Recording(crate::console::RecordingRequest),
     /// Mute the tab at this index, or unmute it.
     MuteTab(usize),
+    /// The channels of the tabs whose pictures are in view in the open
+    /// filmstrip and have no still, left to right; empty when it closes
+    /// (REQ-6883).
+    Thumbnails(Vec<u32>),
     /// Mute every tab, or unmute every tab.
     MuteAll(bool),
     /// Something the window should do.

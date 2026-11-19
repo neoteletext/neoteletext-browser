@@ -11,6 +11,11 @@ use crate::incoming::{Incoming, Library};
 
 use super::App;
 
+/// The page a thumbnail is drawn through to make its still: of channel 0,
+/// which the trusted core never numbers a channel (its numbers start at 1
+/// and skip 0 when they wrap).
+const THUMBNAIL_PAGE: PageKey = PageKey { channel: 0, page: 0 };
+
 impl App {
     pub(super) fn incoming(&mut self, event_loop: &ActiveEventLoop, incoming: Incoming) {
         let now = self.now();
@@ -71,9 +76,7 @@ impl App {
                 self.act(event_loop);
             }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
-            // REQ-6883: made a still once the filmstrip takes thumbnails;
-            // until then the tab keeps its stand-in.
-            Incoming::Thumbnail { .. } => {}
+            Incoming::Thumbnail { channel, page, sub, image } => self.thumbnail(channel, page, sub, &image),
             Incoming::Regis { key, picture } => {
                 if !self.regis_picture(event_loop, key, &picture, now) {
                     return;
@@ -196,6 +199,45 @@ impl App {
         }
         self.request_redraw();
         true
+    }
+
+    /// A picture of a tab that has no still (REQ-6883): made a still of the
+    /// tab, at the still's size, through a page of no channel's that is
+    /// dropped at once, and the image dropped; nothing of it is kept but the
+    /// still. One for a tab gone or moved, or that has a still as seen this
+    /// run, is dropped whole; one the painter refuses keeps the card.
+    fn thumbnail(&mut self, channel: u32, page: u16, sub: u16, image: &protocol::ThumbnailImage) {
+        use interface_core::canvas::Canvas as _;
+        if !self.view.browser.thumbnail_wanted(channel, page, sub) {
+            return;
+        }
+        let painter = &mut self.view.painter;
+        let drawn = match image {
+            protocol::ThumbnailImage::Frame(bytes) => {
+                protocol::frame::decode(bytes, None).is_ok_and(|frame| painter.set_page(THUMBNAIL_PAGE, &frame.palette, frame.screen, &frame.indices).is_ok())
+            }
+            protocol::ThumbnailImage::Regis(picture) => {
+                let part = draw_vello::RegisPart {
+                    language: picture.language,
+                    number: picture.number,
+                    base: picture.base,
+                    x: picture.area.x,
+                    y: picture.area.y,
+                    width: picture.area.width,
+                    height: picture.area.height,
+                };
+                // The picture's page beneath it: a black page, as a ReGIS
+                // page's teletext page shows none of its own.
+                let blank = vec![0; protocol::frame::PAGE_DOTS];
+                painter.set_page(THUMBNAIL_PAGE, &[[0, 0, 0]], 0, &blank).is_ok()
+                    && painter.set_regis(THUMBNAIL_PAGE, &picture.palette, part, &picture.packed).is_ok()
+            }
+        };
+        let kept = drawn && painter.keep_still(channel, THUMBNAIL_PAGE);
+        painter.retain_pages(|key| *key != THUMBNAIL_PAGE);
+        let regis = matches!(image, protocol::ThumbnailImage::Regis(picture) if picture.language == interface_core::canvas::PictureLanguage::Regis);
+        self.view.browser.thumbnail_kept(channel, page, regis, kept);
+        self.request_redraw();
     }
 
     /// A frame of a page shown.

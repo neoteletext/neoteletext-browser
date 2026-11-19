@@ -83,6 +83,9 @@ pub(super) struct Still {
     pub(super) picture: bool,
     /// The canvas made it; else the stand-in shows.
     pub(super) kept: bool,
+    /// Made from a snapshot the trusted core sent (REQ-6883), not as seen
+    /// this run: a still as seen replaces it, never the other way.
+    pub(super) snapshot: bool,
 }
 
 /// The filmstrip's one state (REQ-6640 item 11).
@@ -125,6 +128,8 @@ pub(super) struct Filmstrip {
     pending: Vec<(u32, PageKey, bool)>,
     /// Stills for the canvas to forget at the next frame.
     forget: Vec<u32>,
+    /// The tabs last asked a thumbnail for (REQ-6883), while any were.
+    pub(super) asked: Vec<u32>,
 }
 
 impl Default for Filmstrip {
@@ -145,6 +150,7 @@ impl Default for Filmstrip {
             stills: Vec::new(),
             pending: Vec::new(),
             forget: Vec::new(),
+            asked: Vec::new(),
         }
     }
 }
@@ -230,12 +236,67 @@ impl Browser {
         for (channel, key, picture) in core::mem::take(&mut self.filmstrip.pending) {
             let kept = canvas.keep_still(channel, key);
             self.filmstrip.stills.retain(|still| still.channel != channel);
-            self.filmstrip.stills.push(Still { channel, page: key.page, picture, kept });
+            self.filmstrip.stills.push(Still { channel, page: key.page, picture, kept, snapshot: false });
             // Past the cap the still taken longest ago goes.
             while self.filmstrip.stills.len() > MAX_STILLS {
                 let oldest = self.filmstrip.stills.remove(0);
                 canvas.forget_still(oldest.channel);
             }
+        }
+    }
+
+    /// Whether a thumbnail of `page`'s `sub` is still wanted for the tab of
+    /// `channel` (REQ-6883): the tab is the window's, its address names
+    /// that place or none, and it has no still as seen this run.
+    #[must_use]
+    pub fn thumbnail_wanted(&self, channel: u32, page: u16, sub: u16) -> bool {
+        let Some(tab) = self.tabs.iter().find(|tab| tab.channel == channel) else { return false };
+        let place = tab.page.is_none_or(|named| named == page) && tab.subpage.is_none_or(|named| named == sub);
+        place && !self.filmstrip.still(channel).is_some_and(|still| still.kept && !still.snapshot)
+    }
+
+    /// The host made a still of the tab of `channel` from a thumbnail of
+    /// `page` (REQ-6883), kept by the canvas when `kept`; a ReGIS picture
+    /// when `picture`. It counts within `MAX_STILLS`, the one taken longest
+    /// ago going first.
+    pub fn thumbnail_kept(&mut self, channel: u32, page: u16, picture: bool, kept: bool) {
+        self.filmstrip.stills.retain(|still| still.channel != channel);
+        self.filmstrip.stills.push(Still { channel, page, picture, kept, snapshot: true });
+        while self.filmstrip.stills.len() > MAX_STILLS {
+            let oldest = self.filmstrip.stills.remove(0);
+            self.filmstrip.forget.push(oldest.channel);
+        }
+    }
+
+    /// Asks the trusted core for pictures of the tabs in view without
+    /// stills (REQ-6883): when the filmstrip has opened, its slide has
+    /// settled, or its tabs changed while open, each time the tabs asked
+    /// for change; and once, empty, when it closes.
+    pub(super) fn ask_thumbnails(&mut self, now: u64) {
+        let open = self.filmstrip.shown();
+        if !open {
+            if !self.filmstrip.asked.is_empty() {
+                self.filmstrip.asked.clear();
+                self.outputs.push(Output::Thumbnails(Vec::new()));
+            }
+            return;
+        }
+        if self.filmstrip.slide.moving(now) || self.filmstrip.reveal.moving(now) {
+            return;
+        }
+        let wanted: Vec<u32> = self
+            .filmstrip
+            .pictures
+            .iter()
+            .filter_map(|picture| self.tabs.get(picture.index))
+            .map(|tab| tab.channel)
+            // The window's tabs, which the trusted core sends at most the
+            // protocol's MAX_TABS of, bound the request.
+            .filter(|&channel| !self.filmstrip.still(channel).is_some_and(|still| still.kept))
+            .collect();
+        if wanted != self.filmstrip.asked {
+            self.filmstrip.asked.clone_from(&wanted);
+            self.outputs.push(Output::Thumbnails(wanted));
         }
     }
 
