@@ -40,7 +40,7 @@ impl Browser {
             WheelPlace::Margin
         };
         let (up, down) = self.wheel_ways();
-        WheelState { place, modifier: self.browser_modifier_held(), asks: self.page_asks(), claimed: self.wheel_claimed(), ways: Ways { up, down } }
+        WheelState { place, modifier: self.browser_modifier_held(), claimed: self.wheel_claimed(), ways: Ways { up, down } }
     }
 
     /// Whose the wheel is where the pointer is (REQ-6632).
@@ -64,16 +64,6 @@ impl Browser {
     fn wheel_claimed(&self) -> bool {
         #[cfg(feature = "interaction")]
         return self.page_claims_wheel();
-        #[cfg(not(feature = "interaction"))]
-        false
-    }
-
-    /// Whether the open page's rule table asks for input; without typing
-    /// no page takes the mouse.
-    #[cfg_attr(not(feature = "interaction"), expect(clippy::unused_self, reason = "without typing no page takes the mouse"))]
-    fn page_asks(&self) -> bool {
-        #[cfg(feature = "interaction")]
-        return self.page_asks_input();
         #[cfg(not(feature = "interaction"))]
         false
     }

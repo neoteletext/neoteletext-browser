@@ -334,26 +334,6 @@ fn the_wheel_is_the_pages_only_inside_a_wheel_rule() {
     assert_eq!(wheels(&typing.input_intent(&wheel(10, 5), MS)), 0);
 }
 
-/// REQ-6632 item 2 (DEC-6633 item 2): the interface is told whether the
-/// open page's table asks for input, as its table is taken and as it ends,
-/// so that over the picture of such a page the wheel is the page's and the
-/// pointer the ordinary arrow; a table that asks for nothing, or no table,
-/// leaves the wheel the browser's to step. On the code before, the
-/// interface was told nothing of it.
-#[test]
-fn the_interface_hears_whether_the_open_pages_table_asks_for_input() {
-    let told = |sends: &[Send]| sends.iter().find_map(|send| if let Send::Interface(state) = send { Some(state.asks) } else { None });
-    let mut typing = untold();
-    let (taken, open) = typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS | INTEREST_POINTER_BUTTONS), 0);
-    assert!(open);
-    assert_eq!(told(&taken), Some(true), "a table asking for keys and presses: {taken:?}");
-    let (ended, _) = typing.rules_told(PAGE.channel, &RulesOpen { generation: 0, ..asks(0) }, MS);
-    assert_eq!(told(&ended), Some(false), "the table ended: {ended:?}");
-    let mut typing = untold();
-    let (nothing, _) = typing.rules_told(PAGE.channel, &RulesOpen { watch: Vec::new(), ..asks(0) }, 0);
-    assert_ne!(told(&nothing), Some(true), "a table asking for no input: {nothing:?}");
-}
-
 /// RULE-46, RULE-52 item 1 (REQ-6534): the trusted core gives the control
 /// under a press, and a control's enter and leave as the HOVER that names
 /// it; a pointer event's PICK follows it inside its report.

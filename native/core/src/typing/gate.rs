@@ -161,14 +161,6 @@ impl Gate {
         self.asked.as_ref().is_some_and(|asked| asked.closing_us.is_none() && asked.wheel.iter().any(|rect| rect.contains(self.at.0, self.at.1)))
     }
 
-    /// Whether the open page's table, still open, asks for input of any
-    /// class (RULE-52 item 1): its interest mask is not empty. The wheel
-    /// over its picture is then the page's, not the browser's to step
-    /// (DEC-6633 item 2, REQ-6632).
-    pub(super) fn asks_input(&self) -> bool {
-        self.asked.as_ref().is_some_and(|asked| asked.closing_us.is_none() && asked.interest != 0)
-    }
-
     /// The pointer is at `at`, a point of a pointer intent.
     pub(super) fn pointer_at(&mut self, at: event::Point) {
         self.at = self.pixel_of(at);

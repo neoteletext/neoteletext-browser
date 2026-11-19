@@ -26,7 +26,7 @@ fn browser() -> Browser {
 }
 
 fn typing(cursor: Option<CursorView>) -> TypingView {
-    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None, wheel: false, asks: false }
+    TypingView { channel: KEY.channel, page: KEY.page, on: true, secure: false, refused: false, cursor, round_trip_us: None, wheel: false }
 }
 
 fn intents(outputs: &[Output]) -> Vec<Intent> {
@@ -664,39 +664,6 @@ fn inside_a_wheel_rule_the_wheel_is_the_pages_and_the_indicator_goes() {
     // The rule gone, with the pointer still, the indicator comes back.
     browser.set_typing(typing(None), 21_000);
     assert!(indicator(&browser).is_some());
-}
-
-/// REQ-6632 item 2 (DEC-6633 item 2): over the picture of a page whose
-/// rule table asks for input, though no `wheel` rule claims the wheel
-/// there, the wheel is the page's and the pointer is the ordinary arrow,
-/// as on the music player's instrument pages; the indicator comes back
-/// beside the page, and over the picture once the table asks for nothing.
-/// On the code before, the pointer was the wheel indicator over the whole
-/// picture and the wheel stepped the sub-pages there.
-#[test]
-fn over_the_picture_of_a_page_whose_table_asks_for_input_the_wheel_is_the_pages() {
-    let mut browser = with_subpages(3);
-    browser.set_typing(TypingView { asks: true, ..typing(None) }, 20_000);
-    pointer_at(&mut browser, 20.0, 12.0);
-    browser.take_outputs();
-    assert_eq!(indicator(&browser), None, "the table asks for input: no indicator over the picture");
-    assert_eq!(browser.cursor(), crate::browser::Cursor::Arrow);
-    assert_eq!(browser.terminal_wheel(0.0, 1.0), Some(false), "the page's");
-    assert!(matches!(intents(&browser.take_outputs()).as_slice(), [Intent::Wheel { dx: 0, dy: 120, .. }]), "sent to the trusted core");
-    assert!(!browser.wheel_lines(1.0, 21_000), "the browser does not step");
-    assert_eq!(asked_subpage(&mut browser), None, "no sub-page asked for");
-    // The browser's modifier keeps the wheel the browser's.
-    browser.set_browser_modifier(true);
-    assert_eq!(indicator(&browser), Some((false, true)));
-    browser.set_browser_modifier(false);
-    // Beside the page the wheel steps, as before.
-    pointer_at(&mut browser, -2.0, 12.0);
-    assert_eq!(indicator(&browser), Some((false, true)), "the margin");
-    // The table gone, with the pointer still on the picture, the indicator
-    // shows there too.
-    pointer_at(&mut browser, 20.0, 12.0);
-    browser.set_typing(typing(None), 22_000);
-    assert_eq!(indicator(&browser), Some((false, true)), "a page asking for nothing");
 }
 
 /// REQ-6632 items 2 and 4: where there is nothing to step to the pointer

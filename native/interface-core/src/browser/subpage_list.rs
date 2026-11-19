@@ -962,10 +962,7 @@ mod tests {
     #[cfg(feature = "interaction")]
     fn takes_input(browser: &mut crate::browser::Browser) {
         use crate::browser::typing::TypingView;
-        browser.set_typing(
-            TypingView { channel: 7, page: 0x100, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false, asks: false },
-            0,
-        );
+        browser.set_typing(TypingView { channel: 7, page: 0x100, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false }, 0);
     }
 
     /// REQ-3937 item 1 (DEC-6389): a click on the sub-page list of a page
