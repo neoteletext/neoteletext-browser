@@ -16,7 +16,7 @@ They are records in rdm, reached through its MCP tools (search, get_record, list
 
 - The requirements (the only normative text) and the owner's decisions: rdm, above.
 - `docs/architecture.md`: the design. Section 5 the engine and its pinned commit; section 15 what is built; section 17 the glossary.
-- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`, `cookies.md` with `cookies-security.md`, `discovery.md` with `discovery-security.md`.
+- `docs/security-analysis.md`, and one security analysis per feature beside its design: `hyperlinks.md` with `hyperlinks-security.md`, `interaction.md` with `interaction-security.md`, `sandboxing.md` with `sandboxing-security.md`, `history-and-bookmarks.md` with `history-and-bookmarks-security.md`, `discovery.md` with `discovery-security.md`.
 - `docs/licensing.md` and `CREDITS.md`.
 - `docs/native-interface-design.md`: how the native interface was chosen and what was built when.
 

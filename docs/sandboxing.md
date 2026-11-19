@@ -101,7 +101,7 @@ The core's requests:
 | Read | Reads a file channel's bytes by the browser's channel rules (`source.rs`) and returns them | Only a file the broker's own table allows (section 7.6, REQ-1698); then only teletext the engine's `detect` recognises, or an import's bookmarks file by its first line; refused beneath any dot-entry of the home folder, the platform's folders of applications' data and the browser's own folders; opened without following a link and checked by its descriptor; every refusal one sentence (decision 88); at most 64 MB and 4,096 files (`MAX_REPLY`) |
 | Open the web | Hands a checked address to the system's browser through `web-opener` | `web-opener`'s checks, as before (requirement 17.9); at most one every two seconds, the core's own interval between hand-offs (decision 88) |
 | Local time | Answers the time and the local zone's offset, read by the system's own rules (`history-and-bookmarks.md` section 14 item 1) | No payload |
-| Cookie key | Reads the cookie file's key from the platform's secret store (`cookies.md` section 10) | No payload |
+| Viewer keys' key | Reads the sealing key of the remembered viewer keys' file, `viewer-keys.bin`, from the platform's secret store, or makes it there the first time from the system's random source (neoteletext-common's `docs/viewer-state.md` VS-108); deletes the old cookie file's key once, if it is there (VS-603). It took the place of the cookie key's request, kind 7, removed with cookies (DEC-6471) and never reused | No payload |
 | Healthy | Tells the launcher the version is healthy (`installation-and-updates.md` section 3.2) | No payload |
 | Update state | Returns the launcher's state file, or refuses when no launcher started the broker | At most 4 KiB, read strictly |
 

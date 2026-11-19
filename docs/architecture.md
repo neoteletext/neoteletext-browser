@@ -57,7 +57,7 @@ NeoTeletext is an application for browsing teletext, on desktops, then phones, a
 | **Bank** | A magazine, as the window calls it (decision 105): a hundred pages, such as 100 to 199: teletext's convention gives each section a hundred, with the section's index on its first page. The window shows the eight banks 100 to 899. |
 | **Trusted core** | The process that holds everything the user trusts: which channel each tab shows, history, bookmarks, settings, and the decisions about addresses. It contains no web engine and draws nothing. |
 | **Interface process** | The process that draws the window: tabs, the trusted strip, the banks, the page list, the page area and the overview. It holds no secrets, opens no network connection and no file, and reads only what the trusted core sends. |
-| **Phone keyboard** | The instance's token and the pairing keys of one phone session | The network and the name resolver, for qrkeyboard's relay | Keys typed as the viewer would type them; no pages, cookies or files (`interaction-security.md` section F) |
+| **Phone keyboard** | The instance's token and the pairing keys of one phone session | The network and the name resolver, for qrkeyboard's relay | Keys typed as the viewer would type them; no pages, viewer keys or files (`interaction-security.md` section F) |
 | **Updater** | Nothing secret; the release it is staging | The update host's one port and its staging folder (`installation-and-updates.md` section 8.1) | Files in its staging folder, which the launcher accepts only when both keys signed them |
 | **Launcher** | The installed versions and the state file | Everything the user may; not confined | The user's rights; it parses only its own state, signed manifests, the version mark and the broker's health line (`installation-and-updates-security.md` section 4a) |
 | **Interface core** | The library, without the standard library, that holds the window's state, layout, animation, hit-testing and input handling, and draws only through its drawing interface. |
@@ -97,7 +97,7 @@ The engine is `neoteletext` (`~/devel/neoteletext-renderer-teletext`), a Rust im
 | `neoteletext-core` | Packet decoding, page store, Presentation Levels 1.0 to 3.5, rendering a page to palette indices, flash timing | In the decoder; its flash timing constants in the trusted core; its page addresses in the fetcher. Built with the engine's recommended `modern-classic` profile and its `level35-32colors` feature (decision 60) (its decision E.71) |
 | `neoteletext-formats` | Readers for T42 recordings and Teletext Text Interchange page files; content detection | In the decoder, with the `tti` feature: the browser opens these two and no other (DEC-1762), so the engine's other readers are not built |
 | `neoteletext-image` | Palette indices to colour formats; the Portable Network Graphics writer | The palette in the decoder; the writer no longer (decision 61) |
-| `neoteletext-web` | The strict address parser, origins, the HyperText Transfer Protocol version 1.1, WebSocket, the cookie store, channel descriptors, contents files, push subscriptions, and the user agent that opens and fetches a channel, with no network input or output of its own | In the fetcher, with the `push` and `cookies` features; in the trusted core, its cookie jar, proxy-address parser and address type; in the phone keyboard; and in the updater, pinned in `native/tuf/Cargo.toml` |
+| `neoteletext-web` | The strict address parser, origins, the HyperText Transfer Protocol version 1.1, WebSocket, viewer state's records and the bytes a viewer key signs, channel descriptors, contents files, push subscriptions, and the user agent that opens and fetches a channel, with no network input or output of its own | In the fetcher, with the `push` and `std` features; in the trusted core, its viewer-state identity and signed bytes, proxy-address parser and address type; in the phone keyboard; and in the updater, pinned in `native/tuf/Cargo.toml` |
 | `neoteletext-audio` | The audio profile's receiver (its area AUD) | In the decoder (decision 37) |
 | `neoteletext-audio-mix` | The audio mixer | In the sound helper (decision 55) |
 | `neoteletext-input` | Key, cursor and control records and input sessions (its area INT) | In the trusted core, the decoder, the interface core and the interface (decisions 44 and 48) |
@@ -115,7 +115,7 @@ NeoTeletext defines no limit and no fetching behaviour of its own (decision 26).
 | A grace period during which a closed tab's channel keeps refreshing | Requirement 5.17 |
 | A threshold of malformed packets after which a live feed is closed | Requirement 6.5 |
 | A default refresh schedule for a channel that declares none, if none exists | Requirement 5.16 |
-| The cookie store separable from the user agent, so the trusted core can own it | Requirement 7.5; done by the engine's E.104 (`64c1a97`) |
+| The cookie store separable from the user agent, so the trusted core can own it | Requirement 7.5; done by the engine's E.104 (`64c1a97`). *Amended 20 November 2026:* the engine has no cookie store since the owner's DEC-6471 of 18 November 2026; the trusted core holds the viewer keys that replaced cookies, and the engine gives only the bytes a key signs |
 | A page's text, cleaned of control, bidirectional and zero-width characters and bounded, for display and accessibility | Requirements 11.5 and 12.9 |
 | Transport Layer Security for the engine's network port, or a statement of which library NeoTeletext should supply it with | Requirement 5.8 |
 
@@ -160,7 +160,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 |---|---|---|---|
 | **Broker** | Nothing of the user's | Everything the user may; it does only what section 7 of `sandboxing.md` lists | The user's rights; this is why it parses only the trusted core's few bounded requests and reads nothing else from outside |
 | **Trusted core** | Everything the user trusts in the browser | Its settings folder; through the broker, starting the browser's own helpers, reading file channels and opening the web browser | The browser's state and the strip, but not the user's files or the network, which its sandbox denies (decision 56); this is why it reads no network or teletext format and contains no web engine |
-| **Fetcher** | One channel's network connections; no cookies (decision 62: it asks the trusted core for each request's) | The network, which is its job | The ability to send and receive on the network, and the cookies the trusted core gives its channel's requests; no other channel's cookies, no history, no screen |
+| **Fetcher** | One channel's network connections; no viewer key (REQ-879: the trusted core signs for its own tab's channel) | The network, which is its job | The ability to send and receive on the network, and the signatures the trusted core gives its channel's push connection; no key, no other channel's signatures, no history, no screen |
 | **Decoder** | One channel's pages; and, for the one page of it that is the open page of the active tab, that page's rule table, its rule state (variables, timers, which rules are on) and the viewer's input events its table asked for, as what the evaluator matches and never as their bytes (neoteletext-common's `docs/page-rules.md` RULE-58) | Nothing it needs; see section 6.5 for what the sandbox still allows | Pictures of its choosing in that channel's page images, which its server could draw anyway; and the viewer's own input on that channel's open page sent to that channel, within the trusted core's budgets, which the channel's table could have asked for (RULE-52) |
 | **Sound helper** | The sound now playing; and the instruments of the open page's local sounds, with their bank images and the MIDI messages waiting for them (RULE-60, RULE-62) | The audio output alone | Sound of its choosing, a false report of which tabs sound, and false levels for the views that watch them, at most 32 bytes a tick for each (RULE-33; `security-analysis.md` section 5.10, threat 8) |
 | **Interface process** | What is on screen | The window and input; see section 6.5 | Everything on screen, including a false trusted strip, and the ability to send intents and **strip input**: it can navigate a tab to any address the trusted core's rules accept, go back and forward, and set bookmarks. No secrets, because none are sent to it |
@@ -175,7 +175,7 @@ The fetcher never talks to a decoder directly. The trusted core passes every pag
 
 - **Every channel has its own decoder,** and every web channel its own fetcher, so no two channels share a process that reads their data.
 - **Every tab is a channel of its own** (decision 11 as amended, DEC-910 version 3; neoteletext-common's DEC-1527): `Session::channel_for` gives each tab, and each navigation to another channel, a channel number of its own, even when another tab shows the same channel. So each tab of a live channel has its own push connection, fetcher, decoder, page store and kept sleep data, and its own one selection, told on its own connection with SELECT. The server keeps one selection and one baseline of changed rows per connection, so they apply to the store that received the version they were taken against. Nothing of this is shared between tabs, and no sharing is planned.
-- **The cookie jar alone is per channel:** every tab of a channel is answered from the channel's one jar (decision 62, REQ-880), so a cookie set through one tab's connection is sent by the others; a private tab has a jar of its own (REQ-881).
+- **The viewer key alone is per channel:** every tab of a channel proves the channel's one viewer key, when the channel has asked for state (DEC-910, REQ-880), so the channel knows its tabs as one viewer; a private window's tabs have keys of their own (REQ-881). Cookies, which tabs shared until 18 November 2026, are removed (DEC-6471).
 - **A decoder and its fetcher are stopped** when no tab uses their channel any more.
 
 ### 6.4 Messages between processes
@@ -247,16 +247,14 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | ProxyFailed | The proxy refused, failed or did not answer; it carries nothing (requirement 19.10) |
 | Input | The push WebSocket of a channel whose push address may take messages opened or closed, and whether it is `wss`. The descriptor's `push.input` and `push.wheel` are withdrawn: a page's rule table is the only thing that asks for input (RULE-49) |
 | RulesQuery | A `RULES_QUERY` record the channel pushed: its page and identifier (RULE-47), so that the trusted core passes a page's state only in answer to one |
-| CookieQuestion, ReachedQuestion | Asks for a request's `Cookie` header, or whether a host was reached securely with a live cookie (decision 62) |
-| CookieSet | A `Set-Cookie` value a response carried, as typed fields the fetcher read (DEC-1765) |
-| ClearSiteData | A host's encrypted response said `Clear-Site-Data: "cookies"` |
+| StateChallenged, StateEndReceived, StateKeepOffered | Viewer state (neoteletext-common's `docs/viewer-state.md` VS-119): the channel's push connection sent a challenge, an end of its state or an offer to remember, each of fixed length with enumerated values, so a fetcher names no channel; the trusted core takes the channel from the fetcher's own tab (VS-103). The cookie messages, 88 to 91, 97 and 98, were removed with cookies (DEC-6471) |
 
 **From the trusted core to a fetcher** (`protocol::fetcher`):
 
 | Message | Meaning |
 |---|---|
 | Send | One message of the input stream for the channel's push WebSocket (requirement 4.7): the session's own (HELLO, RESIZE, SELECT, RESUME, viewer state's) or a `RULE_EVENT`, `PAGE_STATE` or `RULES_FAULT`. Under push protocol 9 a viewer's input goes only inside a `RULE_EVENT`, and the protocol crate refuses to write one outside it (RULE-46) |
-| CookieAnswer, ReachedAnswer | The answers to the fetcher's two questions |
+| StateAnswer, StateSendOffer, StateSendNone | What to send for viewer state: a proof (the algorithm, the key's lifetime, its public key and a signature over bytes the trusted core built), an offer, or no proof and why (VS-204) |
 
 **Between the trusted core and the sound helper** (`protocol::sound`), **the phone keyboard** (`protocol::keyboard`) **and the updater** (`update::wire`):
 
@@ -285,7 +283,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Core to interface | Link: show, aliases | Open a page a link led to; the page numbers the channel's descriptor links elsewhere |
 | Core to interface | Typing, phone, phone key | Whether keys go to the open page's channel, and its cursor; the phone keyboard's panel; a key of the paired phone (decisions 45 and 48) |
 | Core to interface | Settings, update | The settings panel's view; the version and an update's offer (decision 81) |
-| Core to interface | Console, cookies | The developer console's new entries; the cookies tab's view, never a name or value |
+| Core to interface | Console, known channels | The developer console's new entries; the view of "Channels that know you" (VS-112), never a key or any part of one (VS-116) |
 | Core to interface | History, suggestions, tab list, bookmarks, star, bar, window | The panels' views, the address field's suggestions, a Back or Forward list, the bookmarks bar, the window's kept place (decisions 57 and 59) |
 | Core to interface | Page controls, remote | The open page's controls; the remote control's place (decisions 67 and 68) |
 | Core to interface | Target, open window, close window | Which window the messages that follow are for; open or close a window (decision 72) |
@@ -304,7 +302,7 @@ Every process speaks the same framing, the engine's: one kind byte, a 32-bit big
 | Interface to core | Drawn | The window drew its first frame, part of a version's health (decision 80) |
 | Interface to core | FramePhase | The display's refresh period and the time to the next composition (RULE-98 item 1), sent where the platform gives the interface frame times and told again at least every half second. winit gives none on any platform, so the shipped interface sends none and decoders paint at once (RULE-65's case without one); the timed test's own build gives the interface a display composing at 60 hertz that sends it |
 | Interface to core | History, bookmarks, star, bar, suggest, suggestion, tab list, go to, new private tab, window | The panels' requests, the address field's text and a chosen suggestion, a Back or Forward list and a step in it, a private tab, the window's place and size |
-| Interface to core | Cookies, page control | Strip input from the cookies tab; a key of the open page's controls |
+| Interface to core | Known channels, page control | Strip input from "Channels that know you": Forget, Remember, Block, Forget all, by the view's row numbers alone; a key of the open page's controls |
 | Interface to core | From, new window, tab to window, close window | Which window the intents that follow are from; open a window, move a tab to another or a new one, close the window (decision 72) |
 
 #### 6.4.1 A page's rule table between the processes
@@ -416,24 +414,28 @@ The aim is the security behaviour of a tab in a traditional browser (decision 9)
 
 ### 9.2 The equivalent of the same-origin policy
 
-- A channel's pages, cookies and history are never mixed with another channel's.
+- A channel's pages, viewer key and history are never mixed with another channel's.
 - A decoder receives only its own channel's bytes, and a fetcher fetches only its own channel.
 - A page cannot cause a request to another channel. Anything that would is a navigation the user chose, by a link the trusted core holds.
 
-### 9.3 Cookies
+### 9.3 Viewer state
 
-The cookie store is the engine's, which follows the cookie specification draft RFC 6265bis as browsers implement it, made stricter: every cookie scoped to its host only, `Secure` cookies never sent over plain connections, the `__Host-` and `__Secure-` prefixes and expiry enforced, and no third-party context at all.
+*Amended 20 November 2026:* until 18 November 2026 this section described the browser's cookies (decision 62). The owner's DEC-6471 removed cookies from every NeoTeletext component and put viewer state in their place (neoteletext-common's `docs/viewer-state.md`; DOC-1924 and DOC-2312 of `PROTOCOL.html`).
 
-**Where it lives** (decision 62, `cookies.md`). The trusted core holds every jar, one for ordinary tabs and one for private ones; a fetcher holds none and asks for each request's header (requirements 7.4, 7.5 and 21.1). Persistent cookies are kept between runs sealed under a key in the platform's secret store; session cookies never are.
+**No cookies.** No fetcher sends a `Cookie` header, and a `Set-Cookie` or `Clear-Site-Data` header changes nothing (REQ-889). The cookie file and its key left by an earlier version are deleted once (REQ-6741).
 
-**No `Domain`, so no Public Suffix List.** A cookie never reaches beyond the host that set it, so the list browsers use to stop `Domain=co.uk` has nothing to do; where Chrome groups by registrable domain, this browser groups by host or channel. Why, and what it costs, is `cookies.md` section 1.1.
+**Where viewer keys live.** The trusted core makes and holds every viewer key, an Ed25519 key pair for one exact channel identity, its scheme, host, port and folder, in one jar for ordinary tabs and one for private windows (REQ-715, REQ-716, REQ-881; `native/core/src/viewer_keys.rs`). It makes a key only when the channel asks and the viewer has just acted on that channel's page. A fetcher holds none: it reports the challenge its push connection carried, and the trusted core builds the bytes to sign itself and gives the fetcher only a signature for its own tab's channel (REQ-879, `trusted_core/viewer_state.rs`). A key is a visit key, in memory only, unless the viewer chooses to be remembered; remembered keys are kept between runs in `viewer-keys.bin`, sealed under a key the broker keeps in the platform's secret store (REQ-882).
+
+**The viewer's controls.** The settings panel's "Channels that know you" lists each channel that has a key, visit or remembered, with Forget, Remember or Stop remembering, Block, and Forget all (REQ-884; `interface-core/src/browser/known_channels.rs`); the interface is shown no key or any part of one.
+
+**No Public Suffix List.** A key belongs to one exact channel and never reaches another host, so the list browsers use to stop a cookie set for `co.uk` has nothing to do.
 
 ### 9.4 Storage
 
 - The decoder's page store belongs to one channel.
 - The trusted core's record of frames sent is keyed by channel and page.
-- The interface process stores nothing: no cookies, no files, no cache.
-- **History, bookmarks, settings and the session are kept** by the trusted core in its settings folder, readable by the user alone (decisions 51, 57 and 59); persistent cookies are kept sealed (decision 62).
+- The interface process stores nothing: no viewer keys, no files, no cache.
+- **History, bookmarks, settings and the session are kept** by the trusted core in its settings folder, readable by the user alone (decisions 51, 57 and 59); remembered viewer keys are kept sealed in `viewer-keys.bin` (REQ-882).
 
 ### 9.5 Navigation
 
@@ -460,7 +462,7 @@ Built (decision 41): the fetcher's transport runs `rustls` with Mozilla's root c
 
 ### 9.8 Local files
 
-Each file is its own channel, with no cookies. It is read by the trusted core and decoded by its own decoder, never parsed by the trusted core. A file is limited to 64 megabytes, and a folder to 4,096 page files.
+Each file is its own channel, with no viewer state (REQ-722). It is read by the trusted core and decoded by its own decoder, never parsed by the trusted core. A file is limited to 64 megabytes, and a folder to 4,096 page files.
 
 ---
 
@@ -532,7 +534,7 @@ The window is decision 35's, drawn by the interface process from the interface c
 | Page area | The bank's pages as a grid, sized by a logarithmic control that shrinks them over its whole travel to 80 pixels a page and shows a list only at its left edge. A click zooms a page to fill the area over 300 milliseconds, the wall dimming behind it; Escape or the close button returns. At the control's right end the zoomed page is shown, and the wheel or Up and Down slide to the next page of the bank, snapping into place: each notch of a mouse wheel is one page, at most one per slide, because macOS reports a slow notch as a tenth of a line. A page under the pointer pops out slightly |
 | Overview | All 800 pages in eight rows: empty, available (listed in the contents file but not yet arrived), loaded, shown; the counts. A page that has arrived pops up at its native size under the pointer, which becomes a hand, never covering the trusted strip. A window starts with it off, and the View menu shows it. At its top right a chevron folds it into the footer, where it draws nothing else and asks for no redraws, and to the chevron's right a close button takes it off the window again |
 | The page's colour | While a tab shows one page alone, that page's screen colour is the background of all the window below the trusted strip: the margins, the page area, the Channel magazines, the page and sub-page lists and the overview, which draw on it in black or white, whichever stands out more, with secondary text and rules mixed from that ink towards the colour. A magazine's own colour that would vanish on the page's gives way to the ink; rows and magazines with a fill of their own keep their white text, and a fill that cannot be told from the colour is edged in the ink. The strip, the console and the browser's panels and popups keep their own colours. The wall of pages, a page not yet arrived, a redirect's notice, a refused certificate and a denied selection stand on the browser's own background (REQ-740, `surface.rs`) |
-| Developer console | Docked in the overview's place while open: the tabs Network, Packets, Pages, Log and Cookies, the last managing cookies by site and channel without ever showing a name or value (decisions 51, 62 and 63) |
+| Developer console | Docked in the overview's place while open: the tabs Network, Packets, Pages and Log, and the figures (decisions 51 and 63); its Cookies tab was removed with cookies (DEC-6471) |
 | Tips | A label for each control drawn as an icon, a symbol or text that may be cut short, saying what it is and does and its shortcut, shown when the pointer rests on it for half a second, over everything, put away by a press or by leaving (decision 63) |
 | Updates | A page whose content changes is marked in amber: a ring bursts from its cell in the overview and a dot stays for a minute; its row in the list flashes and shows how long ago it changed; its frame in the page area glows and fades over 3 seconds |
 
@@ -591,7 +593,7 @@ neoteletext-browser/
     interface-core/         the window's state, layout, animation and input; no standard library
       src/                  the drawing interface (canvas.rs), geometry, the address field's editor, the
                             theme, tweens, page sizes, small text helpers, and the views the trusted core
-                            sends: channel, console, controls, cookies, library, links, session, settings
+                            sends: channel, console, controls, library, links, session, settings, viewer state
       src/browser/          the window, a file for each part: the tab strip (+ tab_strip/, dragging and
                             drawing), the tab filmstrip (+ filmstrip/, its one state, its drawing and the
                             stills it keeps through the canvas, REQ-6640), the toolbar, the address field, its suggestions, Back and Forward's
@@ -600,8 +602,9 @@ neoteletext-browser/
                             certificate-error screen, tips, keys, focus, the pointer (+ pointer/press.rs),
                             frame timing, and regions, where each part was drawn, for hit-testing
       src/browser/<panel>/  the strip's panels, each a file with a folder of its drawing and its input:
-                            bookmarks/, history/, settings_panel/, console_panel/ (its Cookies tab is
-                            cookies_tab.rs), remote/; the star's popover and the bookmarks bar beside them
+                            bookmarks/, history/, settings_panel/, console_panel/, known_channels/ ("Channels
+                            that know you", in the settings panel), remote/; the star's popover and the
+                            bookmarks bar beside them
       src/wall/             the page area: the grid, the page under the pointer, the zoom, update marks,
                             the page-size control, and its drawing
     draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the
@@ -609,11 +612,11 @@ neoteletext-browser/
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, fields, bounds, kinds, text cleaning,
                             page images (frame.rs), and a module for each pipe and feature: sound, audio,
-                            the phone keyboard (keyboard.rs), settings, the console, controls, cookies
+                            the phone keyboard (keyboard.rs), settings, the console, controls, viewer state
       src/interface/        the trusted core and the interface: kinds, tabs, pages, the strip, windows,
                             and each direction's reader and writer (to_core.rs, to_interface.rs)
       src/decoder/          the decoder's pipe: kinds, rendered frames, the open page's view, bookmark files
-      src/fetcher/          the fetcher's pipe: kinds and the cookie messages
+      src/fetcher/          the fetcher's pipe: kinds and viewer state's messages (state.rs)
       src/library/          history, bookmarks and the address field's and Back and Forward's lists
       src/links/            what a decoder finds, Fastext, and what the interface is told of links
       src/interaction/      typing: the viewer's intents and the typing state
@@ -631,7 +634,7 @@ neoteletext-browser/
                             delay-loads shell32.dll on Windows
       src/                  the library (lib.rs), each part pure logic or a kept file's format: addresses,
                             bookmarks (+ bookmarks/: the file, changes, import), the helpers' budget, the
-                            calendar, the console's entries, cookies (+ cookies/file.rs, the sealed file),
+                            calendar, the console's entries, viewer keys (+ viewer_keys/file.rs, the sealed file),
                             dropped lines, frames, hearing, history (+ history/search.rs), links (+ links/:
                             targets, destinations, the strip's questions, following), the outbox, private
                             files, the session file (session_file.rs), settings (+ settings/proxy.rs), sleep,
@@ -643,12 +646,12 @@ neoteletext-browser/
                             timing, windows, intents, decoder and fetcher messages, the strip, the console,
                             settings, sound, updates, the phone, links, typing, start-up, the run, panel
                             numbers, page controls, library/ (history, bookmarks, the star, the bar),
-                            cookies (+ cookies/panel.rs); hostile_tests.rs, the hostile interface harness (+ hostile_tests/: the stand-in broker's watch, the real helpers' run)
+                            viewer state; hostile_tests.rs, the hostile interface harness (+ hostile_tests/: the stand-in broker's watch, the real helpers' run)
     decoder/                the decoder (neoteletext-decoder): its process (process.rs) and the engine as
                             it uses it (engine.rs, + engine/: feed, render), changes, flash, input records,
                             links, titles, the voice sink, and the Netscape bookmark reader (netscape.rs)
     fetcher/                the fetcher (neoteletext-fetcher): its arguments, its loop (process.rs), the
-                            engine's agent's own parts, its cookies, and the engine's network port:
+                            engine's agent's own parts, and the engine's network port:
                             opening a connection and writing to it, over neoteletext-transport
     interface/              the interface process (neoteletext-interface): the system window, the reader
                             thread, keys, and app.rs with app/: frames, input, the input method, typing,
@@ -727,8 +730,9 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 - History and bookmarks (`history-and-bookmarks.md`, decision 57, 22 October 2026): history kept 90 days with its panel, search and removal, private tabs, recently closed tabs, Back and Forward lists, address-field suggestions; bookmarks in folders with the star's popover, a manager, a bookmarks bar, import and export in this browser's format; the menu button's menu.
 - The session kept after every change and restored at start, with its setting (`history-and-bookmarks.md` section 15, decision 59, 22 October 2026).
 - The Colour Map of Levels 2.5 and 3.5 and the screen colour (decision 60), and page images in the browser's own form (decision 61), 22 October 2026.
-- Cookies held by the trusted core, one jar for ordinary tabs and one for private, fetchers asking per request; kept between runs sealed under a key in the platform's secret store; the cookies panel, its settings, clearing with history and `Clear-Site-Data` (`cookies.md`, decision 62, 22 October 2026).
-- Reload, closing a tab with the middle button, cookie management in the developer console, and tips on every icon and symbol (decision 63, 23 October 2026).
+- Cookies held by the trusted core (decision 62, 22 October 2026). *Removed 18 November 2026* by the owner's DEC-6471, with their panel, settings and file: viewer keys replaced them (section 9.3).
+- Reload, closing a tab with the middle button, and tips on every icon and symbol (decision 63, 23 October 2026); the cookie management it put in the developer console went with cookies (DEC-6471).
+- Viewer state (DEC-6471, 18 and 19 November 2026; section 9.3): per-channel Ed25519 viewer keys made and held by the trusted core, proven on the channel's own push connection, remembered keys sealed in `viewer-keys.bin`, and the settings panel's "Channels that know you".
 - History following Chrome's rules (`history-and-bookmarks.md` section 16, decision 64, 23 October 2026): reloads counted as Chrome counts them, lists of 12 with chapter stops, removal reaching the tabs' lists, closed tabs kept between runs, the last 15 minutes, a row's menu.
 - Fastext, reveal, hold, mix and sub-pages (`page-controls.md`, decision 67), with the receiver's row 24 of pages with `LN` lines; the remote control (`remote-control.md`, decision 68); and dragging tabs and their overflow (`tab-strip.md`, decision 69), 23 October 2026.
 - The console's Log, each line with its level and process, and the channel's own `LG` lines (decision 70); bookmarks imported from other browsers' Netscape files, and "Move…" (decision 71); multiple windows, with tabs moved and torn off between them (decision 72), 23 October 2026.
@@ -780,9 +784,9 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 | Page image | A page's palette, screen colour and dots as the trusted core sends them to the interface: raw, in runs, or as changes against the frame held (`protocol::frame`, decision 61). Portable Network Graphics images were used until 22 October 2026. |
 | Parley | A Rust library that lays out and shapes text, with full Unicode and bidirectional support. |
 | Presentation Level | The teletext standard's feature levels: 1.0 and 1.5 (basic), 2.5 (enhanced colours and characters), 3.5 (further enhancements). |
-| Public Suffix List | Mozilla's list of the parts of a name under which anyone may register a site (`com`, `co.uk`, `github.io`); browsers use it to stop a cookie set for a whole suffix. Not used here: no cookie reaches beyond its host (decision 62, `cookies.md` section 1.1). |
+| Public Suffix List | Mozilla's list of the parts of a name under which anyone may register a site (`com`, `co.uk`, `github.io`); browsers use it to stop a cookie set for a whole suffix. Not used here: the browser keeps no cookies, and a viewer key belongs to one exact channel (section 9.3). |
 | Registrable domain | The part of a host one step below a public suffix (`example.co.uk` for `news.example.co.uk`): a browser's "site". This browser groups by host or channel instead. |
-| RFC 6265bis | The current draft of the Internet Engineering Task Force specification for cookies. |
+| RFC 6265bis | The current draft of the Internet Engineering Task Force specification for cookies. The browser keeps no cookies; it takes only the draft's 400-day cap on a cookie's life as the most a remembered viewer key is kept. |
 | `sandbox-exec` | The macOS program that starts another program under a sandbox profile written in the system's sandbox language. |
 | seccomp filter | A Linux mechanism by which a process restricts which system calls it may make. |
 | SIL Open Font License | A permissive licence for fonts. |
