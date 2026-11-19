@@ -323,6 +323,52 @@ mod tests {
         assert_eq!(sent, Plan::default());
     }
 
+    /// The channels a test core's wanted list names.
+    #[cfg(unix)]
+    fn wanted_channels(core: &Core) -> Vec<u32> {
+        core.thumbnails.wanted.iter().map(|want| want.channel).collect()
+    }
+
+    /// REQ-6883 and REQ-687's fifth exception: a request naming a tab of
+    /// another window, a private tab or no tab at all is ignored for that
+    /// number; one from a private window, or with tab pictures off, wants
+    /// nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_thumbnails_request_naming_another_windows_tab_is_ignored() {
+        let mut core = super::super::test_support::test_core();
+        let first = core.session.open("https://a.example/tt/").unwrap().id;
+        let file = core.session.open("https://b.example/tt/302").unwrap().id;
+        let here = core.session.window;
+        let other = core.session.new_window(false).unwrap();
+        assert!(core.session.switch_to(other));
+        let elsewhere = core.session.open("https://c.example/tt/").unwrap().id;
+        assert!(core.session.switch_to(here));
+        core.thumbnails_wanted(&[elsewhere, file, 999, first, first]);
+        assert_eq!(wanted_channels(&core), [file, first], "the window's own tabs, once each, in the order asked");
+        assert_eq!(core.thumbnails.wanted[0].place, Place { channel: String::from("https://b.example/tt/"), page: 0x302, sub: WHOLE_PAGE });
+        core.settings.tab_pictures = false;
+        core.thumbnails_wanted(&[first]);
+        assert_eq!(wanted_channels(&core), [], "tab pictures off");
+    }
+
+    /// REQ-6883, REQ-6886 item 8: a private tab is never wanted, so never
+    /// fetched or read from the store; a private window wants nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_tab_is_never_fetched_or_read_from_the_store() {
+        let mut core = super::super::test_support::test_core();
+        let public = core.session.open("https://a.example/tt/").unwrap().id;
+        let private = core.session.open_private("https://b.example/tt/").unwrap().id;
+        core.thumbnails_wanted(&[private, public]);
+        assert_eq!(wanted_channels(&core), [public]);
+        let window = core.session.new_window(true).unwrap();
+        assert!(core.session.switch_to(window));
+        let inside = core.session.open("https://c.example/tt/").unwrap().id;
+        core.thumbnails_wanted(&[inside]);
+        assert_eq!(wanted_channels(&core), [], "a private window");
+    }
+
     /// REQ-6883: a place being fetched or drawn is not started again.
     #[test]
     fn a_place_in_hand_is_not_started_again() {
