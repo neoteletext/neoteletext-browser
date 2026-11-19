@@ -89,6 +89,13 @@ impl Browser {
         Some(centred.clamp(MARGIN, most))
     }
 
+    /// The row's slide that puts the picture of `tab` where it shows alone
+    /// (DEC-6920 item 6): the picture alone is drawn at this slide too, so
+    /// that it stays exactly where it is when the rest of the row appears.
+    pub(super) fn alone_slide(&self, layout: &Layout, tab: usize) -> Option<f32> {
+        Some(super::narrow(self.alone_left(layout, tab)? - row_left(layout, tab, 0.0)))
+    }
+
     /// The filmstrip, over everything below the strip, as far as it has
     /// slid out at `now`; nothing while it is under the strip. Its stills
     /// are taken first, from the pages the canvas holds before this frame
@@ -108,7 +115,7 @@ impl Browser {
         }
         // REQ-6921: in its first stage only the rested tab's picture shows,
         // under its tab, on a panel only as wide as it and its margins.
-        let alone = self.filmstrip.alone.and_then(|alone| Some((alone.tab, self.alone_left(&layout, alone.tab)?)));
+        let alone = self.filmstrip.alone.and_then(|alone| Some((alone.tab, row_left(&layout, alone.tab, self.alone_slide(&layout, alone.tab)?))));
         let (panel_left, panel_right) = alone.map_or((0.0, width), |(_, left)| (left - MARGIN, left + layout.picture + MARGIN));
         let shown = layout.panel * reveal;
         let panel = Rect::new(panel_left, STRIP_HEIGHT, panel_right, STRIP_HEIGHT + shown);
@@ -121,15 +128,14 @@ impl Browser {
         canvas.fill(Rect::new(panel_left, panel.y1 - EDGE, panel_right, panel.y1), 0.0, SELECTED);
         // Slid out from under the strip: its top rises out of sight.
         let top = panel.y1 - layout.panel + PANEL_TOP;
-        let offset = f64::from(self.filmstrip.slide.value(now));
+        let offset = self.filmstrip.slide.value(now);
         canvas.push_clip(Rect::new(panel_left, panel.y0, panel_right, panel.y1 - EDGE));
         // The row slides under a still pointer: the picture it rests on is
         // found again as each is laid out.
         let shown = self.filmstrip.shown();
         self.filmstrip.hovered = None;
         for index in 0..self.tabs.len() {
-            #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
-            let in_row = MARGIN + index as f64 * layout.step + offset;
+            let in_row = row_left(&layout, index, offset);
             let x = match alone {
                 Some((tab, left)) if tab == index => left,
                 Some(_) => continue,
@@ -293,4 +299,13 @@ fn dashed_border<C: Canvas + ?Sized>(canvas: &mut C, rect: Rect) {
 #[expect(clippy::cast_possible_truncation, reason = "a row's height, far within f32")]
 fn narrow_size(points: f64) -> f32 {
     points as f32
+}
+
+/// Where picture `index` of the row starts across with the row slid by
+/// `slide`: the one sum both the picture alone and the row use, so that
+/// the same slide puts a picture at the same place in both.
+fn row_left(layout: &Layout, index: usize, slide: f32) -> f64 {
+    #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
+    let place = index as f64 * layout.step;
+    MARGIN + place + f64::from(slide)
 }

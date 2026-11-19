@@ -364,19 +364,20 @@ impl Browser {
         self.regions.tabs.iter().find(|region| region.tab.contains(point)).map(|region| region.index)
     }
 
-    /// The rest of the row appears at `now` (REQ-6921 items 3 and 4): laid
-    /// out as it opens, but slid at first so that the picture shown alone
-    /// is where it was, and eased from there to the row's place, so that
-    /// it never jumps (DEC-6920 item 6).
-    fn filmstrip_join(&mut self, now: u64) {
+    /// The rest of the row appears (REQ-6921 items 3 and 4): the row is
+    /// laid out around the picture shown alone, slid so that it stays
+    /// exactly where it is, and the others appear in place beside it. It
+    /// is not eased to the row's usual place: the owner saw the picture
+    /// already shown moved when the others appeared (DEC-6920 item 6). A
+    /// row that runs off the window's edge stays so, for the wheel to
+    /// slide (REQ-6640 item 6); the slide is always within its bounds,
+    /// since the picture alone is kept within the window's margins.
+    fn filmstrip_join(&mut self) {
         let Some(alone) = self.filmstrip.alone.take() else { return };
         self.filmstrip_motion();
         let layout = draw::Layout::of(self.filmstrip.width, self.tabs.len(), self.wall.shape().height_per_width());
-        let place = self.filmstrip_place();
-        #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
-        let from = self.alone_left(&layout, alone.tab).map_or(place, |left| left - (draw::MARGIN + alone.tab as f64 * layout.step));
-        self.filmstrip.slide = Tween::new(narrow(from), self.filmstrip_slide_duration(), STANDARD);
-        self.filmstrip.slide.set(narrow(place), now);
+        let around = self.alone_slide(&layout, alone.tab).unwrap_or_else(|| narrow(self.filmstrip_place()));
+        self.filmstrip.slide = Tween::new(around, self.filmstrip_slide_duration(), STANDARD);
     }
 
     /// Closes the filmstrip at `now`: it slides back under the strip.
@@ -464,7 +465,7 @@ impl Browser {
                 self.filmstrip.alone = self.tab_under(self.pointer).map(|tab| Alone { tab, since: now });
             }
             Phase::Open if self.filmstrip.alone.is_some_and(|alone| now.saturating_sub(alone.since) >= FILMSTRIP_ALONE_MILLISECONDS) => {
-                self.filmstrip_join(now);
+                self.filmstrip_join();
             }
             Phase::Leaving(since) if now.saturating_sub(since) >= FILMSTRIP_CLOSE_MILLISECONDS => self.filmstrip_hide(now),
             Phase::Shut | Phase::Resting(_) | Phase::Open | Phase::Leaving(_) | Phase::Dismissed => return false,
