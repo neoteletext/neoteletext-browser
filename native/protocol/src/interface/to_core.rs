@@ -81,6 +81,7 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::RegisPointer(_) => super::kinds::KIND_REGIS_POINTER,
         ToCore::PictureFocus { .. } => super::kinds::KIND_PICTURE_FOCUS,
         ToCore::PictureFollow { .. } => super::kinds::KIND_PICTURE_FOLLOW,
+        ToCore::Thumbnails(_) => super::kinds::KIND_THUMBNAILS,
         #[cfg(feature = "links")]
         ToCore::Typed { .. } => KIND_TYPED,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -162,6 +163,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
             push_key(payload, *key);
             payload.extend_from_slice(&target.to_be_bytes());
         }
+        ToCore::Thumbnails(channels) => super::push_channels(payload, channels)?,
         #[cfg(feature = "links")]
         ToCore::Typed { number, opened } => push_typed(payload, *number, *opened)?,
         #[cfg(any(feature = "links", feature = "interaction"))]
@@ -370,6 +372,7 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_POINT => ToCore::Point(if payload.is_empty() { None } else { Some(crate::links::read_spot(&mut fields)?) }),
         super::kinds::KIND_REGIS_POINTER => ToCore::RegisPointer(crate::regis::read_pointer(&mut fields)?),
         super::kinds::KIND_PICTURE_FOCUS | super::kinds::KIND_PICTURE_FOLLOW => read_picture_keyboard(kind, &mut fields)?,
+        super::kinds::KIND_THUMBNAILS => ToCore::Thumbnails(super::read_channels(&mut fields)?),
         #[cfg(feature = "links")]
         KIND_LIT => ToCore::Lit(if payload.is_empty() { None } else { Some(crate::links::read_lit(&mut fields)?) }),
         #[cfg(feature = "links")]

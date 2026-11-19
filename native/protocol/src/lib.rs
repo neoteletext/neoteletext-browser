@@ -55,6 +55,6 @@ pub use bounds::*;
 pub use error::ProtocolError;
 pub(crate) use fields::{Fields, KEY_BYTES, push_count, push_count_u8, push_flag, push_key, push_keys, push_text};
 pub(crate) use framing::{read_frame, tail, write_frame};
-pub use interface::{ToCore, ToInterface, problem_code, problem_of, read_from_core, read_from_interface, write_to_core, write_to_interface};
+pub use interface::{ThumbnailImage, ToCore, ToInterface, problem_code, problem_of, read_from_core, read_from_interface, write_to_core, write_to_interface};
 pub use text::clean;
 pub(crate) use text::{push_raw_text, raw_text};

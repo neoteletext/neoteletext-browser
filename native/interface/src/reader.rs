@@ -32,6 +32,7 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             }
             Ok(Some(ToInterface::RegisOver { key, over })) => Incoming::RegisOver { key, over },
             Ok(Some(ToInterface::PictureTargets { key, targets })) => Incoming::PictureTargets { key, targets },
+            Ok(Some(ToInterface::Thumbnail { channel, page, sub, image })) => Incoming::Thumbnail { channel, page, sub, image },
             Ok(Some(ToInterface::Sounding(channels))) => Incoming::Sounding(channels.into_iter().collect()),
             Ok(Some(ToInterface::Show(key))) => Incoming::Show(key),
             Ok(Some(ToInterface::ShowWall(channel))) => Incoming::ShowWall(channel),

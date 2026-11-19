@@ -37,6 +37,9 @@ fn tabs(count: usize) -> Vec<TabInfo> {
             private: false,
             costly: false,
             address: format!("https://tab{index}.invalid/"),
+            page: None,
+            subpage: None,
+            page_title: alloc::string::String::new(),
         })
         .collect()
 }

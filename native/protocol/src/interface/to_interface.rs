@@ -4,7 +4,6 @@
 
 use std::io::{Read, Write};
 
-use super::ToInterface;
 use super::kinds::{
     KIND_BAR_VIEW, KIND_BOOKMARKS_VIEW, KIND_CHANNEL, KIND_CLOSE, KIND_CLOSE_WINDOW_VIEW, KIND_CONSOLE_UPDATE, KIND_FRAME, KIND_HISTORY_VIEW, KIND_KNOWN_VIEW,
     KIND_OPEN_WINDOW, KIND_PAGE, KIND_PAGE_CONTROLS, KIND_PICTURE_STATUS, KIND_RAISE, KIND_REGIS_FRAME, KIND_REGIS_OVER, KIND_REMOTE, KIND_SETTINGS, KIND_SHOW,
@@ -18,6 +17,7 @@ use super::pages::{
 use super::strip::{push_strip, read_strip};
 use super::tabs::{push_channels, push_tabs, read_channels, read_tabs};
 use super::windows::{push_open_window, read_open_window, window_number};
+use super::{ThumbnailImage, ToInterface};
 #[cfg(feature = "interaction")]
 use crate::interaction::{KIND_INPUT_TRACE, KIND_TYPING};
 #[cfg(feature = "phone-keyboard")]
@@ -49,6 +49,7 @@ fn kind_of(message: &ToInterface) -> u8 {
         ToInterface::Regis { .. } => KIND_REGIS_FRAME,
         ToInterface::RegisOver { .. } => KIND_REGIS_OVER,
         ToInterface::PictureTargets { .. } => super::kinds::KIND_PICTURE_TARGETS,
+        ToInterface::Thumbnail { .. } => super::kinds::KIND_THUMBNAIL,
         ToInterface::Sounding(_) => KIND_TAB_SOUNDING,
         ToInterface::Show(_) => KIND_SHOW,
         ToInterface::ShowWall(_) => KIND_SHOW_WALL,
@@ -109,6 +110,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToInterface) -> Result<(), Proto
             push_key(payload, *key);
             crate::regis::push_targets(payload, targets)?;
         }
+        ToInterface::Thumbnail { channel, page, sub, image } => push_thumbnail(payload, *channel, *page, *sub, image)?,
         ToInterface::Sounding(channels) => push_channels(payload, channels)?,
         ToInterface::Show(key) => push_key(payload, *key),
         ToInterface::ShowWall(channel) | ToInterface::ShowContents(channel) => payload.extend_from_slice(&channel.to_be_bytes()),
@@ -191,6 +193,18 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
         }
         KIND_REGIS_OVER => ToInterface::RegisOver { key: fields.key()?, over: fields.flag("a ReGIS pointer over a drawing")? },
         super::kinds::KIND_PICTURE_TARGETS => ToInterface::PictureTargets { key: fields.key()?, targets: crate::regis::read_targets(&mut fields)? },
+        super::kinds::KIND_THUMBNAIL => {
+            let (channel, page, sub) = (fields.u32()?, fields.channel_page()?, fields.u16()?);
+            if !crate::decoder::names_one_subpage(sub) {
+                return Err(ProtocolError::BadValue("thumbnail sub-page"));
+            }
+            let image = match fields.u8()? {
+                THUMBNAIL_FRAME => ThumbnailImage::Frame(fields.take(fields.remaining())?.to_vec()),
+                THUMBNAIL_REGIS => ThumbnailImage::Regis(crate::regis::read_picture(&mut fields)?),
+                _ => return Err(ProtocolError::BadValue("thumbnail image")),
+            };
+            ToInterface::Thumbnail { channel, page, sub, image }
+        }
         KIND_TAB_SOUNDING => ToInterface::Sounding(read_channels(&mut fields)?),
         KIND_SHOW => ToInterface::Show(fields.key()?),
         KIND_SHOW_WALL => ToInterface::ShowWall(fields.u32()?),
@@ -232,4 +246,33 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToInterface>, Proto
     };
     fields.end()?;
     Ok(Some(message))
+}
+
+const THUMBNAIL_FRAME: u8 = 0;
+const THUMBNAIL_REGIS: u8 = 1;
+
+/// A thumbnail: its tab, the sub-page drawn, and its image, a frame's
+/// encoded image or a whole ReGIS picture (REQ-6883).
+fn push_thumbnail(payload: &mut Vec<u8>, channel: u32, page: u16, sub: u16, image: &ThumbnailImage) -> Result<(), ProtocolError> {
+    crate::fields::check_page(page)?;
+    if !crate::decoder::names_one_subpage(sub) {
+        return Err(ProtocolError::BadValue("thumbnail sub-page"));
+    }
+    payload.extend_from_slice(&channel.to_be_bytes());
+    payload.extend_from_slice(&page.to_be_bytes());
+    payload.extend_from_slice(&sub.to_be_bytes());
+    match image {
+        ThumbnailImage::Frame(bytes) => {
+            payload.push(THUMBNAIL_FRAME);
+            payload.extend_from_slice(bytes);
+        }
+        ThumbnailImage::Regis(picture) => {
+            if !picture.whole() {
+                return Err(ProtocolError::BadValue("a thumbnail's picture is whole"));
+            }
+            payload.push(THUMBNAIL_REGIS);
+            crate::regis::push_picture(payload, picture)?;
+        }
+    }
+    Ok(())
 }

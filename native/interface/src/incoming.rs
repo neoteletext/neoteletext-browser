@@ -99,6 +99,17 @@ pub enum Incoming {
         /// The targets, in reading order.
         targets: Vec<protocol::regis::PictureTarget>,
     },
+    /// A tab's picture for the filmstrip (REQ-6883), from a snapshot.
+    Thumbnail {
+        /// The tab's channel.
+        channel: u32,
+        /// The page drawn.
+        page: u16,
+        /// The sub-page drawn.
+        sub: u16,
+        /// The image.
+        image: protocol::ThumbnailImage,
+    },
     /// A page image.
     Page {
         /// Which page.

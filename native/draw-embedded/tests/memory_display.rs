@@ -82,6 +82,9 @@ fn drawn() -> (Screen<Memory>, Browser) {
             private: false,
             costly: false,
             address: "https://example.invalid/".into(),
+            page: None,
+            subpage: None,
+            page_title: String::new(),
         }],
         0,
     );

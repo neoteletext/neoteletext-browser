@@ -47,7 +47,18 @@ fn an_address_of_8000_octets_crosses_the_pipes() {
     let long_strip = StripState { address: longest.clone(), redirecting: longest.clone(), ..strip() };
     let tip = "a".repeat(library::MAX_SHOWN_ADDRESS);
     let tabs = (0..crate::MAX_TABS)
-        .map(|_| TabInfo { title: "t".repeat(crate::MAX_TAB_TITLE), colour: 0, channel: 1, muted: false, private: false, costly: false, address: tip.clone() })
+        .map(|_| TabInfo {
+            title: "t".repeat(crate::MAX_TAB_TITLE),
+            colour: 0,
+            channel: 1,
+            muted: false,
+            private: false,
+            costly: false,
+            address: tip.clone(),
+            page: None,
+            subpage: None,
+            page_title: String::new(),
+        })
         .collect();
     for message in [ToInterface::Strip(long_strip), ToInterface::Tabs { tabs, active: 0 }] {
         let mut bytes = Vec::new();
@@ -163,8 +174,22 @@ fn every_message_to_the_interface_round_trips() {
                     private: false,
                     costly: false,
                     address: "https://news.invalid/channel".into(),
+                    page: None,
+                    subpage: None,
+                    page_title: String::new(),
                 },
-                TabInfo { title: "sport".into(), colour: 7, channel: 9, muted: true, private: true, costly: true, address: String::new() },
+                TabInfo {
+                    title: "sport".into(),
+                    colour: 7,
+                    channel: 9,
+                    muted: true,
+                    private: true,
+                    costly: true,
+                    address: String::new(),
+                    page: None,
+                    subpage: None,
+                    page_title: String::new(),
+                },
             ],
             active: 1,
         },
@@ -550,4 +575,102 @@ fn a_picture_target_is_held_to_the_picture() {
     }
     let many = vec![good; crate::regis::MAX_PICK_ORIGINS + 1];
     assert!(write_to_interface(&mut Vec::new(), &ToInterface::PictureTargets { key, targets: many }).is_err());
+}
+
+fn tab(page: Option<u16>, subpage: Option<u16>, page_title: &str) -> TabInfo {
+    TabInfo {
+        title: "news".into(),
+        colour: 1,
+        channel: 3,
+        muted: false,
+        private: false,
+        costly: false,
+        address: "https://news.invalid/".into(),
+        page,
+        subpage,
+        page_title: page_title.into(),
+    }
+}
+
+/// REQ-6887 item 1: a tab's page, sub-page and page title round trip, at
+/// the title's bound; an over-long title, a sub-page without a page, a
+/// page that is no display page and a sub-page of 3F80 are refused.
+#[test]
+fn tab_info_round_trips_its_page_and_title() {
+    let longest = "T".repeat(crate::MAX_TITLE);
+    for tabs in [
+        vec![tab(Some(0x100), None, "Headlines"), tab(Some(0x302), Some(0x0001), &longest), tab(None, None, "")],
+        vec![tab(Some(0x899), Some(0x3F7E), "Clock")],
+    ] {
+        let message = ToInterface::Tabs { tabs, active: 0 };
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let refused = |tab: TabInfo| write_to_interface(&mut Vec::new(), &ToInterface::Tabs { tabs: vec![tab], active: 0 }).is_err();
+    assert!(refused(tab(Some(0x100), None, &"T".repeat(crate::MAX_TITLE + 1))), "an over-long page title");
+    assert!(refused(tab(None, Some(1), "")), "a sub-page without a page");
+    assert!(refused(tab(Some(0x0FF), None, "")), "no display page");
+    assert!(refused(tab(Some(0x100), Some(0x3F80), "")), "no sub-code");
+    // On the wire: a sub-page with no page, written by hand, is refused.
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::Tabs { tabs: vec![tab(None, None, "")], active: 0 }).unwrap();
+    let place = bytes.len() - 2 - 2;
+    bytes[place] = 0;
+    bytes[place + 1] = 1;
+    assert!(read_from_core(&mut bytes.as_slice()).is_err());
+}
+
+/// REQ-6883: the thumbnails request and a thumbnail round trip at their
+/// bounds; more than `MAX_TABS` channels, a thumbnail of 3F7F, of no
+/// display page or of a part of a ReGIS picture, and an image of no kind
+/// are refused.
+#[test]
+fn thumbnails_and_thumbnail_round_trip_within_their_bounds() {
+    let channels: Vec<u32> = (1..=u32::try_from(crate::MAX_TABS).unwrap()).collect();
+    for message in [ToCore::Thumbnails(Vec::new()), ToCore::Thumbnails(vec![7, 3]), ToCore::Thumbnails(channels.clone())] {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_interface(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let mut too_many = channels;
+    too_many.push(99);
+    assert!(write_to_core(&mut Vec::new(), &ToCore::Thumbnails(too_many)).is_err());
+    let picture = crate::regis::RegisPicture {
+        commits: 1,
+        work: 1,
+        language: crate::regis::PictureLanguage::Regis,
+        palette: [[9; 3]; crate::regis::REGIS_COLOURS],
+        number: 1,
+        base: 0,
+        area: crate::regis::RegisArea::whole(crate::regis::PictureLanguage::Regis),
+        packed: vec![0x3A; crate::regis::REGIS_PACKED],
+    };
+    for message in [
+        ToInterface::Thumbnail { channel: 3, page: 0x100, sub: 0, image: ThumbnailImage::Frame(vec![1, 2, 3]) },
+        ToInterface::Thumbnail { channel: 3, page: 0x302, sub: 0x3F7E, image: ThumbnailImage::Regis(picture.clone()) },
+    ] {
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let refused =
+        |page: u16, sub: u16, image: ThumbnailImage| write_to_interface(&mut Vec::new(), &ToInterface::Thumbnail { channel: 3, page, sub, image }).is_err();
+    assert!(refused(0x100, 0x3F7F, ThumbnailImage::Frame(vec![1])));
+    assert!(refused(0x0FF, 0, ThumbnailImage::Frame(vec![1])));
+    assert!(refused(0x100, 0, ThumbnailImage::Regis(crate::regis::RegisPicture { base: 1, ..picture })));
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::Thumbnail { channel: 3, page: 0x100, sub: 0, image: ThumbnailImage::Frame(vec![1]) }).unwrap();
+    // The image's kind byte follows the frame header, the channel, the
+    // page and the sub-page.
+    bytes[5 + 4 + 2 + 2] = 7;
+    assert!(read_from_core(&mut bytes.as_slice()).is_err());
+    // The interface may not send a thumbnail, nor the trusted core the
+    // request.
+    let mut bytes = Vec::new();
+    write_to_interface(&mut bytes, &ToInterface::Thumbnail { channel: 3, page: 0x100, sub: 0, image: ThumbnailImage::Frame(vec![1]) }).unwrap();
+    assert!(read_from_interface(&mut bytes.as_slice()).is_err());
+    let mut bytes = Vec::new();
+    write_to_core(&mut bytes, &ToCore::Thumbnails(vec![1])).unwrap();
+    assert!(read_from_core(&mut bytes.as_slice()).is_err());
 }

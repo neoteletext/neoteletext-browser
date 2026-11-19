@@ -169,6 +169,7 @@ fn is_strip_input(intent: &ToCore) -> bool {
         | ToCore::RegisPointer(_)
         | ToCore::PictureFocus { .. }
         | ToCore::PictureFollow { .. }
+        | ToCore::Thumbnails(_)
         | ToCore::From(_) => false,
         #[cfg(feature = "links")]
         ToCore::Point(_) | ToCore::Lit(_) | ToCore::Typed { .. } => false,

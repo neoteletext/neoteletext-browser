@@ -35,7 +35,18 @@ fn page_links(version: u32) -> PageLinks {
 fn opened() -> (Browser, Recorder, PageKey, Rect) {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: true });
     browser.set_tabs(
-        vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }],
+        vec![TabInfo {
+            title: "one".into(),
+            colour: 0,
+            channel: 7,
+            muted: false,
+            private: false,
+            costly: false,
+            address: "https://example.invalid/".into(),
+            page: None,
+            subpage: None,
+            page_title: String::new(),
+        }],
         0,
     );
     browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), encrypted: true, ..StripState::default() });

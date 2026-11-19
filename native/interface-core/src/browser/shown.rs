@@ -38,6 +38,16 @@ pub struct TabInfo {
     /// [`crate::library::MAX_SHOWN_ADDRESS`], which its tip shows (decision
     /// 103).
     pub address: String,
+    /// The page the tab's address names, for its stand-in card in the
+    /// filmstrip (REQ-6887 item 1); none when it names none, and the card
+    /// says "Start page".
+    pub page: Option<u16>,
+    /// The sub-page the address names, when it names one.
+    pub subpage: Option<u16>,
+    /// The title of the tab's page from its history entry, cleaned by the
+    /// trusted core and at most the pipe's `MAX_TITLE` bytes; empty when it
+    /// has none.
+    pub page_title: String,
 }
 
 /// What the trusted strip shows. The trusted core decides all of it; the

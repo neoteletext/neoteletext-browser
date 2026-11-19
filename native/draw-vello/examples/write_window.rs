@@ -51,6 +51,9 @@ fn browser(painter: &mut Painter) -> Result<Browser, String> {
             private: false,
             costly: false,
             address: "https://example.invalid/".into(),
+            page: None,
+            subpage: None,
+            page_title: String::new(),
         })
         .collect();
     browser.set_tabs(tabs, 2);

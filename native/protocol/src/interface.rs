@@ -31,6 +31,17 @@ pub(crate) use tabs::{push_channels, read_channels};
 pub use to_core::{read_from_interface, write_to_core};
 pub use to_interface::{read_from_core, write_to_interface};
 
+/// A thumbnail's image (REQ-6883): a teletext page image in
+/// [`frame`](crate::frame)'s form, as [`ToInterface::Frame`] carries one,
+/// or a whole ReGIS picture, as [`ToInterface::Regis`] does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ThumbnailImage {
+    /// A teletext page, NAPLPS on the raster among them.
+    Frame(Vec<u8>),
+    /// A ReGIS picture, whole.
+    Regis(crate::regis::RegisPicture),
+}
+
 /// From the trusted core to the interface.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToInterface {
@@ -120,6 +131,20 @@ pub enum ToInterface {
         key: PageKey,
         /// The targets, at most [`crate::regis::MAX_PICK_ORIGINS`].
         targets: Vec<crate::regis::PictureTarget>,
+    },
+    /// A picture of a tab that has no still, for the filmstrip (REQ-6883):
+    /// a snapshot of the place the tab shows, drawn by a snapshot decoder
+    /// and checked by the trusted core. The interface makes a still of it
+    /// and drops the image, and drops it whole for a tab gone or moved.
+    Thumbnail {
+        /// The tab's channel.
+        channel: u32,
+        /// The page drawn.
+        page: u16,
+        /// The sub-page drawn.
+        sub: u16,
+        /// The image.
+        image: ThumbnailImage,
     },
     /// The channels sounding now, muted or not, for the tabs' speakers;
     /// the sound helper says it and the trusted core passes it on
@@ -299,6 +324,13 @@ pub enum ToCore {
         /// The link's drawing or object.
         target: u16,
     },
+    /// The tabs of the window whose pictures are at least partly in view
+    /// in the open filmstrip and have no still, left to right, at most
+    /// [`MAX_TABS`](crate::MAX_TABS); empty when it closes (REQ-6883,
+    /// REQ-687's fifth exception). Untrusted: the trusted core drops any
+    /// number that is not a tab of the window, keeps only the latest, and
+    /// decides alone what is fetched.
+    Thumbnails(Vec<u32>),
     /// A page number typed that the open page or the channel links
     /// elsewhere.
     #[cfg(feature = "links")]

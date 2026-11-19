@@ -277,6 +277,11 @@ impl Session {
                     private: tab.private,
                     costly: false,
                     address: shown_address(address),
+                    // For the tab's stand-in card (REQ-6887 item 1): its
+                    // place, and its page's title, cleaned and cut.
+                    page: tab.address().and_then(|address| address.page),
+                    subpage: tab.address().and_then(|address| address.page.and(address.subpage)),
+                    page_title: tab.history.get(tab.position).map_or_else(String::new, |visit| clean(&visit.title, protocol::MAX_TITLE)),
                 }
             })
             .collect()

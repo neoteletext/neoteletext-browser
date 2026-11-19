@@ -15,7 +15,18 @@ const OPEN: u64 = 1_000;
 fn opened(subpages: u16) -> (Browser, PageKey) {
     let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
     browser.set_tabs(
-        vec![TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }],
+        vec![TabInfo {
+            title: "one".into(),
+            colour: 0,
+            channel: 7,
+            muted: false,
+            private: false,
+            costly: false,
+            address: "https://example.invalid/".into(),
+            page: None,
+            subpage: None,
+            page_title: alloc::string::String::new(),
+        }],
         0,
     );
     browser.set_strip(StripState { address: "https://news.invalid/".into(), identity: "news.invalid".into(), ..StripState::default() });

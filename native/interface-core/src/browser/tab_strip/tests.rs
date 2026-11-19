@@ -19,6 +19,9 @@ fn browser_with(count: usize, active: usize) -> Browser {
         private: false,
         costly: false,
         address: format!("https://tab{index}.invalid/"),
+        page: None,
+        subpage: None,
+        page_title: String::new(),
     });
     browser.set_tabs(tabs.collect(), active);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 0);
@@ -154,8 +157,30 @@ fn a_tab_playing_sound_shows_a_speaker_that_mutes_it() {
     // Muted, the speaker stays even once the sound ends.
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
+            TabInfo {
+                title: "one".into(),
+                colour: 0,
+                channel: 7,
+                muted: true,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            },
+            TabInfo {
+                title: "two".into(),
+                colour: 1,
+                channel: 8,
+                muted: false,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            }
         ],
         0,
     );
@@ -172,16 +197,60 @@ fn the_mute_all_button_mutes_every_tab_until_all_are_muted() {
     press_at(&mut browser, &mut canvas, button);
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
+            TabInfo {
+                title: "one".into(),
+                colour: 0,
+                channel: 7,
+                muted: true,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            },
+            TabInfo {
+                title: "two".into(),
+                colour: 1,
+                channel: 8,
+                muted: false,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            }
         ],
         0,
     );
     press_at(&mut browser, &mut canvas, button);
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: true, private: false, costly: false, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: true, private: false, costly: false, address: "https://example.invalid/".into() }
+            TabInfo {
+                title: "one".into(),
+                colour: 0,
+                channel: 7,
+                muted: true,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            },
+            TabInfo {
+                title: "two".into(),
+                colour: 1,
+                channel: 8,
+                muted: true,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            }
         ],
         0,
     );
@@ -268,6 +337,9 @@ fn versioned(frame: Frame, count: usize, width: f64) -> (Browser, Recorder) {
         private: false,
         costly: false,
         address: format!("https://tab{index}.invalid/"),
+        page: None,
+        subpage: None,
+        page_title: String::new(),
     });
     browser.set_tabs(tabs.collect(), count.saturating_sub(1));
     browser.set_update(UpdateView { version: VERSION.into(), status: "NeoTeletext is up to date".into(), offer: None, checking: true });
@@ -372,8 +444,30 @@ fn a_costly_tab_shows_its_mark() {
     let (mut browser, mut canvas) = browser();
     browser.set_tabs(
         alloc::vec![
-            TabInfo { title: "one".into(), colour: 0, channel: 7, muted: false, private: false, costly: true, address: "https://example.invalid/".into() },
-            TabInfo { title: "two".into(), colour: 1, channel: 8, muted: false, private: false, costly: false, address: "https://example.invalid/".into() }
+            TabInfo {
+                title: "one".into(),
+                colour: 0,
+                channel: 7,
+                muted: false,
+                private: false,
+                costly: true,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            },
+            TabInfo {
+                title: "two".into(),
+                colour: 1,
+                channel: 8,
+                muted: false,
+                private: false,
+                costly: false,
+                address: "https://example.invalid/".into(),
+                page: None,
+                subpage: None,
+                page_title: String::new()
+            }
         ],
         0,
     );

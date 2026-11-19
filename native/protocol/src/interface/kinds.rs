@@ -146,6 +146,13 @@ pub(crate) const KIND_REDUCED_MOTION: u8 = 203;
 pub(crate) const KIND_PICTURE_TARGETS: u8 = 207;
 pub(crate) const KIND_PICTURE_FOCUS: u8 = 208;
 pub(crate) const KIND_PICTURE_FOLLOW: u8 = 209;
+// Tab thumbnails (neoteletext-common's `docs/tab-thumbnails.md` section
+// 8, REQ-6883), in the next numbers free across every pipe on 19 November
+// 2026, after the snapshot decoder's 214 to 217: interface to trusted
+// core, the tabs in view without stills; trusted core to interface, a
+// tab's picture.
+pub(crate) const KIND_THUMBNAILS: u8 = 218;
+pub(crate) const KIND_THUMBNAIL: u8 = 219;
 
 // The strip's flags.
 pub(crate) const ENCRYPTED: u8 = 1;

@@ -179,7 +179,18 @@ mod tests {
         use interface_core::browser::{Browser, Frame, StripState, TabInfo};
         let window = || {
             let mut browser = Browser::new(Frame { window_buttons: false, ..crate::window::FRAME });
-            let tab = |title: &str| TabInfo { title: title.into(), colour: 0, channel: 1, muted: false, private: false, costly: false, address: String::new() };
+            let tab = |title: &str| TabInfo {
+                title: title.into(),
+                colour: 0,
+                channel: 1,
+                muted: false,
+                private: false,
+                costly: false,
+                address: String::new(),
+                page: None,
+                subpage: None,
+                page_title: String::new(),
+            };
             browser.set_tabs(vec![tab("one"), tab("two")], 0);
             browser.set_strip(StripState { back: true, forward: true, ..StripState::default() });
             browser

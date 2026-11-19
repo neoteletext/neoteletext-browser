@@ -71,6 +71,9 @@ impl App {
                 self.act(event_loop);
             }
             Incoming::Page { key, version, image } => self.page_frame(event_loop, key, version, &image, now),
+            // REQ-6883: made a still once the filmstrip takes thumbnails;
+            // until then the tab keeps its stand-in.
+            Incoming::Thumbnail { .. } => {}
             Incoming::Regis { key, picture } => {
                 if !self.regis_picture(event_loop, key, &picture, now) {
                     return;

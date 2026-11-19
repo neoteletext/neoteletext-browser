@@ -156,6 +156,10 @@ impl Core {
             ToCore::RegisPointer(pointer) => self.regis_pointer(pointer)?,
             ToCore::PictureFocus { key, target } => self.picture_focus(key, target)?,
             ToCore::PictureFollow { key, target } => self.picture_follow(key, target)?,
+            // REQ-6883: the filmstrip's tabs in view without stills, which
+            // the thumbnail scheduler serves once it is built; until then
+            // nothing is fetched for them and they show their stand-ins.
+            ToCore::Thumbnails(_) => {}
             #[cfg(any(feature = "links", feature = "interaction"))]
             ToCore::Focused(focused) => self.focused(focused)?,
             #[cfg(feature = "interaction")]
