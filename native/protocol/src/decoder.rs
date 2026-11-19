@@ -28,6 +28,7 @@ use neoteletext_core::consts::NIBBLE_MASK;
 mod bookmarks;
 mod frame;
 mod kinds;
+mod snapshot;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -38,6 +39,7 @@ pub use bookmarks::{BookmarkEntry, MAX_BOOKMARK_ENTRIES, MAX_BOOKMARK_FILE, MAX_
 // receiver's eight colours after it (the engine's DEC-2464).
 pub use crate::frame::MAX_COLOURS;
 pub use frame::{PageArea, write_frame_to_core};
+pub use snapshot::{SnapshotImage, SnapshotRefusal};
 pub use view::View;
 pub(crate) use view::names_one_subpage;
 
@@ -189,6 +191,15 @@ pub enum ToDecoder {
     /// state change the channel or the page's rules make still applies. A
     /// decoder begins with it off.
     ReducedMotion(bool),
+    /// Draw the snapshot whose bytes came before as [`ToDecoder::Whole`]
+    /// (REQ-6885 item 1), to a decoder in snapshot mode alone: the page,
+    /// and the sub-code asked, 3F7F for the page as a whole.
+    Snapshot {
+        /// The page.
+        page: u16,
+        /// The sub-code, or 3F7F.
+        sub: u16,
+    },
     /// A part of the font the viewer chose for every picture of a language
     /// (renderer parity PAR-35), the bytes of its file as the trusted core
     /// read them, untrusted: the decoder puts the parts together, in order
@@ -463,6 +474,29 @@ pub enum FromDecoder {
     },
     /// The open page's counts (RULE-72), for the console.
     RuleCounters(crate::rules::RuleCounters),
+    /// A piece of the snapshot's sub-page source, in a static channel's
+    /// sub-page file form with concealed text blanked (REQ-6885 item 4),
+    /// in order, before [`FromDecoder::SnapshotDrawn`]. Untrusted, and
+    /// stored unread.
+    SnapshotSource(Vec<u8>),
+    /// The snapshot is a real page drawn successfully (REQ-6885 item 3).
+    SnapshotDrawn {
+        /// The page.
+        page: u16,
+        /// The sub-page drawn, never 3F7F.
+        sub: u16,
+        /// Its image.
+        image: SnapshotImage,
+    },
+    /// The snapshot is not a page drawn successfully.
+    SnapshotRefused {
+        /// The page asked.
+        page: u16,
+        /// The sub-code asked.
+        sub: u16,
+        /// Why.
+        reason: SnapshotRefusal,
+    },
 }
 
 /// # Errors
@@ -559,6 +593,12 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::PictureFont(part) => {
             crate::regis::push_font_part(&mut payload, part)?;
             kinds::KIND_PICTURE_FONT
+        }
+        ToDecoder::Snapshot { page, sub } => {
+            snapshot::check_asked(*page, *sub)?;
+            payload.extend_from_slice(&page.to_be_bytes());
+            payload.extend_from_slice(&sub.to_be_bytes());
+            kinds::KIND_SNAPSHOT
         }
     };
     write_frame(out, kind, &payload)
@@ -762,6 +802,11 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         kinds::KIND_REDUCED_MOTION => ToDecoder::ReducedMotion(fields.flag("reduced motion")?),
         kinds::KIND_PICTURE_FONT => ToDecoder::PictureFont(crate::regis::read_font_part(&mut fields)?),
+        kinds::KIND_SNAPSHOT => {
+            let (page, sub) = (fields.u16()?, fields.u16()?);
+            snapshot::check_asked(page, sub)?;
+            ToDecoder::Snapshot { page, sub }
+        }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;
@@ -908,6 +953,18 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             push_raw_text(&mut payload, text, MAX_CHANNEL_LOG);
             KIND_CHANNEL_LOG
         }
+        FromDecoder::SnapshotSource(bytes) => {
+            snapshot::push_source(&mut payload, bytes)?;
+            kinds::KIND_SNAPSHOT_SOURCE
+        }
+        FromDecoder::SnapshotDrawn { page, sub, image } => {
+            snapshot::push_drawn(&mut payload, *page, *sub, image)?;
+            kinds::KIND_SNAPSHOT_DRAWN
+        }
+        FromDecoder::SnapshotRefused { page, sub, reason } => {
+            snapshot::push_refused(&mut payload, *page, *sub, *reason)?;
+            kinds::KIND_SNAPSHOT_REFUSED
+        }
         // The rule messages (page-rules.md RULE-63).
         rules => push_rules_to_core(&mut payload, rules)?,
     };
@@ -1017,6 +1074,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
         kinds::KIND_RULES_OPEN | kinds::KIND_REPORT | kinds::KIND_PAGE_STATE | kinds::KIND_RULES_FAULT | kinds::KIND_RULE_COUNTERS => {
             read_rules_from_decoder(kind, &mut fields)?
         }
+        kinds::KIND_SNAPSHOT_SOURCE | kinds::KIND_SNAPSHOT_DRAWN | kinds::KIND_SNAPSHOT_REFUSED => return snapshot::read_from_decoder(kind, payload).map(Some),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

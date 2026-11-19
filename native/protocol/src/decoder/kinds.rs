@@ -117,3 +117,11 @@ pub(super) const KIND_PICTURE_TITLE: u8 = 201;
 // parity PAR-33), in the next number free across every pipe on 19
 // November 2026.
 pub(super) const KIND_REDUCED_MOTION: u8 = 202;
+// A decoder's snapshot mode (neoteletext-common's `docs/tab-thumbnails.md`
+// section 10, REQ-6885), in the next numbers free across every pipe on 19
+// November 2026, after the snapshot fetcher's 210 to 213: the place to
+// draw, and the decoder's blanked source, image and refusal.
+pub(super) const KIND_SNAPSHOT: u8 = 214;
+pub(super) const KIND_SNAPSHOT_SOURCE: u8 = 215;
+pub(super) const KIND_SNAPSHOT_DRAWN: u8 = 216;
+pub(super) const KIND_SNAPSHOT_REFUSED: u8 = 217;

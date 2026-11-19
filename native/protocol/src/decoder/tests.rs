@@ -434,3 +434,69 @@ fn a_picture_font_goes_in_bounded_parts() {
     bytes.extend_from_slice(&[0, 0, 0, 0, b'#', b'#']);
     assert!(read_from_core(&mut bytes.as_slice()).is_err(), "read: over the bound");
 }
+
+/// REQ-6885 items 1, 3 and 4: the snapshot place, its blanked source's
+/// pieces, its image as a frame or a whole ReGIS picture, and a refusal
+/// each round trip.
+#[test]
+fn snapshot_messages_round_trip() {
+    for message in [ToDecoder::Snapshot { page: 0x100, sub: SUBCODE_ANY }, ToDecoder::Snapshot { page: 0x899, sub: 0x3F7E }] {
+        let mut bytes = Vec::new();
+        write_to_decoder(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_core(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+    let mut indices = vec![0; PAGE_DOTS];
+    indices[PAGE_DOTS - 1] = 1;
+    for message in [
+        FromDecoder::SnapshotSource(vec![0x15; 42 * 3]),
+        FromDecoder::SnapshotDrawn { page: 0x100, sub: 0, image: SnapshotImage::Frame { palette: vec![[0, 0, 0], [255, 255, 0]], screen: 0, indices } },
+        FromDecoder::SnapshotDrawn { page: 0x302, sub: 0x0002, image: SnapshotImage::Regis(regis_picture()) },
+        FromDecoder::SnapshotRefused { page: 0x100, sub: SUBCODE_ANY, reason: SnapshotRefusal::NoSuchSubPage },
+        FromDecoder::SnapshotRefused { page: 0x100, sub: 1, reason: SnapshotRefusal::Rejected },
+        FromDecoder::SnapshotRefused { page: 0x100, sub: 1, reason: SnapshotRefusal::PictureFailed },
+        FromDecoder::SnapshotRefused { page: 0x100, sub: 1, reason: SnapshotRefusal::TooLarge },
+    ] {
+        let mut bytes = Vec::new();
+        write_to_core(&mut bytes, &message).unwrap();
+        assert_eq!(read_from_decoder(&mut bytes.as_slice()).unwrap().unwrap(), message);
+    }
+}
+
+/// REQ-6885: a snapshot drawn names one sub-page, never 3F7F; a page is a
+/// display page; a ReGIS picture is whole; a frame is a page's shape; an
+/// empty source piece and a refusal of no kind are refused.
+#[test]
+fn malformed_snapshot_messages_are_refused() {
+    let frame = || SnapshotImage::Frame { palette: vec![[0, 0, 0]], screen: 0, indices: vec![0; PAGE_DOTS] };
+    let refused = |message: FromDecoder| write_to_core(&mut Vec::new(), &message).is_err();
+    assert!(refused(FromDecoder::SnapshotDrawn { page: 0x100, sub: SUBCODE_ANY, image: frame() }));
+    assert!(refused(FromDecoder::SnapshotDrawn { page: 0x0FF, sub: 0, image: frame() }));
+    assert!(refused(FromDecoder::SnapshotDrawn {
+        page: 0x100,
+        sub: 0,
+        image: SnapshotImage::Frame { palette: vec![[0, 0, 0]], screen: 0, indices: vec![0; 9] }
+    }));
+    assert!(refused(FromDecoder::SnapshotDrawn {
+        page: 0x100,
+        sub: 0,
+        image: SnapshotImage::Frame { palette: vec![[0, 0, 0]], screen: 1, indices: vec![0; PAGE_DOTS] }
+    }));
+    assert!(refused(FromDecoder::SnapshotDrawn {
+        page: 0x100,
+        sub: 0,
+        image: SnapshotImage::Regis(regis_part(crate::regis::RegisArea { x: 0, y: 0, width: 2, height: 1 }))
+    }));
+    assert!(refused(FromDecoder::SnapshotSource(Vec::new())));
+    assert!(refused(FromDecoder::SnapshotRefused { page: 0x100, sub: 0x3F80, reason: SnapshotRefusal::Rejected }));
+    assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::Snapshot { page: 0x100, sub: 0x4000 }).is_err());
+    let raw = |kind: u8, payload: &[u8]| {
+        let mut bytes = vec![kind];
+        bytes.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
+        bytes.extend_from_slice(payload);
+        read_from_decoder(&mut bytes.as_slice())
+    };
+    assert!(raw(kinds::KIND_SNAPSHOT_SOURCE, &[]).is_err());
+    assert!(raw(kinds::KIND_SNAPSHOT_REFUSED, &[1, 0, 0, 0, 9]).is_err());
+    assert!(raw(kinds::KIND_SNAPSHOT_REFUSED, &[1, 0, 0, 0, 0, 0]).is_err(), "runs on");
+    assert!(raw(kinds::KIND_SNAPSHOT_DRAWN, &[1, 0, 0, 0, 7]).is_err(), "an image of no kind");
+}

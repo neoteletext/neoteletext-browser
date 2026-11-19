@@ -10,6 +10,7 @@ use protocol::{ToInterface, clean};
 use super::Core;
 
 impl Core {
+    #[allow(clippy::too_many_lines, reason = "one arm a message a decoder sends, each a line or two")]
     pub(super) fn decoded(&mut self, channel: u32, message: FromDecoder) -> Result<(), String> {
         #[cfg(feature = "timed-test")]
         timed_marks(&message);
@@ -36,19 +37,28 @@ impl Core {
             FromDecoder::Missing(pages) => self.wall_missing(channel, pages)?,
             #[cfg(not(feature = "interaction"))]
             FromDecoder::Missing(_) => {}
-            // Only a decoder started to read bookmarks reports them; from a
-            // channel's they change nothing.
             // The channel's own log, for its author: in its Log tab only,
             // cleaned and marked as the channel's (decision 70).
             FromDecoder::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
-            FromDecoder::Bookmark(_) | FromDecoder::BookmarksRead { .. } => {
-                self.log(Level::Warning, Some(channel), "the channel's decoder reported bookmarks, which it may not; ignored");
-            }
             // A channel's decoder took a font for pictures, or refused it (PAR-35).
             FromDecoder::FontChecked { refusal, .. } => self.font_taken(channel, refusal.as_deref()),
-            // Only a decoder started to convert a picture makes one.
-            FromDecoder::PictureConverted { .. } | FromDecoder::PictureRefused(_) | FromDecoder::PictureOutput { .. } => {
-                self.log(Level::Warning, Some(channel), "the channel's decoder reported a converted picture, which it may not; ignored");
+            // Only a decoder started to read bookmarks reports them, only
+            // one started to convert a picture makes one, and only one
+            // started in snapshot mode draws a snapshot (REQ-6885): from a
+            // channel's they change nothing.
+            FromDecoder::Bookmark(_)
+            | FromDecoder::BookmarksRead { .. }
+            | FromDecoder::PictureConverted { .. }
+            | FromDecoder::PictureRefused(_)
+            | FromDecoder::PictureOutput { .. }
+            | FromDecoder::SnapshotSource(_)
+            | FromDecoder::SnapshotDrawn { .. }
+            | FromDecoder::SnapshotRefused { .. } => {
+                self.log(
+                    Level::Warning,
+                    Some(channel),
+                    "the channel's decoder reported bookmarks, a converted picture or a snapshot, which it may not; ignored",
+                );
             }
             FromDecoder::Arrived { page, title } => self.arrived(channel, page, &title)?,
             FromDecoder::PictureTitle { page, title } => self.picture_titled(channel, page, &title)?,

@@ -400,6 +400,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             }
             // Every page on screen is drawn again: its flash stops or
             // starts (renderer parity PAR-33).
+            // Only a decoder started in snapshot mode draws a snapshot
+            // (REQ-6885): a tab's decoder told to is told wrongly, and ends.
+            ToDecoder::Snapshot { .. } => return Err(ProtocolError::BadValue("a snapshot asked of a tab's decoder")),
             ToDecoder::ReducedMotion(reduced) => {
                 engine.set_reduced_motion(reduced);
                 let pages = showing.clone();
