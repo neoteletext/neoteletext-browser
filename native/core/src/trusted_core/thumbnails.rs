@@ -274,7 +274,7 @@ impl Core {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
 mod tests {
     use super::*;
-    use neoteletext::snapshots::WHOLE_PAGE;
+    use neoteletext::snapshots::{INITIAL_PAGE_ASKED, WHOLE_PAGE};
 
     fn want(channel: u32, host: &str, page: u16) -> Wanted {
         Wanted { channel, place: Place { channel: format!("https://{host}/tt/"), page, sub: WHOLE_PAGE }, host: host.to_owned() }
@@ -367,6 +367,69 @@ mod tests {
         let inside = core.session.open("https://c.example/tt/").unwrap().id;
         core.thumbnails_wanted(&[inside]);
         assert_eq!(wanted_channels(&core), [], "a private window");
+    }
+
+    /// The bytes of `bytes` with each one's parity bit cleared (EN 300 706
+    /// clause 8.2: data bytes are seven bits and odd parity), so that text
+    /// in packets can be looked for.
+    fn without_parity(bytes: &[u8]) -> Vec<u8> {
+        bytes.iter().map(|byte| byte & 0x7F).collect()
+    }
+
+    /// REQ-6886 item 6, end to end: a page with concealed text, drawn by
+    /// the snapshot decoder's own answer and kept by the trusted core as a
+    /// fetched snapshot is, leaves a file in the store that holds none of
+    /// the concealed characters, while the text shown is kept.
+    #[cfg(unix)]
+    #[test]
+    fn a_stored_snapshot_of_a_page_with_concealed_text_holds_none_of_it() {
+        use neoteletext_core::consts::COLUMNS;
+        use neoteletext_core::packet::Packet;
+        use neoteletext_core::types::{PageAddress, SubCode};
+        use neoteletext_formats::page::PageFile;
+        use protocol::decoder::{FromDecoder, read_from_decoder};
+        /// Spacing attributes (EN 300 706 clause 12.2, Table 26).
+        const ALPHA_WHITE: u8 = 0x07;
+        const CONCEAL: u8 = 0x18;
+        const HIDDEN: &[u8] = b"XYZZY";
+
+        let mut file = PageFile { address: PageAddress::from_mpp(INITIAL_PAGE_ASKED).unwrap(), subcode: SubCode::new(0), ..PageFile::default() };
+        let mut codes = [b' '; COLUMNS];
+        let text = [&[ALPHA_WHITE][..], b"OPEN ", &[CONCEAL], HIDDEN].concat();
+        codes[..text.len()].copy_from_slice(&text);
+        file.set_row(3, &codes);
+        file.rows_present |= 1 << 3;
+        let mut page = Vec::new();
+        neoteletext_formats::encode::encode_page(&file, &mut |packet: Packet| page.extend_from_slice(&packet.bytes));
+        assert!(without_parity(&page).windows(HIDDEN.len()).any(|window| window == HIDDEN), "the page as sent holds the concealed text");
+
+        let folder = std::env::temp_dir().join(format!("neoteletext-thumbnails-concealed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        let mut core = super::super::test_support::test_core();
+        core.thumbnails = Thumbnails::new(Some(&folder));
+        core.session.open("https://a.example/tt/").unwrap();
+        let place = Place { channel: String::from("https://a.example/tt/"), page: neoteletext::snapshots::INITIAL_PAGE, sub: WHOLE_PAGE };
+
+        let mut answer = Vec::new();
+        decoder::snapshot::answer(&mut answer, place.page_asked(), place.sub, &page).unwrap();
+        let mut answer = answer.as_slice();
+        let mut source = Vec::new();
+        let drawn = loop {
+            match read_from_decoder(&mut answer).unwrap() {
+                Some(FromDecoder::SnapshotSource(piece)) => source.extend_from_slice(&piece),
+                Some(FromDecoder::SnapshotDrawn { page, sub, image }) => break SnapshotDrawn { page, sub, image, source },
+                other => panic!("the snapshot decoder answered {other:?}"),
+            }
+        };
+        let job = core.thumbnails.job();
+        core.thumbnails.drawing.push((job, place.clone(), true));
+        core.snapshot_drawn(job, Ok(drawn)).unwrap();
+
+        let kept = std::fs::read(folder.join(neoteletext::snapshots::FOLDER).join(place.file_name())).expect("the snapshot was kept");
+        let kept = without_parity(&kept);
+        assert!(!kept.windows(HIDDEN.len()).any(|window| window == HIDDEN), "the kept file holds the concealed text");
+        assert!(kept.windows(4).any(|window| window == b"OPEN"), "the text shown is kept");
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 
     /// REQ-6883: a place being fetched or drawn is not started again.
