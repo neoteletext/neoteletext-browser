@@ -43,14 +43,18 @@ fn tabs(count: usize) -> Vec<TabInfo> {
         .collect()
 }
 
-/// Rests the pointer on the first tab at `now` and waits it out: the
-/// filmstrip opens and has slid out by the time it is drawn again.
+/// Rests the pointer on the first tab at `now` and waits it out, and the
+/// first tab's picture shown alone (REQ-6921): the whole row shows and has
+/// settled by the time it is drawn again.
 fn open(browser: &mut Browser, canvas: &mut Recorder, now: u64) -> u64 {
     let tab = browser.regions.tabs[0].tab;
     browser.pointer_moved(middle(tab).x, middle(tab).y, now);
     let opened = now.saturating_add(FILMSTRIP_DELAY_MILLISECONDS);
     assert!(browser.settle(opened), "it opens");
-    let out = opened.saturating_add(FILMSTRIP_OPEN_MILLISECONDS);
+    browser.draw(canvas, WIDTH, HEIGHT, opened.saturating_add(FILMSTRIP_OPEN_MILLISECONDS));
+    let joined = opened.saturating_add(FILMSTRIP_ALONE_MILLISECONDS);
+    assert!(browser.settle(joined), "the rest of the row appears");
+    let out = joined.saturating_add(FILMSTRIP_SLIDE_MILLISECONDS.max(FILMSTRIP_OPEN_MILLISECONDS));
     browser.draw(canvas, WIDTH, HEIGHT, out);
     out
 }
@@ -84,6 +88,8 @@ fn a_rest_on_the_tabs_opens_the_filmstrip_and_crossing_does_not() {
     browser.draw(&mut canvas, WIDTH, HEIGHT, halfway + FILMSTRIP_OPEN_MILLISECONDS);
     let whole = browser.filmstrip.panel;
     assert!(part.y0 == STRIP_HEIGHT && whole.y0 == STRIP_HEIGHT && part.y1 < whole.y1, "joined to the strip, sliding down: {part:?} {whole:?}");
+    browser.settle(2_000 + FILMSTRIP_DELAY_MILLISECONDS + FILMSTRIP_ALONE_MILLISECONDS);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, 4_000);
     assert_eq!(browser.filmstrip.pictures.len(), 3, "a picture for every tab");
 }
 
@@ -176,8 +182,11 @@ fn stills_are_taken_when_a_tab_is_left_and_when_the_filmstrip_opens() {
     browser.set_channel(other);
     browser.draw(&mut canvas, WIDTH, HEIGHT, 20);
     canvas.painted.clear();
-    open(&mut browser, &mut canvas, 100);
+    let out = open(&mut browser, &mut canvas, 100);
     assert_eq!(canvas.taken.last().map(|&(still, _)| still), Some(FIRST + 1), "the active tab's, as it opens");
+    // The whole row as drawn, not the first tab's picture alone before it.
+    canvas.painted.clear();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, out);
     let stills: Vec<u32> = canvas.painted.iter().filter_map(|painted| if let Painted::Still(still, _) = painted { Some(*still) } else { None }).collect();
     assert_eq!(stills, [FIRST, FIRST + 1], "the two tabs seen draw their stills");
     let never = browser.filmstrip.pictures.iter().find(|picture| picture.index == 2).unwrap();
@@ -522,4 +531,91 @@ fn the_wheels_owner_over_the_open_filmstrip_is_the_filmstrip() {
     assert!(!matches!(browser.cursor(), crate::browser::Cursor::Wheel(_)), "no wheel indicator over it");
     point_at(&mut browser, Rect::new(10.0, HEIGHT - 20.0, 20.0, HEIGHT - 10.0), now);
     assert_ne!(browser.wheel_owner(), WheelOwner::Filmstrip, "below it, not the filmstrip's");
+}
+
+/// Rests the pointer on tab `index` at `now` and waits out the rest: the
+/// first stage has slid out by the time returned, when it is drawn.
+fn rest_on(browser: &mut Browser, canvas: &mut Recorder, index: usize, now: u64) -> u64 {
+    let tab = browser.regions.tabs.iter().find(|region| region.index == index).unwrap().tab;
+    point_at(browser, tab, now);
+    let opened = now.saturating_add(FILMSTRIP_DELAY_MILLISECONDS);
+    assert!(browser.settle(opened) && browser.filmstrip_open(), "the rest opens it");
+    let out = opened.saturating_add(FILMSTRIP_OPEN_MILLISECONDS);
+    browser.draw(canvas, WIDTH, HEIGHT, out);
+    out
+}
+
+/// The middle of tab `index` on the strip, across.
+fn tab_middle(browser: &Browser, index: usize) -> f64 {
+    middle(browser.regions.tabs.iter().find(|region| region.index == index).unwrap().tab).x
+}
+
+/// REQ-6921 item 1 (DEC-6920): a rest on a tab first shows that tab's
+/// picture alone, centred directly under the tab, on a panel no wider than
+/// it and its margins; under the first tab it is kept within the window's
+/// margin. Before, every tab's picture showed at once in the row.
+#[test]
+fn a_rest_on_a_tab_shows_its_picture_alone_directly_under_it() {
+    let (mut browser, mut canvas) = browser_of(5);
+    rest_on(&mut browser, &mut canvas, 2, 0);
+    let indices: Vec<usize> = browser.filmstrip.pictures.iter().map(|picture| picture.index).collect();
+    assert_eq!(indices, [2], "the rested tab's picture alone");
+    let picture = browser.filmstrip.pictures[0].rect;
+    assert!((middle(picture).x - tab_middle(&browser, 2)).abs() < 1e-6, "centred under its tab: {picture:?}");
+    let panel = browser.filmstrip.panel;
+    assert!((panel.x0 - (picture.x0 - MARGIN)).abs() < 1e-6 && (panel.x1 - (picture.x1 + MARGIN)).abs() < 1e-6, "a panel only as wide as it: {panel:?}");
+    // Under the first tab, nearer the window's edge than half a picture.
+    let (mut browser, mut canvas) = browser_of(5);
+    rest_on(&mut browser, &mut canvas, 0, 0);
+    let picture = browser.filmstrip.pictures[0].rect;
+    assert_eq!(browser.filmstrip.pictures[0].index, 0);
+    assert!(tab_middle(&browser, 0) - picture.width() / 2.0 < MARGIN, "the fixture's first tab is near the edge");
+    assert!((picture.x0 - MARGIN).abs() < 1e-6, "kept whole within the margin: {picture:?}");
+}
+
+/// REQ-6921 items 3 and 4 (DEC-6920): 500 milliseconds after the picture
+/// appeared alone, with the pointer still on the strip, every tab's picture
+/// shows; the rested one starts where it was alone and eases to its place
+/// in the row. Before, the row showed from the start.
+#[test]
+fn the_rest_of_the_row_appears_500_milliseconds_later_from_where_it_was() {
+    let (mut browser, mut canvas) = browser_of(5);
+    rest_on(&mut browser, &mut canvas, 2, 0);
+    let alone = browser.filmstrip.pictures[0].rect;
+    let shown = FILMSTRIP_DELAY_MILLISECONDS;
+    assert_eq!(browser.frame_interval(shown + 300), Some(FILMSTRIP_ALONE_MILLISECONDS - 300), "it waits for the rest");
+    assert!(!browser.settle(shown + FILMSTRIP_ALONE_MILLISECONDS - 1), "not yet");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, shown + FILMSTRIP_ALONE_MILLISECONDS - 1);
+    assert_eq!(browser.filmstrip.pictures.len(), 1, "still alone");
+    let joined = shown + FILMSTRIP_ALONE_MILLISECONDS;
+    assert!(browser.settle(joined), "the rest appear");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, joined);
+    let indices: Vec<usize> = browser.filmstrip.pictures.iter().map(|picture| picture.index).collect();
+    assert_eq!(indices, [0, 1, 2, 3, 4], "every tab's picture");
+    assert!((browser.filmstrip.panel.width() - WIDTH).abs() < 1e-6, "the whole width");
+    let start = browser.filmstrip.pictures.iter().find(|picture| picture.index == 2).unwrap().rect;
+    assert!((start.x0 - alone.x0).abs() < 1e-3, "it starts where it was alone: {start:?} {alone:?}");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, joined + FILMSTRIP_SLIDE_MILLISECONDS);
+    let layout = Layout::of(WIDTH, 5, browser.wall.shape().height_per_width());
+    let placed = browser.filmstrip.pictures.iter().find(|picture| picture.index == 2).unwrap().rect;
+    assert!((placed.x0 - (MARGIN + 2.0 * layout.step)).abs() < 1e-3, "and eases to its place in the row: {placed:?}");
+}
+
+/// REQ-6921 item 2 (DEC-6920): moving to another tab while the picture
+/// shows alone moves it under that tab, showing that tab's picture, and the
+/// rest still appear 500 milliseconds after it first appeared.
+#[test]
+fn moving_to_another_tab_moves_the_lone_picture_under_it() {
+    let (mut browser, mut canvas) = browser_of(5);
+    let out = rest_on(&mut browser, &mut canvas, 1, 0);
+    let tab = browser.regions.tabs.iter().find(|region| region.index == 3).unwrap().tab;
+    point_at(&mut browser, tab, out + 50);
+    browser.draw(&mut canvas, WIDTH, HEIGHT, out + 60);
+    let indices: Vec<usize> = browser.filmstrip.pictures.iter().map(|picture| picture.index).collect();
+    assert_eq!(indices, [3], "the other tab's picture alone");
+    let picture = browser.filmstrip.pictures[0].rect;
+    assert!((middle(picture).x - tab_middle(&browser, 3)).abs() < 1e-6, "under the other tab: {picture:?}");
+    assert!(browser.settle(FILMSTRIP_DELAY_MILLISECONDS + FILMSTRIP_ALONE_MILLISECONDS), "the wait was not restarted");
+    browser.draw(&mut canvas, WIDTH, HEIGHT, FILMSTRIP_DELAY_MILLISECONDS + FILMSTRIP_ALONE_MILLISECONDS);
+    assert_eq!(browser.filmstrip.pictures.len(), 5);
 }

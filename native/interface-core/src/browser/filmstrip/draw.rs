@@ -78,6 +78,17 @@ impl Layout {
 }
 
 impl Browser {
+    /// Where the picture of `tab`, shown alone, starts across (REQ-6921
+    /// item 1): centred directly under the tab as the strip shows it, moved
+    /// only as far as keeps it whole within the window's margins; none
+    /// while the tab is not on the strip.
+    pub(super) fn alone_left(&self, layout: &Layout, tab: usize) -> Option<f64> {
+        let region = self.regions.tabs.iter().find(|region| region.index == tab)?;
+        let centred = f64::midpoint(region.tab.x0, region.tab.x1) - layout.picture / 2.0;
+        let most = (self.filmstrip.width - MARGIN - layout.picture).max(MARGIN);
+        Some(centred.clamp(MARGIN, most))
+    }
+
     /// The filmstrip, over everything below the strip, as far as it has
     /// slid out at `now`; nothing while it is under the strip. Its stills
     /// are taken first, from the pages the canvas holds before this frame
@@ -95,26 +106,35 @@ impl Browser {
             self.ask_thumbnails(now);
             return;
         }
+        // REQ-6921: in its first stage only the rested tab's picture shows,
+        // under its tab, on a panel only as wide as it and its margins.
+        let alone = self.filmstrip.alone.and_then(|alone| Some((alone.tab, self.alone_left(&layout, alone.tab)?)));
+        let (panel_left, panel_right) = alone.map_or((0.0, width), |(_, left)| (left - MARGIN, left + layout.picture + MARGIN));
         let shown = layout.panel * reveal;
-        let panel = Rect::new(0.0, STRIP_HEIGHT, width, STRIP_HEIGHT + shown);
+        let panel = Rect::new(panel_left, STRIP_HEIGHT, panel_right, STRIP_HEIGHT + shown);
         canvas.dim(panel, GROUND);
         let mut band_top = panel.y1;
         for amount in SHADOW {
-            canvas.dim(Rect::new(0.0, band_top, width, band_top + SHADOW_BAND), amount);
+            canvas.dim(Rect::new(panel_left, band_top, panel_right, band_top + SHADOW_BAND), amount);
             band_top += SHADOW_BAND;
         }
-        canvas.fill(Rect::new(0.0, panel.y1 - EDGE, width, panel.y1), 0.0, SELECTED);
+        canvas.fill(Rect::new(panel_left, panel.y1 - EDGE, panel_right, panel.y1), 0.0, SELECTED);
         // Slid out from under the strip: its top rises out of sight.
         let top = panel.y1 - layout.panel + PANEL_TOP;
         let offset = f64::from(self.filmstrip.slide.value(now));
-        canvas.push_clip(Rect::new(0.0, panel.y0, width, panel.y1 - EDGE));
+        canvas.push_clip(Rect::new(panel_left, panel.y0, panel_right, panel.y1 - EDGE));
         // The row slides under a still pointer: the picture it rests on is
         // found again as each is laid out.
         let shown = self.filmstrip.shown();
         self.filmstrip.hovered = None;
         for index in 0..self.tabs.len() {
             #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
-            let x = MARGIN + index as f64 * layout.step + offset;
+            let in_row = MARGIN + index as f64 * layout.step + offset;
+            let x = match alone {
+                Some((tab, left)) if tab == index => left,
+                Some(_) => continue,
+                None => in_row,
+            };
             if x + layout.picture < 0.0 || x > width {
                 continue;
             }

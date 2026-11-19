@@ -33,6 +33,10 @@ pub(super) const FILMSTRIP_DELAY_MILLISECONDS: u64 = 300;
 /// it closes (DEC-6637 item 6): long enough for a hand that slips off its
 /// edge and comes back.
 pub(super) const FILMSTRIP_CLOSE_MILLISECONDS: u64 = 300;
+/// How long the rested tab's picture shows alone, directly under its tab,
+/// before the rest of the row appears (REQ-6921, the owner's "500ms
+/// delay", DEC-6920).
+pub(super) const FILMSTRIP_ALONE_MILLISECONDS: u64 = 500;
 /// How long it takes to slide out from under the strip, and back: about
 /// as quick as a menu opens, so it never keeps the viewer waiting.
 const FILMSTRIP_OPEN_MILLISECONDS: u64 = 200;
@@ -55,6 +59,19 @@ enum Phase {
     /// by a rest until the pointer has left the strip, as the overflow
     /// panel did (decision 102).
     Dismissed,
+}
+
+/// The first stage of a filmstrip opened by a rest on a tab (REQ-6921):
+/// that tab's picture shows alone, directly under it, until the rest of
+/// the row appears.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Alone {
+    /// The tab whose picture shows: the one the pointer is over.
+    pub(super) tab: usize,
+    /// When the picture appeared: the rest appear
+    /// [`FILMSTRIP_ALONE_MILLISECONDS`] later, the wait not restarted by a
+    /// move to another tab (DEC-6920 item 5).
+    since: u64,
 }
 
 /// A picture as last drawn, and its buttons.
@@ -105,6 +122,9 @@ pub(super) struct Filmstrip {
     pub(super) strip_active: Option<usize>,
     /// The picture the pointer rests on.
     pub(super) hovered: Option<usize>,
+    /// The tab whose picture shows alone, while the filmstrip opened by a
+    /// rest on it is in its first stage (REQ-6921).
+    pub(super) alone: Option<Alone>,
     /// The rest that opened the filmstrip was on the overflow count, and
     /// the pointer has stayed on the count since. A press there is then
     /// the press the viewer was making when the rest opened it first, and
@@ -141,6 +161,7 @@ impl Default for Filmstrip {
             strip: Tween::new(0.0, FILMSTRIP_SLIDE_MILLISECONDS, STANDARD),
             strip_active: None,
             hovered: None,
+            alone: None,
             rested_on_count: false,
             pictures: Vec::new(),
             panel: Rect::ZERO,
@@ -223,6 +244,10 @@ impl Browser {
         self.filmstrip.forget.extend(gone);
         if self.filmstrip.hovered.is_some_and(|index| index >= self.tabs.len()) {
             self.filmstrip.hovered = None;
+        }
+        // The tab shown alone has closed: the whole row shows.
+        if self.filmstrip.alone.is_some_and(|alone| alone.tab >= self.tabs.len()) {
+            self.filmstrip.alone = None;
         }
     }
 
@@ -309,6 +334,7 @@ impl Browser {
         }
         self.filmstrip.phase = Phase::Open;
         self.filmstrip.rested_on_count = false;
+        self.filmstrip.alone = None;
         self.filmstrip.reveal.set(1.0, now);
         let place = self.filmstrip_place();
         self.filmstrip.slide = Tween::new(narrow(place), self.filmstrip_slide_duration(), STANDARD);
@@ -333,11 +359,32 @@ impl Browser {
         centred.clamp(layout.bounds.0, layout.bounds.1)
     }
 
+    /// The tab under `point` on the strip, if any.
+    fn tab_under(&self, point: Point) -> Option<usize> {
+        self.regions.tabs.iter().find(|region| region.tab.contains(point)).map(|region| region.index)
+    }
+
+    /// The rest of the row appears at `now` (REQ-6921 items 3 and 4): laid
+    /// out as it opens, but slid at first so that the picture shown alone
+    /// is where it was, and eased from there to the row's place, so that
+    /// it never jumps (DEC-6920 item 6).
+    fn filmstrip_join(&mut self, now: u64) {
+        let Some(alone) = self.filmstrip.alone.take() else { return };
+        self.filmstrip_motion();
+        let layout = draw::Layout::of(self.filmstrip.width, self.tabs.len(), self.wall.shape().height_per_width());
+        let place = self.filmstrip_place();
+        #[allow(clippy::cast_precision_loss, reason = "a tab's place, below a hundred")]
+        let from = self.alone_left(&layout, alone.tab).map_or(place, |left| left - (draw::MARGIN + alone.tab as f64 * layout.step));
+        self.filmstrip.slide = Tween::new(narrow(from), self.filmstrip_slide_duration(), STANDARD);
+        self.filmstrip.slide.set(narrow(place), now);
+    }
+
     /// Closes the filmstrip at `now`: it slides back under the strip.
     fn filmstrip_hide(&mut self, now: u64) {
         self.filmstrip_motion();
         self.filmstrip.phase = Phase::Shut;
         self.filmstrip.rested_on_count = false;
+        self.filmstrip.alone = None;
         self.filmstrip.reveal.set(0.0, now);
         self.filmstrip.hovered = None;
     }
@@ -348,6 +395,7 @@ impl Browser {
         self.filmstrip.phase = Phase::Shut;
         self.filmstrip.reveal = Tween::new(0.0, FILMSTRIP_OPEN_MILLISECONDS, EASE_OUT);
         self.filmstrip.hovered = None;
+        self.filmstrip.alone = None;
         self.filmstrip.rested_on_count = false;
         self.filmstrip.pictures.clear();
         self.filmstrip.panel = Rect::ZERO;
@@ -359,7 +407,7 @@ impl Browser {
     /// back ends that wait. A tab pressed or dragged opens nothing.
     /// Returns whether anything changed.
     pub(super) fn filmstrip_moved(&mut self, point: Point, now: u64) -> bool {
-        let before = (self.filmstrip.phase, self.filmstrip.hovered);
+        let before = (self.filmstrip.phase, self.filmstrip.hovered, self.filmstrip.alone);
         let on_tabs = self.tab_strip.tabs_area.contains(point);
         let on_strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT).contains(point);
         let on_filmstrip = self.filmstrip.panel.contains(point);
@@ -375,12 +423,20 @@ impl Browser {
             Phase::Dismissed if !on_strip => Phase::Shut,
             unchanged => unchanged,
         };
+        // REQ-6921 item 2: the picture shown alone follows the pointer to
+        // another tab.
+        if self.filmstrip.shown()
+            && let Some(tab) = self.tab_under(point)
+            && let Some(alone) = self.filmstrip.alone.as_mut()
+        {
+            alone.tab = tab;
+        }
         self.filmstrip.hovered = if self.filmstrip.shown() {
             self.filmstrip.pictures.iter().find(|picture| picture.rect.contains(point)).map(|picture| picture.index)
         } else {
             None
         };
-        before != (self.filmstrip.phase, self.filmstrip.hovered)
+        before != (self.filmstrip.phase, self.filmstrip.hovered, self.filmstrip.alone)
     }
 
     /// How long until the filmstrip opens or closes, while it waits.
@@ -388,18 +444,27 @@ impl Browser {
         let due = match self.filmstrip.phase {
             Phase::Resting(since) => since.saturating_add(FILMSTRIP_DELAY_MILLISECONDS),
             Phase::Leaving(since) => since.saturating_add(FILMSTRIP_CLOSE_MILLISECONDS),
-            Phase::Shut | Phase::Open | Phase::Dismissed => return None,
+            // The rest of the row appears only with the pointer present.
+            Phase::Open => self.filmstrip.alone?.since.saturating_add(FILMSTRIP_ALONE_MILLISECONDS),
+            Phase::Shut | Phase::Dismissed => return None,
         };
         Some(due.saturating_sub(now).max(1))
     }
 
-    /// The filmstrip opens once the pointer has rested on the tabs, and
-    /// closes once it has been away; whether either happened now.
+    /// The filmstrip opens once the pointer has rested on the tabs, with
+    /// the rested tab's picture alone when the rest was on a tab
+    /// (REQ-6921), shows the rest of the row once that picture has shown
+    /// long enough with the pointer present, and closes once the pointer
+    /// has been away; whether any happened now.
     pub(super) fn filmstrip_settle(&mut self, now: u64) -> bool {
         match self.filmstrip.phase {
             Phase::Resting(since) if now.saturating_sub(since) >= FILMSTRIP_DELAY_MILLISECONDS => {
                 self.filmstrip_show(now);
                 self.filmstrip.rested_on_count = self.tab_strip.count.contains(self.pointer);
+                self.filmstrip.alone = self.tab_under(self.pointer).map(|tab| Alone { tab, since: now });
+            }
+            Phase::Open if self.filmstrip.alone.is_some_and(|alone| now.saturating_sub(alone.since) >= FILMSTRIP_ALONE_MILLISECONDS) => {
+                self.filmstrip_join(now);
             }
             Phase::Leaving(since) if now.saturating_sub(since) >= FILMSTRIP_CLOSE_MILLISECONDS => self.filmstrip_hide(now),
             Phase::Shut | Phase::Resting(_) | Phase::Open | Phase::Leaving(_) | Phase::Dismissed => return false,
