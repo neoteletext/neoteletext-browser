@@ -53,7 +53,8 @@ impl Browser {
     /// picture, as the keyboard does it on a focused picture target that is
     /// not a link (renderer parity PAR-30): the trusted core is told that
     /// pixel, one picture pixel across, as a pointer there would tell it.
-    #[cfg(feature = "interaction")]
+    /// Only the keyboard's focus ring calls it, which is in `links`.
+    #[cfg(all(feature = "interaction", feature = "links"))]
     pub(super) fn regis_press_at(&mut self, key: PageKey, pixel: (u16, u16), pressed: bool) {
         let pointer = RegisPointer { key, at: Some(pixel), pressed, finger: false, span: 1 };
         self.outputs.push(Output::RegisPointer(pointer));
