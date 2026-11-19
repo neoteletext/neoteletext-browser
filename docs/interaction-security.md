@@ -45,7 +45,7 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 | `input` declared without a WebSocket, or a push address off the channel's origin | Refused by the descriptor parser, as `push` is today |
 | Cursor records in a push stream, a file or a broadcast | Decoded and dropped unless the channel declares input over a WebSocket and the page is open |
 | A push flood, now that the decoder renders on arrival | Coalesced to one render per 16 ms per page; the 64 KB message limit stands |
-| A hijacked socket after reconnection | The resume record carries only a sequence number; there is no token to steal. A viewer's identity across connections is the engine's cookies, with the engine's rules (REQ-WEB-006), never anything in the records |
+| A hijacked socket after reconnection | The resume record carries only a sequence number; there is no token to steal. A viewer's identity across connections is viewer state alone, a key the trusted core proves by signing a fresh challenge with the channel's identity on the channel's own push connection (neoteletext-common's `docs/viewer-state.md` VS-203; cookies, named here until 18 November 2026, were removed by DEC-6471), never anything in the records |
 | A plain `ws://` connection | "Not secure" in the strip beside "Keys go to", as the address field shows it; decision 10 |
 
 ### B. The fetcher and the trusted core
@@ -88,7 +88,7 @@ phone ──▶ relay ──▶ neoteletext-keyboard ── PhoneKey
 
 | Threat | Mitigation |
 |---|---|
-| The keyboard process attacked through what it parses: relay JSON, frames, ciphertext, decrypted JSON | Its own process, sandboxed with the network only; no files, pages or cookies; the no-panic list; its readers fuzzed; it holds only the instance's token and the pairing keys |
+| The keyboard process attacked through what it parses: relay JSON, frames, ciphertext, decrypted JSON | Its own process, sandboxed with the network only; no files, pages or viewer keys; the no-panic list; its readers fuzzed; it holds only the instance's token and the pairing keys |
 | A passive relay or network observer reads keys | It cannot: AES-256-GCM end to end from a secret it never sees |
 | The relay's operator, or whoever compromises its server, reads the PIN and the keys (finding F-18) | Not prevented: the relay serves the phone's page, the code that encrypts, so it can serve code that sends the PIN and the keys elsewhere. Bounded by section F: a hostile phone is a hostile local keyboard with no modifiers, which outside a page open for typing only moves between pages. Serving the phone's page apart from the relay would close it, and qrkeyboard.com is not this repository's server (decision 96) |
 | A hostile relay relabels the phone's keys or renames the screen | qrkeyboard's configuration hash in the QR, computed as its SDK computes it |

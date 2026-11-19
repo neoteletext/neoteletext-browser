@@ -342,7 +342,7 @@ These are easy to lose in a move away from a browser engine, and each is require
 7. **Clipboard, drag and drop, multiple windows** (requirements 10.9 and 12.8): from `arboard` and winit.
 8. **The developer tools panel** (requirement 12.7) needs text tables, from the widget layer.
 9. **Localisation of the interface's own text** has never been specified in any document; it should be, now that the interface's text is ours.
-10. **The cookie store moving into the trusted core**, and **macOS sandboxing of the fetcher and decoder**, are still unsolved (`prototypes/docs/architecture.md` section 5.1, requirement 3.8); this design does not change them.
+10. **The cookie store moving into the trusted core**, and **macOS sandboxing of the fetcher and decoder**, are still unsolved (`prototypes/docs/architecture.md` section 5.1, requirement 3.8); this design does not change them. *Amended 20 November 2026:* the cookie store moved into the trusted core (decision 62), and cookies were then removed from the browser (DEC-6471, 18 November 2026).
 11. **The ten open questions for neoteletext** (`neoteletext/docs/neoteletext-browser-open-questions.md`) are still unanswered and are independent of the interface.
 12. **The display scale:** every measurement here was at a scale of 1; drawing on the processor costs about four times as much at a scale of 2.
 
@@ -443,7 +443,7 @@ An analysis of the processes' interaction, memory, latency, threads and polling 
 
 ### 12.6 The window's controls (23 October 2026)
 
-On the owner's requests of 23 October 2026 (decision 63): Reload joined the strip between Forward and Home, with Command-R and Control-R; a press of the middle button on a tab closes it; cookie management moved from a panel over the window into the developer console, as its Cookies tab; and every control drawn as an icon, a symbol or text that may be cut short gained a tip. The tips are listed each frame from where the controls were drawn, one place per part of the window (`interface-core/src/browser/tips.rs`), so a control added later is given its tip where it is drawn. The same day the window was found not to reach the screen on macOS 15.6 under the interface's sandbox profile, which lacked the window manager's service (`sandboxing.md` section 6).
+On the owner's requests of 23 October 2026 (decision 63): Reload joined the strip between Forward and Home, with Command-R and Control-R; a press of the middle button on a tab closes it; cookie management moved from a panel over the window into the developer console, as its Cookies tab (removed with cookies on 18 November 2026, DEC-6471); and every control drawn as an icon, a symbol or text that may be cut short gained a tip. The tips are listed each frame from where the controls were drawn, one place per part of the window (`interface-core/src/browser/tips.rs`), so a control added later is given its tip where it is drawn. The same day the window was found not to reach the screen on macOS 15.6 under the interface's sandbox profile, which lacked the window manager's service (`sandboxing.md` section 6).
 
 ### 12.7 Drawing only what changed (23 October 2026)
 

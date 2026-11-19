@@ -45,7 +45,7 @@ The largest remaining risk is one the architecture already carries: a **compromi
 In addition to `security-analysis.md` section 2:
 
 - **The user's understanding of where a click leads.** A link must never take the user somewhere other than where the browser said it would.
-- **The boundary of the channel.** A page reaches another channel, or another origin, only by a link the trusted core holds, which the user chose, as in a web browser (REQ-1670). The destination gets its own decoder and cookies.
+- **The boundary of the channel.** A page reaches another channel, or another origin, only by a link the trusted core holds, which the user chose, as in a web browser (REQ-1670). The destination gets its own decoder and its own viewer key, if it asks for one (REQ-716).
 - **The boundary of the browser.** No page may cause anything to run or open outside NeoTeletext without the user's confirmation in the strip.
 - **The trusted core's integrity.** Link data is page data; parsing it in the core must not add a way to crash or confuse the core.
 - **The user's attention.** Prompts must not be forced, flooded or timed to catch a click meant for something else.
@@ -89,7 +89,7 @@ Boundaries B, C and D exist today for frames and clicks; links add new message k
 | A target over 8,004 bytes | Refused by the engine |
 | A page remaps a visible number (`LK,140,…`) to another page | Within the channel, harmless: the same author controls both pages. To another channel: the strip shows the destination before the number is followed, and Back returns (section 8) |
 | **A descriptor's `aliases` remap a typed number to another service or address** | Up to 16; these are links and must go through the same table and the same screens as `LK`. The proposed spec had missed them (finding 2) |
-| **A descriptor's named `services` lead to other descriptors, at other origins** | A `name:mpp` target is *another channel*, not "this channel, another service" as the spec said (finding 1); the strip names that channel, and it gets its own decoder and cookies |
+| **A descriptor's named `services` lead to other descriptors, at other origins** | A `name:mpp` target is *another channel*, not "this channel, another service" as the spec said (finding 1); the strip names that channel, and it gets its own decoder and viewer key |
 
 **Remaining risk:** low. The decoder cannot act on a link; it can only describe one.
 
@@ -152,7 +152,7 @@ A compromised interface can send `Cell` and `Point` for any cell, and strip inpu
 What it can achieve:
 - **Follow any link on any page of the selected tab,** including links to other channels and to the web, by sending the clicks and confirmations itself. It cannot invent links: the targets come from the core's table, from pages the user chose to open. But any page the user visits can carry a web link, so in effect **a compromised interface plus any channel of the attacker's choosing can open any `https` address in the system's web browser,** silently.
 - It cannot open a `file:` address, a custom scheme, a path or an unparsable address: boundary E refuses them regardless of how the request arrived.
-- It cannot change what is fetched (requirement 4.7) or read a cookie (requirement 4.5).
+- It cannot change what is fetched (requirement 4.7) or touch a viewer key (requirement 4.5, REQ-685).
 
 This is the existing residual of `security-analysis.md` section 5.6 and open decision 3, with a higher consequence than before: previously a forged strip input could at most change channel; now it can hand an address to another program. Mitigations that reduce the consequence without a second process:
 - the two-second limit, so a forgery cannot spray addresses;
@@ -231,7 +231,7 @@ Everything in `security-analysis.md` section 7 applies. What links add:
 
 Each changed the spec; `hyperlinks.md` section 18 records the edits.
 
-1. **Named services are other channels.** REQ-WEB-002's `services` each name "the address of its own descriptor", and the engine makes a descriptor's channel identity its origin and folder. So `name:mpp` leaves the channel, and the trusted core must treat it as another channel, with its own decoder and cookies. The spec's classification table called it "this channel, another service". **Severity: high** had it been built: a page of one origin would have been shown in another's channel. Decision DEC-1664 later withdrew the site-change screen this finding first called for: following a link needs no confirmation, as in a web browser.
+1. **Named services are other channels.** REQ-WEB-002's `services` each name "the address of its own descriptor", and the engine makes a descriptor's channel identity its origin and folder. So `name:mpp` leaves the channel, and the trusted core must treat it as another channel, with its own decoder and viewer key. The spec's classification table called it "this channel, another service". **Severity: high** had it been built: a page of one origin would have been shown in another's channel. Decision DEC-1664 later withdrew the site-change screen this finding first called for: following a link needs no confirmation, as in a web browser.
 2. **Descriptor aliases are links the spec missed.** REQ-WEB-002 allows up to 16 `aliases` mapping a page number to `name:mpp` or an address. They are a third link source (with `LK` and found numbers) and must enter the same table, so that typing an aliased number shows the destination and goes through the screens. A found page number that the descriptor aliases shows the alias's destination, not "Page 140".
 3. **The Point-to-Cell race.** The spec resolved a click against its frame, but the strip could still be naming the previous frame's destination. The core must re-resolve the last `Point` on every `Links` for that page, and accept a click only when the resolved target equals the strip's shown target.
 4. **The address parser becomes reachable from pages.** The spec passed link targets to the core's address rules without noting that these rules have only ever seen user input. A separate target parser, fuzzed, and the address fuzz target kept.
@@ -253,7 +253,7 @@ Each changed the spec; `hyperlinks.md` section 18 records the edits.
 | 5 | The default browser or `$BROWSER` is itself hostile or broken | Out of scope (local attacker) | — | — |
 | 6 | A web page or an application fires `neottx://` links at the browser | Medium: anyone can, and most web browsers ask first but not all | Low: a tab opens on an `http` or `https` channel of the sender's choosing, unasked (DEC-1667), and that channel's fetcher connects | One wrapped web address and nothing else, the same parser on every route, never `file:`; never a private window; five in ten seconds, the rest dropped; on Windows a launch with anything beside the one argument is refused whole, and a marker's presence turns every other switch off (REQ-1673) |
 | 7 | A crafted link adds switches to the Windows command line | Low (`--open-link` is checked before anything else reads the arguments) | High if it succeeded: `--allow-local` | `launch::read`, fuzzed (`launch_arguments`, `outside_link`); not yet tried by hand in Windows |
-| 8 | A page moves a tab to another channel with no act of the viewer's, by a REDIRECT record (REQ-1688) | Medium: any live channel can, as any web page can | Low: the tab opens an `http` or `https` channel of the sender's choosing, whose fetcher connects, with its own decoder and cookies (REQ-714). A lookalike page can follow, as after any link, and the address field shows where the tab is | The address rules, as for a server's redirect: never a `file:` address, a `web:` hand-off or a built-in page. The second's notice names the destination, drawn by the interface, in words the channel does not choose (REQ-1686). At most 20 in a row with no input from the viewer (REQ-1688 item 6). A record is read only from a live channel's tab, and a fetcher's word is taken no further than a channel's own |
+| 8 | A page moves a tab to another channel with no act of the viewer's, by a REDIRECT record (REQ-1688) | Medium: any live channel can, as any web page can | Low: the tab opens an `http` or `https` channel of the sender's choosing, whose fetcher connects, with its own decoder and viewer key (REQ-714, REQ-716). A lookalike page can follow, as after any link, and the address field shows where the tab is | The address rules, as for a server's redirect: never a `file:` address, a `web:` hand-off or a built-in page. The second's notice names the destination, drawn by the interface, in words the channel does not choose (REQ-1686). At most 20 in a row with no input from the viewer (REQ-1688 item 6). A record is read only from a live channel's tab, and a fetcher's word is taken no further than a channel's own |
 
 ## 15. Checks that keep these properties
 

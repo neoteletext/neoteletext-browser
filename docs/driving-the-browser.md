@@ -12,7 +12,7 @@ Measured on macOS 15 (Darwin 24.6), Apple Silicon, with the release build in `na
 | One process cannot activate another | Since macOS 14, activation is cooperative. `NSRunningApplication.activate` returns true, but the window does not become the key window. |
 | Keys reach a channel only while the window has the focus | `interaction.md` section 7.3: the tab must be active, the page the channel's, and the window focused. Keys posted to the process while it is in the background reach the browser (typed digits choose pages), but never the channel. |
 | The page list keeps the keys it is given | After typing a page number the focus is on the page list, which keeps the arrows and Page keys until something else is clicked (decision 105). |
-| A keychain prompt at every start | The cookie file's key is in the login Keychain (decision 62). A rebuilt program is signed afresh, and the Keychain asks again ("neoteletext wants to use your confidential information stored in "NeoTeletext cookie file" in your keychain"). The prompt, SecurityAgent, takes the front. |
+| A keychain prompt when remembered keys are opened | The sealing key of the remembered viewer keys' file is in the login Keychain (neoteletext-common's `docs/viewer-state.md` VS-108; until 18 November 2026 it was the cookie file's key, removed with cookies by DEC-6471). It is asked for only when there is a `viewer-keys.bin` to open or the viewer chooses to be remembered. A rebuilt program is signed afresh, and the Keychain asks again ("neoteletext wants to use your confidential information stored in "NeoTeletext viewer keys" in your keychain"). The prompt, SecurityAgent, takes the front. |
 | "Frontmost" can be stale | `NSWorkspace.frontmostApplication` is updated by notifications a command-line tool's idle run loop never processes. It reported SecurityAgent while iTerm2 was in front. |
 | A click can land on another window | Other apps' windows may cover the browser's. A synthetic click goes to whatever is on top at that point, and a capture by window ID still shows the browser's window, hiding the problem. |
 | Local addresses are refused | The fetcher reaches this computer or the local network only when named with `--allow-local`, and it takes an IP address, not an address and port (`192.168.0.166:8098` made each fetcher stop and restart). |
@@ -25,7 +25,7 @@ Measured on macOS 15 (Darwin 24.6), Apple Silicon, with the release build in `na
 neoteletext --no-keychain --allow-local 192.168.0.166 http://192.168.0.166:8098/kitchensink/
 ```
 
-- **`--no-keychain`** (decision 113) keeps cookies for the run only. The trusted core never asks the broker for the cookie key, so no keychain prompt appears; the cookie file is neither read nor written.
+- **`--no-keychain`** (decision 113) keeps viewer keys for the run only. The trusted core never asks the broker for the sealing key, so no keychain prompt appears; `viewer-keys.bin` is neither read nor written, and "Remember me" is unavailable.
 - **`--allow-local`** takes the server's IP address.
 - **Record the processes.** The harness starts the launcher with `posix_spawn` and records every process under it: the trusted core, the interface, the sound helper, and a fetcher and a decoder for each tab, ten in all. The list is kept in a file, so they can be ended by PID even if the launcher goes first.
 

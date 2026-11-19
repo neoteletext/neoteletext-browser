@@ -31,7 +31,7 @@ Three messages open and close windows: `OpenWindow(n, place)` and `CloseWindow(n
 
 The session holds the window at hand's tabs as before, and sets the other windows aside, each with its tabs, its active tab, its place and size and whether it is private. Switching to another window swaps them, so every tab place in a message is the window's own, as it always was. What a window shows (the frames sent, the channel told which pages are shown, and those pages) is set aside with it.
 
-- **What a channel says goes to its own window**: a page arrived, a frame, a link, a cookie, a fetcher's word are handled with the channel's window at hand, and sent there.
+- **What a channel says goes to its own window**: a page arrived, a frame, a link, a viewer-state challenge, a fetcher's word are handled with the channel's window at hand, and sent there.
 - **What every window shares** (the star, the bar, the settings, the remote) is sent to the window at hand when it changes; every other window is marked out of date and sent it again when it is next at hand.
 - **Sound** follows the window last used: the channel whose page that window opened sounds, as before (the engine's REQ-AUD-012). Which channels sound is sent to every window, for its tabs' marks.
 - **Every window's active channel is awake** (decision 47): the window not focused still draws and updates.

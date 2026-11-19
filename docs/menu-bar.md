@@ -42,7 +42,7 @@ On a channel that takes input, keys go to the channel (decision 48), but the bro
 
 ## 4. Copy and paste in the browser's fields
 
-Every text field the browser draws (the address field, the history and bookmarks searches, the bookmarks manager's and the star's forms, the settings panel's fields, the console's and cookies' searches) gains:
+Every text field the browser draws (the address field, the history and bookmarks searches, the bookmarks manager's and the star's forms, the settings panel's fields, the console's search and the search of "Channels that know you") gains:
 
 - **Cut, Copy and Paste** of its selection, through the system clipboard;
 - **Select All**, which some had already.

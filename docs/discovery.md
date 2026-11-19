@@ -44,7 +44,7 @@ The fetcher makes one `GET` of the typed address with the engine's user agent, i
 - the response's headers within the engine's header limit, and at most the first 8,192 bytes of its body (REQ-693), after which the connection is closed and not reused;
 - every other status, and every media type but `text/html`, ends discovery with "No channel found at example.org".
 
-The fetcher is a fresh one, started for this request with no channel, as a tab's fetcher is started for a channel, confined the same way, and ended when the request ends. It holds no cookie, so a hostile page cannot reach a channel's session through it.
+The fetcher is a fresh one, started for this request with no channel, as a tab's fetcher is started for a channel, confined the same way, and ended when the request ends. It has no channel, so the trusted core signs no viewer-state proof for it, and a hostile page cannot reach a channel's viewer state through it.
 
 ### 4.2 The reader
 

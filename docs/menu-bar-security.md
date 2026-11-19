@@ -16,7 +16,7 @@ No new message reaches the trusted core: a menu item stands for a key the interf
 | A page | Nothing: the menu bar is the system's, drawn outside the window, and a page sends no keys to it | Choose a menu item, or read the clipboard |
 | A channel that takes input | Receive what the user pastes while keys go to it, as before (decision 49) | Read the clipboard otherwise; the browser's own Command keys never reach it |
 | Another application | Put text on the clipboard, which a paste types into a field | Do more than typing it would: a pasted address is still only text in the field, opened only by Return and the address rules, and hidden characters are dropped |
-| A compromised interface | Copy what it shows to the clipboard, as any application can | Copy what it never had: it holds no cookies, history beyond the panels' views, or keys (requirement 3.9) |
+| A compromised interface | Copy what it shows to the clipboard, as any application can | Copy what it never had: it holds no viewer keys, history beyond the panels' views, or other keys (requirement 3.9) |
 
 ## 3. The unsafe code
 

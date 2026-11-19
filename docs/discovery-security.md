@@ -11,11 +11,11 @@
 
 | Asset | Why it matters |
 |---|---|
-| The trusted core | It holds the profile, cookies, history and bookmarks, and decides every navigation. It must never read HTML. |
+| The trusted core | It holds the profile, viewer keys, history and bookmarks, and decides every navigation. It must never read HTML. |
 | The viewer's choice of where to go | A server must not send the viewer to a channel the viewer did not see and choose (REQ-694). |
 | The local network | The browser must not become a way to reach routers and devices behind it (requirement 5.10). |
 | Encryption | A viewer who typed or reached `https` must not be moved to `http` without seeing it. |
-| Each channel's session | Cookies belong to channels (REQ-1883, decision 62); a web page must neither plant nor read them. |
+| Each channel's viewer state | A viewer key belongs to one channel (REQ-1883, REQ-716; cookies, which this row named until 18 November 2026, were removed by DEC-6471); a web page must neither plant nor read one. |
 | The viewer's privacy | Which web sites the viewer looks for channels on. |
 
 ## 2. Attackers
@@ -64,7 +64,7 @@ A pointer names a router's address, a `file:` or `javascript:` address, an `http
 
 ### 3.7 Discovery plants or reads a channel's session
 
-- **Answer:** the discovery fetcher is started with no channel, asks the trusted core for no cookie, and every `Set-Cookie` in its answers is ignored; nothing of it reaches a jar.
+- **Answer:** the discovery fetcher is started with no channel, so the trusted core signs nothing for it, and every `Set-Cookie` in its answers is ignored, as every fetcher ignores one (REQ-889); nothing of it reaches a viewer key.
 - **Remaining risk:** none.
 
 ### 3.8 Denial of service

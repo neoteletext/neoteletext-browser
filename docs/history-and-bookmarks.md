@@ -105,7 +105,7 @@ The file is compacted at once (section 2.3). *Amended by decision 64:* as Chrome
 
 A **private tab** records nothing: no history rows, no typed address, no place in recently closed tabs. It still reads history and bookmarks for its address field's suggestions, as Chrome's incognito windows do, and the user may still bookmark a page from it, which is the user's own act. Opened by Command-Shift-N on macOS and Control-Shift-N elsewhere, and from the menu button. The strip marks it with "Private" in its own colour beside the address, and its tab shows a mask, so the user can always tell.
 
-Cookies are already kept only for a fetcher's life (the engine's REQ-SEC-013), so a private tab differs from another tab only in what history keeps. Private tabs share nothing with other tabs, as no two tabs do (requirement 7.3).
+Cookies are already kept only for a fetcher's life (the engine's REQ-SEC-013), so a private tab differs from another tab only in what history keeps. *Amended 20 November 2026:* the browser keeps no cookies since the owner's DEC-6471 of 18 November 2026; a private window has viewer keys of its own, in memory only, gone when its last window closes (REQ-881). Private tabs share nothing with other tabs, as no two tabs do (requirement 7.3).
 
 ### 2.8 Recently closed tabs
 
@@ -427,7 +427,7 @@ Adopting this design is decision 57. Each item has a recommendation; any can be 
 1. **History is one row per page per day**, kept 90 days, at most 50 000 rows and 16 MiB. *Recommended*, as Chrome's history page shows it.
 2. **History and bookmarks are panels of the trusted strip**, not teletext pages like the start page. *Recommended:* a search field, check boxes and dragging need the strip's controls, a teletext page shows about 20 rows of 40 characters, and a page would pass the history through a decoder.
 3. **Suggestions in the address field, with inline completion only from typed addresses.** *Recommended.*
-4. **Private tabs.** *Recommended:* browser-style, and small here, since cookies already live only as long as a fetcher.
+4. **Private tabs.** *Recommended:* browser-style, and small here, since cookies already live only as long as a fetcher. *(Cookies were removed on 18 November 2026, DEC-6471; private windows have their own viewer keys, REQ-881.)*
 5. **Recently closed tabs, 25, in memory only.** *Recommended;* restoring the last session is its own design.
 6. **The star bookmarks the page shown**, with "The whole channel" in its popover, instead of today's channel only. *Recommended*, as every browser keeps the exact address.
 7. **Folders, the two fixed folders, and a bookmarks bar off by default.** *Recommended.*
