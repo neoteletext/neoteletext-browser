@@ -837,3 +837,66 @@ fn the_key_and_meter_parts_are_taken_and_drawn_in_their_own_boxes() {
         drawn[FRAMES - 1]
     );
 }
+
+/// Whether two words (0x00RRGGBB) differ by at most `tolerance` in each
+/// channel.
+fn near(left: u32, right: u32, tolerance: u32) -> bool {
+    left.to_be_bytes().iter().zip(right.to_be_bytes()).all(|(left, right)| u32::from(left.abs_diff(right)) <= tolerance)
+}
+
+/// REQ-6887 item 2, drawn by the painter: with the filmstrip open, a tab
+/// with no still shows its card, whose band is the tab's colour darkened
+/// by the card's dimming, a colour found nowhere in the window while the
+/// filmstrip is closed. (The dashed border is checked in the drawing's
+/// record by `interface-core`'s filmstrip tests; in the painter's pixels
+/// it could not be told apart, TODO-6915.)
+#[test]
+#[allow(clippy::arithmetic_side_effects, clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a test's own colours and times")]
+fn the_card_is_drawn_in_the_tabs_colour_darkened() {
+    use interface_core::theme::TAB_COLOURS;
+    /// The card's dimming, `CARD_DIM` in `interface-core`'s filmstrip,
+    /// which this crate cannot reach: a black of this strength laid over it.
+    const CARD_DIM: f64 = 0.35;
+    /// Rounding in the blend: a channel may be one or two off.
+    const BLEND_TOLERANCE: u32 = 2;
+    /// Long enough for a rest to open the filmstrip (300 milliseconds)
+    /// and for it to slide out (200).
+    const OPENED: u64 = 1_000;
+    /// The fewest pixels of the darkened band: measured at more than 100
+    /// with the card darkened, and 8 with the dimming removed.
+    const BAND_PIXELS: usize = 100;
+    let pages = pages();
+    let mut painter = Painter::new(Family::Roboto);
+    let mut browser = browser(&mut painter, &pages);
+    let tab = |channel: u32, colour: u8| TabInfo {
+        title: format!("Channel {channel}"),
+        colour,
+        channel,
+        muted: false,
+        private: false,
+        costly: false,
+        address: format!("https://tab{channel}.invalid/"),
+        page: Some(0x302),
+        subpage: None,
+        page_title: String::from("Weather"),
+    };
+    let banded = 5;
+    browser.set_tabs(vec![tab(CHANNEL, 0), tab(CHANNEL + 1, banded)], 0);
+    let closed = frame(&mut painter, &mut browser, SETTLED).1;
+    let (band, _) = TAB_COLOURS[usize::from(banded)];
+    let darken = |channel: u8| (f64::from(channel) * (1.0 - CARD_DIM)).round() as u8;
+    let dimmed_band = u32::from_be_bytes([0, darken(band.red), darken(band.green), darken(band.blue)]);
+    let count = |words: &[u32]| words.iter().filter(|&&word| near(word, dimmed_band, BLEND_TOLERANCE)).count();
+    assert_eq!(count(&closed), 0, "no darkened band before the filmstrip opens");
+    // Rest the pointer down the tab strip's left until a rest opens it.
+    let mut now = SETTLED;
+    let opened = (0..u32::from(HEIGHT) / 8).any(|row| {
+        now += OPENED;
+        browser.pointer_moved(60.0, f64::from(row * 2), now);
+        browser.settle(now + OPENED / 2) && browser.filmstrip_open()
+    });
+    assert!(opened, "a rest on the tabs opens the filmstrip");
+    let open = frame(&mut painter, &mut browser, now + OPENED).1;
+    let band_pixels = count(&open);
+    assert!(band_pixels > BAND_PIXELS, "the band in the tab's colour, darkened: {band_pixels} pixels");
+}
