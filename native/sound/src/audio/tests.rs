@@ -22,7 +22,7 @@ fn playing(value: i16) -> Mutex<Mixers> {
 fn the_cores_operations_play_through_the_mixer_in_every_channel() {
     let mixer = playing(8_000);
     let mut data = vec![0.0_f32; 2 * 400];
-    let mut scratch = vec![0_i16; 128];
+    let mut scratch = vec![0_i32; 128];
     render(&mixer, &mut data, 2, &mut scratch);
     // Settled after the 5 ms ramp: both channels at 8 000 / 32 768.
     let expected = f32::from_i16(8_000);
@@ -45,7 +45,7 @@ fn silent_channels_cost_the_audio_thread_nothing() {
         apply(&mixers, channel, Audio::Define { sound: SOUND, rate_hz: RATE, samples: 1 });
     }
     let mut data = vec![0_i16; PIECE];
-    let mut scratch = vec![0_i16; 2 * PIECE];
+    let mut scratch = vec![0_i32; 2 * PIECE];
     let started = std::time::Instant::now();
     for _ in 0..usize::try_from(RATE).unwrap() / PIECE {
         render(&mixers, &mut data, 1, &mut scratch);
@@ -253,7 +253,7 @@ fn an_operation_on_an_unknown_channel_makes_no_mixer() {
     apply(&mixers, 7, Audio::Stream { channel: 0, sound: SOUND, rate_hz: 8_000 });
     assert_eq!(mixers.lock().unwrap().channels.keys().copied().collect::<Vec<_>>(), [6, 7]);
     let mut data = vec![0_i16; 400];
-    let mut scratch = vec![0_i16; 400];
+    let mut scratch = vec![0_i32; 400];
     render(&mixers, &mut data, 1, &mut scratch);
     // After the master's ramp, as in the test of muted tabs above.
     assert!(data[300..].iter().all(|&sample| sample == 0), "the mute held: {:?}", &data[300..310]);
@@ -270,7 +270,7 @@ fn a_sound_plays_the_buffer_allocated_before_the_lock() {
     assert!(leftover.mixer.is_none() && leftover.buffer.is_none(), "the buffer was taken");
     let start = Audio::Start { channel: 0, sound: SOUND, gain: 100, fade_ms: 5, looped: false, duck_percent: 100, after_current: false };
     let _ = mixers.apply(1, Operation::Other(start));
-    let mut data = vec![0_i16; 400];
+    let mut data = vec![0_i32; 400];
     mixers.render(&mut data, &mut [0; 400]);
     // After the 5 ms ramp, 40 samples at 8 kHz.
     assert!((7_900..=8_100).contains(&data[300]), "{}", data[300]);
@@ -383,4 +383,109 @@ fn a_stream_under_a_held_name_replaces_it_and_a_forget_ends_every_stream() {
     render(&mixers, &mut data, 1, &mut [0; 512]);
     assert!(data[7_000..].iter().all(|&sample| sample == 0), "both streams played out and ended");
     assert_eq!(mixers.lock().unwrap().sounding(), BTreeSet::new());
+}
+
+/// A tenth of a second of a 440 Hz sine of `peak` at 48 kHz, which loops
+/// without a step: 44 whole cycles.
+fn sine(peak: f64) -> Vec<i16> {
+    #[expect(clippy::cast_possible_truncation, reason = "a sine of at most a 16-bit peak, rounded, is a 16-bit sample")]
+    (0..4_800_u32).map(|at| (peak * (f64::from(at) * 440.0 * std::f64::consts::TAU / 48_000.0).sin()).round() as i16).collect()
+}
+
+/// `tabs` channels at 48 kHz, each with all four voices looping a sine of
+/// `peak` at full gain.
+fn loud_tabs(tabs: u32, peak: f64) -> Mutex<Mixers> {
+    let mixers = Mutex::new(Mixers::new(48_000));
+    for tab in 1..=tabs {
+        for voice in 0..4_u8 {
+            let sound = Sound { handle: voice.wrapping_add(1), generation: 1 };
+            apply(&mixers, tab, Audio::Define { sound, rate_hz: 48_000, samples: 4_800 });
+            apply(&mixers, tab, Audio::Samples { sound, first: 0, pcm: sine(peak) });
+            apply(&mixers, tab, Audio::Start { channel: voice, sound, gain: 100, fade_ms: 5, looped: true, duck_percent: 100, after_current: false });
+        }
+    }
+    mixers
+}
+
+/// The longest run of samples next to each other that are equal and at
+/// the loudest magnitude of `data`: a clamp leaves the wave's tops flat,
+/// many samples long.
+fn longest_flat_top(data: &[i16]) -> usize {
+    let top = data.iter().map(|sample| sample.unsigned_abs()).max().unwrap_or(0);
+    let (mut longest, mut run) = (0_usize, 0_usize);
+    for sample in data {
+        run = if sample.unsigned_abs() == top { run.wrapping_add(1) } else { 0 };
+        longest = longest.max(run);
+    }
+    longest
+}
+
+/// REQ-6933 items 1 and 2 (TODO-6940, DEC-6950): four voices at full gain
+/// in each of three tabs, a sum twelve times over full scale that the
+/// clamp cut flat, come out at or under the ceiling of -1 dBFS, with no
+/// sample at full scale and the wave's tops still round. One tab's four
+/// voices alone are limited as well, which the engine mixer's clamp hid
+/// from the helper before.
+#[test]
+fn a_sum_that_clipped_comes_out_under_the_ceiling_and_is_not_cut_flat() {
+    for tabs in [3, 1] {
+        let mixers = loud_tabs(tabs, 32_767.0);
+        let mut data = vec![0_i16; 48_000];
+        render(&mixers, &mut data, 1, &mut vec![0; 2 * 48_000]);
+        let loudest = data.iter().map(|sample| sample.unsigned_abs()).max().unwrap();
+        assert!(i32::from(loudest) <= 29_203, "{tabs} tabs: the loudest sample, {loudest}, is over the ceiling of -1 dBFS, 29 203");
+        assert!(data.iter().all(|&sample| sample != i16::MAX && sample != i16::MIN), "{tabs} tabs: a sample is at full scale");
+        // Settled, the tops are a sine's: a 440 Hz wave at 48 kHz holds its
+        // top for at most two samples.
+        let flat = longest_flat_top(&data[24_000..]);
+        assert!(flat <= 2, "{tabs} tabs: the wave's top is flat for {flat} samples");
+        // And it is loud: turned down to the ceiling, not below it.
+        assert!(loudest >= 29_000, "{tabs} tabs: the loudest sample is only {loudest}");
+    }
+}
+
+/// REQ-6933 item 4 (TODO-6940): what a device buffer of 10 milliseconds
+/// costs to fill, printed, with three tabs of four voices each over the
+/// ceiling and under it.
+#[test]
+fn the_cost_of_filling_a_device_buffer_is_printed() {
+    const BLOCK: usize = 480;
+    const BLOCKS: usize = 2_000;
+    for (name, peak) in [("over the ceiling", 30_000.0), ("under the ceiling", 2_000.0)] {
+        let mixers = loud_tabs(3, peak);
+        let mut data = vec![0.0_f32; 2 * BLOCK];
+        let mut scratch = [0; 2 * BLOCK];
+        let mut costs = Vec::with_capacity(BLOCKS);
+        for _ in 0..BLOCKS {
+            let started = std::time::Instant::now();
+            render(&mixers, &mut data, 2, &mut scratch);
+            costs.push(started.elapsed());
+        }
+        costs.sort();
+        println!("a 10 ms device buffer, 3 tabs of 4 voices {name}: median {:?}, slowest {:?}", costs[BLOCKS / 2], costs[BLOCKS - 1]);
+    }
+}
+
+/// REQ-6933 item 3: the end of a sound is still in the limiter when its
+/// mixer falls silent, so the device is wanted until it has gone out, and
+/// nothing of one sound waits there to be heard at the start of the next.
+#[test]
+fn the_device_runs_on_until_the_limiter_has_let_the_last_sound_out() {
+    let mixers = playing(8_000);
+    let delay = mixers.lock().unwrap().delay_frames();
+    apply(&mixers, 1, Audio::Reset);
+    // The reset took the mixer; the limiter holds nothing yet heard.
+    let mut data = vec![0_i16; 400];
+    render(&mixers, &mut data, 1, &mut [0; 800]);
+    assert!(data.iter().all(|&sample| sample == 0));
+    assert!(!mixers.lock().unwrap().device_wanted());
+    // A sound cut off after a buffer: its last frames are in the limiter.
+    play(&mixers, 1, 8_000);
+    render(&mixers, &mut data, 1, &mut [0; 800]);
+    apply(&mixers, 1, Audio::Reset);
+    assert!(mixers.lock().unwrap().device_wanted(), "the limiter holds the end of the sound");
+    let mut tail = vec![0_i16; delay];
+    render(&mixers, &mut tail, 1, &mut [0; 800]);
+    assert!(tail.iter().all(|&sample| sample == 8_000), "the frames held back go out: {tail:?}");
+    assert!(!mixers.lock().unwrap().device_wanted(), "and then the device may stop");
 }

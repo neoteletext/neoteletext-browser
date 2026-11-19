@@ -12,6 +12,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, SampleFormat, SizedSample, Stream, SupportedBufferSize};
 
 use super::buffer::{Offered, Size};
+use super::limiter::narrowed;
 use super::{Mixers, SCRATCH_FRAMES, Shared, Told};
 
 /// The output device, playing the mixers while a channel sounds. Dropped,
@@ -170,7 +171,7 @@ where
     let mixers = Arc::clone(mixers);
     let peak = Arc::clone(peak);
     let (late, failed) = (trouble.clone(), trouble.clone());
-    let mut scratch = vec![0_i16; SCRATCH_FRAMES * 2];
+    let mut scratch = vec![0_i32; SCRATCH_FRAMES * 2];
     device
         .build_output_stream(
             config,
@@ -207,9 +208,10 @@ where
 }
 
 /// Fills `data`, interleaved frames of `channels`, with the mixers' mono
-/// sum in every channel, and returns the loudest sample's magnitude.
-/// `scratch` is split in two: the sum, and each mixer's part of it.
-pub fn render<T>(mixers: &Mutex<Mixers>, data: &mut [T], channels: usize, scratch: &mut [i16]) -> u16
+/// sum, limited (REQ-6933), in every channel, and returns the loudest
+/// sample's magnitude. `scratch` is split in two: the sum, and each
+/// mixer's part of it.
+pub fn render<T>(mixers: &Mutex<Mixers>, data: &mut [T], channels: usize, scratch: &mut [i32]) -> u16
 where
     T: OutputSample,
 {
@@ -222,8 +224,9 @@ where
         let frames = piece.len().checked_div(channels).unwrap_or(0);
         let Some(mono) = sum.get_mut(..frames) else { return loudest };
         mixers.render(mono, part);
-        loudest = mono.iter().fold(loudest, |loudest, sample| loudest.max(sample.unsigned_abs()));
         for (frame, &sample) in piece.chunks_mut(channels).zip(mono.iter()) {
+            let sample = narrowed(sample);
+            loudest = loudest.max(sample.unsigned_abs());
             for out in frame {
                 *out = T::from_i16(sample);
             }

@@ -2,6 +2,9 @@
 //! voice operations the trusted core passes on are applied to one engine
 //! mixer for each channel, so every tab is heard and each can be muted, and
 //! the operating system's output device plays their sum, through `cpal`.
+//! The sum goes out through a look-ahead limiter (`limiter.rs`, REQ-6933),
+//! which keeps it under -1 dBFS without cutting the wave and delays it by
+//! 1.5 milliseconds.
 //!
 //! The mixers are shared between the thread that reads the trusted core and
 //! the device's audio thread behind a mutex. The reader holds it only to
@@ -49,11 +52,13 @@ use neoteletext_audio_mix::{Mixer, Start};
 use neoteletext_rules::table::WATCH_LEVEL;
 use protocol::audio::{Audio, MAX_WATCH_SLOTS, Sound, WatchSlot};
 
+use limiter::Limiter;
 use local::{LocalVoice, Locals, VOICES};
 use names::{Name, Names};
 
 pub mod buffer;
 mod device;
+mod limiter;
 mod local;
 #[cfg(test)]
 mod local_tests;
@@ -135,6 +140,12 @@ const SCRATCH_FRAMES: usize = 8192;
 /// The mixers the reader and the audio thread share.
 pub type Shared = Arc<Mutex<Mixers>>;
 
+/// The channels of the frames the mixers make: one, copied to each of the
+/// device's. The limiter is made for this many and gives them one gain,
+/// so that stereo (DEC-6924 item 10 (ii)) changes this number and not the
+/// limiter.
+const OUTPUT_CHANNELS: usize = 1;
+
 /// The loudest volume: the engine mixer's master is a percentage.
 const MAX_VOLUME: u8 = 100;
 const _: () = assert!(MAX_VOLUME == protocol::settings::MAX_VOLUME);
@@ -195,6 +206,11 @@ pub struct Mixers {
     /// Woken when that changes. It holds one wake, and a wake that finds
     /// one waiting is not needed: the watcher looks afresh each time.
     wake: Option<SyncSender<()>>,
+    /// The limiter the channels' sum goes out through (REQ-6933). It is
+    /// here, with the mixers and under their lock, so that what it holds
+    /// back goes on into the next buffer when the device is opened again
+    /// (RULE-97), and the audio thread takes no lock for it.
+    limiter: Limiter,
 }
 
 impl Mixers {
@@ -214,7 +230,15 @@ impl Mixers {
             since_report: 0,
             told: None,
             wake: None,
+            limiter: Limiter::new(rate_hz, OUTPUT_CHANNELS),
         }
+    }
+
+    /// The frames by which what the device is given lags what the mixers
+    /// made: the limiter's look-ahead (REQ-6933 item 3).
+    #[must_use]
+    pub const fn delay_frames(&self) -> usize {
+        self.limiter.lookahead()
     }
 
     /// The views with a local sound open, paused or not (RULE-97: a paused
@@ -237,10 +261,11 @@ impl Mixers {
 
     /// Whether the output device is to run: a channel sounds or is about
     /// to. A local sound keeps it running while it plays, heard or not, so
-    /// that a note never waits for the device to start (RULE-62).
+    /// that a note never waits for the device to start (RULE-62). It
+    /// runs on until the limiter has let out the end of the last sound.
     #[must_use]
     pub fn device_wanted(&self) -> bool {
-        self.channels.values().any(|channel| channel.mixer.active())
+        self.channels.values().any(|channel| channel.mixer.active()) || self.limiter.holds_sound()
     }
 
     /// Wakes the watcher when the channels went from silent to sounding or
@@ -248,7 +273,7 @@ impl Mixers {
     /// it sounds. Called with the lock held, on the audio thread too: it
     /// never blocks or allocates.
     fn note_activity(&mut self) {
-        let active = self.channels.values().any(|channel| channel.mixer.active());
+        let active = self.device_wanted();
         // Every tab's own mark, not only whether anything sounds: a second
         // tab that starts while the first plays on leaves the device as it
         // was, and its speaker was never shown when only that was watched.
@@ -352,12 +377,14 @@ impl Mixers {
     }
 
     /// Renders the sum of every channel into `out`, using `scratch`, as long
-    /// as `out`, for each. It never allocates or frees. A channel with
+    /// as `out`, for each, and limits it (REQ-6933): what comes out is the
+    /// sum of [`Limiter::lookahead`] frames before, no sample of it above
+    /// the limiter's ceiling. It never allocates or frees. A channel with
     /// nothing playing or about to is silent and is not rendered: a mixer
     /// costs its work for every sample whether or not it sounds, so a few
     /// hundred tabs that once played a sound would otherwise take a whole
     /// processor core on the audio thread.
-    fn render(&mut self, out: &mut [i16], scratch: &mut [i16]) {
+    fn render(&mut self, out: &mut [i32], scratch: &mut [i32]) {
         out.fill(0);
         let Some(scratch) = scratch.get_mut(..out.len()) else { return };
         let frames = u64::try_from(out.len()).unwrap_or(u64::MAX);
@@ -369,7 +396,9 @@ impl Mixers {
             // Every view is timed (REQ-6626); one with local sounds is held
             // to the time of the buffer its instruments fill (RULE-62).
             let started = std::time::Instant::now();
-            mixer.render_pulling(scratch, locals);
+            // Not clamped (DEC-6950): the limiter is to see every peak of
+            // the sum, a single channel's among them.
+            mixer.render_pulling_unclamped(scratch, locals);
             for (sum, &sample) in out.iter_mut().zip(scratch.iter()) {
                 *sum = sum.saturating_add(sample);
             }
@@ -407,6 +436,7 @@ impl Mixers {
         if let Some(channel) = overran {
             self.tell_loop(Told::Overrun { channel });
         }
+        self.limiter.process(out);
         self.report_watched(out.len());
         // A sound ends here, on the audio thread.
         self.note_activity();

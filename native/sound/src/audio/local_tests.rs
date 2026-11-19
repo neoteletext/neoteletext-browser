@@ -71,11 +71,16 @@ fn metered(told: &Receiver<Told>) -> Vec<Vec<u8>> {
 /// note's first sample is then the instrument's own to make: within the
 /// first block for the families that sound at once, and in the second for
 /// those whose voice begins at its next block (the positions are printed).
+/// A position is counted from where the buffer's first frame comes out of
+/// the limiter, its look-ahead after the buffer's start (REQ-6933 item 3,
+/// DEC-6950 item 4): that delay is the limiter's, 1.5 milliseconds for
+/// every sound, and no buffer held ahead of the instrument.
 #[test]
 fn a_note_queued_before_a_buffer_sounds_within_its_first_blocks() {
     let mut late = Vec::new();
     for (name, family, variant) in FAMILIES {
         let (mixers, _told) = mixers();
+        let delay = mixers.lock().unwrap().delay_frames();
         start(&mixers, family, variant);
         // The sound plays, silent: several buffers with no note.
         for _ in 0..4 {
@@ -83,8 +88,9 @@ fn a_note_queued_before_a_buffer_sounds_within_its_first_blocks() {
         }
         midi(&mixers, 0x90, 60, 127);
         let sounded = buffer(&mixers, BUFFER);
-        let first = sounded.iter().position(|&sample| sample != 0);
-        println!("local sound, {name}: the note's first sample is sample {first:?} of the buffer it was queued before");
+        let first = sounded.iter().position(|&sample| sample != 0).map(|first| first.saturating_sub(delay));
+        assert!(sounded[..delay].iter().all(|&sample| sample == 0), "{name}: nothing of the note is out before the limiter's delay");
+        println!("local sound, {name}: the note's first sample is sample {first:?} of the buffer it was queued before, {delay} frames later at the device");
         assert!(first.is_some_and(|first| first < 2 * LOCAL_BLOCK_SAMPLES), "{name}: the first sample of the note is at {first:?} of the buffer");
         if first.is_some_and(|first| first >= LOCAL_BLOCK_SAMPLES) {
             late.push(name);

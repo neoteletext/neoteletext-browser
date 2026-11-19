@@ -225,7 +225,7 @@ fn decoder(messages: &Receiver<Vec<u8>>, core: &Sender<ToCore>) {
 /// what the audio thread metered told the trusted core after it.
 fn device(mixers: &Mutex<Mixers>, told: &Receiver<Told>, core: &Sender<ToCore>, seen: &Sender<Seen>, stop: &Receiver<()>) {
     let mut data = vec![0_i16; BUFFER_FRAMES];
-    let mut scratch = vec![0_i16; BUFFER_FRAMES * 2];
+    let mut scratch = vec![0_i32; BUFFER_FRAMES * 2];
     let mut sounding = false;
     let mut next = Instant::now();
     while stop.try_recv().is_err() {
