@@ -59,6 +59,34 @@ fn a_channels_log_lines_are_taken_with_their_page() {
     assert!(engine.take_logs().is_empty(), "taken once");
 }
 
+/// DEC-6851: a NAPLPS sub-page whose drawing stops at its renderer's
+/// pixel work allowance is told to the developer console as a warning of
+/// its page, after the channel's own lines.
+#[test]
+fn a_naplps_picture_stopped_at_its_work_allowance_is_logged() {
+    use neoteletext_core::types::{PageAddress, SubCode};
+    let mut engine = Engine::new();
+    let mut stream = vec![0x0e];
+    for _ in 0..200 {
+        // POINT SET at the origin, RECTANGLE (FILLED) over the screen
+        // (ANSI X3.110-1983 sections 5.3.3.1 and 5.3.3.4).
+        stream.extend_from_slice(&[0x24, 0x40, 0x40, 0x40, 0x31, 0x5a, 0x7f, 0x7f]);
+    }
+    let record = neoteletext_web::records::regis::RegisRecord {
+        page: PageAddress::from_mpp(0x100).unwrap(),
+        subcode: SubCode::new(1),
+        generation: 1,
+        offset: 0,
+        data: &stream,
+    };
+    engine.naplps().read(&record);
+    let logs = engine.take_logs();
+    assert_eq!(logs.len(), 1, "{logs:?}");
+    assert_eq!((logs[0].level, logs[0].page), (interface_core::console::Level::Warning, Some(0x100)));
+    assert!(logs[0].text.starts_with("100/0001: NAPLPS: the picture stopped drawing at its pixel work allowance"), "{}", logs[0].text);
+    assert!(engine.take_logs().is_empty(), "taken once");
+}
+
 /// REQ-NAV-011 and the engine's E.108: a page file whose `LN` lines
 /// give its keys, and no row 24 of its own, shows the receiver's row 24
 /// with each key's label, so its keys act (REQ-SEC-024); a link to

@@ -388,9 +388,18 @@ impl Engine {
         changed
     }
 
-    /// The channel's log lines read since the last call.
+    /// The channel's log lines read since the last call, then a warning
+    /// for each NAPLPS sub-page whose drawing met one of its renderer's
+    /// work bounds since (DEC-6851): the page stops drawing, and the
+    /// developer console says why.
     pub fn take_logs(&mut self) -> Vec<ChannelLog> {
-        core::mem::take(&mut self.logs)
+        let mut logs = core::mem::take(&mut self.logs);
+        logs.extend(self.naplps.take_notes().into_iter().map(|note| ChannelLog {
+            level: interface_core::console::Level::Warning,
+            page: Some(note.page),
+            text: format!("{:03X}/{:04X}: {}", note.page, note.sub, note.text),
+        }));
+        logs
     }
 
     /// True once, when as many pages and sub-pages have been received as

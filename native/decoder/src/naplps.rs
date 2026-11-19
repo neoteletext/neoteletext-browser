@@ -178,6 +178,38 @@ struct Page {
     /// The object that is its cursor, and its blink (renderer parity
     /// PAR-27).
     cursor: Cursor,
+    /// Its stream's drawing stopped at the renderer's pixel work
+    /// allowance, and its composing of objects at its bound, and whether
+    /// each was told (DEC-6851): once a generation each.
+    stopped: Stopped,
+}
+
+/// Which of the NAPLPS renderer's work bounds (DEC-6851) a sub-page's
+/// picture has met and been told of.
+#[derive(Clone, Copy, Debug, Default)]
+struct Stopped {
+    /// The stream's allowance, `WORK_CAP` and `WORK_PER_BYTE` a byte: its
+    /// drawing stopped for good, the rest of its stream passed over.
+    stream: bool,
+    /// One composing's bound, `MAX_COMPOSE_WORK`: its objects were shown
+    /// only as far as it paid for.
+    composing: bool,
+}
+
+/// The most notes of stopped drawing held between two takes: one of each
+/// kind for every sub-page held.
+const MAX_NOTES_HELD: usize = 2 * MAX_NAPLPS_PAGES;
+
+/// A sub-page whose NAPLPS drawing met one of its renderer's work bounds
+/// (DEC-6851): its page as `0xMPP`, its sub-code, and what stopped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoppedNote {
+    /// The page.
+    pub page: u16,
+    /// The sub-code.
+    pub sub: u16,
+    /// What stopped, in words for the developer console.
+    pub text: String,
 }
 
 /// The object a `REGIS_CURSOR` record names as a NAPLPS sub-page's cursor
@@ -263,7 +295,23 @@ impl Page {
             counters: Counters::default(),
             viewer: RegisViewer::default(),
             cursor: Cursor::default(),
+            stopped: Stopped::default(),
         })
+    }
+
+    /// Whether its stream's drawing has stopped at the renderer's work
+    /// allowance and that was not yet told: true once (DEC-6851). Drawing
+    /// stops for good, so every later byte is passed over.
+    fn newly_stopped(&mut self) -> bool {
+        let stopped = self.terminal.diagnostics().count(naplps::Refusal::WorkLimit) > 0;
+        stopped && !core::mem::replace(&mut self.stopped.stream, true)
+    }
+
+    /// Whether its last composing stopped at the renderer's bound and that
+    /// was not yet told this generation: true once (DEC-6851).
+    fn newly_stopped_composing(&mut self) -> bool {
+        let (_, stopped) = self.terminal.compose_work();
+        stopped && !core::mem::replace(&mut self.stopped.composing, true)
     }
 
     /// The picture as the browser's processes carry it, one byte a pixel:
@@ -605,6 +653,9 @@ pub struct NaplpsPages {
     /// The stroke font the viewer chose for every new terminal, or none
     /// for the one compiled in (renderer parity PAR-35).
     font: Option<StrokeFont>,
+    /// The sub-pages whose drawing met a work bound since the last take,
+    /// for the developer console (DEC-6851).
+    notes: Vec<StoppedNote>,
 }
 
 /// What a `NAPLPS_OBJECTS` record does to its sub-page's objects (the
@@ -649,6 +700,28 @@ impl Page {
 }
 
 impl NaplpsPages {
+    /// Notes that the sub-page `key`'s drawing met a work bound.
+    fn note(notes: &mut Vec<StoppedNote>, key: (u16, u16), text: String) {
+        if notes.len() < MAX_NOTES_HELD {
+            notes.push(StoppedNote { page: key.0, sub: key.1, text });
+        }
+    }
+
+    /// The words for a stream's drawing stopped at its work allowance.
+    fn stream_stopped_text() -> String {
+        format!(
+            "NAPLPS: the picture stopped drawing at its pixel work allowance (WORK_CAP {} and WORK_PER_BYTE {} a byte); the rest of its stream is not drawn",
+            naplps::limits::WORK_CAP,
+            naplps::limits::WORK_PER_BYTE
+        )
+    }
+
+    /// The sub-pages whose drawing met a work bound since the last call
+    /// (DEC-6851), for the developer console.
+    pub fn take_notes(&mut self) -> Vec<StoppedNote> {
+        core::mem::take(&mut self.notes)
+    }
+
     /// Reads one NAPLPS record: its bytes go to its sub-page's terminal.
     pub fn read(&mut self, record: &RegisRecord<'_>) {
         let key = (record.page.mpp(), record.subcode.value());
@@ -702,6 +775,9 @@ impl NaplpsPages {
         // the player until the clock has played it (ANIM-20). A bell is
         // not rung (DEC-6407 item 4).
         let _ = page.player.push(&mut page.terminal, &mut page.canvas, record.data);
+        if page.newly_stopped() {
+            Self::note(&mut self.notes, key, Self::stream_stopped_text());
+        }
         page.records = page.records.saturating_add(1);
         page.bytes = page.bytes.saturating_add(u64::try_from(record.data.len()).unwrap_or(u64::MAX));
         page.changed = true;
@@ -936,8 +1012,14 @@ impl NaplpsPages {
     /// Brings the sub-page of `page` on screen to presentation tick
     /// `tick`: its WAIT, its BLINK and its cycles (ANIM-14, ANIM-20).
     pub fn advance(&mut self, page: u16, sub: Option<u16>, tick: u32) {
-        if let Some(held) = self.shown(page, sub).and_then(|key| self.pages.get_mut(&key)) {
+        let Some(key) = self.shown(page, sub) else { return };
+        if let Some(held) = self.pages.get_mut(&key) {
             held.advance(tick);
+            // What a WAIT held is drawn as the clock plays it, and may meet
+            // the allowance then.
+            if held.newly_stopped() {
+                Self::note(&mut self.notes, key, Self::stream_stopped_text());
+            }
         }
     }
 
@@ -1016,6 +1098,13 @@ impl NaplpsPages {
         held.motion.slowed = false;
         // A picture the renderer cannot compose is sent as it stands.
         let _ = held.terminal.compose(&held.canvas, &mut held.presented);
+        if held.newly_stopped_composing() {
+            let text = format!(
+                "NAPLPS: drawing the picture's objects stopped at the composing work bound (MAX_COMPOSE_WORK {}); only part of them is shown",
+                naplps::limits::MAX_COMPOSE_WORK
+            );
+            Self::note(&mut self.notes, key, text);
+        }
         let _ = held.terminal.take_damage();
         let (pixels, palette) = (held.pixels(), held.palette());
         let figures = Figures { commits: held.records, work: held.bytes, language: PICTURE };
@@ -1043,6 +1132,44 @@ mod tests {
 
     fn record(page: u16, generation: u16, offset: u32, data: &[u8]) -> RegisRecord<'_> {
         RegisRecord { page: PageAddress::from_mpp(page).unwrap(), subcode: SubCode::new(0), generation, offset, data }
+    }
+
+    /// SO, then POINT SET at the origin and RECTANGLE (FILLED) over the
+    /// whole unit screen (ANSI X3.110-1983 sections 5.3.3.1 and 5.3.3.4),
+    /// `fills` times: each costs about a whole canvas of pixel work.
+    fn whole_screen_fills(fills: usize) -> Vec<u8> {
+        let mut stream = vec![0x0e];
+        for _ in 0..fills {
+            // The origin, then 255 by 191 256ths, three bytes a pair
+            // (section 5.3.2.2.3): x and y three bits at a time.
+            stream.extend_from_slice(&[0x24, 0x40, 0x40, 0x40, 0x31, 0x5a, 0x7f, 0x7f]);
+        }
+        stream
+    }
+
+    /// DEC-6851: a stream whose drawing passes the NAPLPS renderer's pixel
+    /// work allowance (128 screens and 16 units a byte) stops drawing for
+    /// good, and the developer console is told once, naming the
+    /// allowance; a picture within it says nothing. Before the allowance
+    /// a megabyte of such fills took the decoder five minutes to draw.
+    #[test]
+    fn a_stream_past_the_work_allowance_stops_drawing_and_says_so_once() {
+        let mut pages = NaplpsPages::default();
+        pages.read(&record(0x100, 1, 0, &whole_screen_fills(2)));
+        assert_eq!(pages.take_notes(), [], "two fills are within the allowance");
+        let mut pages = NaplpsPages::default();
+        let stream = whole_screen_fills(200);
+        pages.read(&record(0x100, 1, 0, &stream));
+        let notes = pages.take_notes();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert_eq!((notes[0].page, notes[0].sub), (0x100, 0));
+        assert!(notes[0].text.contains("pixel work allowance (WORK_CAP 28385280 and WORK_PER_BYTE 16 a byte)"), "{}", notes[0].text);
+        let spent = pages.pages.get(&(0x100, 0)).unwrap().terminal.work_spent();
+        let offset = u32::try_from(stream.len()).unwrap();
+        pages.read(&record(0x100, 1, offset, &whole_screen_fills(10)[1..]));
+        assert_eq!(pages.take_notes(), [], "told once");
+        assert_eq!(pages.pages.get(&(0x100, 0)).unwrap().terminal.work_spent(), spent, "nothing more is drawn");
+        assert!(pages.take(0x100, Some(0)).is_some(), "what was drawn is shown");
     }
 
     /// Renderer parity PAR-35: a stroke font the viewer chose is the font
