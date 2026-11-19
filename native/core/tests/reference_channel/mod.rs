@@ -29,7 +29,8 @@ pub fn programs() -> (PathBuf, PathBuf) {
 }
 
 /// The fetcher's input, written by the test and by the thread that answers
-/// its cookie questions as the trusted core does, one message at a time.
+/// its viewer-state challenges as the trusted core does, one message at a
+/// time.
 pub type Input = Arc<Mutex<Option<BufWriter<ChildStdin>>>>;
 
 /// An input message alone: not a move, nothing more of its moment.

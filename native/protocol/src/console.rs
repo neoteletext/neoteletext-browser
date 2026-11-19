@@ -1,7 +1,7 @@
 //! The developer console (`settings-home-console-proxy.md` section 3,
 //! requirements 19.8 and 19.9): entries the trusted core keeps for each
 //! tab's channel and sends, as cleaned text, while the console is open. It
-//! never carries a cookie, a form's values, a typed key or a secret.
+//! never carries a viewer key, a form's values, a typed key or a secret.
 
 use super::{Fields, ProtocolError, push_count, push_text};
 
