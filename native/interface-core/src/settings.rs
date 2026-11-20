@@ -58,6 +58,9 @@ pub struct SettingsView {
     /// delays what follows it; off, everything appears at once
     /// (animation.md ANIM-15, DEC-6525 item 27).
     pub paint_gradually: bool,
+    /// A channel's tabs share one connection to its server; off, each tab
+    /// has its own (REQ-6982).
+    pub share_connections: bool,
     /// Tabs not looked at this run show snapshots (REQ-6886 item 9).
     pub tab_pictures: bool,
     /// The file name of the font the viewer chose for alphabet 0 of every
@@ -111,6 +114,9 @@ pub enum SettingChange {
     /// Drawings painted gradually (true) or at once (animation.md
     /// ANIM-15).
     PaintGradually(bool),
+    /// A channel's tabs share one connection (true) or each has its own
+    /// (REQ-6982).
+    ShareConnections(bool),
     /// Tab pictures on or off (REQ-6886 item 9).
     TabPictures(bool),
     /// Pictures of this language drawn in the font compiled in again, not

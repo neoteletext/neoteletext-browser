@@ -16,6 +16,7 @@ fn view() -> SettingsView {
         wheel_inverted: true,
         regis_contain: false,
         paint_gradually: false,
+        share_connections: false,
         tab_pictures: false,
         regis_font: "myfont.regisfont".into(),
         naplps_font: String::new(),
@@ -47,6 +48,8 @@ fn the_view_and_every_change_round_trip() {
         SettingChange::WheelInverted(true),
         SettingChange::RegisContain(false),
         SettingChange::PaintGradually(false),
+        SettingChange::ShareConnections(false),
+        SettingChange::ShareConnections(true),
         SettingChange::BuiltInFont(crate::regis::PictureLanguage::Regis),
         SettingChange::BuiltInFont(crate::regis::PictureLanguage::Naplps),
     ] {

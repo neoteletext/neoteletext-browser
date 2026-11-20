@@ -74,6 +74,7 @@ impl Core {
             wheel_inverted: self.settings.wheel_inverted,
             regis_contain: self.settings.regis_contain,
             paint_gradually: self.settings.paint_gradually,
+            share_connections: self.settings.share_connections,
             tab_pictures: self.settings.tab_pictures,
             regis_font: clean(&self.fonts.names().0, protocol::settings::MAX_FONT_NAME),
             naplps_font: clean(&self.fonts.names().1, protocol::settings::MAX_FONT_NAME),
@@ -228,6 +229,13 @@ fn checked_change(settings: &mut Settings, change: SettingChange, current: Optio
             settings.paint_gradually = on;
             Ok(None)
         }
+        // Whether a channel's tabs share one connection (REQ-6982): like
+        // the proxy, it reaches the fetchers started after it, and the
+        // tabs open keep the fetcher they have.
+        SettingChange::ShareConnections(on) => {
+            settings.share_connections = on;
+            Ok(None)
+        }
         // Whether tabs not looked at show snapshots (REQ-6886 item 9): off,
         // the store is emptied by the caller.
         SettingChange::TabPictures(on) => {
@@ -340,12 +348,14 @@ mod tests {
         assert_eq!(change(SettingChange::WheelInverted(true)), Ok(None));
         assert_eq!(change(SettingChange::RegisContain(false)), Ok(None));
         assert_eq!(change(SettingChange::PaintGradually(false)), Ok(None));
+        assert_eq!(change(SettingChange::ShareConnections(false)), Ok(None));
         assert_eq!(change(SettingChange::TabPictures(false)), Ok(None));
         assert!(!settings.tab_pictures, "REQ-6886 item 9");
         assert!(!settings.restore);
         assert!(settings.wheel_inverted, "REQ-6351");
         assert!(!settings.regis_contain, "REQ-6363");
         assert!(!settings.paint_gradually, "ANIM-15");
+        assert!(!settings.share_connections, "REQ-6982");
         assert_eq!(settings.home, "https://open.example/");
         assert_eq!((settings.volume, settings.sound, settings.proxy.is_none()), (30, false, true));
         assert_eq!(settings.local.len(), stored::MAX_LOCAL - 1);

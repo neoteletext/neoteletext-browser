@@ -76,6 +76,10 @@ pub struct Settings {
     /// Drawings with a paint rate appear gradually, and a NAPLPS WAIT
     /// delays what follows it (animation.md ANIM-15, DEC-6525 item 27).
     pub paint_gradually: bool,
+    /// A channel's tabs share one connection to its server, each tab's
+    /// push WebSocket a stream of it; off, each tab has its own HTTP/1.1
+    /// connection (REQ-6982, neoteletext-common's DEC-6979 item 8).
+    pub share_connections: bool,
     /// The last session is restored at start (requirement 20.24).
     pub restore: bool,
     /// The browser checks for updates (`installation-and-updates.md`
@@ -106,6 +110,7 @@ impl Default for Settings {
             wheel_inverted: false,
             regis_contain: true,
             paint_gradually: true,
+            share_connections: true,
             restore: true,
             check_updates: true,
             channels_may_know: true,
@@ -219,6 +224,13 @@ impl Settings {
             }
             .map(|gradual| self.paint_gradually = gradual)
             .is_some(),
+            "connections" => match value {
+                "shared" => Some(true),
+                "separate" => Some(false),
+                _ => None,
+            }
+            .map(|shared| self.share_connections = shared)
+            .is_some(),
             "remote" => read_remote(value).map(|place| self.remote = place).is_some(),
             "tab-pictures" => switch(value).map(|on| self.tab_pictures = on).is_some(),
             "restore" => switch(value).map(|on| self.restore = on).is_some(),
@@ -273,6 +285,7 @@ impl Settings {
         lines.push(format!("wheel {}", if self.wheel_inverted { "inverted" } else { "normal" }));
         lines.push(format!("regis {}", if self.regis_contain { "contain" } else { "teletext" }));
         lines.push(format!("drawings {}", if self.paint_gradually { "gradual" } else { "whole" }));
+        lines.push(format!("connections {}", if self.share_connections { "shared" } else { "separate" }));
         lines.push(format!("restore {}", if self.restore { "on" } else { "off" }));
         lines.push(remote_line(self.remote));
         lines.push(format!("tab-pictures {}", if self.tab_pictures { "on" } else { "off" }));

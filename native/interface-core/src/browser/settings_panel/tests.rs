@@ -19,6 +19,7 @@ fn view() -> SettingsView {
         wheel_inverted: false,
         regis_contain: true,
         paint_gradually: true,
+        share_connections: true,
         tab_pictures: true,
         regis_font: String::new(),
         naplps_font: String::new(),
@@ -120,6 +121,10 @@ fn each_control_asks_for_its_change() {
     let (gradual, whole) = (browser.settings.controls.paint_gradual, browser.settings.controls.paint_whole);
     assert_eq!(press(&mut browser, whole), [Output::Setting(SettingChange::PaintGradually(false))]);
     assert_eq!(press(&mut browser, gradual), [Output::Setting(SettingChange::PaintGradually(true))]);
+    // REQ-6982: a channel's tabs share a connection, or have one each.
+    let (shared, separate) = (browser.settings.controls.connections_shared, browser.settings.controls.connections_separate);
+    assert_eq!(press(&mut browser, separate), [Output::Setting(SettingChange::ShareConnections(false))]);
+    assert_eq!(press(&mut browser, shared), [Output::Setting(SettingChange::ShareConnections(true))]);
     // REQ-6886 item 9: tab pictures on or off.
     let (on, off) = (browser.settings.controls.tab_pictures_on, browser.settings.controls.tab_pictures_off);
     assert_eq!(press(&mut browser, off), [Output::Setting(SettingChange::TabPictures(false))]);

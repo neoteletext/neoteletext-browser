@@ -91,6 +91,7 @@ pub(super) fn settings() -> SettingsView {
         wheel_inverted: false,
         regis_contain: true,
         paint_gradually: true,
+        share_connections: true,
         tab_pictures: true,
         regis_font: String::new(),
         naplps_font: String::new(),

@@ -63,6 +63,7 @@ impl Browser {
         y = self.draw_settings_home(canvas, &mut controls, row(y), field_left);
         y = draw_settings_sound(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = self.draw_settings_proxy(canvas, &mut controls, row(y), field_left);
+        y = draw_settings_connections(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_restore(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_wheel(canvas, view.as_ref(), &mut controls, row(y), field_left);
         y = draw_settings_regis(canvas, view.as_ref(), &mut controls, row(y), field_left);
@@ -310,6 +311,19 @@ fn draw_settings_painting<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&Sett
     controls.paint_whole = Rect::new(controls.paint_gradual.x1 + GAP, y, controls.paint_gradual.x1 + GAP + BUTTON_WIDTH * 1.5, y + ROW);
     button(canvas, controls.paint_gradual, "Gradually", gradual);
     button(canvas, controls.paint_whole, "At once", !gradual);
+    y + ROW + ROW_GAP
+}
+
+/// Whether a channel's tabs share one connection to its server, or each
+/// has its own (REQ-6982), in `line`. Returns where the next row starts.
+fn draw_settings_connections<C: Canvas + ?Sized>(canvas: &mut C, view: Option<&SettingsView>, controls: &mut Controls, line: Rect, field_left: f64) -> f64 {
+    let y = line.y0;
+    let shared = view.is_none_or(|view| view.share_connections);
+    left_centred(canvas, line, 0.0, "A channel's tabs", ROW_TITLE, WHITE);
+    controls.connections_shared = Rect::new(field_left, y, field_left + BUTTON_WIDTH * 2.0, y + ROW);
+    controls.connections_separate = Rect::new(controls.connections_shared.x1 + GAP, y, controls.connections_shared.x1 + GAP + BUTTON_WIDTH * 2.0, y + ROW);
+    button(canvas, controls.connections_shared, "Share a connection", shared);
+    button(canvas, controls.connections_separate, "One each", !shared);
     y + ROW + ROW_GAP
 }
 

@@ -7,7 +7,7 @@ use super::{Field, Kind, MAX_VOLUME, PANEL_WIDTH, VOLUME_STEP};
 use crate::browser::widgets::panel_rect;
 use crate::browser::{Browser, Key, Modifiers, OpenKind, Output};
 use crate::canvas::PictureLanguage;
-use crate::geometry::Point;
+use crate::geometry::{Point, Rect};
 use crate::settings::{ProxyView, SettingChange};
 
 impl Browser {
@@ -99,10 +99,10 @@ impl Browser {
             Some(SettingChange::RegisContain(true))
         } else if controls.regis_teletext.contains(point) {
             Some(SettingChange::RegisContain(false))
-        } else if controls.paint_gradual.contains(point) {
-            Some(SettingChange::PaintGradually(true))
-        } else if controls.paint_whole.contains(point) {
-            Some(SettingChange::PaintGradually(false))
+        } else if let Some(gradual) = one_of_two(controls.paint_gradual, controls.paint_whole, point) {
+            Some(SettingChange::PaintGradually(gradual))
+        } else if let Some(shared) = one_of_two(controls.connections_shared, controls.connections_separate, point) {
+            Some(SettingChange::ShareConnections(shared))
         } else if controls.tab_pictures_on.contains(point) {
             Some(SettingChange::TabPictures(true))
         } else if controls.tab_pictures_off.contains(point) {
@@ -155,5 +155,17 @@ impl Browser {
         }
         // The panel takes every press on it.
         panel_rect(self.settings_area(), PANEL_WIDTH, self.settings_height()).contains(point)
+    }
+}
+
+/// Which of a setting's two buttons `point` is on: true for `on`, false
+/// for `off`, none for neither.
+fn one_of_two(on: Rect, off: Rect, point: Point) -> Option<bool> {
+    if on.contains(point) {
+        Some(true)
+    } else if off.contains(point) {
+        Some(false)
+    } else {
+        None
     }
 }

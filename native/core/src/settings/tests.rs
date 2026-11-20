@@ -19,6 +19,7 @@ fn settings_round_trip_through_their_file() {
         wheel_inverted: true,
         regis_contain: false,
         paint_gradually: false,
+        share_connections: false,
         restore: false,
         check_updates: false,
         channels_may_know: false,
@@ -82,6 +83,22 @@ fn drawings_are_painted_gradually_until_set_whole_and_read_strictly() {
     assert!(!Settings::read(&format!("{VERSION_LINE}\ndrawings whole\n")).0.paint_gradually);
     let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\ndrawings slowly\n"));
     assert_eq!((read.paint_gradually, dropped.len()), (true, 1));
+}
+
+/// REQ-6982, DEC-6979 item 8: a channel's tabs share one connection by
+/// default, in a file that has no line for it too; kept as `connections
+/// separate` and read strictly.
+#[test]
+fn connections_are_shared_until_set_separate_and_read_strictly() {
+    assert!(Settings::default().share_connections);
+    assert!(Settings::default().text().contains("connections shared\n"));
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nbar on\n"));
+    assert_eq!((read.share_connections, dropped.len()), (true, 0), "a file written before it");
+    let separate = Settings { share_connections: false, ..Settings::default() };
+    assert!(separate.text().contains("connections separate\n"));
+    assert!(!Settings::read(&separate.text()).0.share_connections, "written and read back");
+    let (read, dropped) = Settings::read(&format!("{VERSION_LINE}\nconnections one\n"));
+    assert_eq!((read.share_connections, dropped.len()), (true, 1));
 }
 
 /// REQ-737 item 2: off by default, in a file that has no line for it too;

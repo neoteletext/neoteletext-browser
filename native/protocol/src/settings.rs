@@ -56,6 +56,9 @@ const CHANGE_WHEEL_INVERTED: u8 = 13;
 const CHANGE_REGIS_CONTAIN: u8 = 14;
 /// "Paint drawings gradually" (animation.md ANIM-15); 15 is taken.
 const CHANGE_PAINT_GRADUALLY: u8 = 16;
+/// "A channel's tabs share a connection" (REQ-6982), the next number
+/// free among the changes.
+const CHANGE_SHARE_CONNECTIONS: u8 = 19;
 // The font compiled in again for a picture language (renderer parity
 // PAR-35), the next number free among the changes.
 const CHANGE_BUILT_IN_FONT: u8 = 17;
@@ -111,6 +114,7 @@ pub(crate) fn push_view(payload: &mut Vec<u8>, view: &SettingsView) -> Result<()
     push_flag(payload, view.wheel_inverted);
     push_flag(payload, view.regis_contain);
     push_flag(payload, view.paint_gradually);
+    push_flag(payload, view.share_connections);
     push_flag(payload, view.tab_pictures);
     push_text(payload, &view.regis_font, MAX_FONT_NAME)?;
     push_text(payload, &view.naplps_font, MAX_FONT_NAME)?;
@@ -144,6 +148,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
     let wheel_inverted = fields.flag("flag")?;
     let regis_contain = fields.flag("flag")?;
     let paint_gradually = fields.flag("flag")?;
+    let share_connections = fields.flag("flag")?;
     let tab_pictures = fields.flag("flag")?;
     let regis_font = fields.text(MAX_FONT_NAME)?;
     let naplps_font = fields.text(MAX_FONT_NAME)?;
@@ -161,6 +166,7 @@ pub(crate) fn read_view(fields: &mut Fields<'_>) -> Result<SettingsView, Protoco
         wheel_inverted,
         regis_contain,
         paint_gradually,
+        share_connections,
         tab_pictures,
         regis_font,
         naplps_font,
@@ -227,6 +233,10 @@ pub(crate) fn push_change(payload: &mut Vec<u8>, change: &SettingChange) -> Resu
             payload.push(CHANGE_PAINT_GRADUALLY);
             push_flag(payload, *on);
         }
+        SettingChange::ShareConnections(on) => {
+            payload.push(CHANGE_SHARE_CONNECTIONS);
+            push_flag(payload, *on);
+        }
         SettingChange::TabPictures(on) => {
             payload.push(CHANGE_TAB_PICTURES);
             push_flag(payload, *on);
@@ -278,6 +288,7 @@ pub(crate) fn read_change(fields: &mut Fields<'_>) -> Result<SettingChange, Prot
         CHANGE_WHEEL_INVERTED => SettingChange::WheelInverted(fields.flag("flag")?),
         CHANGE_REGIS_CONTAIN => SettingChange::RegisContain(fields.flag("flag")?),
         CHANGE_PAINT_GRADUALLY => SettingChange::PaintGradually(fields.flag("flag")?),
+        CHANGE_SHARE_CONNECTIONS => SettingChange::ShareConnections(fields.flag("flag")?),
         CHANGE_TAB_PICTURES => SettingChange::TabPictures(fields.flag("flag")?),
         CHANGE_BUILT_IN_FONT => {
             SettingChange::BuiltInFont(if fields.flag("flag")? { crate::regis::PictureLanguage::Naplps } else { crate::regis::PictureLanguage::Regis })
