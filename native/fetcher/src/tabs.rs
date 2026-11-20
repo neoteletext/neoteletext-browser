@@ -118,7 +118,9 @@ pub(crate) fn serve(channel: &str, config: Config, transport: &MakeTransport, in
     ended
 }
 
-#[cfg(test)]
+// The tests select pages over the input protocol, which typing's feature
+// brings (`interaction.md`).
+#[cfg(all(test, feature = "interaction"))]
 mod shared_tests;
 #[cfg(test)]
 mod tests;

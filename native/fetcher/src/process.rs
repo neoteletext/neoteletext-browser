@@ -6,7 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-#[cfg(test)]
+#[cfg(all(test, feature = "interaction"))]
 use std::io::Read;
 use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
@@ -26,7 +26,7 @@ use neoteletext_web::port::{ConnectionId, NetInput, NetOutput, Pump, Security, T
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages::{self, PartNumber};
-#[cfg(test)]
+#[cfg(all(test, feature = "interaction"))]
 use protocol::fetcher::read_to_fetcher;
 use protocol::fetcher::{Entry, FromFetcher, Origin, RefusedFile, ToFetcher, redirect_in_bounds, write_to_core};
 use protocol::subpages::SubPageRows;
@@ -645,7 +645,8 @@ impl Tab {
 /// [`run`] for one tab alone, with the agent's settings, the transport
 /// `transport` makes with the loop's waker, and the trusted core's pipes,
 /// whose messages carry no tab number: the loop as a test drives it.
-#[cfg(test)]
+// Only typing's tests drive the loop so (`interaction.md`).
+#[cfg(all(test, feature = "interaction"))]
 fn run_with(
     channel: &str,
     config: Config,
@@ -1090,7 +1091,7 @@ impl Commands {
 
 /// Reads one tab's messages, written without a tab number, until the pipe
 /// closes or breaks the protocol: the loop as a test drives it.
-#[cfg(test)]
+#[cfg(all(test, feature = "interaction"))]
 fn read_commands(input: &mut dyn Read, commands: &mut Commands) {
     while let Ok(Some(message)) = read_to_fetcher(input) {
         if !commands.take(message) {
