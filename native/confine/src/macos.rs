@@ -138,6 +138,16 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
             // therefore holds for UDP as for TCP.
             if let Some(port) = udp_port {
                 let _ = writeln!(profile, "(allow network-outbound (remote udp \"*:{port}\"))");
+                // A UDP socket is bound before it sends, which the sandbox
+                // checks as `network-bind`; refused, the QUIC connection
+                // cannot start ("Operation not permitted", measured on
+                // macOS 15.6 on 21 November 2026). The profile language
+                // takes no port 0 for the ephemeral port the socket asks
+                // for, so the rule names any local port. Inbound datagrams
+                // other than the connected peer's stay refused: no
+                // `network-inbound` rule is given, and a bound port under
+                // this rule alone received nothing sent to it.
+                profile.push_str("(allow network-bind (local udp \"*:*\"))\n");
             }
             // A fetcher's refusal of this computer's addresses, when the
             // user has not allowed the local network (decision 89,
@@ -399,10 +409,11 @@ mod tests {
     }
 
     /// REQ-6981, neoteletext-common's DEC-6979 item 6: a fetcher given a
-    /// UDP port may send UDP to that port and no other, by one rule, which
+    /// UDP port may send UDP to that port and no other, by one rule which
     /// comes before the refusal of this computer so that the refusal holds
-    /// for UDP too; a fetcher given none has no UDP rule, as before; and no
-    /// other role's profile changes with a port.
+    /// for UDP too, and may bind the UDP socket it sends from, with no
+    /// inbound rule; a fetcher given none has no UDP rule, as before; and
+    /// no other role's profile changes with a port.
     #[test]
     fn a_fetcher_reaches_udp_only_at_the_port_it_is_given() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-fetcher");
@@ -410,8 +421,10 @@ mod tests {
         assert!(!without.contains("udp"), "no UDP rule without a port: {without}");
         let with = profile(program, Role::Network, None, false, Some(8443)).unwrap().0;
         let rule = "(allow network-outbound (remote udp \"*:8443\"))\n";
-        assert_eq!(with.matches("udp").count(), 1, "one UDP rule: {with}");
-        assert_eq!(with.replace(rule, ""), without, "the rule is all the profile gained");
+        let bind = "(allow network-bind (local udp \"*:*\"))\n";
+        assert_eq!(with.matches("udp").count(), 2, "the port's rule and the socket's bind: {with}");
+        assert_eq!(with.replace(rule, "").replace(bind, ""), without, "the two rules are all the profile gained");
+        assert!(!with.contains("network-inbound"), "nothing may arrive but the connected peer's datagrams: {with}");
         let refusal = with.find("(deny network-outbound (remote ip \"localhost:*\"))").unwrap();
         assert!(with.find(rule).unwrap() < refusal, "the later rule wins: this computer stays refused over UDP");
         let local = profile(program, Role::Network, None, true, Some(443)).unwrap().0;
