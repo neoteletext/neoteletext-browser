@@ -233,7 +233,13 @@ impl Fetcher {
     fn start(channel: &str, sharing: bool) -> Self {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(CertificateDer::from(CERTIFICATE.to_vec())).unwrap();
-        let config = agent_config(&[IpAddr::V4(Ipv4Addr::LOCALHOST)], false);
+        Self::start_trusting(channel, sharing, roots, &[IpAddr::V4(Ipv4Addr::LOCALHOST)])
+    }
+
+    /// A fetcher for `channel` that trusts `roots` and may reach the
+    /// local addresses `allowed`, as the program's arguments allow them.
+    fn start_trusting(channel: &str, sharing: bool, roots: rustls::RootCertStore, allowed: &[IpAddr]) -> Self {
+        let config = agent_config(allowed, false);
         let allowed = config.allowed_local;
         let shared = if sharing { Shared::new(roots.clone(), allowed) } else { None };
         let theirs = shared.clone();
@@ -556,6 +562,59 @@ fn a_second_tabs_first_page_is_timed_both_ways() {
         let way = if sharing { "a stream of the shared HTTP/3 connection" } else { "its own HTTP/1.1 connection" };
         println!(
             "a second tab's opening to its first page over {way}: median {:?}, least {:?}, most {:?}, of {} tabs",
+            times[times.len() / 2],
+            times[0],
+            times[times.len() - 1],
+            times.len()
+        );
+    }
+}
+
+/// The environment variable that names a live channel on a server with a
+/// certificate Mozilla's roots accept, for the measurement on a real path.
+const TIMED_CHANNEL: &str = "NEOTELETEXT_TIMED_CHANNEL";
+
+/// `a_second_tabs_first_page_is_timed_both_ways` on a real path
+/// (REQ-6989, TODO-6992 item 9): the channel `NEOTELETEXT_TIMED_CHANNEL`
+/// names, trusted by Mozilla's roots as the fetcher's program trusts them.
+/// Each run opens a tab with the channel's first tab open, selects its
+/// initial page the moment its push connection is open and waits for the
+/// first page pushed to it. That the shared runs went over one shared
+/// connection, and the others over none, is asserted from what each tab
+/// said of its transport and from the connections made.
+#[test]
+#[ignore = "needs the network and a live channel served over HTTP/3, named by NEOTELETEXT_TIMED_CHANNEL"]
+fn a_second_tabs_first_page_is_timed_on_a_real_path() {
+    let channel = std::env::var(TIMED_CHANNEL).unwrap_or_else(|_| panic!("{TIMED_CHANNEL} names no channel"));
+    let pushed = |tab: u32| move |said: u32, message: &FromFetcher| said == tab && matches!(message, FromFetcher::Page { origin: Origin::PushedPackets, .. });
+    let mut results = Vec::new();
+    for sharing in [true, false] {
+        let mut fetcher = Fetcher::start_trusting(&channel, sharing, neoteletext_transport::mozilla_roots(), &[]);
+        fetcher.open(1);
+        let asked = fetcher.ask(1, 0x100);
+        fetcher.until_since(asked, "the first tab's first page", pushed(1));
+        let mut times: Vec<Duration> = (2..2 + MEASURED_TABS)
+            .map(|tab| {
+                let started = Instant::now();
+                fetcher.open(tab);
+                let asked = fetcher.ask(tab, 0x100);
+                fetcher.until_since(asked, "a page", pushed(tab));
+                let took = started.elapsed();
+                assert_eq!(fetcher.streams(tab), if sharing { (1, 0) } else { (0, 0) }, "{:?}", fetcher.notices());
+                tell(&mut fetcher.told, tab, &ToFetcher::TabLeaves);
+                took
+            })
+            .collect();
+        if sharing {
+            assert_eq!(fetcher.shared.as_ref().unwrap().connections_made(), 1, "every tab on the one connection");
+        }
+        times.sort();
+        results.push((sharing, times));
+    }
+    for (sharing, times) in results {
+        let way = if sharing { "a stream of the shared HTTP/3 connection" } else { "its own HTTP/1.1 connection" };
+        println!(
+            "{channel}: a second tab's opening to its first page over {way}: median {:?}, least {:?}, most {:?}, of {} tabs",
             times[times.len() / 2],
             times[0],
             times[times.len() - 1],
