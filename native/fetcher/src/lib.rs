@@ -1,5 +1,5 @@
-//! The fetcher process's logic, for its binary: the loop that holds one
-//! channel's network connections through the engine's web module, the
+//! The fetcher process's logic, for its binary: the tabs of one channel it
+//! serves (REQ-6980), the loop that holds each tab's network connections through the engine's web module, the
 //! sockets and the proxy, viewer state's challenges asked of the trusted
 //! core, and the arguments it starts with. `main.rs` confines the process and calls
 //! [`run`].
@@ -26,6 +26,7 @@ mod pictured;
 mod process;
 mod snapshot;
 mod state;
+mod tabs;
 mod transport;
 
 pub use arguments::{Arguments, arguments};

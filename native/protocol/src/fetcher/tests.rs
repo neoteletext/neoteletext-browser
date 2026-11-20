@@ -81,6 +81,8 @@ fn every_kind_round_trips() {
         ToFetcher::StateSendOffer,
         ToFetcher::StateSendNone(NoneReason::Forgotten),
         ToFetcher::FetchContents,
+        ToFetcher::TabOpens,
+        ToFetcher::TabLeaves,
         ToFetcher::FetchPage { page: 0x210 },
         ToFetcher::FetchSubPages { page: 0x210, part: 0 },
         ToFetcher::FetchSubPages { page: 0x210, part: 127 },
@@ -396,4 +398,68 @@ fn a_channel_name_is_bounded() {
     hostile.extend_from_slice(&u32::try_from(payload.len()).unwrap().to_be_bytes());
     hostile.extend_from_slice(&payload);
     assert!(read_from_fetcher(&mut hostile.as_slice()).is_err(), "a longer name is refused");
+}
+
+/// REQ-6980: every message between the trusted core and a fetcher process
+/// names its tab, 32 bits big-endian before the message, both ways.
+#[test]
+fn a_message_names_its_tab_both_ways() {
+    let mut to_fetcher = Vec::new();
+    write_to_fetcher_for(&mut to_fetcher, 7, &ToFetcher::TabOpens).unwrap();
+    write_to_fetcher_for(&mut to_fetcher, u32::MAX, &ToFetcher::FetchPage { page: 0x210 }).unwrap();
+    write_to_fetcher_for(&mut to_fetcher, 7, &ToFetcher::TabLeaves).unwrap();
+    assert_eq!(to_fetcher[..4], [0, 0, 0, 7], "the tab's number comes first, big-endian");
+    let mut input = to_fetcher.as_slice();
+    assert_eq!(read_to_fetcher_for(&mut input).unwrap(), Some((7, ToFetcher::TabOpens)));
+    assert_eq!(read_to_fetcher_for(&mut input).unwrap(), Some((u32::MAX, ToFetcher::FetchPage { page: 0x210 })));
+    assert_eq!(read_to_fetcher_for(&mut input).unwrap(), Some((7, ToFetcher::TabLeaves)));
+    assert_eq!(read_to_fetcher_for(&mut input).unwrap(), None, "a clean end");
+
+    let mut to_core = Vec::new();
+    write_to_core_for(&mut to_core, PROCESS_TAB, &FromFetcher::Confined).unwrap();
+    write_to_core_for(&mut to_core, 9, &FromFetcher::Pushing(true)).unwrap();
+    let mut input = to_core.as_slice();
+    assert_eq!(read_from_fetcher_for(&mut input).unwrap(), Some((PROCESS_TAB, FromFetcher::Confined)));
+    assert_eq!(read_from_fetcher_for(&mut input).unwrap(), Some((9, FromFetcher::Pushing(true))));
+    assert_eq!(read_from_fetcher_for(&mut input).unwrap(), None);
+}
+
+/// REQ-6980: a message without its tab number is refused. Written as
+/// before the requirement, its first bytes are read as a tab number and
+/// what follows is no message: the pipe's end, or a kind no side accepts.
+#[test]
+fn a_message_without_its_tab_is_refused() {
+    let mut untagged = Vec::new();
+    write_to_core(&mut untagged, &FromFetcher::Confined).unwrap();
+    assert!(read_from_fetcher_for(&mut untagged.as_slice()).is_err(), "the pipe ends where the message must be");
+    let mut untagged = Vec::new();
+    write_to_fetcher(&mut untagged, &ToFetcher::FetchPage { page: 0x210 }).unwrap();
+    write_to_fetcher(&mut untagged, &ToFetcher::FetchPage { page: 0x210 }).unwrap();
+    assert!(read_to_fetcher_for(&mut untagged.as_slice()).is_err());
+    // A tab number alone, with the pipe ended after it.
+    assert!(read_to_fetcher_for(&mut [0_u8, 0, 0, 7].as_slice()).is_err());
+    assert!(read_from_fetcher_for(&mut [0_u8, 0, 0, 7].as_slice()).is_err());
+}
+
+/// REQ-6980: a tab's writer writes messages without their tab, and
+/// `name_tab` puts the tab before each whole one, leaving a message cut
+/// short for the bytes that complete it.
+#[test]
+fn whole_messages_are_named_and_a_cut_one_waits() {
+    let mut written = Vec::new();
+    write_to_core(&mut written, &FromFetcher::Pushing(true)).unwrap();
+    write_to_core(&mut written, &FromFetcher::Notice("Opened".into())).unwrap();
+    let whole = written.clone();
+    let cut = written.split_off(whole.len() - 3);
+    let mut named = Vec::new();
+    name_tab(5, &mut written, &mut named);
+    let mut input = named.as_slice();
+    assert_eq!(read_from_fetcher_for(&mut input).unwrap(), Some((5, FromFetcher::Pushing(true))));
+    assert_eq!(read_from_fetcher_for(&mut input).unwrap(), None, "the cut message is not passed on");
+    assert!(!written.is_empty(), "and is kept");
+    written.extend_from_slice(&cut);
+    let mut named = Vec::new();
+    name_tab(5, &mut written, &mut named);
+    assert_eq!(read_from_fetcher_for(&mut named.as_slice()).unwrap(), Some((5, FromFetcher::Notice("Opened".into()))));
+    assert_eq!(written, [] as [u8; 0]);
 }

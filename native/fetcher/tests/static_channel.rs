@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use confine::{Role, Spawn};
-use protocol::fetcher::{FromFetcher, Origin, RefusedFile, ToFetcher, read_from_fetcher, write_to_fetcher};
+use protocol::fetcher::{FromFetcher, Origin, RefusedFile, ToFetcher, read_from_fetcher_for, write_to_fetcher_for};
 
 /// A page file, of one page.
 const PAGE: &[u8] = b"PN,10000\r\nOL,1,HELLO\r\n";
@@ -98,6 +98,9 @@ fn fetcher_is_exempt() -> bool {
     String::from_utf8_lossy(&listed.stdout).to_ascii_lowercase().contains(&sid)
 }
 
+/// The number of the one tab the test's fetcher process serves (REQ-6980).
+const TAB: u32 = 1;
+
 /// A fetcher of the channel at `port`, as the trusted core starts one that
 /// may reach this computer.
 struct Fetcher {
@@ -119,14 +122,18 @@ impl Fetcher {
                 .unwrap();
         let output: Box<dyn Read> = Box::new(process.stdout.take().unwrap());
         let output = BufReader::new(output);
-        Self { process, output }
+        let mut fetcher = Self { process, output };
+        // The process serves this one tab, added as the trusted core adds
+        // one (REQ-6980).
+        fetcher.tell(&ToFetcher::TabOpens);
+        fetcher
     }
 
     /// Reads until `wanted` picks something out of a message. A static
     /// channel has no push connection, so nothing asks the trusted core.
     fn until<T>(&mut self, mut wanted: impl FnMut(&FromFetcher) -> Option<T>) -> T {
         loop {
-            let message = read_from_fetcher(&mut self.output).unwrap().expect("the fetcher ended");
+            let (_, message) = read_from_fetcher_for(&mut self.output).unwrap().expect("the fetcher ended");
             if let Some(found) = wanted(&message) {
                 return found;
             }
@@ -143,7 +150,7 @@ impl Fetcher {
 
     fn tell(&mut self, message: &ToFetcher) {
         let input = self.process.stdin.as_mut().unwrap();
-        write_to_fetcher(input, message).unwrap();
+        write_to_fetcher_for(input, TAB, message).unwrap();
         input.flush().unwrap();
     }
 

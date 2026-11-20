@@ -10,6 +10,7 @@ use std::time::Duration;
 
 pub use interface_core::browser::CertificateProblem;
 
+use crate::framing::HEADER_BYTES;
 use crate::subpages::SubPageRows;
 use crate::{Fields, MAX_ADDRESS, MAX_PAGE_TITLE, MAX_PAYLOAD, MAX_TAB_TITLE, ProtocolError, push_count, push_raw_text, raw_text, read_frame, write_frame};
 use interface_core::channel::page_index;
@@ -20,7 +21,7 @@ use kinds::{
     KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS,
     KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED,
     KIND_REGION, KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE, KIND_STATE_SEND_OFFER,
-    KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TIMED_OUT,
+    KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TAB_LEAVES, KIND_TAB_OPENS, KIND_TIMED_OUT,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -447,6 +448,103 @@ pub enum ToFetcher {
         /// The sub-page, any of the thirteen bits' values but 3F7F.
         subcode: u16,
     },
+    /// A tab of the fetcher's channel and jar joins the process, under the
+    /// tab number the message is written for (REQ-6980). It carries nothing
+    /// else, and no address: every tab of a fetcher shows the channel the
+    /// fetcher was started for (REQ-2948).
+    TabOpens,
+    /// The tab the message is written for leaves the process: what it was
+    /// last told is sent, and its connections close (REQ-6980).
+    TabLeaves,
+}
+
+/// The most tabs one fetcher process serves (REQ-6980): the most tabs the
+/// browser has.
+pub const MAX_FETCHER_TABS: usize = crate::MAX_TABS;
+/// The tab number of what a fetcher process says of itself, its
+/// [`FromFetcher::Confined`], and never a tab's (REQ-6980).
+pub const PROCESS_TAB: u32 = 0;
+/// The bytes of a tab number before a message (REQ-6980).
+const TAB_BYTES: usize = size_of::<u32>();
+
+/// Reads the tab number before a message, or `None` at a clean end.
+fn read_tab(input: &mut dyn Read) -> Result<Option<u32>, ProtocolError> {
+    let mut tab = [0_u8; TAB_BYTES];
+    match input.read_exact(&mut tab) {
+        Ok(()) => Ok(Some(u32::from_be_bytes(tab))),
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// A pipe that ended after a tab number, where its message must follow.
+fn cut_short() -> ProtocolError {
+    ProtocolError::Io(std::io::ErrorKind::UnexpectedEof.into())
+}
+
+/// Writes `message` for the tab `tab` of a fetcher process: the tab's
+/// number, 32 bits big-endian, then the message (REQ-6980).
+///
+/// # Errors
+/// As [`write_to_fetcher`].
+pub fn write_to_fetcher_for(out: &mut dyn Write, tab: u32, message: &ToFetcher) -> Result<(), ProtocolError> {
+    let mut framed = Vec::new();
+    write_to_fetcher(&mut framed, message)?;
+    out.write_all(&tab.to_be_bytes())?;
+    out.write_all(&framed)?;
+    Ok(())
+}
+
+/// Reads one message from the trusted core and the tab it names, or `None`
+/// at a clean end (REQ-6980).
+///
+/// # Errors
+/// As [`read_to_fetcher`], and when the pipe ends after a tab number.
+pub fn read_to_fetcher_for(input: &mut dyn Read) -> Result<Option<(u32, ToFetcher)>, ProtocolError> {
+    let Some(tab) = read_tab(input)? else { return Ok(None) };
+    read_to_fetcher(input)?.map(|message| Some((tab, message))).ok_or_else(cut_short)
+}
+
+/// Writes `message` of the tab `tab`, or of the process itself as
+/// [`PROCESS_TAB`], to the trusted core: the tab's number, 32 bits
+/// big-endian, then the message (REQ-6980).
+///
+/// # Errors
+/// As [`write_to_core`].
+pub fn write_to_core_for(out: &mut dyn Write, tab: u32, message: &FromFetcher) -> Result<(), ProtocolError> {
+    let mut framed = Vec::new();
+    write_to_core(&mut framed, message)?;
+    out.write_all(&tab.to_be_bytes())?;
+    out.write_all(&framed)?;
+    Ok(())
+}
+
+/// Reads one message from a fetcher process and the tab it names, or
+/// `None` at a clean end (REQ-6980).
+///
+/// # Errors
+/// As [`read_from_fetcher`], and when the pipe ends after a tab number.
+pub fn read_from_fetcher_for(input: &mut dyn Read) -> Result<Option<(u32, FromFetcher)>, ProtocolError> {
+    let Some(tab) = read_tab(input)? else { return Ok(None) };
+    read_from_fetcher(input)?.map(|message| Some((tab, message))).ok_or_else(cut_short)
+}
+
+/// Moves every whole message at the front of `written`, as
+/// [`write_to_fetcher`] or [`write_to_core`] wrote them, to `out`, each
+/// after the number of `tab` (REQ-6980); a message not yet whole stays in
+/// `written` for the bytes that complete it. It is how one tab's writer,
+/// which writes messages without their tab, shares a pipe with the others.
+pub fn name_tab(tab: u32, written: &mut Vec<u8>, out: &mut Vec<u8>) {
+    let mut taken = 0_usize;
+    while let Some(header) = written.get(taken..).and_then(|rest| rest.first_chunk::<HEADER_BYTES>()) {
+        let [_, length @ ..] = *header;
+        let whole = HEADER_BYTES.saturating_add(u32::from_be_bytes(length) as usize);
+        let Some(message) = written.get(taken..taken.saturating_add(whole)) else { break };
+        out.extend_from_slice(&tab.to_be_bytes());
+        out.extend_from_slice(message);
+        taken = taken.saturating_add(whole);
+    }
+    written.drain(..taken);
 }
 
 /// # Errors
@@ -471,6 +569,8 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             write_frame(out, kind, &payload)
         }
         ToFetcher::FetchContents => write_frame(out, KIND_FETCH_CONTENTS, &[]),
+        ToFetcher::TabOpens => write_frame(out, KIND_TAB_OPENS, &[]),
+        ToFetcher::TabLeaves => write_frame(out, KIND_TAB_LEAVES, &[]),
         ToFetcher::FetchPage { page } => {
             crate::fields::check_page(*page)?;
             write_frame(out, KIND_FETCH_PAGE, &page.to_be_bytes())
@@ -519,6 +619,8 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
         KIND_MEASURE_ROUND_TRIP => ToFetcher::MeasureRoundTrip(fields.flag("measure")?),
         KIND_STATE_ANSWER | KIND_STATE_SEND_OFFER | KIND_STATE_SEND_NONE => state::read_to_fetcher(kind, &mut fields)?,
         KIND_FETCH_CONTENTS => ToFetcher::FetchContents,
+        KIND_TAB_OPENS => ToFetcher::TabOpens,
+        KIND_TAB_LEAVES => ToFetcher::TabLeaves,
         KIND_FETCH_PAGE => ToFetcher::FetchPage { page: fields.channel_page()? },
         KIND_FETCH_SUBPAGES => ToFetcher::FetchSubPages { page: fields.channel_page()?, part: checked_part(fields.u8()?)? },
         KIND_FETCH_SUBPAGE => {

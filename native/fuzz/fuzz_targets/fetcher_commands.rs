@@ -3,17 +3,19 @@
 //! which it writes to a channel's WebSocket (REQ-INT-133), and under push
 //! protocol 9 never a viewer's input outside a `RULE_EVENT`
 //! (neoteletext-common's page-rules.md RULE-46); viewer state's answers;
-//! and what it is asked to fetch or measure, a part of a page's list among
-//! them.
+//! what it is asked to fetch or measure, a part of a page's list among
+//! them; and a tab's joining and leaving its process. The same bytes are
+//! read once as one tab's messages and once as a process's, each after its
+//! tab's number (REQ-6980).
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use neoteletext_input::event::{Item, is_page_input, read_message};
-use protocol::fetcher::{MAX_LIST_PARTS, ToFetcher, read_to_fetcher};
+use protocol::fetcher::{MAX_LIST_PARTS, ToFetcher, read_to_fetcher, read_to_fetcher_for};
 
-fuzz_target!(|data: &[u8]| {
-    let mut input = data;
-    while let Ok(Some(message)) = read_to_fetcher(&mut input) {
+/// Holds one message to what its reader promises.
+fn check(message: ToFetcher) {
+    {
         match message {
             ToFetcher::Send { bytes, move_of, .. } => {
                 assert!(bytes.len() <= neoteletext_input::MAX_MESSAGE);
@@ -38,7 +40,20 @@ fuzz_target!(|data: &[u8]| {
             | ToFetcher::FetchContents
             | ToFetcher::FetchPage { .. }
             | ToFetcher::FetchSubPage { .. }
-            | ToFetcher::MeasureRoundTrip(_) => {}
+            | ToFetcher::MeasureRoundTrip(_)
+            | ToFetcher::TabOpens
+            | ToFetcher::TabLeaves => {}
         }
+    }
+}
+
+fuzz_target!(|data: &[u8]| {
+    let mut input = data;
+    while let Ok(Some(message)) = read_to_fetcher(&mut input) {
+        check(message);
+    }
+    let mut input = data;
+    while let Ok(Some((_, message))) = read_to_fetcher_for(&mut input) {
+        check(message);
     }
 });

@@ -6,7 +6,9 @@
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::io::{self, BufWriter, Read, Write};
+#[cfg(test)]
+use std::io::Read;
+use std::io::{self, BufWriter, Write};
 use std::net::IpAddr;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,7 +26,9 @@ use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages::{self, PartNumber};
-use protocol::fetcher::{Entry, FromFetcher, Origin, RefusedFile, ToFetcher, read_to_fetcher, redirect_in_bounds, write_to_core};
+#[cfg(test)]
+use protocol::fetcher::read_to_fetcher;
+use protocol::fetcher::{Entry, FromFetcher, Origin, RefusedFile, ToFetcher, redirect_in_bounds, write_to_core};
 use protocol::subpages::SubPageRows;
 
 #[cfg(feature = "links")]
@@ -547,50 +551,121 @@ pub(crate) fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
     config
 }
 
-/// Holds the channel `channel`'s connections until the trusted core closes
-/// standard input: the engine's agent opens it, which fetches `channel.ttx`
-/// and then a static channel's bundle, holds a live channel's push
-/// connection, and fetches each file the trusted core asks for as it is
-/// wanted (REQ-703); what arrives goes to the trusted core on standard
-/// output. A server on this computer
-/// or the local network is reached only when `allowed` names it. Its
-/// first message says it is confined, as `main.rs` has made it.
+/// Holds the connections of every tab of the channel `channel` that the
+/// trusted core adds to this process, until it closes standard input
+/// (REQ-6980): each tab has the engine's agent of its own, which opens the
+/// channel, fetches `channel.ttx` and then a static channel's bundle, holds
+/// a live channel's push connection, and fetches each file the trusted
+/// core asks for as it is wanted (REQ-703); what arrives goes to the
+/// trusted core on standard output, named with its tab. A server on this
+/// computer or the local network is reached only when `allowed` names it.
+/// The process's first message says it is confined, as `main.rs` has made
+/// it. `http3` is whether the tabs may share one HTTP/3 connection
+/// (neoteletext-common's DEC-6979; false with `--no-http3` or a proxy).
 ///
 /// # Errors
-/// When writing to the trusted core fails.
-pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>) -> Result<(), String> {
+/// When writing to the trusted core fails, or it breaks the pipe's
+/// protocol.
+#[expect(unused_variables, reason = "the shared HTTP/3 connection, which `http3` allows, is made in the next change (DEC-6979 item 3)")]
+pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>, http3: bool) -> Result<(), String> {
     let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
-    run_with(channel, config, |wake| Tcp::new(wake, proxy, allowed_local), Box::new(io::stdin()), Box::new(io::stdout()))
+    // What every tab's transport is made with. This closure is the one
+    // place an object the whole process shares, the channel's shared
+    // connection (DEC-6979 item 6), is handed to each tab's transport.
+    let transport: crate::tabs::MakeTransport = Arc::new(move |wake| Tcp::new(wake, proxy.clone(), allowed_local));
+    crate::tabs::serve(channel, config, &transport, &mut io::BufReader::new(io::stdin()), Box::new(io::stdout()))
 }
 
-/// [`run`] with the agent's settings, the transport `transport` makes with
-/// the loop's waker, and the trusted core's pipes, which a test replaces.
+/// One tab of the process: the trusted core's messages for it, handed to
+/// its loop, and the thread its loop runs on.
+pub(crate) struct Tab {
+    commands: Commands,
+    done: std::thread::JoinHandle<()>,
+}
+
+impl Tab {
+    /// Starts the loop of a tab of `channel` on a thread of its own, with
+    /// the transport `transport` makes with its waker; what it tells the
+    /// trusted core is written to `output`. A loop that fails ends the
+    /// process, as a fetcher's one loop did: the trusted core hears the
+    /// pipe close, for every tab (REQ-6980).
+    pub(crate) fn start(channel: &str, config: Config, transport: crate::tabs::MakeTransport, output: impl Write + Send + 'static) -> Self {
+        let (wakes, woken) = mpsc::channel::<Wake>();
+        let (answers, answered) = mpsc::channel();
+        let commands = Commands::new(wakes.clone(), answers);
+        let channel = channel.to_owned();
+        let done = std::thread::spawn(move || {
+            if let Err(error) = run_tab(&channel, config, |wake| transport(wake), (wakes, woken), answered, Box::new(output)) {
+                eprintln!("neoteletext-fetcher: {error}");
+                // Not in a test, whose process is the tests' own.
+                #[cfg(not(test))]
+                std::process::exit(1);
+            }
+        });
+        Self { commands, done }
+    }
+
+    /// Hands the tab's loop a message of the trusted core's; false when
+    /// the loop has gone or the message is not one a tab takes.
+    pub(crate) fn take(&mut self, message: ToFetcher) -> bool {
+        self.commands.take(message)
+    }
+
+    /// The tab leaves, or the trusted core closed the pipe: its loop sends
+    /// what it was last told and ends, and its connections close. The
+    /// thread to wait for.
+    pub(crate) fn leave(mut self) -> std::thread::JoinHandle<()> {
+        self.commands.end();
+        self.done
+    }
+}
+
+/// [`run`] for one tab alone, with the agent's settings, the transport
+/// `transport` makes with the loop's waker, and the trusted core's pipes,
+/// whose messages carry no tab number: the loop as a test drives it.
+#[cfg(test)]
 fn run_with(
     channel: &str,
     config: Config,
     transport: impl FnOnce(crate::transport::Wake) -> Tcp,
     input: Box<dyn Read + Send>,
+    mut output: Box<dyn Write>,
+) -> Result<(), String> {
+    write_to_core(&mut output, &FromFetcher::Confined).map_err(|error| error.to_string())?;
+    output.flush().map_err(|error| error.to_string())?;
+    let (wakes, woken) = mpsc::channel::<Wake>();
+    let (answers, answered) = mpsc::channel();
+    let mut commands = Commands::new(wakes.clone(), answers);
+    std::thread::spawn(move || {
+        read_commands(&mut io::BufReader::new(input), &mut commands);
+        commands.end();
+    });
+    run_tab(channel, config, transport, (wakes, woken), answered, output)
+}
+
+/// One tab's loop: the agent's output turned into actions on its sockets
+/// and messages for the trusted core, until the wake that says the tab
+/// left or the pipe closed. `wakes` is the loop's own waker and what it
+/// wakes; `answered` brings the trusted core's answers to viewer state's
+/// challenges.
+fn run_tab(
+    channel: &str,
+    config: Config,
+    transport: impl FnOnce(crate::transport::Wake) -> Tcp,
+    (wakes, woken): (mpsc::Sender<Wake>, mpsc::Receiver<Wake>),
+    answered: mpsc::Receiver<ToFetcher>,
     output: Box<dyn Write>,
 ) -> Result<(), String> {
-    // Before anything of the channel, so the trusted core can tell a
-    // fetcher that could not start from one its server ended (finding
-    // F-12).
     let output: CorePipe = Rc::new(RefCell::new(BufWriter::new(output)));
-    send(&output, &FromFetcher::Confined)?;
-    output.borrow_mut().flush().map_err(|error| error.to_string())?;
     // The body buffer holds the largest page file with a picture (PAGE_LIMIT).
     let mut storage = crate::pictured::Storage::new();
     let random = Random::new();
-    let (wakes, woken) = mpsc::channel::<Wake>();
-    // The trusted core's answers to viewer state's challenges, read by the
-    // same thread that reads its input messages.
-    let (answers, answered) = mpsc::channel();
     let mut state = State::new(answered);
     let mut agent: Box<Agent<'_>> = Box::new(UserAgent::new(config, storage.buffers(), random));
-    let network = wakes.clone();
+    let network = wakes;
     let mut pump = Pump::new(transport(Arc::new(move || {
         let _ = network.send(Wake::Network);
     })));
@@ -608,16 +683,6 @@ fn run_with(
     // The reader of the records the channel pushes, for the state queries
     // among them; every packet goes on to the decoder unread all the same.
     let mut queries = neoteletext_web::records::RecordReader::new();
-
-    // The trusted core closes standard input to end the fetcher. Before
-    // then it sends only what `ToFetcher` holds (REQ-1381 version 2):
-    // input messages, the round trip's switch, viewer state's answers and
-    // unprompted messages, and requests for pages, lists of sub-pages and
-    // sub-pages; anything else ends the fetcher too.
-    std::thread::spawn(move || {
-        read_commands(&mut io::BufReader::new(input), &wakes, &answers);
-        let _ = wakes.send(Wake::Ended);
-    });
 
     let mut actions = Vec::new();
     // The channel has no `channel.ttx`, so its name is not its own.
@@ -886,48 +951,81 @@ fn give_records(records: &[Record], more_after: bool, handle: &mut dyn FnMut(Inp
     }
 }
 
-/// Hands the loop the input messages of a moment read so far, if any;
-/// false when the loop has gone.
-#[cfg(feature = "interaction")]
-fn hand_moment(commands: &mpsc::Sender<Wake>, moment: &mut Vec<Record>) -> bool {
-    moment.is_empty() || commands.send(Wake::Records(std::mem::take(moment))).is_ok()
+/// The trusted core's messages for one tab, handed to its loop as they
+/// are read: input messages and requests wake the loop, and viewer state's
+/// answers go to the loop waiting for them. An input message the trusted
+/// core says more follow at once waits here for them (REQ-RCH-010): it
+/// writes a moment's messages in one write, so they are already on the
+/// pipe; any other message, the bound [`MOMENT_MESSAGES`] or the end hands
+/// on what was read.
+pub(crate) struct Commands {
+    /// The loop's waker.
+    wakes: mpsc::Sender<Wake>,
+    answers: mpsc::Sender<ToFetcher>,
+    #[cfg(feature = "interaction")]
+    moment: Vec<Record>,
 }
 
-/// Reads the trusted core's messages until its pipe closes or breaks the
-/// protocol: input messages and requests wake the loop, and viewer state's
-/// answers go to the loop waiting for them. An input message the trusted core
-/// says more follow at once waits here for them (REQ-RCH-010): it writes
-/// a moment's messages in one write, so they are already on the pipe; any
-/// other message, the bound [`MOMENT_MESSAGES`] or the pipe's end hands on
-/// what was read.
-fn read_commands(input: &mut dyn Read, commands: &mpsc::Sender<Wake>, answers: &mpsc::Sender<ToFetcher>) {
-    #[cfg(feature = "interaction")]
-    let mut moment: Vec<Record> = Vec::new();
-    while let Ok(Some(message)) = read_to_fetcher(input) {
-        #[cfg(feature = "interaction")]
-        if !matches!(message, ToFetcher::Send { .. }) && !hand_moment(commands, &mut moment) {
-            return;
+impl Commands {
+    fn new(wakes: mpsc::Sender<Wake>, answers: mpsc::Sender<ToFetcher>) -> Self {
+        Self {
+            wakes,
+            answers,
+            #[cfg(feature = "interaction")]
+            moment: Vec::new(),
         }
-        let delivered = match message {
+    }
+
+    /// Hands the loop the input messages of a moment read so far, if any;
+    /// false when the loop has gone.
+    #[cfg(feature = "interaction")]
+    fn hand_moment(&mut self) -> bool {
+        self.moment.is_empty() || self.wakes.send(Wake::Records(std::mem::take(&mut self.moment))).is_ok()
+    }
+
+    /// One message of the trusted core's; false when the loop has gone, or
+    /// the message is of a tab's coming or going, which is the process's
+    /// to read and never a tab's.
+    fn take(&mut self, message: ToFetcher) -> bool {
+        #[cfg(feature = "interaction")]
+        if !matches!(message, ToFetcher::Send { .. }) && !self.hand_moment() {
+            return false;
+        }
+        match message {
             #[cfg(feature = "interaction")]
             ToFetcher::Send { bytes, move_of, more } => {
-                moment.push(Record { bytes, move_of });
-                (more && moment.len() < MOMENT_MESSAGES) || hand_moment(commands, &mut moment)
+                self.moment.push(Record { bytes, move_of });
+                (more && self.moment.len() < MOMENT_MESSAGES) || self.hand_moment()
             }
             #[cfg(feature = "interaction")]
-            ToFetcher::MeasureRoundTrip(on) => commands.send(Wake::RoundTrip(on)).is_ok(),
-            answer @ ToFetcher::StateAnswer { .. } => answers.send(answer).is_ok(),
-            unprompted @ (ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_)) => commands.send(Wake::State(unprompted)).is_ok(),
+            ToFetcher::MeasureRoundTrip(on) => self.wakes.send(Wake::RoundTrip(on)).is_ok(),
+            answer @ ToFetcher::StateAnswer { .. } => self.answers.send(answer).is_ok(),
+            unprompted @ (ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_)) => self.wakes.send(Wake::State(unprompted)).is_ok(),
             asked @ (ToFetcher::FetchContents | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
-                commands.send(Wake::Fetch(asked)).is_ok()
+                self.wakes.send(Wake::Fetch(asked)).is_ok()
             }
-        };
-        if !delivered {
+            ToFetcher::TabOpens | ToFetcher::TabLeaves => false,
+        }
+    }
+
+    /// No more messages come: what was read is handed on, and the loop is
+    /// told to end.
+    fn end(&mut self) {
+        #[cfg(feature = "interaction")]
+        self.hand_moment();
+        let _ = self.wakes.send(Wake::Ended);
+    }
+}
+
+/// Reads one tab's messages, written without a tab number, until the pipe
+/// closes or breaks the protocol: the loop as a test drives it.
+#[cfg(test)]
+fn read_commands(input: &mut dyn Read, commands: &mut Commands) {
+    while let Ok(Some(message)) = read_to_fetcher(input) {
+        if !commands.take(message) {
             return;
         }
     }
-    #[cfg(feature = "interaction")]
-    hand_moment(commands, &mut moment);
 }
 
 #[cfg(test)]
@@ -1275,11 +1373,15 @@ mod tests {
         for message in messages {
             protocol::fetcher::write_to_fetcher(&mut pipe, message).unwrap();
         }
-        let (commands, woken) = mpsc::channel();
+        let (wakes, woken) = mpsc::channel();
         let (answers, _) = mpsc::channel();
-        read_commands(&mut pipe.as_slice(), &commands, &answers);
+        let mut commands = Commands::new(wakes, answers);
+        read_commands(&mut pipe.as_slice(), &mut commands);
+        // The pipe's end hands on what was read; the wake that ends the
+        // loop is not a message's.
+        commands.end();
         drop(commands);
-        woken.into_iter().collect()
+        woken.into_iter().filter(|wake| !matches!(wake, Wake::Ended)).collect()
     }
 
     /// The bytes and contacts of a wake of input messages.

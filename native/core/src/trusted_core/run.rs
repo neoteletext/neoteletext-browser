@@ -38,7 +38,11 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
                 core.in_window_of(channel, |core| core.fetched(channel, message))?;
             }
         }
-        Event::FetcherEnded(channel, generation, reason) => core.fetcher_ended(channel, generation, reason),
+        Event::FetcherProcessEnded(routes, reason) => {
+            for (channel, generation) in super::processes::places(&routes) {
+                core.fetcher_ended(channel, generation, reason.clone());
+            }
+        }
         Event::FramePhase(phase, read_at) => core.frame_phase(phase, read_at),
         Event::Intent(intent) => {
             // What the intent changes in a tab's list is stamped with now.
@@ -363,7 +367,7 @@ mod tests {
             core.console.set_open(true);
             core.fetchers.insert(1, Fetcher::new(child, 1, None));
             let begun = std::time::Instant::now();
-            handle(&mut core, Event::FetcherEnded(1, 1, reason)).unwrap();
+            handle(&mut core, Event::FetcherProcessEnded(super::super::processes::places_of(&[(1, 1)]), reason)).unwrap();
             assert!(begun.elapsed() < HELPER_LIMIT, "the event loop waited {:?} for a fetcher still running", begun.elapsed());
             assert!(ended_soon(output), "killed");
             assert!(core.fetchers.is_empty());
@@ -455,13 +459,13 @@ mod tests {
         let mut core = test_core();
         fetcher(&mut core);
         handle(&mut core, Event::Fetched(1, 1, FromFetcher::Confined)).unwrap();
-        handle(&mut core, Event::FetcherEnded(1, 1, None)).unwrap();
+        handle(&mut core, Event::FetcherProcessEnded(super::super::processes::places_of(&[(1, 1)]), None)).unwrap();
         assert!(healthy_once_settled(&mut core), "a fetcher that ended after it was confined is not counted");
 
         let mut core = test_core();
         fetcher(&mut core);
         handle(&mut core, Event::Fetched(1, 1, FromFetcher::Notice("unreachable".into()))).unwrap();
-        handle(&mut core, Event::FetcherEnded(1, 1, None)).unwrap();
+        handle(&mut core, Event::FetcherProcessEnded(super::super::processes::places_of(&[(1, 1)]), None)).unwrap();
         assert!(!healthy_once_settled(&mut core), "a fetcher that never said it was confined failed the version");
     }
 }

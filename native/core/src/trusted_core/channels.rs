@@ -10,7 +10,7 @@ use protocol::console::Level;
 use protocol::decoder::{FIRST_STORE_PAGES, MAX_STORE_PAGES, ToDecoder};
 
 use super::Core;
-use super::processes::{Decoder, Fetcher, Reach, start_decoder, start_fetcher, stop_decoder};
+use super::processes::{Decoder, Fetcher, FetcherKey, Reach, start_decoder, start_fetcher, stop_decoder};
 
 /// The most times a channel's decoder is replaced, for stopping reading,
 /// in [`DECODER_RESTART_WINDOW`] before the channel is given up (finding
@@ -55,8 +55,8 @@ impl Core {
                 self.sleep.seen(tab.channel.id, now);
             }
         }
-        let channels: Vec<(u32, Option<String>, Option<String>)> =
-            self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone())).collect();
+        let channels: Vec<(u32, Option<String>, Option<String>, bool)> =
+            self.session.all_tabs().map(|tab| (tab.channel.id, tab.channel.problem.clone(), tab.channel.web.clone(), tab.private)).collect();
         // A channel no tab holds any more is ended first: a helper that then
         // cannot start, as when the broker refuses one, leaves none running
         // that no tab holds (REQ-683).
@@ -81,7 +81,7 @@ impl Core {
         self.given_up.retain(open);
         self.restarts.retain(|id, _| open(id));
         let mut started = false;
-        for (id, problem, web) in &channels {
+        for (id, problem, web, private) in &channels {
             let awake = self.sleep.awake(*id, active, now);
             if awake && !self.decoders.contains_key(id) && !self.given_up.contains(id) {
                 // A restored file is read as its tab is first shown
@@ -130,16 +130,23 @@ impl Core {
             } else if !awake && self.decoders.contains_key(id) {
                 self.put_to_sleep(*id, false);
             }
-            // A web channel's pages come from its own fetcher, which runs
-            // for as long as its tab is open, asleep or not, and fetches a
-            // static channel's files only as they are wanted (REQ-703).
+            // A web channel's pages come from its tab's own place in the
+            // fetcher process of its channel and jar (REQ-6980), which the
+            // tab keeps for as long as it is open, asleep or not, and
+            // which fetches a static channel's files only as they are
+            // wanted (REQ-703).
             if let Some(address) = web
                 && !self.fetchers.contains_key(id)
                 && !self.given_up.contains(id)
             {
                 self.generation = self.generation.wrapping_add(1);
-                let reach = Reach::of(&self.allow_local, &self.settings);
-                let fetcher = start_fetcher(self.broker()?, address, &reach, *id, self.generation, self.events.clone())?;
+                let key = FetcherKey::of(address, *private, &Reach::of(&self.allow_local, &self.settings));
+                // A tab of a channel and jar another tab shows joins that
+                // tab's process; the first starts one.
+                let fetcher = match self.fetchers.values().find(|fetcher| fetcher.serves(&key)) {
+                    Some(serving) => serving.join(*id, self.generation),
+                    None => start_fetcher(self.broker()?, key, *id, self.generation, self.events.clone())?,
+                };
                 self.note(Level::Info, Some(*id), &format!("fetcher: confined: {}", fetcher.report()));
                 self.fetchers.insert(*id, fetcher);
             }
@@ -281,7 +288,7 @@ impl Core {
             let stopped = format!("the fetcher for channel {channel} stopped{}", reason.map(|reason| format!(": {reason}")).unwrap_or_default());
             self.log(Level::Error, Some(channel), &stopped);
             if let Some(fetcher) = self.fetchers.remove(&channel) {
-                if !fetcher.heard() {
+                if fetcher.ended_unheard() {
                     self.updates.helper_failed(&format!("{stopped} before it said it was confined"));
                 }
                 fetcher.end();
@@ -485,5 +492,87 @@ mod tests {
         assert_ne!(core.session.tabs[0].channel.id, old, "another channel");
         assert!(core.match_decoders().is_err(), "this core has no broker to start the new channel's helpers");
         assert!(!core.fetchers.contains_key(&old), "the old channel's fetcher is ended all the same");
+    }
+
+    /// The fetcher processes the stand-in broker was asked for, each as
+    /// its arguments.
+    fn fetcher_processes(stand_in: &confine::broker::stand_in::StandIn) -> Vec<Vec<String>> {
+        stand_in.started().into_iter().filter(|helper| helper.program == confine::broker::Program::Fetcher).map(|helper| helper.arguments).collect()
+    }
+
+    /// The fetcher processes the core has asked the broker to kill.
+    fn fetchers_killed(stand_in: &confine::broker::stand_in::StandIn, killed: &mut Vec<u32>) -> usize {
+        use confine::broker::Request;
+        killed.extend(stand_in.take_requests().iter().filter_map(|request| if let Request::Kill(id) = request { Some(*id) } else { None }));
+        let fetchers: Vec<u32> =
+            stand_in.started().into_iter().filter(|helper| helper.program == confine::broker::Program::Fetcher).map(|helper| helper.id).collect();
+        killed.iter().filter(|id| fetchers.contains(id)).count()
+    }
+
+    // REQ-6980, DEC-6979 items 1 and 6: one fetcher process serves every
+    // tab of one channel in one jar. A second ordinary tab of a channel
+    // joins the first's process; a private tab of the same channel has a
+    // process of its own, and so has a tab of another channel; each tab
+    // keeps a place of its own; and the process is ended only when its last
+    // tab has left. Before, every tab started a process, and closing a tab
+    // ended one.
+    #[test]
+    fn tabs_of_one_channel_and_jar_share_one_fetcher_process() {
+        use super::super::test_support::core_on;
+        const CHANNEL: &str = "https://a.invalid/teletext/";
+        const OTHER: &str = "https://b.invalid/teletext/";
+        let (mut core, stand_in) = core_on(CHANNEL);
+        core.session.open(CHANNEL).unwrap();
+        core.session.open_private(CHANNEL).unwrap();
+        core.session.open(OTHER).unwrap();
+        core.match_decoders().unwrap();
+        let started = fetcher_processes(&stand_in);
+        assert_eq!(
+            started,
+            [vec![CHANNEL.to_owned()], vec![CHANNEL.to_owned()], vec![OTHER.to_owned()]],
+            "the channel's ordinary jar, its private jar, the other channel"
+        );
+        assert_eq!(core.fetchers.len(), 4, "each tab has its place");
+        let channels: Vec<u32> = core.session.tabs.iter().map(|tab| tab.channel.id).collect();
+        let key = |address: &str, private: bool| FetcherKey::of(address, private, &Reach::of(&[], &core.settings));
+        assert!(core.fetchers[&channels[0]].serves(&key(CHANNEL, false)) && core.fetchers[&channels[1]].serves(&key(CHANNEL, false)));
+        assert!(!core.fetchers[&channels[2]].serves(&key(CHANNEL, false)), "REQ-881: a private tab never shares an ordinary tab's process");
+        assert!(core.fetchers[&channels[2]].serves(&key(CHANNEL, true)));
+        assert!(!core.fetchers[&channels[3]].serves(&key(CHANNEL, false)), "REQ-712: nor does another channel's tab");
+
+        // A change of the setting reaches the tabs opened after it
+        // (REQ-6982): such a tab joins no process started before it.
+        core.settings.share_connections = false;
+        core.session.open(CHANNEL).unwrap();
+        core.match_decoders().unwrap();
+        let started = fetcher_processes(&stand_in);
+        assert_eq!(started.len(), 4, "a process of its own");
+        assert_eq!(started[3], [CHANNEL, "--no-http3"], "with sharing off");
+        core.settings.share_connections = true;
+
+        // The first tab leaves: its process still serves the second.
+        let mut killed = Vec::new();
+        core.session.close(0).unwrap();
+        core.match_decoders().unwrap();
+        assert!(!core.fetchers.contains_key(&channels[0]) && core.fetchers.contains_key(&channels[1]));
+        std::thread::sleep(protocol::fetcher::FETCHER_END_WAIT * 2);
+        assert_eq!(fetchers_killed(&stand_in, &mut killed), 0, "no process ended while a tab of it stays");
+        // A third tab of the channel joins the process still running.
+        core.session.open(CHANNEL).unwrap();
+        core.match_decoders().unwrap();
+        assert_eq!(fetcher_processes(&stand_in).len(), 4, "none started");
+        // Its last tabs leave: the process is ended.
+        let third = core.session.tabs.last().unwrap().channel.id;
+        for channel in [channels[1], third] {
+            let index = core.session.tabs.iter().position(|tab| tab.channel.id == channel).unwrap();
+            core.session.close(index).unwrap();
+        }
+        core.match_decoders().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while fetchers_killed(&stand_in, &mut killed) == 0 {
+            assert!(std::time::Instant::now() < deadline, "the process was never ended");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(fetchers_killed(&stand_in, &mut killed), 1, "that process and no other");
     }
 }

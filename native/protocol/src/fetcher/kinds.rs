@@ -85,3 +85,9 @@ pub(super) const KIND_RULES_QUERY: u8 = 186;
 // DEC-6637 item 9), in a number clear of those other work in flight on 18
 // November 2026 may take next.
 pub(super) const KIND_CHANNEL_NAME: u8 = 200;
+// A tab added to and removed from a fetcher process that serves every tab
+// of one channel in one jar (REQ-6980, neoteletext-common's DEC-6979 item
+// 6), in numbers past the last used across every pipe and clear of those
+// other work in flight on 20 November 2026 may take next.
+pub(super) const KIND_TAB_OPENS: u8 = 230;
+pub(super) const KIND_TAB_LEAVES: u8 = 231;

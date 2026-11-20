@@ -12,7 +12,7 @@ use std::time::Duration;
 use confine::broker::stand_in::{StandIn, Started, Written};
 use confine::broker::{Broker, Program, Request};
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_STORE_PAGES, ToDecoder, read_from_core};
-use protocol::fetcher::{FromFetcher, read_to_fetcher};
+use protocol::fetcher::{FromFetcher, read_to_fetcher_for};
 
 use super::super::Core;
 
@@ -62,7 +62,7 @@ fn first_words(helper: &Started) -> Option<Vec<u8>> {
             write_to_core(&mut bytes, &FromSnapshot::Ended(SnapshotEnd::NotOffered)).ok()?;
         }
         Program::Decoder => protocol::decoder::write_to_core(&mut bytes, &FromDecoder::Confined).ok()?,
-        Program::Fetcher => protocol::fetcher::write_to_core(&mut bytes, &FromFetcher::Confined).ok()?,
+        Program::Fetcher => protocol::fetcher::write_to_core_for(&mut bytes, protocol::fetcher::PROCESS_TAB, &FromFetcher::Confined).ok()?,
         Program::Interface | Program::Keyboard | Program::Sound | Program::Updater => {}
     }
     Some(bytes)
@@ -233,7 +233,7 @@ impl Watch {
                 Program::Fetcher => {
                     let mut input = bytes.as_slice();
                     loop {
-                        match read_to_fetcher(&mut input) {
+                        match read_to_fetcher_for(&mut input) {
                             Ok(Some(_)) => sent.messages += 1,
                             Ok(None) => break,
                             Err(error) => panic!("the core sent the fetcher {helper:?} what its reader refuses: {error}"),

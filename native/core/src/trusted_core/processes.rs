@@ -2,9 +2,11 @@
 //! (decision 56): a decoder, a fetcher, the bookmark reader, the
 //! interface's pipe, and where a fetcher may connect.
 
+use std::collections::BTreeMap;
 use std::io::{BufReader, Read, Write};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 
 use confine::broker::{Broker, Helper, Program};
@@ -13,7 +15,7 @@ use neoteletext::budget::Budget;
 use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
-use protocol::fetcher::{FETCHER_END_WAIT, read_from_fetcher};
+use protocol::fetcher::{FETCHER_END_WAIT, FromFetcher, MAX_FETCHER_TABS, ToFetcher, read_from_fetcher_for, write_to_fetcher};
 use protocol::{ProtocolError, read_from_interface};
 
 use super::Event;
@@ -37,15 +39,113 @@ impl Decoder {
     }
 }
 
+/// A tab's place in a fetcher process (REQ-6980): one process serves every
+/// tab of one channel in one jar, and each tab has a place in it, with a
+/// tab number that names its messages on the process's two pipes.
 pub(super) struct Fetcher {
-    child: Helper,
+    process: Arc<Mutex<FetcherProcess>>,
+    /// The number that names this tab's messages, never used twice in one
+    /// process.
+    tab: u32,
     /// As [`Decoder::generation`].
     generation: u64,
-    /// What a fetcher is given: input messages (REQ-INT-133), and the
-    /// answers to its viewer state challenges (VS-119).
+    /// What a fetcher is given for this tab: input messages (REQ-INT-133),
+    /// the answers to its viewer state challenges (VS-119) and requests
+    /// for files; none when the process has no input.
+    input: Option<TabPipe>,
+}
+
+/// What decides which fetcher process serves a tab (REQ-6980): the jar,
+/// and everything the process is started with, which is the channel's
+/// address, the local addresses it may reach, the proxy, and whether its
+/// tabs may share a connection (REQ-6982). Tabs that differ in any are
+/// served by different processes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FetcherKey {
+    /// The tab is private: the private jar's (REQ-881).
+    private: bool,
+    arguments: Vec<String>,
+}
+
+impl FetcherKey {
+    /// The key of a tab of the channel at `address`, private or not,
+    /// whose fetcher may connect where `reach` says.
+    pub(super) fn of(address: &str, private: bool, reach: &Reach) -> Self {
+        let mut arguments = vec![address.to_owned()];
+        for ip in &reach.allow_local {
+            arguments.push(String::from("--allow-local"));
+            arguments.push(ip.clone());
+        }
+        if let Some(proxy) = &reach.proxy {
+            arguments.push(String::from("--proxy"));
+            arguments.push(proxy.clone());
+        }
+        // With sharing off, or a proxy, through which QUIC cannot go
+        // (requirement 19.10), the fetcher is told to keep every tab on
+        // HTTP/1.1 (REQ-6982).
+        if !reach.shares() {
+            arguments.push(String::from("--no-http3"));
+        }
+        Self { private, arguments }
+    }
+}
+
+/// The tabs a fetcher process serves, by their numbers: each one's channel
+/// and the generation of its place, which is how its messages become the
+/// trusted core's events. The process's reader thread reads it; the
+/// trusted core adds and removes tabs.
+type Routes = Arc<Mutex<BTreeMap<u32, (u32, u64)>>>;
+
+/// One fetcher process and what its tabs share.
+struct FetcherProcess {
+    key: Option<FetcherKey>,
+    /// None once it was ended.
+    child: Option<Helper>,
+    /// The one pipe to it, on which every tab's messages go, each after
+    /// its tab's number; none when it has no input, or once it was ended.
     input: Option<Outbox>,
-    /// As [`Decoder::heard`].
-    heard: bool,
+    routes: Routes,
+    /// The last tab number given.
+    last_tab: u32,
+    /// As [`Decoder::heard`], said once by the process for all its tabs.
+    heard: Arc<AtomicBool>,
+    /// It ended unheard, and that has been counted against the version,
+    /// once however many tabs it served (finding F-12).
+    counted: bool,
+    report: confine::Report,
+}
+
+fn locked<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// One tab's side of the pipe to its fetcher process: what is written is
+/// whole messages without a tab number, and a flush passes each on after
+/// the tab's number, so that every caller writes to a tab's fetcher as it
+/// did when the tab had a process of its own (REQ-6980).
+pub(super) struct TabPipe {
+    tab: u32,
+    /// Written since the last flush.
+    pending: Vec<u8>,
+    process: Arc<Mutex<FetcherProcess>>,
+}
+
+impl Write for TabPipe {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        let mut named = Vec::new();
+        protocol::fetcher::name_tab(self.tab, &mut self.pending, &mut named);
+        let mut process = locked(&self.process);
+        let input = process.input.as_mut().ok_or(std::io::ErrorKind::BrokenPipe)?;
+        if !named.is_empty() {
+            input.write_all(&named)?;
+        }
+        input.flush()
+    }
 }
 
 impl Decoder {
@@ -96,11 +196,72 @@ impl Decoder {
     }
 }
 
+impl FetcherProcess {
+    /// Gives a tab of `channel` a place of `generation`: its number, by
+    /// which the reader thread knows its messages from now on.
+    fn add(&mut self, channel: u32, generation: u64) -> u32 {
+        // Never the process's own number, and never one used before: a
+        // process is given far fewer than 2^32 tabs in its life.
+        self.last_tab = self.last_tab.wrapping_add(1).max(protocol::fetcher::PROCESS_TAB.saturating_add(1));
+        locked(&self.routes).insert(self.last_tab, (channel, generation));
+        self.last_tab
+    }
+
+    /// Ends the pipe to it, and takes the process to be ended.
+    fn close(&mut self) -> Option<Helper> {
+        drop(self.input.take());
+        let mut child = self.child.take()?;
+        drop(child.stdin.take());
+        Some(child)
+    }
+}
+
 impl Fetcher {
-    /// The fetcher `child`, of `generation`, given `input` if it has one,
-    /// which has said nothing yet.
+    /// A fetcher process `child` of its own for one tab, whose place is of
+    /// `generation`, given `input` if it has one, which has said nothing
+    /// yet: a process no other tab joins, as a test makes one.
+    #[cfg(test)]
     pub(super) fn new(child: Helper, generation: u64, input: Option<Outbox>) -> Self {
-        Self { child, generation, input, heard: false }
+        Self::first(child, None, 0, generation, input, Arc::default())
+    }
+
+    /// The first place in the process `child`, for a tab of `channel`.
+    fn first(child: Helper, key: Option<FetcherKey>, channel: u32, generation: u64, input: Option<Outbox>, routes: Routes) -> Self {
+        let report = child.report.clone();
+        let has_input = input.is_some();
+        let mut process = FetcherProcess { key, child: Some(child), input, routes, last_tab: 0, heard: Arc::default(), counted: false, report };
+        let tab = process.add(channel, generation);
+        let process = Arc::new(Mutex::new(process));
+        let mut fetcher = Self { input: has_input.then(|| TabPipe { tab, pending: Vec::new(), process: Arc::clone(&process) }), process, tab, generation };
+        fetcher.tell(&ToFetcher::TabOpens);
+        fetcher
+    }
+
+    /// Whether this tab's process serves the tabs of `key` and can take
+    /// another: it has not been ended, and holds fewer than
+    /// [`MAX_FETCHER_TABS`].
+    pub(super) fn serves(&self, key: &FetcherKey) -> bool {
+        let process = locked(&self.process);
+        process.key.as_ref() == Some(key) && process.input.is_some() && locked(&process.routes).len() < MAX_FETCHER_TABS
+    }
+
+    /// A place of `generation` for another tab, of `channel`, in this
+    /// tab's process (REQ-6980).
+    pub(super) fn join(&self, channel: u32, generation: u64) -> Self {
+        let tab = locked(&self.process).add(channel, generation);
+        let process = Arc::clone(&self.process);
+        let mut fetcher = Self { input: Some(TabPipe { tab, pending: Vec::new(), process: Arc::clone(&process) }), process, tab, generation };
+        fetcher.tell(&ToFetcher::TabOpens);
+        fetcher
+    }
+
+    /// Writes `message` for this tab and passes it on at once; a process
+    /// that does not take it is its own to notice.
+    fn tell(&mut self, message: &ToFetcher) {
+        if let Some(input) = self.input.as_mut() {
+            let _ = write_to_fetcher(input, message);
+            let _ = input.flush();
+        }
     }
 
     /// As [`Decoder::generation`].
@@ -108,48 +269,73 @@ impl Fetcher {
         self.generation
     }
 
-    /// As [`Decoder::heard`].
+    /// As [`Decoder::heard`]: its process said it is confined.
+    #[cfg(test)]
     pub(super) fn heard(&self) -> bool {
-        self.heard
+        locked(&self.process).heard.load(Ordering::Acquire)
     }
 
-    /// It said it is confined.
+    /// Its process said it is confined.
     pub(super) fn hear(&mut self) {
-        self.heard = true;
+        locked(&self.process).heard.store(true, Ordering::Release);
     }
 
-    /// How it was confined.
-    pub(super) fn report(&self) -> &confine::Report {
-        &self.child.report
+    /// Whether its process ended before it said it was confined and that
+    /// has not yet been counted: true once for a process, however many
+    /// tabs it served (finding F-12).
+    pub(super) fn ended_unheard(&self) -> bool {
+        let mut process = locked(&self.process);
+        !process.heard.load(Ordering::Acquire) && !std::mem::replace(&mut process.counted, true)
     }
 
-    /// Its input: input messages and the answers to its viewer state
-    /// challenges.
-    pub(super) fn input(&mut self) -> Option<&mut Outbox> {
+    /// How its process was confined.
+    pub(super) fn report(&self) -> confine::Report {
+        locked(&self.process).report.clone()
+    }
+
+    /// Its input: input messages, the answers to its viewer state
+    /// challenges and requests for files, each named with this tab as it
+    /// is passed on.
+    pub(super) fn input(&mut self) -> Option<&mut TabPipe> {
         self.input.as_mut()
     }
 
-    /// Ends it: closing its input ends a fetcher once what it was last
-    /// told has left, the channel told the tab went (neoteletext-common's
-    /// DEC-1538 item 3). It is killed and waited for after that, on a
-    /// thread of its own, so nothing waits for its network.
+    /// The tab leaves its process: the fetcher is told, and sends what
+    /// the tab was last told before it closes the tab's connections, the
+    /// channel told the tab went (neoteletext-common's DEC-1538 item 3).
+    /// The process's last tab ends the process: closing its input ends a
+    /// fetcher once every tab's last writes have left, and it is killed
+    /// and waited for after that, on a thread of its own, so nothing waits
+    /// for its network.
     pub(super) fn stop(mut self) {
-        drop(self.child.stdin.take());
+        self.tell(&ToFetcher::TabLeaves);
         drop(self.input.take());
-        thread::spawn(move || {
-            thread::sleep(FETCHER_END_WAIT);
-            end(&mut self.child);
-        });
+        let mut process = locked(&self.process);
+        let last = {
+            let mut routes = locked(&process.routes);
+            routes.remove(&self.tab);
+            routes.is_empty()
+        };
+        if last && let Some(mut child) = process.close() {
+            thread::spawn(move || {
+                thread::sleep(FETCHER_END_WAIT);
+                end(&mut child);
+            });
+        }
     }
 
-    /// Ends it at once, told nothing: its output stopped, and that says
-    /// nothing of whether it ended. A helper reads a hostile server's data,
-    /// so one that broke its protocol or closed its output may sleep for
-    /// ever (REQ-683).
+    /// Ends its process at once, told nothing: its output stopped, and
+    /// that says nothing of whether it ended. A helper reads a hostile
+    /// server's data, so one that broke its protocol or closed its output
+    /// may sleep for ever (REQ-683). Every tab of the process hears that
+    /// it ended, by the same event.
     pub(super) fn end(mut self) {
-        drop(self.child.stdin.take());
         drop(self.input.take());
-        end_aside(self.child);
+        let mut process = locked(&self.process);
+        locked(&process.routes).remove(&self.tab);
+        if let Some(child) = process.close() {
+            end_aside(child);
+        }
     }
 }
 
@@ -158,13 +344,22 @@ impl Fetcher {
 pub(super) struct Reach {
     allow_local: Vec<String>,
     proxy: Option<String>,
+    /// A channel's tabs may share one connection (REQ-6982).
+    share_connections: bool,
 }
 
 impl Reach {
     pub(super) fn of(command_line: &[String], settings: &Settings) -> Self {
         let mut allow_local = command_line.to_vec();
         allow_local.extend(settings.local.iter().map(ToString::to_string));
-        Self { allow_local, proxy: settings.proxy.as_ref().map(stored::Proxy::url) }
+        Self { allow_local, proxy: settings.proxy.as_ref().map(stored::Proxy::url), share_connections: settings.share_connections }
+    }
+
+    /// Whether a fetcher started with this reach may share one HTTP/3
+    /// connection among its tabs: the setting is on (REQ-6982) and no proxy
+    /// is set, since QUIC would go direct (requirement 19.10).
+    fn shares(&self) -> bool {
+        self.share_connections && self.proxy.is_none()
     }
 }
 
@@ -376,39 +571,65 @@ fn convert_picture_with(
     Ok(())
 }
 
-/// Starts a fetcher for the web channel at `address`, whose messages
-/// arrive as events.
+/// Starts a fetcher process for the tabs of `key`, with a first place of
+/// `generation` for a tab of `channel`; its tabs' messages arrive as
+/// events, each as the event of the tab it names (REQ-6980).
 /// A fetcher is given its proxy only here, when it starts: a change of the
-/// proxy reaches fetchers started after it (requirement 19.12).
-pub(super) fn start_fetcher(
-    broker: &Arc<Broker>,
-    address: &str,
-    reach: &Reach,
-    channel: u32,
-    generation: u64,
-    events: Sender<Event>,
-) -> Result<Fetcher, String> {
-    let mut arguments = vec![address.to_owned()];
-    for ip in &reach.allow_local {
-        arguments.push(String::from("--allow-local"));
-        arguments.push(ip.clone());
-    }
-    if let Some(proxy) = &reach.proxy {
-        arguments.push(String::from("--proxy"));
-        arguments.push(proxy.clone());
-    }
-    let mut child = spawn(broker, Program::Fetcher, &arguments, !reach.allow_local.is_empty())?;
+/// proxy reaches fetchers started after it (requirement 19.12), and so
+/// does a change of whether a channel's tabs share a connection
+/// (REQ-6982).
+pub(super) fn start_fetcher(broker: &Arc<Broker>, key: FetcherKey, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
+    let local_network = key.arguments.iter().any(|argument| argument == "--allow-local");
+    let mut child = spawn(broker, Program::Fetcher, &key.arguments, local_network)?;
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
+    let input = child.stdin.take().map(Outbox::new);
+    let routes = Routes::default();
+    let fetcher = Fetcher::first(child, Some(key), channel, generation, input, Arc::clone(&routes));
+    let heard = Arc::clone(&locked(&fetcher.process).heard);
+    let listened = Arc::clone(&routes);
     relay(
         output,
-        read_from_fetcher,
+        read_from_fetcher_for,
         events,
-        move |message| Event::Fetched(channel, generation, message),
-        move |end| Event::FetcherEnded(channel, generation, end),
+        move |(tab, message)| fetched_event(&listened, &heard, tab, message),
+        move |end| Event::FetcherProcessEnded(routes, end),
     );
-    let input = child.stdin.take().map(Outbox::new);
-    Ok(Fetcher::new(child, generation, input))
+    Ok(fetcher)
 }
+
+/// A channel and a generation no place has, for a message that is not to
+/// be listened to: channels are numbered from 1.
+const NO_PLACE: (u32, u64) = (0, 0);
+
+/// The event of a fetcher process's `message` naming `tab`: the event of
+/// the tab's place when the trusted core added that tab and has not
+/// removed it. The process's own word that it is confined is noted here,
+/// for all its tabs. Anything else, a message of a tab that left or one
+/// never added, becomes an event of no place, which nothing listens to
+/// (REQ-6980).
+fn fetched_event(routes: &Routes, heard: &AtomicBool, tab: u32, message: FromFetcher) -> Event {
+    if tab == protocol::fetcher::PROCESS_TAB && message == FromFetcher::Confined {
+        heard.store(true, Ordering::Release);
+    }
+    let (channel, generation) = locked(routes).get(&tab).copied().unwrap_or(NO_PLACE);
+    Event::Fetched(channel, generation, message)
+}
+
+/// The places of the tabs a fetcher process that ended was serving: each
+/// tab's channel and generation.
+pub(super) fn places(routes: &Routes) -> Vec<(u32, u64)> {
+    locked(routes).values().copied().collect()
+}
+
+/// The routes of a fetcher process that serves tabs at `places`, each a
+/// channel and a generation, as a test says one ended.
+#[cfg(test)]
+pub(super) fn places_of(places: &[(u32, u64)]) -> FetcherRoutes {
+    Arc::new(Mutex::new((1..).zip(places.iter().copied()).collect()))
+}
+
+/// As [`Routes`], for the event that says a fetcher process ended.
+pub(super) type FetcherRoutes = Routes;
 
 /// A snapshot drawn by a snapshot decoder (REQ-6885): the sub-code drawn,
 /// its image, and its source with concealed text blanked, untrusted until
@@ -713,5 +934,124 @@ mod tests {
         assert_eq!(reach.allow_local, ["192.168.0.9", "10.0.0.2"]);
         assert_eq!(reach.proxy.as_deref(), Some("http://p.example:3128"));
         assert_eq!(Reach::of(&[], &Settings::default()).proxy, None);
+    }
+
+    /// What a test reads of what was written to a fetcher process's pipe.
+    #[derive(Clone)]
+    struct Kept(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Kept {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            locked(&self.0).extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Every message written to a fetcher process so far, with its tab.
+    fn written(kept: &Kept) -> Vec<(u32, ToFetcher)> {
+        // The outbox's own thread writes: what was flushed arrives soon.
+        thread::sleep(Duration::from_millis(100));
+        let bytes = locked(&kept.0).clone();
+        let mut input = bytes.as_slice();
+        let mut messages = Vec::new();
+        while let Some(message) = protocol::fetcher::read_to_fetcher_for(&mut input).unwrap() {
+            messages.push(message);
+        }
+        messages
+    }
+
+    /// REQ-6980: each tab's place in a fetcher process writes on the one
+    /// pipe under its own tab number, which is never the process's own and
+    /// never used twice; joining says "tab opens" and leaving "tab
+    /// leaves"; and the process is ended with its last tab. Before, a
+    /// fetcher's pipe carried one tab's messages, unnamed.
+    #[cfg(unix)]
+    #[test]
+    fn each_place_in_a_fetcher_process_names_its_tab() {
+        use super::super::test_support::{ended_soon, sleeping_helper};
+        let (child, output) = sleeping_helper(confine::Role::Network);
+        let kept = Kept(Arc::default());
+        let reach = Reach { allow_local: Vec::new(), proxy: None, share_connections: true };
+        let key = FetcherKey::of("https://a.invalid/teletext/", false, &reach);
+        let mut first = Fetcher::first(child, Some(key.clone()), 5, 1, Some(Outbox::new(kept.clone())), Routes::default());
+        assert!(first.serves(&key));
+        assert!(!first.serves(&FetcherKey::of("https://a.invalid/teletext/", true, &reach)), "REQ-881: the private jar's tabs have a process of their own");
+        let mut second = first.join(6, 2);
+        assert_ne!(first.tab, second.tab);
+        assert!(first.tab != protocol::fetcher::PROCESS_TAB && second.tab != protocol::fetcher::PROCESS_TAB);
+        let (first_tab, second_tab) = (first.tab, second.tab);
+        write_to_fetcher(second.input().unwrap(), &ToFetcher::FetchPage { page: 0x200 }).unwrap();
+        write_to_fetcher(first.input().unwrap(), &ToFetcher::FetchContents).unwrap();
+        second.input().unwrap().flush().unwrap();
+        first.input().unwrap().flush().unwrap();
+        assert_eq!(
+            written(&kept),
+            [
+                (first_tab, ToFetcher::TabOpens),
+                (second_tab, ToFetcher::TabOpens),
+                (second_tab, ToFetcher::FetchPage { page: 0x200 }),
+                (first_tab, ToFetcher::FetchContents)
+            ]
+        );
+        // The routes are what the reader thread listens by.
+        let routes = Arc::clone(&locked(&first.process).routes);
+        assert_eq!(places(&routes), [(5, 1), (6, 2)]);
+
+        // The first tab leaves, with a last message not yet flushed: it
+        // goes before the leaving, and the process stays for the second.
+        write_to_fetcher(first.input().unwrap(), &ToFetcher::FetchPage { page: 0x100 }).unwrap();
+        first.stop();
+        assert_eq!(written(&kept)[4..], [(first_tab, ToFetcher::FetchPage { page: 0x100 }), (first_tab, ToFetcher::TabLeaves)]);
+        assert_eq!(places(&routes), [(6, 2)]);
+        assert!(second.serves(&key), "the process still serves");
+        let third = second.join(7, 3);
+        assert!(third.tab != first_tab && third.tab != second_tab, "a number is never used twice");
+        third.stop();
+        second.stop();
+        assert_eq!(places(&routes), []);
+        assert!(ended_soon(output), "the last tab's leaving ends the process");
+    }
+
+    /// REQ-6980: a message from a fetcher process is listened to only for
+    /// a tab the trusted core added and has not removed, as that tab's own
+    /// place; a message of a tab that left, or of one never added, is of
+    /// no place. The process's own "confined" is heard for all its tabs.
+    #[test]
+    fn a_message_is_listened_to_only_for_a_tab_held() {
+        let routes = places_of(&[(5, 1), (6, 2)]);
+        let heard = AtomicBool::new(false);
+        let place = |tab: u32, message: FromFetcher| match fetched_event(&routes, &heard, tab, message) {
+            Event::Fetched(channel, generation, _) => (channel, generation),
+            _ => panic!("not a fetcher's message"),
+        };
+        assert_eq!(place(1, FromFetcher::Pushing(true)), (5, 1));
+        assert_eq!(place(2, FromFetcher::Pushing(true)), (6, 2));
+        assert_eq!(place(3, FromFetcher::Pushing(true)), NO_PLACE, "a tab never added");
+        locked(&routes).remove(&1);
+        assert_eq!(place(1, FromFetcher::Pushing(true)), NO_PLACE, "a tab that left");
+        // No tab's own word makes the process heard: only the process's.
+        assert_eq!(place(2, FromFetcher::Confined), (6, 2));
+        assert!(!heard.load(Ordering::Acquire));
+        assert_eq!(place(protocol::fetcher::PROCESS_TAB, FromFetcher::Confined), NO_PLACE);
+        assert!(heard.load(Ordering::Acquire));
+    }
+
+    /// REQ-6982, requirement 19.10: a fetcher is started with `--no-http3`
+    /// exactly when sharing is off or a proxy is set.
+    #[test]
+    fn a_fetcher_may_share_exactly_when_the_setting_is_on_and_no_proxy_is_set() {
+        let reach = |share_connections: bool, proxy: Option<&str>| Reach { allow_local: Vec::new(), proxy: proxy.map(str::to_owned), share_connections };
+        let key = |address: &str, reach: &Reach| FetcherKey::of(address, false, reach);
+        let shared = key("https://a.example/teletext/", &reach(true, None));
+        assert_eq!(shared.arguments, ["https://a.example/teletext/"]);
+        let separate = key("https://a.example/teletext/", &reach(false, None));
+        assert_eq!(separate.arguments, ["https://a.example/teletext/", "--no-http3"]);
+        let proxied = key("https://a.example/teletext/", &reach(true, Some("http://p.example:3128")));
+        assert_eq!(proxied.arguments[1..], ["--proxy", "http://p.example:3128", "--no-http3"], "nothing goes direct");
+        assert_ne!(shared, separate, "a tab opened after the setting changed joins no process started before it");
     }
 }

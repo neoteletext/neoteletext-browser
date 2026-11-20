@@ -16,6 +16,11 @@ pub struct Arguments {
     /// In snapshot mode, the page and the sub-code to fetch as a stranger
     /// would (REQ-6884): `--snapshot <PPP> <SSSS>`.
     pub snapshot: Option<(u16, u16)>,
+    /// Whether the channel's tabs may share one HTTP/3 connection
+    /// (neoteletext-common's DEC-6979): false with `--no-http3`, the
+    /// setting that turns sharing off (REQ-6982), and whenever a proxy is
+    /// given, since QUIC would go direct (requirement 19.10).
+    pub http3: bool,
 }
 
 /// The digits of a page number and of a sub-code on the command line.
@@ -46,15 +51,21 @@ fn snapshot_place(page: &str, sub: &str) -> Result<(u16, u16), String> {
 }
 
 /// Reads the fetcher's arguments, `<channel address> [--snapshot <PPP>
-/// <SSSS>] [--allow-local <ip>]... [--proxy <url>]`.
+/// <SSSS>] [--allow-local <ip>]... [--proxy <url>] [--no-http3]`.
 ///
 /// # Errors
 /// The usage or what is wrong, when the arguments are not these.
 pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, String> {
     let mut given = given.into_iter();
-    let channel = given.next().ok_or("usage: neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>] [--allow-local <ip>]... [--proxy <url>]")?;
-    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None, snapshot: None };
+    let channel =
+        given.next().ok_or("usage: neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>] [--allow-local <ip>]... [--proxy <url>] [--no-http3]")?;
+    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None, snapshot: None, http3: true };
     while let Some(argument) = given.next() {
+        // The one argument without a value, once.
+        if argument == "--no-http3" && read.http3 {
+            read.http3 = false;
+            continue;
+        }
         let value = given.next().ok_or_else(|| format!("{argument} needs a value"))?;
         match argument.as_str() {
             "--snapshot" if read.snapshot.is_none() => {
@@ -66,6 +77,7 @@ pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, S
             _ => return Err(format!("{argument}: not understood")),
         }
     }
+    read.http3 &= read.proxy.is_none();
     Ok(read)
 }
 
@@ -91,6 +103,20 @@ mod tests {
         assert!(read(&["https://a.example/", "--proxy"]).is_err());
         assert!(read(&["https://a.example/", "--proxy", "http://p:1", "--proxy", "http://q:1"]).is_err(), "one proxy");
         assert!(read(&[]).is_err());
+    }
+
+    /// REQ-6982, DEC-6979 items 3 and 8: `--no-http3` turns the shared
+    /// HTTP/3 connection off, once, and so does a proxy, through which
+    /// QUIC cannot go (requirement 19.10).
+    #[test]
+    fn http3_is_off_with_its_argument_or_a_proxy() {
+        assert!(read(&["https://a.example/"]).unwrap().http3);
+        assert!(read(&["https://a.example/", "--allow-local", "10.0.0.2"]).unwrap().http3);
+        assert!(!read(&["https://a.example/", "--no-http3"]).unwrap().http3);
+        assert!(!read(&["https://a.example/", "--allow-local", "10.0.0.2", "--no-http3"]).unwrap().http3);
+        assert!(!read(&["https://a.example/", "--proxy", "http://p.example:3128"]).unwrap().http3, "nothing goes direct");
+        assert!(read(&["https://a.example/", "--no-http3", "--no-http3"]).is_err(), "once");
+        assert!(read(&["https://a.example/", "--no-http3=1"]).is_err());
     }
 
     /// REQ-6884: `--snapshot <PPP> <SSSS>` is read strictly: three

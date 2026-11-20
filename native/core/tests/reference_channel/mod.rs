@@ -14,7 +14,7 @@ use neoteletext_input::caps::SELECT_CAP;
 use neoteletext_input::control::{Control, FRAGMENT_DATA, from_packet};
 use neoteletext_input::event::Item;
 use neoteletext_input::session::Session;
-use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher, write_to_fetcher};
+use protocol::fetcher::{FromFetcher, Origin, ToFetcher, read_from_fetcher_for, write_to_fetcher_for};
 
 mod site;
 #[allow(unused_imports, reason = "each test uses part of this")]
@@ -39,10 +39,14 @@ pub fn alone(bytes: Vec<u8>) -> ToFetcher {
     ToFetcher::Send { bytes, move_of: None, more: false }
 }
 
+/// The number of the one tab each test's fetcher process serves: every
+/// message on its pipes names its tab (REQ-6980).
+pub const TAB: u32 = 1;
+
 pub fn send(input: &Input, message: &ToFetcher) {
     let mut input = input.lock().unwrap();
     let input = input.as_mut().expect("the fetcher's input is open");
-    write_to_fetcher(&mut *input, message).unwrap();
+    write_to_fetcher_for(&mut *input, TAB, message).unwrap();
     input.flush().unwrap();
 }
 
@@ -108,9 +112,14 @@ impl Tab {
         let output = fetcher.stdout.take().unwrap();
         let (sender, received) = mpsc::channel();
         let answering = Arc::clone(&input);
+        // The process serves this one tab, added as the trusted core adds
+        // one (REQ-6980).
+        send(&input, &ToFetcher::TabOpens);
         std::thread::spawn(move || {
             let mut output = BufReader::new(output);
-            while let Ok(Some(message)) = read_from_fetcher(&mut output) {
+            // The process's own word that it is confined, and the tab's
+            // messages, are passed on alike.
+            while let Ok(Some((_, message))) = read_from_fetcher_for(&mut output) {
                 // The reference channel asks no state: a challenge, were one
                 // to come, is answered as a stateless client answers
                 // (VS-204).
@@ -147,7 +156,7 @@ impl Tab {
     /// reads the two together, as it does for a tab's last SELECT.
     pub fn send_and_close(&self, message: &ToFetcher) {
         let mut input = self.input.lock().unwrap();
-        write_to_fetcher(input.as_mut().expect("the fetcher's input is open"), message).unwrap();
+        write_to_fetcher_for(input.as_mut().expect("the fetcher's input is open"), TAB, message).unwrap();
         *input = None;
     }
 

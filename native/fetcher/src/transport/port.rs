@@ -99,3 +99,14 @@ impl Transport for Tcp {
         }
     }
 }
+
+impl Drop for Tcp {
+    /// A tab that leaves its process closes its connections (REQ-6980):
+    /// their threads end with them, where once the process's end ended
+    /// them.
+    fn drop(&mut self) {
+        for connection in ConnectionId::ALL {
+            self.close(connection);
+        }
+    }
+}

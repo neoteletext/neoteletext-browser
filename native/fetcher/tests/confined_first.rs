@@ -15,7 +15,7 @@ use std::io::BufReader;
 use std::path::Path;
 
 use confine::{Role, Spawn};
-use protocol::fetcher::{FromFetcher, read_from_fetcher};
+use protocol::fetcher::{FromFetcher, PROCESS_TAB, read_from_fetcher_for};
 
 /// A channel that cannot be reached: `.invalid` is never a host (RFC 6761
 /// section 6.4), so nothing the fetcher could say of it comes first.
@@ -35,8 +35,8 @@ fn a_fetcher_says_it_is_confined_before_it_opens_its_channel() {
     // is read until it comes or the fetcher ends, with no deadline.
     drop(process.stdin.take());
     let output = process.stdout.take().unwrap();
-    let first = read_from_fetcher(&mut BufReader::new(output)).map_err(|error| error.to_string());
+    let first = read_from_fetcher_for(&mut BufReader::new(output)).map_err(|error| error.to_string());
     let _ = process.kill();
     let _ = process.wait();
-    assert_eq!(first, Ok(Some(FromFetcher::Confined)), "its first message, before anything of its channel");
+    assert_eq!(first, Ok(Some((PROCESS_TAB, FromFetcher::Confined))), "its first message, the process's own, before anything of its channel");
 }

@@ -5,7 +5,8 @@ use std::io::{self, Read, Write};
 
 use crate::{MAX_PAYLOAD, ProtocolError};
 
-const HEADER_BYTES: usize = 5;
+/// The bytes before a payload: its kind, then its length.
+pub(crate) const HEADER_BYTES: usize = 5;
 
 pub(crate) fn write_frame(out: &mut dyn Write, kind: u8, payload: &[u8]) -> Result<(), ProtocolError> {
     if payload.len() > MAX_PAYLOAD {

@@ -110,7 +110,9 @@ enum Event {
     Fetched(u32, u64, FromFetcher),
     /// What opens from outside, from the broker.
     Opening(confine::broker::Opening),
-    FetcherEnded(u32, u64, Option<String>),
+    /// A fetcher process ended or broke its protocol, and why: every tab it
+    /// was serving hears it (REQ-6980).
+    FetcherProcessEnded(processes::FetcherRoutes, Option<String>),
     DecoderEnded(u32, u64, Option<String>),
     Intent(ToCore),
     /// The interface's frames, with when its reader read them from the

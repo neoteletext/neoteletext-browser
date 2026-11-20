@@ -7,7 +7,10 @@
 //! trusted core on standard output.
 //!
 //! Usage: `neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>]
-//! [--allow-local <ip>]... [--proxy <url>]`; with `--snapshot` it fetches
+//! [--allow-local <ip>]... [--proxy <url>] [--no-http3]`; one process serves
+//! every tab of its channel in one jar that the trusted core adds to it,
+//! each message on its pipes naming its tab (REQ-6980), and `--no-http3`
+//! keeps every tab's push connection on HTTP/1.1 (REQ-6982); with `--snapshot` it fetches
 //! one page as a stranger would and speaks only `protocol::snapshot`
 //! (REQ-6884). A server on this computer or the local network is
 //! refused unless named with `--allow-local` (the engine's REQ-SEC-006).
@@ -57,7 +60,7 @@ fn main() -> ExitCode {
     // only protocol::snapshot (REQ-6884).
     let ran = match read.snapshot {
         Some((page, sub)) => snapshot(&read.channel, page, sub, &read.allowed, read.proxy),
-        None => run(&read.channel, &read.allowed, read.proxy),
+        None => run(&read.channel, &read.allowed, read.proxy, read.http3),
     };
     match ran {
         Ok(()) => ExitCode::SUCCESS,

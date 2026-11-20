@@ -252,8 +252,12 @@ pub(super) fn sent_to_fetcher(core: &mut Core, channel: u32, written: &mpsc::Rec
     }
     let mut input = bytes.as_slice();
     let mut messages = Vec::new();
-    while let Some(message) = protocol::fetcher::read_to_fetcher(&mut input).unwrap() {
-        messages.push(message);
+    // Each names the tab's place in its process (REQ-6980); the tab's
+    // joining the process is not one of the messages a test asks after.
+    while let Some((_, message)) = protocol::fetcher::read_to_fetcher_for(&mut input).unwrap() {
+        if message != ToFetcher::TabOpens {
+            messages.push(message);
+        }
     }
     messages
 }
