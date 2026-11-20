@@ -117,9 +117,16 @@ impl Fetcher {
         let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-fetcher"));
         let arguments = [OsString::from(format!("http://127.0.0.1:{port}/")), OsString::from("--allow-local"), OsString::from("127.0.0.1")];
         let environment = confine::environment(Role::Network);
-        let mut process =
-            confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Network, environment: &environment, local_network: true, writable: None })
-                .unwrap();
+        let mut process = confine::spawn(&Spawn {
+            program,
+            arguments: &arguments,
+            role: Role::Network,
+            environment: &environment,
+            local_network: true,
+            udp_port: None,
+            writable: None,
+        })
+        .unwrap();
         let output: Box<dyn Read> = Box::new(process.stdout.take().unwrap());
         let output = BufReader::new(output);
         let mut fetcher = Self { process, output };

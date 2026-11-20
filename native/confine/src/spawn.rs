@@ -26,6 +26,11 @@ pub struct Spawn<'a> {
     /// Whether a network helper may reach the local network, which the
     /// user allowed (requirement 5.10).
     pub local_network: bool,
+    /// The one UDP port a fetcher may reach, at any address its other
+    /// rules allow: its channel's own, for its tabs' shared HTTP/3
+    /// connection (REQ-6981, neoteletext-common's DEC-6979 item 6). None
+    /// for every other helper, and for a fetcher that shares nothing.
+    pub udp_port: Option<u16>,
     /// The one folder it may write: the trusted core's settings.
     pub writable: Option<&'a Path>,
 }

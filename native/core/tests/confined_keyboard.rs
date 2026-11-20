@@ -54,6 +54,7 @@ fn the_keyboard_reaches_its_relay_confined() {
         role: Role::Network,
         environment: &environment,
         local_network: false,
+        udp_port: None,
         writable: None,
     })
     .unwrap();

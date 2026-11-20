@@ -22,9 +22,16 @@ fn a_decoder_says_it_is_confined_before_it_reads_anything() {
     let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-decoder"));
     let arguments = [OsString::from("--store-pages"), OsString::from(FIRST_STORE_PAGES.to_string())];
     let environment = confine::environment(Role::Decoder);
-    let mut process =
-        confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = confine::spawn(&Spawn {
+        program,
+        arguments: &arguments,
+        role: Role::Decoder,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     // Its input ends at once, with no channel data: a decoder that read
     // before saying it is confined finds the end and ends having said
     // nothing, so its first message is read until it comes or the decoder

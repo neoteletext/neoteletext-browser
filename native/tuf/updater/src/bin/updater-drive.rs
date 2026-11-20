@@ -45,6 +45,7 @@ fn run() -> Result<(), String> {
         role,
         environment: &environment,
         local_network: false,
+        udp_port: None,
         writable: Some(&staging),
     })
     .map_err(|error| format!("cannot start the updater confined: {error}"))?;

@@ -37,9 +37,16 @@ fn converted(picture: &[u8]) -> Vec<FromDecoder> {
     let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-decoder"));
     let arguments = [OsString::from("--picture")];
     let environment = confine::environment(Role::Decoder);
-    let mut process =
-        confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = confine::spawn(&Spawn {
+        program,
+        arguments: &arguments,
+        role: Role::Decoder,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     eprintln!("decoder: {}", process.report);
     let mut input = process.stdin.take().unwrap();
     write_to_decoder(&mut input, &ToDecoder::Picture(PictureChoice::default())).unwrap();

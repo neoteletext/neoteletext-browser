@@ -73,7 +73,7 @@ pub struct Core {
 /// When it cannot be started confined.
 pub fn start_core(program: &Path, arguments: &[OsString], writable: &Path, environment: &[(OsString, OsString)]) -> io::Result<Core> {
     let (process, channel) =
-        platform::start_core(&Spawn { program, arguments, role: Role::Core, environment, local_network: false, writable: Some(writable) })?;
+        platform::start_core(&Spawn { program, arguments, role: Role::Core, environment, local_network: false, udp_port: None, writable: Some(writable) })?;
     let report = process.report.clone();
     Ok(Core { process, channel, report })
 }
@@ -114,11 +114,11 @@ pub fn serve(mut core: Core, programs: &Path, handlers: &Handlers<'_>) -> io::Re
 /// Carries out one request and writes its reply.
 fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Handlers<'_>, request: Request) -> io::Result<()> {
     let reply = match request {
-        Request::Spawn { program, local_network, arguments } => {
+        Request::Spawn { program, local_network, udp_port, arguments } => {
             if helpers.alive.len() >= MAX_HELPERS {
                 Reply::Failed(String::from("too many helpers"))
             } else {
-                match start_helper(programs, program, local_network, &arguments, handlers) {
+                match start_helper(programs, program, (local_network, udp_port), &arguments, handlers) {
                     Ok(mut process) => {
                         let id = helpers.next;
                         helpers.next = helpers.next.wrapping_add(1).max(1);
@@ -234,14 +234,25 @@ pub(crate) fn hear_declarations(mut channel: Channel, declared: Arc<dyn Fn(Decla
 }
 
 /// Starts one of the browser's own helpers, beside the broker.
-fn start_helper(programs: &Path, program: Program, local_network: bool, arguments: &[String], handlers: &Handlers<'_>) -> io::Result<Process> {
+fn start_helper(
+    programs: &Path,
+    program: Program,
+    (local_network, udp_port): (bool, Option<u16>),
+    arguments: &[String],
+    handlers: &Handlers<'_>,
+) -> io::Result<Process> {
+    // A UDP port is a fetcher's alone (REQ-6981): the request's reader
+    // refused any other, and so does the broker's own start.
+    if !super::wire::udp_allowed(program, udp_port) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "a UDP port is a fetcher's alone"));
+    }
     let path: PathBuf = programs.join(program.file_name());
     // The updater's folder and port are the broker's rules', from where it
     // is installed and the proxy the core names, never the core's word.
     let grant = if program == Program::Updater { Some((handlers.updater)(arguments).map_err(io::Error::other)?) } else { None };
     let role = grant.as_ref().map_or(program.role(), |grant| Role::Updater { port: grant.port });
     let writable = grant.as_ref().map(|grant| grant.staging.as_path());
-    start_confined(&path, role, local_network, arguments, &(handlers.environment)(role), writable)
+    start_confined(&path, role, (local_network, udp_port), arguments, &(handlers.environment)(role), writable)
 }
 
 /// Starts the program at `path` confined as `role`, with `arguments` as the
@@ -250,13 +261,13 @@ fn start_helper(programs: &Path, program: Program, local_network: bool, argument
 pub(crate) fn start_confined(
     path: &Path,
     role: Role,
-    local_network: bool,
+    (local_network, udp_port): (bool, Option<u16>),
     arguments: &[String],
     environment: &[(OsString, OsString)],
     writable: Option<&Path>,
 ) -> io::Result<Process> {
     let arguments: Vec<OsString> = arguments.iter().map(OsString::from).collect();
-    crate::spawn(&Spawn { program: path, arguments: &arguments, role, environment, local_network, writable })
+    crate::spawn(&Spawn { program: path, arguments: &arguments, role, environment, local_network, udp_port, writable })
 }
 
 /// Sends the core a started helper's number, with its two pipes.

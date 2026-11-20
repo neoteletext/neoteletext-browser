@@ -267,7 +267,7 @@ fn decoder_messages(helper: &Started, bytes: &[u8]) -> Vec<ToDecoder> {
 /// interface's intent, with the arguments the core gives it.
 fn check_starts(core: &Core, requests: &[Request], described: &str) {
     for request in requests {
-        let Request::Spawn { program, local_network, arguments } = request else { continue };
+        let Request::Spawn { program, local_network, udp_port, arguments } = request else { continue };
         match program {
             // Each is started once, as the browser starts.
             Program::Interface | Program::Sound => panic!("{described} started the {}", program.name()),
@@ -281,6 +281,7 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
                 };
                 assert!(store, "{described} started a decoder with {arguments:?}");
                 assert!(!local_network, "{described} let a decoder reach the local network");
+                assert_eq!(*udp_port, None, "{described} gave a decoder a UDP port");
             }
             // REQ-687's fifth exception: a snapshot only of the place a tab
             // of a window that is not private shows, taken from the core's
@@ -293,6 +294,7 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
                 });
                 assert!(asked && core.settings.tab_pictures, "{described} started a snapshot fetcher with {arguments:?}, which no tab's place is");
                 assert_eq!(*local_network, arguments.iter().any(|argument| argument == "--allow-local"), "{described}: a snapshot fetcher's local network");
+                assert_eq!(*udp_port, None, "{described} gave a snapshot fetcher a UDP port");
             }
             Program::Fetcher => {
                 let address = arguments.first().map(String::as_str).unwrap_or_default();
@@ -305,8 +307,13 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
                     arguments.iter().any(|argument| argument == "--allow-local"),
                     "{described}: a fetcher's local network as not asked for"
                 );
+                // REQ-6981: no UDP port but its own channel's, and none
+                // with sharing off or through a proxy.
+                let own = neoteletext_web::url::Url::parse(address).ok().filter(neoteletext_web::url::Url::is_secure).map(|url| url.port());
+                let shares = !arguments.iter().any(|argument| argument == "--no-http3" || argument == "--proxy");
+                assert_eq!(*udp_port, own.filter(|_| shares), "{described}: a fetcher's UDP port");
             }
-            Program::Keyboard | Program::Updater => {}
+            Program::Keyboard | Program::Updater => assert_eq!(*udp_port, None, "{described} gave the {} a UDP port", program.name()),
         }
     }
 }

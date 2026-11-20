@@ -57,14 +57,15 @@ pub(super) struct Fetcher {
 
 /// What decides which fetcher process serves a tab (REQ-6980): the jar,
 /// and everything the process is started with, which is the channel's
-/// address, the local addresses it may reach, the proxy, and whether its
-/// tabs may share a connection (REQ-6982). Tabs that differ in any are
-/// served by different processes.
+/// address, the local addresses it may reach, the proxy, whether its tabs
+/// may share a connection (REQ-6982), and the UDP port its sandbox allows
+/// (REQ-6981). Tabs that differ in any are served by different processes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FetcherKey {
     /// The tab is private: the private jar's (REQ-881).
     private: bool,
     arguments: Vec<String>,
+    udp_port: Option<u16>,
 }
 
 impl FetcherKey {
@@ -82,11 +83,11 @@ impl FetcherKey {
         }
         // With sharing off, or a proxy, through which QUIC cannot go
         // (requirement 19.10), the fetcher is told to keep every tab on
-        // HTTP/1.1 (REQ-6982).
+        // HTTP/1.1, and its sandbox is given no UDP (REQ-6982, REQ-6981).
         if !reach.shares() {
             arguments.push(String::from("--no-http3"));
         }
-        Self { private, arguments }
+        Self { private, arguments, udp_port: reach.udp_port(address) }
     }
 }
 
@@ -361,6 +362,19 @@ impl Reach {
     fn shares(&self) -> bool {
         self.share_connections && self.proxy.is_none()
     }
+
+    /// The UDP port the fetcher of the channel at `address` may reach, for
+    /// its tabs' shared HTTP/3 connection (REQ-6981): the channel's own
+    /// port, 443 when its address names none, and none at all when sharing
+    /// is off (REQ-6982), when a proxy is set, since nothing goes direct
+    /// (requirement 19.10), or when the channel is not served over TLS,
+    /// which QUIC always is.
+    fn udp_port(&self, address: &str) -> Option<u16> {
+        if !self.shares() {
+            return None;
+        }
+        neoteletext_web::url::Url::parse(address).ok().filter(neoteletext_web::url::Url::is_secure).map(|url| url.port())
+    }
 }
 
 /// Asks the broker for a helper (decision 56): it starts it confined as
@@ -580,7 +594,10 @@ fn convert_picture_with(
 /// (REQ-6982).
 pub(super) fn start_fetcher(broker: &Arc<Broker>, key: FetcherKey, channel: u32, generation: u64, events: Sender<Event>) -> Result<Fetcher, String> {
     let local_network = key.arguments.iter().any(|argument| argument == "--allow-local");
-    let mut child = spawn(broker, Program::Fetcher, &key.arguments, local_network)?;
+    // Its sandbox allows UDP to its channel's port alone, and only when
+    // its tabs may share a connection (REQ-6981).
+    let mut child = broker.spawn_fetcher(&key.arguments, local_network, key.udp_port).map_err(|error| format!("cannot start the fetcher: {error}"))?;
+    eprintln!("neoteletext: the fetcher started confined: {}", child.report);
     let output = child.stdout.take().ok_or("the fetcher has no output")?;
     let input = child.stdin.take().map(Outbox::new);
     let routes = Routes::default();
@@ -888,8 +905,15 @@ mod tests {
         const DEADLINE: Duration = Duration::from_millis(200);
         let program = std::path::PathBuf::from("/bin/sleep");
         let arguments = [std::ffi::OsString::from("60")];
-        let spawn =
-            confine::Spawn { program: &program, arguments: &arguments, role: confine::Role::Decoder, environment: &[], local_network: false, writable: None };
+        let spawn = confine::Spawn {
+            program: &program,
+            arguments: &arguments,
+            role: confine::Role::Decoder,
+            environment: &[],
+            local_network: false,
+            udp_port: None,
+            writable: None,
+        };
         let child = Helper::local(confine::spawn(&spawn).unwrap());
         let (events, incoming) = mpsc::channel();
         read_bookmarks_with(child, b"<!DOCTYPE NETSCAPE-Bookmark-file-1>".to_vec(), events, DEADLINE).unwrap();
@@ -1040,18 +1064,25 @@ mod tests {
         assert!(heard.load(Ordering::Acquire));
     }
 
-    /// REQ-6982, requirement 19.10: a fetcher is started with `--no-http3`
-    /// exactly when sharing is off or a proxy is set.
+    /// REQ-6982, REQ-6981, requirement 19.10: a fetcher is started with
+    /// `--no-http3`, and its sandbox given no UDP port, exactly when
+    /// sharing is off or a proxy is set; with sharing on, the port is the
+    /// channel's own, 443 when its address names none, and only for a
+    /// channel served over TLS.
     #[test]
     fn a_fetcher_may_share_exactly_when_the_setting_is_on_and_no_proxy_is_set() {
         let reach = |share_connections: bool, proxy: Option<&str>| Reach { allow_local: Vec::new(), proxy: proxy.map(str::to_owned), share_connections };
         let key = |address: &str, reach: &Reach| FetcherKey::of(address, false, reach);
         let shared = key("https://a.example/teletext/", &reach(true, None));
-        assert_eq!(shared.arguments, ["https://a.example/teletext/"]);
+        assert_eq!((shared.arguments.as_slice(), shared.udp_port), (["https://a.example/teletext/".to_owned()].as_slice(), Some(443)));
+        assert_eq!(key("https://a.example:8443/teletext/", &reach(true, None)).udp_port, Some(8443));
+        let plain = key("http://a.example/teletext/", &reach(true, None));
+        assert_eq!((plain.arguments.len(), plain.udp_port), (1, None), "QUIC is always TLS: a plain channel is given no UDP");
         let separate = key("https://a.example/teletext/", &reach(false, None));
-        assert_eq!(separate.arguments, ["https://a.example/teletext/", "--no-http3"]);
+        assert_eq!((separate.arguments.last().map(String::as_str), separate.udp_port), (Some("--no-http3"), None));
         let proxied = key("https://a.example/teletext/", &reach(true, Some("http://p.example:3128")));
         assert_eq!(proxied.arguments[1..], ["--proxy", "http://p.example:3128", "--no-http3"], "nothing goes direct");
+        assert_eq!(proxied.udp_port, None);
         assert_ne!(shared, separate, "a tab opened after the setting changed joins no process started before it");
     }
 }

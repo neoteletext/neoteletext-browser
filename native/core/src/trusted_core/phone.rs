@@ -223,6 +223,7 @@ mod tests {
                 role: confine::Role::Network,
                 environment: &[],
                 local_network: false,
+                udp_port: None,
                 writable: None,
             })
             .unwrap(),

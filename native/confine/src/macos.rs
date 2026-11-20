@@ -119,8 +119,9 @@ fn preamble(program: &str) -> String {
 
 /// The profile for `program` as `role` says, with the parameters its paths
 /// are passed as; `writable` is the core's settings folder, and
-/// `local_network` whether a fetcher may reach this computer.
-fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: bool) -> Result<(String, Parameters), String> {
+/// `local_network` whether a fetcher may reach this computer, and
+/// `udp_port` the one UDP port a fetcher may reach (REQ-6981).
+fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: bool, udp_port: Option<u16>) -> Result<(String, Parameters), String> {
     let mut parameters = Parameters::default();
     let mut profile = preamble(&parameters.path("PROGRAM", program));
     match role {
@@ -129,6 +130,15 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
         // opendirectoryd's libinfo, with the hosts file.
         Role::Network => {
             profile.push_str(RESOLVER);
+            // The shared HTTP/3 connection of a fetcher's channel runs
+            // over QUIC, so over UDP: to the channel's own port and no
+            // other (REQ-6981, neoteletext-common's DEC-6979 item 6). The
+            // port is a number the broker formats, never text of the
+            // channel's. Before the refusal of this computer below, which
+            // therefore holds for UDP as for TCP.
+            if let Some(port) = udp_port {
+                let _ = writeln!(profile, "(allow network-outbound (remote udp \"*:{port}\"))");
+            }
             // A fetcher's refusal of this computer's addresses, when the
             // user has not allowed the local network (decision 89,
             // requirement 5.10): after the allowing of TCP, and the later
@@ -256,7 +266,7 @@ pub(crate) fn apply() -> Report {
 /// The command that runs the helper under its profile, each path a `-D`
 /// parameter (finding F-51).
 pub(crate) fn command(spawn: &Spawn<'_>) -> Result<Command, String> {
-    let (profile, parameters) = profile(spawn.program, spawn.role, spawn.writable, spawn.local_network)?;
+    let (profile, parameters) = profile(spawn.program, spawn.role, spawn.writable, spawn.local_network, spawn.udp_port)?;
     let mut command = Command::new("/usr/bin/sandbox-exec");
     command.arg("-p").arg(profile);
     for (name, value) in parameters.values {
@@ -278,7 +288,7 @@ mod tests {
     fn profiles_start_from_nothing_and_give_the_network_only_to_fetchers() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder");
         for role in [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound] {
-            let (profile, parameters) = profile(program, role, None, false).unwrap();
+            let (profile, parameters) = profile(program, role, None, false, None).unwrap();
             assert!(profile.starts_with("(version 1)\n(deny default)\n(import \"system.sb\")\n"), "{role:?}");
             assert!(profile.contains("(allow process-exec (literal (param \"PROGRAM\")))"), "{role:?}");
             assert_eq!(parameters.values.first().map(|(name, path)| (name.as_str(), path.as_path())), Some(("PROGRAM", program)), "{role:?}");
@@ -286,14 +296,14 @@ mod tests {
             assert_eq!(profile.contains("(system-network)"), role == Role::Network, "{role:?}");
             assert!(!profile.contains("(allow default)"));
         }
-        assert!(!profile(program, Role::Decoder, None, false).unwrap().0.contains("mach-lookup"), "a decoder looks nothing up");
-        assert!(!profile(program, Role::Core, None, false).unwrap().0.contains("mach-lookup"), "nor does the core");
-        assert!(!profile(program, Role::Interface, None, false).unwrap().0.contains("audio"), "sound is the sound helper's");
+        assert!(!profile(program, Role::Decoder, None, false, None).unwrap().0.contains("mach-lookup"), "a decoder looks nothing up");
+        assert!(!profile(program, Role::Core, None, false, None).unwrap().0.contains("mach-lookup"), "nor does the core");
+        assert!(!profile(program, Role::Interface, None, false, None).unwrap().0.contains("audio"), "sound is the sound helper's");
         assert!(
-            profile(program, Role::Interface, None, false).unwrap().0.contains("(global-name \"com.apple.windowmanager.server\")"),
+            profile(program, Role::Interface, None, false, None).unwrap().0.contains("(global-name \"com.apple.windowmanager.server\")"),
             "without it the window never reaches the screen"
         );
-        let (core, parameters) = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")), false).unwrap();
+        let (core, parameters) = profile(program, Role::Core, Some(Path::new("/Users/someone/Library/Application Support/NeoTeletext")), false, None).unwrap();
         assert!(core.contains("(allow file-read* file-write* (subpath (param \"WRITABLE\")))"));
         assert_eq!(
             parameters.values.iter().find(|(name, _)| name == "WRITABLE").map(|(_, path)| path.as_path()),
@@ -307,7 +317,7 @@ mod tests {
     #[test]
     fn a_crafted_path_stays_a_parameter() {
         let program = Path::new("/tmp/x\")(allow default)(\"/neoteletext-decoder");
-        let (profile, parameters) = profile(program, Role::Decoder, None, false).unwrap();
+        let (profile, parameters) = profile(program, Role::Decoder, None, false, None).unwrap();
         assert!(!profile.contains("allow default"), "the path reached the profile: {profile}");
         assert!(profile.contains("(literal (param \"PROGRAM\"))"));
         assert_eq!(parameters.values.first().map(|(_, path)| path.as_path()), Some(program));
@@ -321,7 +331,7 @@ mod tests {
     fn the_system_reads_name_only_this_user_s_folders() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-interface");
         for role in [Role::Interface, Role::Sound] {
-            let (profile, parameters) = profile(program, role, None, false).unwrap();
+            let (profile, parameters) = profile(program, role, None, false, None).unwrap();
             assert!(!profile.contains("(subpath \"/private/var/folders\")"), "{role:?} still reads all of /private/var/folders: {profile}");
             assert!(profile.contains("(subpath (param \"USER_CACHE\")) (subpath (param \"USER_TEMP\"))"), "{role:?}: {profile}");
             for name in ["USER_CACHE", "USER_TEMP"] {
@@ -338,7 +348,7 @@ mod tests {
     fn the_interface_lists_its_own_folders_for_its_bundle() {
         let read = |parameters: &Parameters, name: &str| parameters.values.iter().find(|(parameter, _)| parameter == name).map(|(_, path)| path.clone());
         let bundled = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-interface");
-        let (rules, parameters) = profile(bundled, Role::Interface, None, false).unwrap();
+        let (rules, parameters) = profile(bundled, Role::Interface, None, false, None).unwrap();
         assert!(
             rules.contains(
                 "(allow file-read* (literal (param \"BUNDLE\")) (literal (param \"BUNDLE_CONTENTS\")) (literal (param \"BUNDLE_PROGRAMS\")) (literal (param \"BUNDLE_INFORMATION\")))"
@@ -351,12 +361,12 @@ mod tests {
         assert_eq!(read(&parameters, "BUNDLE_INFORMATION"), Some(PathBuf::from("/Applications/NeoTeletext.app/Contents/Info.plist")));
         assert!(!rules.contains("(subpath (param \"BUNDLE"), "listings, not the bundle's files");
         let built = Path::new("/Users/someone/neoteletext-browser/native/target/release/neoteletext-interface");
-        let (rules, parameters) = profile(built, Role::Interface, None, false).unwrap();
+        let (rules, parameters) = profile(built, Role::Interface, None, false, None).unwrap();
         assert!(rules.contains("(allow file-read* (literal (param \"PROGRAM_FOLDER\")))"), "{rules}");
         assert_eq!(read(&parameters, "PROGRAM_FOLDER"), Some(PathBuf::from("/Users/someone/neoteletext-browser/native/target/release")));
         assert!(!rules.contains("BUNDLE"), "not a bundle: {rules}");
         for role in [Role::Decoder, Role::Network, Role::Core, Role::Sound] {
-            let (rules, _) = profile(bundled, role, None, false).unwrap();
+            let (rules, _) = profile(bundled, role, None, false, None).unwrap();
             assert!(!rules.contains("BUNDLE") && !rules.contains("PROGRAM_FOLDER"), "{role:?}");
         }
     }
@@ -367,7 +377,7 @@ mod tests {
     fn the_updater_reaches_one_port_and_writes_only_its_staging_folder() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-updater");
         let staging = Path::new("/Users/someone/Library/Application Support/NeoTeletext Updates/staging");
-        let (updater, parameters) = profile(program, Role::Updater { port: 443 }, Some(staging), false).unwrap();
+        let (updater, parameters) = profile(program, Role::Updater { port: 443 }, Some(staging), false, None).unwrap();
         assert!(updater.starts_with("(version 1)\n(deny default)\n"));
         assert!(updater.contains("(remote tcp \"*:443\")"));
         assert!(!updater.contains("*:*"), "no other port");
@@ -384,7 +394,30 @@ mod tests {
     #[test]
     fn the_fetcher_denies_loopback_only_when_the_local_network_is_not_allowed() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-fetcher");
-        assert!(profile(program, Role::Network, None, false).unwrap().0.contains("(deny network-outbound (remote ip \"localhost:*\"))"));
-        assert!(!profile(program, Role::Network, None, true).unwrap().0.contains("localhost"));
+        assert!(profile(program, Role::Network, None, false, None).unwrap().0.contains("(deny network-outbound (remote ip \"localhost:*\"))"));
+        assert!(!profile(program, Role::Network, None, true, None).unwrap().0.contains("localhost"));
+    }
+
+    /// REQ-6981, neoteletext-common's DEC-6979 item 6: a fetcher given a
+    /// UDP port may send UDP to that port and no other, by one rule, which
+    /// comes before the refusal of this computer so that the refusal holds
+    /// for UDP too; a fetcher given none has no UDP rule, as before; and no
+    /// other role's profile changes with a port.
+    #[test]
+    fn a_fetcher_reaches_udp_only_at_the_port_it_is_given() {
+        let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-fetcher");
+        let without = profile(program, Role::Network, None, false, None).unwrap().0;
+        assert!(!without.contains("udp"), "no UDP rule without a port: {without}");
+        let with = profile(program, Role::Network, None, false, Some(8443)).unwrap().0;
+        let rule = "(allow network-outbound (remote udp \"*:8443\"))\n";
+        assert_eq!(with.matches("udp").count(), 1, "one UDP rule: {with}");
+        assert_eq!(with.replace(rule, ""), without, "the rule is all the profile gained");
+        let refusal = with.find("(deny network-outbound (remote ip \"localhost:*\"))").unwrap();
+        assert!(with.find(rule).unwrap() < refusal, "the later rule wins: this computer stays refused over UDP");
+        let local = profile(program, Role::Network, None, true, Some(443)).unwrap().0;
+        assert!(local.contains("(remote udp \"*:443\")") && !local.contains("localhost"));
+        for role in [Role::Decoder, Role::Interface, Role::Core, Role::Sound, Role::Updater { port: 443 }] {
+            assert_eq!(profile(program, role, None, false, Some(8443)).unwrap().0, profile(program, role, None, false, None).unwrap().0, "{role:?}");
+        }
     }
 }

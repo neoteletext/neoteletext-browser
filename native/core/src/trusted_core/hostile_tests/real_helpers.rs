@@ -485,8 +485,10 @@ fn helpers_started(requests: &[Request], addresses: &[String; 2]) -> Vec<(Progra
     let mut started = Vec::new();
     for request in requests {
         match request {
-            Request::Spawn { program: Program::Decoder, local_network: false, arguments } => started.push((Program::Decoder, arguments.clone())),
-            Request::Spawn { program: Program::Fetcher, local_network: true, arguments } => {
+            Request::Spawn { program: Program::Decoder, local_network: false, udp_port: None, arguments } => {
+                started.push((Program::Decoder, arguments.clone()));
+            }
+            Request::Spawn { program: Program::Fetcher, local_network: true, udp_port: None, arguments } => {
                 let place = addresses.iter().position(|address| arguments.first() == Some(address));
                 let place = place.unwrap_or_else(|| panic!("a fetcher for {arguments:?}, no channel's address"));
                 assert_eq!(arguments[1..], ["--allow-local", LOCAL], "a fetcher's reach");

@@ -31,8 +31,16 @@ fn a_tone_plays_through_the_confined_sound_helper() {
     let arguments: [OsString; 0] = [];
     let mut environment = confine::environment(Role::Sound);
     environment.push((OsString::from("NEOTELETEXT_AUDIO_TRACE"), OsString::from("1")));
-    let mut process =
-        confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Sound, environment: &environment, local_network: false, writable: None }).unwrap();
+    let mut process = confine::spawn(&Spawn {
+        program,
+        arguments: &arguments,
+        role: Role::Sound,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     eprintln!("sound helper: {}", process.report);
     let mut input = process.stdin.take().unwrap();
     let mut output = BufReader::new(process.stdout.take().unwrap());

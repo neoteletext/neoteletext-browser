@@ -43,6 +43,9 @@ pub enum Request {
         program: Program,
         /// May a network helper reach the local network.
         local_network: bool,
+        /// The one UDP port a fetcher may reach, its channel's own
+        /// (REQ-6981); no other program is given one.
+        udp_port: Option<u16>,
         /// Its arguments.
         arguments: Vec<String>,
     },
@@ -199,6 +202,21 @@ pub(crate) fn frame(kind: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// How a spawn request says no UDP port is allowed: port 0, which is no
+/// channel's (RFC 6335 section 6 reserves it).
+const NO_UDP_PORT: u16 = 0;
+
+/// Whether `program` may be given the UDP port `udp_port`: a fetcher may
+/// be given one, for its channel's shared connection (REQ-6981); no other
+/// program may, the phone keyboard, which shares the fetcher's role,
+/// among them; and port 0 names none.
+pub(crate) fn udp_allowed(program: Program, udp_port: Option<u16>) -> bool {
+    match udp_port {
+        None => true,
+        Some(port) => program == Program::Fetcher && port != NO_UDP_PORT,
+    }
+}
+
 /// A request as bytes.
 ///
 /// # Errors
@@ -206,12 +224,16 @@ pub(crate) fn frame(kind: u8, payload: &[u8]) -> io::Result<Vec<u8>> {
 pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match request {
-        Request::Spawn { program, local_network, arguments } => {
+        Request::Spawn { program, local_network, udp_port, arguments } => {
             if arguments.len() > MAX_ARGUMENTS {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "too many arguments"));
             }
+            if !udp_allowed(*program, *udp_port) {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "a UDP port is a fetcher's alone, and never port 0"));
+            }
             payload.push(program.code());
             payload.push(u8::from(*local_network));
+            payload.extend_from_slice(&udp_port.unwrap_or(NO_UDP_PORT).to_be_bytes());
             payload.extend_from_slice(&u16::try_from(arguments.len()).map_err(|_| io::ErrorKind::InvalidInput)?.to_be_bytes());
             for argument in arguments {
                 push_text(&mut payload, argument)?;
@@ -280,12 +302,16 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_SPAWN => {
             let program = Program::from_code(fields.u8()?).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no such program"))?;
             let local_network = fields.flag()?;
+            let udp_port = Some(fields.u16()?).filter(|&port| port != NO_UDP_PORT);
+            if !udp_allowed(program, udp_port) {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "a UDP port is a fetcher's alone"));
+            }
             let count = usize::from(fields.u16()?);
             if count > MAX_ARGUMENTS {
                 return Err(io::Error::new(io::ErrorKind::InvalidData, "too many arguments"));
             }
             let arguments = (0..count).map(|_| fields.text()).collect::<io::Result<Vec<_>>>()?;
-            Request::Spawn { program, local_network, arguments }
+            Request::Spawn { program, local_network, udp_port, arguments }
         }
         KIND_KILL => Request::Kill(fields.u32()?),
         KIND_WAIT => Request::Wait(fields.u32()?),
@@ -434,7 +460,8 @@ mod tests {
     #[test]
     fn every_request_and_reply_round_trips() {
         for request in [
-            Request::Spawn { program: Program::Fetcher, local_network: true, arguments: vec!["http://a.example/".into(), "--proxy".into()] },
+            Request::Spawn { program: Program::Fetcher, local_network: true, udp_port: None, arguments: vec!["http://a.example/".into(), "--proxy".into()] },
+            Request::Spawn { program: Program::Fetcher, local_network: false, udp_port: Some(443), arguments: vec!["https://a.example/".into()] },
             Request::Kill(7),
             Request::Wait(9),
             Request::ProcessorTime(u32::MAX),
@@ -444,7 +471,12 @@ mod tests {
             Request::ViewerKeysKey,
             Request::Healthy,
             Request::UpdateState,
-            Request::Spawn { program: Program::Updater, local_network: false, arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()] },
+            Request::Spawn {
+                program: Program::Updater,
+                local_network: false,
+                udp_port: None,
+                arguments: vec!["--proxy".into(), "http://proxy.example:3128".into()],
+            },
             Request::Choose { kind: ChooseKind::Folder, parent: "x11:4a".into(), keep: false },
             Request::Choose { kind: ChooseKind::SaveT42, parent: String::new(), keep: true },
             Request::ReadPicture("/home/a/photo.jpg".into()),
@@ -481,8 +513,10 @@ mod tests {
     #[test]
     fn a_request_holds_an_address_of_8000_octets() {
         let address = "a".repeat("neottx://".len() + 8_000);
-        for request in [Request::Spawn { program: Program::Fetcher, local_network: false, arguments: vec![address.clone()] }, Request::OpenWeb(address.clone())]
-        {
+        for request in [
+            Request::Spawn { program: Program::Fetcher, local_network: false, udp_port: None, arguments: vec![address.clone()] },
+            Request::OpenWeb(address.clone()),
+        ] {
             assert_eq!(round_trip(&request), request);
         }
     }
@@ -494,7 +528,24 @@ mod tests {
         assert!(decode_request(KIND_SPAWN, &[99, 0, 0, 0]).is_err(), "no such program");
         assert!(decode_request(KIND_SPAWN, &[1, 2, 0, 0]).is_err(), "a flag that is not one");
         let too_many = u16::try_from(MAX_ARGUMENTS + 1).unwrap().to_be_bytes();
-        assert!(decode_request(KIND_SPAWN, &[1, 0, too_many[0], too_many[1]]).is_err());
+        assert!(decode_request(KIND_SPAWN, &[1, 0, 0, 0, too_many[0], too_many[1]]).is_err());
+        // REQ-6981: a UDP port is a fetcher's alone. The decoder (1), the
+        // phone keyboard (4), which shares the fetcher's role, and the
+        // updater (6) are refused one, in the request's reader and its
+        // writer; a fetcher (2) is given it; and port 0 is none.
+        let [high, low] = 443_u16.to_be_bytes();
+        for other in [1, 3, 4, 5, 6] {
+            assert!(decode_request(KIND_SPAWN, &[other, 0, high, low, 0, 0]).is_err(), "program {other} with a UDP port");
+            assert!(decode_request(KIND_SPAWN, &[other, 0, 0, 0, 0, 0]).is_ok(), "program {other} without one");
+        }
+        assert_eq!(
+            decode_request(KIND_SPAWN, &[2, 0, high, low, 0, 0]).unwrap(),
+            Request::Spawn { program: Program::Fetcher, local_network: false, udp_port: Some(443), arguments: Vec::new() }
+        );
+        for program in [Program::Decoder, Program::Interface, Program::Keyboard, Program::Sound, Program::Updater] {
+            assert!(encode_request(&Request::Spawn { program, local_network: false, udp_port: Some(443), arguments: Vec::new() }).is_err(), "{program:?}");
+        }
+        assert!(encode_request(&Request::Spawn { program: Program::Fetcher, local_network: false, udp_port: Some(0), arguments: Vec::new() }).is_err());
         assert!(decode_request(KIND_KILL, &[0, 0, 0]).is_err(), "short");
         assert!(decode_request(KIND_KILL, &[0, 0, 0, 1, 0]).is_err(), "long");
         assert!(decode_request(KIND_READ, &[0, 2, 0xFF, 0xFE]).is_err(), "not UTF-8");

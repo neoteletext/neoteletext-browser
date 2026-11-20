@@ -26,9 +26,16 @@ fn a_fetcher_says_it_is_confined_before_it_opens_its_channel() {
     let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-fetcher"));
     let arguments = [OsString::from(UNREACHABLE)];
     let environment = confine::environment(Role::Network);
-    let mut process =
-        confine::spawn(&Spawn { program, arguments: &arguments, role: Role::Network, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = confine::spawn(&Spawn {
+        program,
+        arguments: &arguments,
+        role: Role::Network,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     // Closing its input ends a fetcher, and it is closed at once: one that
     // opened its channel before saying it is confined sends what it has of
     // the channel first, or ends having said nothing, so its first message

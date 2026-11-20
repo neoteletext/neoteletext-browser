@@ -51,6 +51,7 @@ fn helpers_started_at_once_in_a_new_profile_all_start() {
                         role: Role::Decoder,
                         environment: &environment,
                         local_network: false,
+                        udp_port: None,
                         writable: None,
                     };
                     let mut process = spawn_in(&spawn, &sid)?;
@@ -169,7 +170,7 @@ fn console_owner() {
     for role in ROLES {
         let mut environment = environment(role);
         environment.push((OsString::from(CONSOLE_TYPIST), OsString::from("1")));
-        let spawn = Spawn { program: &program, arguments: &arguments, role, environment: &environment, local_network: false, writable: None };
+        let spawn = Spawn { program: &program, arguments: &arguments, role, environment: &environment, local_network: false, udp_port: None, writable: None };
         match self::spawn(&spawn) {
             Ok(mut process) => {
                 let _ = process.wait();
@@ -246,7 +247,15 @@ fn an_interface_started_with_no_standard_error_keeps_its_channel_apart() {
     let arguments = [OsString::from("--exact"), OsString::from("windows::tests::standard_error_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Interface);
     environment.push((OsString::from(STANDARD_ERROR_PROBE), OsString::from("1")));
-    let spawn = Spawn { program: &program, arguments: &arguments, role: Role::Interface, environment: &environment, local_network: false, writable: None };
+    let spawn = Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Interface,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    };
     // As the shell starts a desktop program: no standard error. Put back
     // at once, so that the other tests keep theirs.
     // SAFETY: GetStdHandle and SetStdHandle take constants and a handle this process

@@ -32,9 +32,16 @@ fn a_helper_gets_only_the_environment_it_is_given() {
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::environment_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Decoder);
     environment.extend([(OsString::from(PROBE), OsString::from("1")), (OsString::from("NEOTELETEXT_GIVEN"), OsString::from("yes"))]);
-    let mut process =
-        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = spawn(&Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Decoder,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     let output = process.stdout.take().unwrap();
     let names: Vec<String> = BufReader::new(output)
         .lines()
@@ -62,7 +69,8 @@ fn a_helper_gets_only_the_environment_it_is_given() {
 fn a_helper_whose_container_cannot_be_made_is_not_started() {
     let program = std::env::current_exe().unwrap();
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::environment_probe")];
-    let started = spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &[], local_network: false, writable: None });
+    let started =
+        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &[], local_network: false, udp_port: None, writable: None });
     let refused = match started {
         Ok(mut process) => {
             let _ = process.kill();
@@ -128,9 +136,16 @@ fn the_interface_reaches_no_network_and_no_user_file() {
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::interface_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Interface);
     environment.extend([(OsString::from(INTERFACE_PORT), OsString::from(port.to_string())), (OsString::from(INTERFACE_FILE), file.clone().into_os_string())]);
-    let mut process =
-        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Interface, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = spawn(&Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Interface,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     let output = process.stdout.take().unwrap();
     let line = BufReader::new(output).lines().map_while(Result::ok).filter(|line| line.starts_with("REACH")).last().unwrap_or_default();
     let _ = process.wait();
@@ -172,8 +187,16 @@ fn a_fetcher_reaches_this_computer_only_when_allowed() {
     let mut environment = environment(Role::Network);
     environment.push((OsString::from(LOOPBACK_PORT), OsString::from(&port)));
     let reached = |local_network: bool| {
-        let mut process =
-            spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Network, environment: &environment, local_network, writable: None }).unwrap();
+        let mut process = spawn(&Spawn {
+            program: &program,
+            arguments: &arguments,
+            role: Role::Network,
+            environment: &environment,
+            local_network,
+            udp_port: None,
+            writable: None,
+        })
+        .unwrap();
         // Read to the end, so the probe's last lines find a reader.
         let line =
             BufReader::new(process.stdout.take().unwrap()).lines().map_while(Result::ok).filter(|line| line.starts_with("LOOPBACK")).last().unwrap_or_default();
@@ -212,8 +235,10 @@ fn the_interface_alone_has_a_channel_to_the_broker() {
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::declarer_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Interface);
     environment.push((OsString::from(DECLARER_PROBE), OsString::from("1")));
-    let start =
-        |role| spawn(&Spawn { program: &program, arguments: &arguments, role, environment: &environment, local_network: false, writable: None }).unwrap();
+    let start = |role| {
+        spawn(&Spawn { program: &program, arguments: &arguments, role, environment: &environment, local_network: false, udp_port: None, writable: None })
+            .unwrap()
+    };
 
     let mut decoder = start(Role::Decoder);
     assert!(decoder.broker_side.is_none(), "only the interface has one");
@@ -277,9 +302,16 @@ fn a_fetcher_reaches_this_computer_only_with_the_exemption() {
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::windows_loopback_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Network);
     environment.push((OsString::from(WINDOWS_LOOPBACK_PORT), OsString::from(&port)));
-    let mut process =
-        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Network, environment: &environment, local_network: true, writable: None })
-            .unwrap();
+    let mut process = spawn(&Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Network,
+        environment: &environment,
+        local_network: true,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     let lines: Vec<String> = BufReader::new(process.stdout.take().unwrap()).lines().map_while(Result::ok).collect();
     let _ = process.wait();
     drop(listener);
@@ -315,9 +347,16 @@ fn descriptors_of_a_helper() -> String {
     let arguments = [OsString::from("--exact"), OsString::from("spawn::tests::descriptors_probe"), OsString::from("--nocapture")];
     let mut environment = environment(Role::Decoder);
     environment.push((OsString::from(DESCRIPTORS_PROBE), OsString::from("1")));
-    let mut process =
-        spawn(&Spawn { program: &program, arguments: &arguments, role: Role::Decoder, environment: &environment, local_network: false, writable: None })
-            .unwrap();
+    let mut process = spawn(&Spawn {
+        program: &program,
+        arguments: &arguments,
+        role: Role::Decoder,
+        environment: &environment,
+        local_network: false,
+        udp_port: None,
+        writable: None,
+    })
+    .unwrap();
     let line = BufReader::new(process.stdout.take().unwrap())
         .lines()
         .map_while(Result::ok)

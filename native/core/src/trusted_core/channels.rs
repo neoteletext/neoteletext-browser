@@ -379,6 +379,7 @@ mod tests {
                 role: Role::Decoder,
                 environment: &[],
                 local_network: false,
+                udp_port: None,
                 writable: None,
             })
             .unwrap(),

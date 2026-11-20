@@ -56,6 +56,8 @@ pub struct Started {
     pub arguments: Vec<String>,
     /// Whether it may reach the local network.
     pub local_network: bool,
+    /// The UDP port its sandbox was to allow, a fetcher's alone.
+    pub udp_port: Option<u16>,
     /// How it was confined, as the core is told: the real program's
     /// report, or the stand-in's own words for two pipes.
     pub report: String,
@@ -226,9 +228,15 @@ impl Server {
 
     fn answer(&mut self, request: Request) -> io::Result<()> {
         let reply = match &request {
-            Request::Spawn { program, local_network, arguments } => {
-                let helper =
-                    Started { id: self.next, program: *program, arguments: arguments.clone(), local_network: *local_network, report: String::from(REPORT) };
+            Request::Spawn { program, local_network, udp_port, arguments } => {
+                let helper = Started {
+                    id: self.next,
+                    program: *program,
+                    arguments: arguments.clone(),
+                    local_network: *local_network,
+                    udp_port: *udp_port,
+                    report: String::from(REPORT),
+                };
                 if self.outputs.len().saturating_add(self.alive.len()) >= MAX_HELPERS {
                     Reply::Failed(String::from("too many helpers"))
                 } else {
@@ -335,7 +343,7 @@ impl Server {
     /// broker confines it, and sends the core its pipes as the broker does.
     fn start_program(&mut self, mut helper: Started, path: &Path) -> io::Result<()> {
         let role = helper.program.role();
-        let started = super::server::start_confined(path, role, helper.local_network, &helper.arguments, &crate::environment(role), None);
+        let started = super::server::start_confined(path, role, (helper.local_network, helper.udp_port), &helper.arguments, &crate::environment(role), None);
         let mut process = match started {
             Ok(process) => process,
             Err(error) => {

@@ -75,7 +75,16 @@ pub(super) fn stand_in(program: &str, arguments: &[&str], role: confine::Role) -
     let program = std::path::PathBuf::from(program);
     let arguments: Vec<std::ffi::OsString> = arguments.iter().map(std::ffi::OsString::from).collect();
     confine::broker::Helper::local(
-        confine::spawn(&confine::Spawn { program: &program, arguments: &arguments, role, environment: &[], local_network: false, writable: None }).unwrap(),
+        confine::spawn(&confine::Spawn {
+            program: &program,
+            arguments: &arguments,
+            role,
+            environment: &[],
+            local_network: false,
+            udp_port: None,
+            writable: None,
+        })
+        .unwrap(),
     )
 }
 

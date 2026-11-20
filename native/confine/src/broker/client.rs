@@ -149,7 +149,21 @@ impl Broker {
     /// # Errors
     /// When the broker cannot or will not start it.
     pub fn spawn(self: &Arc<Self>, program: Program, arguments: &[String], local_network: bool) -> io::Result<Helper> {
-        match self.ask(&Request::Spawn { program, local_network, arguments: arguments.to_vec() })? {
+        self.spawn_reaching(program, arguments, local_network, None)
+    }
+
+    /// Starts a fetcher with `arguments` whose sandbox allows UDP to
+    /// `udp_port`, its channel's own port, for its tabs' shared HTTP/3
+    /// connection (REQ-6981); with none, as [`Broker::spawn`].
+    ///
+    /// # Errors
+    /// When the broker cannot or will not start it.
+    pub fn spawn_fetcher(self: &Arc<Self>, arguments: &[String], local_network: bool, udp_port: Option<u16>) -> io::Result<Helper> {
+        self.spawn_reaching(Program::Fetcher, arguments, local_network, udp_port)
+    }
+
+    fn spawn_reaching(self: &Arc<Self>, program: Program, arguments: &[String], local_network: bool, udp_port: Option<u16>) -> io::Result<Helper> {
+        match self.ask(&Request::Spawn { program, local_network, udp_port, arguments: arguments.to_vec() })? {
             (Reply::Spawned { id, report }, pipes) => {
                 let mut pipes = pipes.into_iter();
                 let (Some(stdin), Some(stdout), None) = (pipes.next(), pipes.next(), pipes.next()) else {
