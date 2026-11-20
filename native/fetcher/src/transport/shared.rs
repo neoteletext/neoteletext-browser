@@ -74,9 +74,15 @@ struct State {
     failed_until: Option<Instant>,
 }
 
+/// What the remembered failure is timed by: the system's clock, or a
+/// test's, so that the moment the failure is forgotten can be shown
+/// without waiting for it.
+pub(crate) type Clock = Arc<dyn Fn() -> Instant + Send + Sync>;
+
 /// The process's shared connection, and whether it may have one.
 pub(crate) struct Shared {
     tls: QuicTls,
+    clock: Clock,
     allowed: AllowedLocal,
     state: Mutex<State>,
     /// The process's count of names being resolved is each tab's own; the
@@ -119,9 +125,15 @@ impl Shared {
     /// `roots` as its TCP connections do; `None` when the TLS library
     /// cannot serve QUIC, which the `ring` provider always can.
     pub(crate) fn new(roots: rustls::RootCertStore, allowed: AllowedLocal) -> SharedConnection {
+        Self::timed_by(roots, allowed, Arc::new(Instant::now))
+    }
+
+    /// As [`Self::new`], with the remembered failure timed by `clock`.
+    pub(crate) fn timed_by(roots: rustls::RootCertStore, allowed: AllowedLocal, clock: Clock) -> SharedConnection {
         let tls = quic_tls(roots).ok()?;
         Some(Arc::new(Self {
             tls,
+            clock,
             allowed,
             state: Mutex::new(State { connection: None, failed_until: None }),
             resolving: Arc::new(AtomicUsize::new(0)),
@@ -135,7 +147,8 @@ impl Shared {
 
     /// Whether a stream may be asked for now: no failure is remembered.
     pub(crate) fn usable(&self) -> bool {
-        self.lock().failed_until.is_none_or(|until| Instant::now() >= until)
+        let now = (self.clock)();
+        self.lock().failed_until.is_none_or(|until| now >= until)
     }
 
     /// Forgets a remembered failure: the channel's server could not be
@@ -153,7 +166,7 @@ impl Shared {
         if state.connection.as_ref().is_some_and(|held| same(held, failed)) {
             state.connection = None;
         }
-        let now = Instant::now();
+        let now = (self.clock)();
         state.failed_until = Some(now.checked_add(HTTP3_RETRY_AFTER).unwrap_or(now));
     }
 
@@ -161,8 +174,9 @@ impl Shared {
     /// use, else a new one to the first address of `host` that may be
     /// reached.
     fn connection(&self, request: &PushRequest, until: Instant) -> Result<Http3Connection, Unavailable> {
+        let now = (self.clock)();
         let mut state = self.lock();
-        if state.failed_until.is_some_and(|retry| Instant::now() < retry) {
+        if state.failed_until.is_some_and(|retry| now < retry) {
             return Err(String::from("its last attempt failed and is not yet tried again"));
         }
         if let Some(held) = &state.connection {

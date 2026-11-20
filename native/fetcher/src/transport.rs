@@ -240,19 +240,19 @@ impl Tcp {
         }
     }
 
-    /// The channel's server could not be reached over TCP either: a
-    /// failure of the shared connection remembered is forgotten, since it
-    /// says nothing of the path's UDP (REQ-6989 item 5).
-    pub fn forget_stream_failure(&self) {
-        if let Some(shared) = &self.shared {
+    /// The push connection failed to open: why, when it was asked for as
+    /// a stream and none was available. When it was the tab's own TCP
+    /// connection that failed, the channel's server could not be reached
+    /// over TCP either, so a failure of the shared connection remembered
+    /// says nothing of the path's UDP and is forgotten (REQ-6989 item 5).
+    pub fn push_failed(&mut self) -> Option<String> {
+        let no_stream = self.no_stream.take();
+        if no_stream.is_none()
+            && let Some(shared) = &self.shared
+        {
             shared.forget_failure();
         }
-    }
-
-    /// Why no stream was available for the push connection, since this was
-    /// last asked.
-    pub fn take_no_stream(&mut self) -> Option<String> {
-        self.no_stream.take()
+        no_stream
     }
 
     /// Whether an address was refused as local since this was last asked.

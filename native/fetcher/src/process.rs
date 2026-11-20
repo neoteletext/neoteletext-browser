@@ -870,18 +870,10 @@ fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, 
         // it opens its own HTTP/1.1 connection (the engine's REQ-6984).
         let stream = match input {
             NetInput::Connected(ConnectionId::Push, peer) => pump.transport.take_stream_answer().map(|(status, subprotocol)| (Some(peer), status, subprotocol)),
-            NetInput::ConnectFailed(ConnectionId::Push) => {
-                let no_stream = pump.transport.take_no_stream();
-                // The tab's own connection failed too: the server is not
-                // reached at all, which is no fault of UDP's.
-                if no_stream.is_none() {
-                    pump.transport.forget_stream_failure();
-                }
-                no_stream.map(|why| {
-                    tell(actions, &format!("push: no stream of a shared HTTP/3 connection ({why}); a connection of this tab's own over HTTP/1.1 instead"));
-                    (None, 0, None)
-                })
-            }
+            NetInput::ConnectFailed(ConnectionId::Push) => pump.transport.push_failed().map(|why| {
+                tell(actions, &format!("push: no stream of a shared HTTP/3 connection ({why}); a connection of this tab's own over HTTP/1.1 instead"));
+                (None, 0, None)
+            }),
             _ => None,
         };
         let input = match &stream {

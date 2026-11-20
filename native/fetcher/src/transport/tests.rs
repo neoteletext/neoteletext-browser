@@ -558,3 +558,80 @@ fn a_transport_with_a_proxy_shares_no_connection() {
     assert!(!Tcp::new(Arc::new(|| {}), Some(proxy), this_computer()).sharing(shared).streams_usable());
     assert!(!Tcp::new(Arc::new(|| {}), None, this_computer()).streams_usable(), "nor one given none");
 }
+
+/// A clock a test moves by hand, for the shared connection's remembered
+/// failure.
+fn hand_clock() -> (Arc<std::sync::Mutex<Instant>>, shared::Clock) {
+    let now = Arc::new(std::sync::Mutex::new(Instant::now()));
+    let read = Arc::clone(&now);
+    (now, Arc::new(move || *read.lock().unwrap()))
+}
+
+/// A push stream's request to a port of this computer on which nothing
+/// listens over UDP, so that its QUIC connection is refused at once.
+fn request_to_nothing() -> PushRequest {
+    let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    PushRequest {
+        host: String::from("127.0.0.1"),
+        port,
+        authority: format!("127.0.0.1:{port}").into_bytes(),
+        path: String::from("/ch/push"),
+        subprotocol: String::from(neoteletext_web::consts::PUSH_SUBPROTOCOL),
+        user_agent: b"test".to_vec(),
+    }
+}
+
+/// How long a refused QUIC connection is given to be found refused.
+const REFUSED_WITHIN: Duration = Duration::from_secs(5);
+
+/// REQ-6989 item 5, DEC-6990 item 5: a shared connection that could not be
+/// made is not tried again for `HTTP3_RETRY_AFTER`, five minutes, and is
+/// tried again from that moment: one second before it, a stream is still
+/// refused without a datagram sent; at it, streams are usable again.
+#[test]
+fn a_remembered_failure_ends_five_minutes_after_it() {
+    assert_eq!(shared::HTTP3_RETRY_AFTER, Duration::from_mins(5), "REQ-6989 item 5's figure");
+    let (now, clock) = hand_clock();
+    let shared = Shared::timed_by(mozilla_roots(), this_computer(), clock).unwrap();
+    let request = request_to_nothing();
+    let wake: Wake = Arc::new(|| {});
+    let failed_at = *now.lock().unwrap();
+    let Err(why) = shared.open(&request, Instant::now() + REFUSED_WITHIN, &wake) else { panic!("a stream from nothing") };
+    assert!(why.contains("no QUIC connection was made in time"), "{why}");
+    assert_eq!(shared.connections_made(), 1);
+    assert!(!shared.usable(), "remembered at once");
+    *now.lock().unwrap() = (failed_at + shared::HTTP3_RETRY_AFTER).checked_sub(Duration::from_secs(1)).unwrap();
+    assert!(!shared.usable(), "still remembered a second before the end");
+    let Err(why) = shared.open(&request, Instant::now() + REFUSED_WITHIN, &wake) else { panic!("a stream from nothing") };
+    assert!(why.contains("not yet tried again"), "{why}");
+    assert_eq!(shared.connections_made(), 1, "no connection tried while it is remembered");
+    *now.lock().unwrap() = failed_at + shared::HTTP3_RETRY_AFTER;
+    assert!(shared.usable(), "forgotten at the end");
+    let Err(_) = shared.open(&request, Instant::now() + REFUSED_WITHIN, &wake) else { panic!("a stream from nothing") };
+    assert_eq!(shared.connections_made(), 2, "tried again once forgotten");
+}
+
+/// REQ-6989 item 5: when the tab's own TCP connection fails after its
+/// stream did, the server is not reached at all, which says nothing of the
+/// path's UDP, so the failure remembered is forgotten and the next push
+/// connection may be a stream again; a stream's failure alone is kept.
+#[test]
+fn a_failure_is_forgotten_when_the_tabs_tcp_connection_fails_too() {
+    let (_now, clock) = hand_clock();
+    let shared = Shared::timed_by(mozilla_roots(), this_computer(), clock);
+    let mut tcp = Tcp::new(Arc::new(|| {}), None, this_computer()).sharing(shared);
+    let request = request_to_nothing();
+    let port = request.port;
+    tcp.ask_stream(request);
+    tcp.connect(ConnectionId::Push, "127.0.0.1", port, Security::Tls).unwrap();
+    assert!(matches!(settled(&mut tcp, ConnectionId::Push), LinkState::Failed));
+    let why = tcp.push_failed().expect("the stream's failure is told");
+    assert!(why.contains("no QUIC connection was made in time"), "{why}");
+    assert!(!tcp.streams_usable(), "the stream's failure is remembered");
+    // The tab's own connection, to a TCP port nothing listens on.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    tcp.connect(ConnectionId::Push, "127.0.0.1", closed, Security::Plain).unwrap();
+    assert!(matches!(settled(&mut tcp, ConnectionId::Push), LinkState::Failed));
+    assert_eq!(tcp.push_failed(), None, "no stream was asked for");
+    assert!(tcp.streams_usable(), "forgotten: TCP failed too");
+}
