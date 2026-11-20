@@ -507,6 +507,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
+name = "chacha20"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "cipher"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1249,8 +1260,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1272,8 +1285,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
+ "rand_core 0.10.1",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1803,6 +1819,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
+name = "lru-slab"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
+
+[[package]]
 name = "mach2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1950,7 +1972,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "neoteletext-audio-instruments",
  "neoteletext-core",
@@ -1960,12 +1982,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-audio-instruments"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-audio-mix"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-chooser"
@@ -1980,7 +2002,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-core"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-decoder"
@@ -2025,10 +2047,15 @@ dependencies = [
 [[package]]
 name = "neoteletext-formats"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "neoteletext-core",
 ]
+
+[[package]]
+name = "neoteletext-http3"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-icon"
@@ -2041,7 +2068,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-image"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "neoteletext-core",
 ]
@@ -2049,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-input"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
@@ -2113,12 +2140,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-opus"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-picture"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "image",
  "naplps",
@@ -2131,7 +2158,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-qrkeyboard"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "aes-gcm",
  "getrandom 0.2.17",
@@ -2149,7 +2176,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-rules"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 
 [[package]]
 name = "neoteletext-site"
@@ -2190,9 +2217,12 @@ dependencies = [
 [[package]]
 name = "neoteletext-transport"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
+ "bytes",
+ "neoteletext-http3",
  "neoteletext-web",
+ "quinn-proto",
  "rustls",
  "webpki-roots",
 ]
@@ -2200,7 +2230,7 @@ dependencies = [
 [[package]]
 name = "neoteletext-web"
 version = "0.1.0"
-source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=f427eee52443abe785bafac6c3b5dd4642b86906#f427eee52443abe785bafac6c3b5dd4642b86906"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=3a5083f1f77fd7fc9a1e8231b02880bd34d89aba#3a5083f1f77fd7fc9a1e8231b02880bd34d89aba"
 dependencies = [
  "embedded-io",
  "neoteletext-audio",
@@ -3008,6 +3038,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "quinn-proto"
+version = "0.11.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
+dependencies = [
+ "bytes",
+ "getrandom 0.4.3",
+ "lru-slab",
+ "rand",
+ "rand_pcg",
+ "ring",
+ "rustc-hash",
+ "rustls",
+ "rustls-pki-types",
+ "slab",
+ "thiserror 2.0.21",
+ "tinyvec",
+ "tracing",
+ "web-time",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3029,6 +3081,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
+name = "rand"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11"
+dependencies = [
+ "chacha20",
+ "getrandom 0.4.3",
+ "rand_core 0.10.1",
+]
+
+[[package]]
 name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3042,6 +3105,15 @@ name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
+
+[[package]]
+name = "rand_pcg"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb95882a1e14462c69aea9984bb261293ccfe6022ef8de0eda18bd5afb0052df"
+dependencies = [
+ "rand_core 0.10.1",
+]
 
 [[package]]
 name = "raw-window-handle"
@@ -3188,6 +3260,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
+
+[[package]]
 name = "rustc_version"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3243,6 +3321,7 @@ version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f4925028c7eb5d1fcdaf196971378ed9d2c1c4efc7dc5d011256f76c99c0a96"
 dependencies = [
+ "web-time",
  "zeroize",
 ]
 
