@@ -54,9 +54,12 @@ mod cancel;
 mod connection;
 mod opening;
 mod port;
+mod shared;
 mod writer;
 
 use cancel::Cancel;
+use shared::StreamLink;
+pub(crate) use shared::{PushRequest, Shared, SharedConnection};
 use writer::Outgoing;
 
 /// How long a connection may take to open, from the name's resolution to
@@ -106,6 +109,18 @@ struct Failure {
     /// not start for [`MAX_RESOLVING`]: the channel did not answer in time,
     /// which is not a certificate's fault (TODO-1277).
     timed_out: bool,
+    /// It was to be a stream of the channel's shared connection, and none
+    /// is available, for this reason: the agent opens its own HTTP/1.1
+    /// connection instead (REQ-6989 item 5).
+    no_stream: Option<String>,
+}
+
+/// What a connection's thread opened.
+enum Opened {
+    /// A connection of the tab's own, over TCP.
+    Own(Connection),
+    /// A stream of the channel's shared HTTP/3 connection, answered.
+    Stream(StreamLink),
 }
 
 /// The kind of a failed secure handshake, from the TLS library's error
@@ -129,8 +144,11 @@ fn certificate_problem(error: &std::io::Error) -> CertificateProblem {
 enum Link {
     /// Being opened on its thread, which sends the outcome here, and
     /// which closing shuts.
-    Connecting(Receiver<Result<Connection, Failure>>, Cancel),
+    Connecting(Receiver<Result<Opened, Failure>>, Cancel),
     Open(Connection),
+    /// The push connection as a stream of the channel's shared HTTP/3
+    /// connection (REQ-6989).
+    Stream(StreamLink),
     Failed,
 }
 
@@ -155,6 +173,15 @@ pub struct Tcp {
     timed_out: bool,
     /// How many names are being resolved, of at most [`MAX_RESOLVING`].
     resolving: Arc<AtomicUsize>,
+    /// The channel's shared HTTP/3 connection, in a process that may have
+    /// one (REQ-6989).
+    shared: SharedConnection,
+    /// The request of the push stream the agent asked for, until the push
+    /// connection is next opened, which is then that stream.
+    stream_request: Option<PushRequest>,
+    /// No stream was available for the push connection since this was last
+    /// asked, and why.
+    no_stream: Option<String>,
 }
 
 impl Tcp {
@@ -177,7 +204,55 @@ impl Tcp {
             local_refused: false,
             timed_out: false,
             resolving: Arc::new(AtomicUsize::new(0)),
+            shared: None,
+            stream_request: None,
+            no_stream: None,
         }
+    }
+
+    /// The transport with the process's shared connection, on which its
+    /// push connection may be a stream (REQ-6989). A transport with a
+    /// proxy never uses it: nothing goes direct (requirement 19.10).
+    #[must_use]
+    pub(crate) fn sharing(mut self, shared: SharedConnection) -> Self {
+        self.shared = if self.proxy.is_some() { None } else { shared };
+        self
+    }
+
+    /// Whether the push connection may be asked for as a stream now: the
+    /// process has a shared connection, and no failure of it is remembered.
+    pub fn streams_usable(&self) -> bool {
+        self.shared.as_ref().is_some_and(|shared| shared.usable())
+    }
+
+    /// The agent asked for its push connection as a stream with `request`:
+    /// the next opening of the push connection is that stream's.
+    pub(crate) fn ask_stream(&mut self, request: PushRequest) {
+        self.stream_request = Some(request);
+    }
+
+    /// The server's answer to the push stream's request, once: the status
+    /// and the subprotocol it chose, for the agent to judge.
+    pub fn take_stream_answer(&mut self) -> Option<(u16, Option<Vec<u8>>)> {
+        match &mut self.push {
+            Some(Link::Stream(link)) => link.answer.take(),
+            _ => None,
+        }
+    }
+
+    /// The channel's server could not be reached over TCP either: a
+    /// failure of the shared connection remembered is forgotten, since it
+    /// says nothing of the path's UDP (REQ-6989 item 5).
+    pub fn forget_stream_failure(&self) {
+        if let Some(shared) = &self.shared {
+            shared.forget_failure();
+        }
+    }
+
+    /// Why no stream was available for the push connection, since this was
+    /// last asked.
+    pub fn take_no_stream(&mut self) -> Option<String> {
+        self.no_stream.take()
     }
 
     /// Whether an address was refused as local since this was last asked.
@@ -216,15 +291,18 @@ impl Tcp {
         let mut refused = None;
         let mut local_refused = false;
         let mut timed_out = false;
+        let mut no_stream = None;
         let slot = self.connection(connection);
         if let Some(Link::Connecting(outcome, _)) = slot {
             match outcome.try_recv() {
-                Ok(Ok(open)) => *slot = Some(Link::Open(open)),
+                Ok(Ok(Opened::Own(open))) => *slot = Some(Link::Open(open)),
+                Ok(Ok(Opened::Stream(stream))) => *slot = Some(Link::Stream(stream)),
                 Ok(Err(failure)) => {
                     proxy_failed = failure.proxy;
                     refused = failure.certificate;
                     local_refused = failure.local;
                     timed_out = failure.timed_out;
+                    no_stream = failure.no_stream;
                     *slot = Some(Link::Failed);
                 }
                 Err(TryRecvError::Empty) => {}
@@ -235,6 +313,7 @@ impl Tcp {
         self.refused = refused.or(self.refused);
         self.local_refused |= local_refused;
         self.timed_out |= timed_out;
+        self.no_stream = no_stream.or(self.no_stream.take());
         self.connection(connection)
     }
 }

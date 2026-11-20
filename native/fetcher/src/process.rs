@@ -17,12 +17,12 @@ use std::time::{Duration, Instant as Clock};
 
 use neoteletext_core::types::{Instant, PageAddress, SubCode};
 use neoteletext_transport::web_address;
-use neoteletext_web::agent::{Config, Event, Failure, Input, InputMessage, Output, Source, Subscription, UserAgent};
+use neoteletext_web::agent::{Config, Event, Failure, Input, InputMessage, Output, PushStream, Source, Subscription, UserAgent};
 use neoteletext_web::channel::{BUNDLE_FILE, SETTINGS_FILE};
 use neoteletext_web::consts::{ALLOWED_LOCAL, STATUS_GONE, STATUS_NOT_FOUND};
 use neoteletext_web::contents::{self, Entry as ContentsEntry};
 use neoteletext_web::http::MediaType;
-use neoteletext_web::port::{ConnectionId, NetOutput, Pump, Security, Transport};
+use neoteletext_web::port::{ConnectionId, NetInput, NetOutput, Pump, Security, Transport};
 use neoteletext_web::proxy::Proxy;
 use neoteletext_web::records::redirect::RedirectRecord;
 use neoteletext_web::subpages::{self, PartNumber};
@@ -36,7 +36,7 @@ use crate::agent::descriptor_links;
 use crate::agent::{Random, product};
 use crate::live::{LiveIndex, Noted, SubPageLists};
 use crate::state::State;
-use crate::transport::Tcp;
+use crate::transport::{PushRequest, Shared, Tcp};
 
 const _: () = assert!(protocol::fetcher::MAX_DENIED_PLACE == neoteletext_web::records::denied::MAX_PLACE, "the engine's longest place");
 const _: () = assert!(protocol::fetcher::MIN_REFRESH_SECONDS == neoteletext_web::descriptor::MIN_REFRESH_SECONDS, "the engine's shortest refresh");
@@ -150,6 +150,9 @@ enum Action {
     },
     Send(ConnectionId, Vec<u8>),
     Close(ConnectionId),
+    /// The agent asked for its push connection as a stream of the
+    /// channel's shared connection (REQ-6989, the engine's REQ-6984).
+    OpenStream(PushRequest),
     Timer(Instant),
     Bytes {
         origin: Origin,
@@ -358,6 +361,14 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
     }
     actions.push(match output {
         Output::Timer { at } => Action::Timer(at),
+        Output::OpenPushStream { host, port, authority, path, subprotocol, user_agent } => Action::OpenStream(PushRequest {
+            host: host.to_owned(),
+            port,
+            authority: authority.to_vec(),
+            path: path.to_owned(),
+            subprotocol: subprotocol.to_owned(),
+            user_agent: user_agent.to_vec(),
+        }),
         Output::Event(Event::ServiceReady { name, initial_page, region, .. }) => Action::Ready(initial_page.mpp(), region, name.to_owned()),
         Output::Event(Event::ChannelDefaults) => Action::Unnamed,
         Output::Event(Event::Contents(bytes)) => Action::Contents(bytes.to_vec()),
@@ -566,17 +577,25 @@ pub(crate) fn agent_config(allowed: &[IpAddr], proxied: bool) -> Config {
 /// # Errors
 /// When writing to the trusted core fails, or it breaks the pipe's
 /// protocol.
-#[expect(unused_variables, reason = "the shared HTTP/3 connection, which `http3` allows, is made in the next change (DEC-6979 item 3)")]
 pub fn run(channel: &str, allowed: &[IpAddr], proxy: Option<Proxy>, http3: bool) -> Result<(), String> {
     let config = agent_config(allowed, proxy.is_some());
     // The transport refuses the same local addresses before connecting
     // (finding F-62).
     let allowed_local = config.allowed_local;
-    // What every tab's transport is made with. This closure is the one
-    // place an object the whole process shares, the channel's shared
-    // connection (DEC-6979 item 6), is handed to each tab's transport.
-    let transport: crate::tabs::MakeTransport = Arc::new(move |wake| Tcp::new(wake, proxy.clone(), allowed_local));
-    crate::tabs::serve(channel, config, &transport, &mut io::BufReader::new(io::stdin()), Box::new(io::stdout()))
+    // The channel's shared HTTP/3 connection (REQ-6989), which every tab's
+    // transport is given: none with `--no-http3` or a proxy, when each
+    // tab's push connection is its own over HTTP/1.1 (REQ-6982,
+    // requirement 19.10).
+    let shared = if http3 && proxy.is_none() { Shared::new(neoteletext_transport::mozilla_roots(), allowed_local) } else { None };
+    let theirs = shared.clone();
+    let transport: crate::tabs::MakeTransport = Arc::new(move |wake| Tcp::new(wake, proxy.clone(), allowed_local).sharing(theirs.clone()));
+    let served = crate::tabs::serve(channel, config, &transport, &mut io::BufReader::new(io::stdin()), Box::new(io::stdout()));
+    // What the tabs' streams were last given leaves before the process
+    // ends (REQ-6989 item 8).
+    if let Some(shared) = shared {
+        shared.close();
+    }
+    served
 }
 
 /// One tab of the process: the trusted core's messages for it, handed to
@@ -687,6 +706,7 @@ fn run_tab(
     let mut actions = Vec::new();
     // The channel has no `channel.ttx`, so its name is not its own.
     let mut unnamed = false;
+    allow_streams(&mut agent, &pump.transport, &clock, &mut actions);
     agent.handle(clock(), Input::OpenChannel(channel), &mut |out| collect(out, &mut actions));
     loop {
         let mut busy = !actions.is_empty();
@@ -695,6 +715,7 @@ fn run_tab(
                 Action::Connect { connection, host, port, security } => pump.execute(NetOutput::Connect { connection, host: &host, port, security }),
                 Action::Send(connection, bytes) => pump.execute(NetOutput::Send(connection, &bytes)),
                 Action::Close(connection) => pump.execute(NetOutput::Close(connection)),
+                Action::OpenStream(request) => open_stream(&mut pump, request),
                 Action::Timer(at) => next_tick = Some(next_tick.map_or(at, |current| current.min(at))),
                 Action::Bytes { origin, bytes } => pass_bytes(&output, &mut queries, origin, bytes)?,
                 Action::Unnamed => unnamed = true,
@@ -718,7 +739,12 @@ fn run_tab(
                 // for it again when its page next opens.
                 Action::SubPagesCurrent(page, part) => send_part(&output, page, part, parts.get(page, part))?,
                 Action::Refused(file, answer) => send(&output, &FromFetcher::Refused { file, status: answer.status(last_status) })?,
-                Action::Push(open) => push_changed(&agent, &output, open, &mut state)?,
+                Action::Push(open) => {
+                    push_changed(&agent, &output, open, &mut state)?;
+                    if !open {
+                        allow_streams(&mut agent, &pump.transport, &clock, &mut actions);
+                    }
+                }
                 // Answered now, before the input messages the trusted core
                 // sent meanwhile, which wait in the wakes below (VS-202).
                 Action::Challenge(challenge) => send_state(&mut agent, clock(), &state.challenged(&output, challenge), &mut actions),
@@ -837,12 +863,65 @@ fn send(output: &CorePipe, message: &FromFetcher) -> Result<(), String> {
 fn poll_sockets(pump: &mut Pump<Tcp>, buffer: &mut [u8], agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) -> bool {
     let mut busy = false;
     for connection in [ConnectionId::Fetch, ConnectionId::Push] {
-        if let Some(input) = pump.poll(connection, buffer) {
-            busy = true;
-            agent.handle(clock(), Input::Net(input), &mut |out| collect(out, actions));
-        }
+        let Some(input) = pump.poll(connection, buffer) else { continue };
+        busy = true;
+        // A push stream's opening is the port's to turn into the stream's
+        // answer, which the agent judges, or into "unavailable", at which
+        // it opens its own HTTP/1.1 connection (the engine's REQ-6984).
+        let stream = match input {
+            NetInput::Connected(ConnectionId::Push, peer) => pump.transport.take_stream_answer().map(|(status, subprotocol)| (Some(peer), status, subprotocol)),
+            NetInput::ConnectFailed(ConnectionId::Push) => {
+                let no_stream = pump.transport.take_no_stream();
+                // The tab's own connection failed too: the server is not
+                // reached at all, which is no fault of UDP's.
+                if no_stream.is_none() {
+                    pump.transport.forget_stream_failure();
+                }
+                no_stream.map(|why| {
+                    tell(actions, &format!("push: no stream of a shared HTTP/3 connection ({why}); a connection of this tab's own over HTTP/1.1 instead"));
+                    (None, 0, None)
+                })
+            }
+            _ => None,
+        };
+        let input = match &stream {
+            Some((Some(peer), status, subprotocol)) => {
+                tell(actions, &format!("push: a stream of the channel's shared HTTP/3 connection, answered {status}"));
+                Input::PushStream(PushStream::Answered { peer: *peer, status: *status, subprotocol: subprotocol.as_deref() })
+            }
+            Some((None, ..)) => Input::PushStream(PushStream::Unavailable),
+            None => Input::Net(input),
+        };
+        agent.handle(clock(), input, &mut |out| collect(out, actions));
     }
     busy
+}
+
+/// Opens the push connection as the stream the agent asked for
+/// (REQ-6989): where a TCP connection would be opened, on the push
+/// connection's own thread, its answer read back as the connection's
+/// opening ([`poll_sockets`]).
+fn open_stream(pump: &mut Pump<Tcp>, request: PushRequest) {
+    let (host, port) = (request.host.clone(), request.port);
+    pump.transport.ask_stream(request);
+    pump.execute(NetOutput::Connect { connection: ConnectionId::Push, host: &host, port, security: Security::Tls });
+}
+
+/// Tells the agent whether its push connection may be a stream of the
+/// channel's shared connection: before the channel opens, and again each
+/// time the push connection is lost, so that after a failure of the shared
+/// connection has been remembered long enough the next loss tries it again
+/// (REQ-6989 items 1 and 5). The agent asks for a stream only where the
+/// channel's server named HTTP/3.
+fn allow_streams(agent: &mut Agent<'_>, transport: &Tcp, clock: &dyn Fn() -> Instant, actions: &mut Vec<Action>) {
+    agent.handle(clock(), Input::PushOverStream(transport.streams_usable()), &mut |out| collect(out, actions));
+}
+
+/// Says `text` where a channel's other transport facts are said: this
+/// process's standard error and the developer console.
+fn tell(actions: &mut Vec<Action>, text: &str) {
+    eprintln!("neoteletext-fetcher: {text}");
+    actions.push(Action::Tell(FromFetcher::Notice(text.to_owned())));
 }
 
 /// Tells the trusted core what the open channel's descriptor says, with
@@ -1645,7 +1724,7 @@ mod tests {
         let ping = push_sends(&mut actions).concat().into_iter().find(|(opcode, _)| *opcode == neoteletext_web::consts::OPCODE_PING).expect("a ping");
         assert_eq!(ping.1.len(), 1, "one byte, told from the heartbeat's");
         let answer = [0x80 | neoteletext_web::consts::OPCODE_PONG, 1, ping.1[0]];
-        let answered = neoteletext_web::port::NetInput::Received(ConnectionId::Push, &answer);
+        let answered = NetInput::Received(ConnectionId::Push, &answer);
         agent.handle(Instant(32_250), Input::Net(answered), &mut |out| collect(out, &mut actions));
         let told: Vec<FromFetcher> = actions
             .into_iter()

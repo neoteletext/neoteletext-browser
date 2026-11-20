@@ -524,3 +524,37 @@ fn a_reconnection_resumes_the_tls_session_and_sends_no_early_data() {
     }
     assert_eq!(server.join().unwrap(), [(Some(rustls::HandshakeKind::Full), false), (Some(rustls::HandshakeKind::Resumed), false)]);
 }
+
+/// REQ-6989 item 2, the engine's REQ-SEC-006, finding F-62: the shared
+/// HTTP/3 connection is held to the rule of a TCP connection. A name that
+/// leads only to this computer, which the channel may not reach, gets no
+/// QUIC connection and no datagram, and the tab is told no stream is
+/// available.
+#[test]
+fn the_shared_connection_reaches_no_address_the_channel_may_not() {
+    let shared = Shared::new(mozilla_roots(), NO_LOCAL).unwrap();
+    let request = PushRequest {
+        host: String::from("localhost"),
+        port: 443,
+        authority: b"localhost".to_vec(),
+        path: String::from("/ch/push"),
+        subprotocol: String::from(neoteletext_web::consts::PUSH_SUBPROTOCOL),
+        user_agent: b"test".to_vec(),
+    };
+    let wake: Wake = Arc::new(|| {});
+    let Err(why) = shared.open(&request, Instant::now() + Duration::from_secs(5), &wake) else { panic!("a stream to this computer") };
+    assert!(why.contains("addresses this channel may not reach"), "{why}");
+    assert_eq!(shared.connections_made(), 0, "no connection was started");
+    assert!(shared.usable(), "an address refused is no failure of UDP to remember");
+}
+
+/// REQ-6989 item 1, requirement 19.10: a transport with a proxy has no
+/// shared connection, whatever it is given, so nothing goes direct.
+#[test]
+fn a_transport_with_a_proxy_shares_no_connection() {
+    let shared = Shared::new(mozilla_roots(), this_computer());
+    assert!(Tcp::new(Arc::new(|| {}), None, this_computer()).sharing(shared.clone()).streams_usable());
+    let (proxy, _server) = proxy(Proxying::HttpAllows);
+    assert!(!Tcp::new(Arc::new(|| {}), Some(proxy), this_computer()).sharing(shared).streams_usable());
+    assert!(!Tcp::new(Arc::new(|| {}), None, this_computer()).streams_usable(), "nor one given none");
+}

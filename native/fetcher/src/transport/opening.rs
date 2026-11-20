@@ -145,14 +145,14 @@ impl Opener {
 
 /// Whether `ip` may not be connected to: the engine's rule (REQ-SEC-006),
 /// as its agent applies it to a peer.
-fn refused_local(ip: IpAddr, allowed: &AllowedLocal) -> bool {
+pub(super) fn refused_local(ip: IpAddr, allowed: &AllowedLocal) -> bool {
     let ip = web_address(ip);
     ip.is_blocked() && !allowed.contains(&Some(ip))
 }
 
 /// How a name's resolution went.
 #[derive(Debug, PartialEq, Eq)]
-enum Resolution {
+pub(super) enum Resolution {
     /// The addresses it resolves to.
     Addresses(Vec<SocketAddr>),
     /// It does not resolve.
@@ -194,7 +194,7 @@ impl Drop for Resolving {
 /// thread of its own, which ends when the resolver gives up, by its own
 /// limits; the connection does not wait for it, and at most
 /// [`MAX_RESOLVING`] such threads run at once.
-fn resolve(host: &str, port: u16, until: Instant, resolving: &Arc<AtomicUsize>) -> Resolution {
+pub(super) fn resolve(host: &str, port: u16, until: Instant, resolving: &Arc<AtomicUsize>) -> Resolution {
     resolve_with(host, port, until, resolving, |host, port| (host, port).to_socket_addrs().map(Iterator::collect))
 }
 

@@ -119,4 +119,6 @@ pub(crate) fn serve(channel: &str, config: Config, transport: &MakeTransport, in
 }
 
 #[cfg(test)]
+mod shared_tests;
+#[cfg(test)]
 mod tests;

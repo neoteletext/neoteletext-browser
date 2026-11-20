@@ -21,12 +21,12 @@ use super::*;
 use crate::process::agent_config;
 
 /// How long a test waits for what should come at once.
-const LIMIT: Duration = Duration::from_secs(20);
+pub(super) const LIMIT: Duration = Duration::from_secs(20);
 /// The status the played server answers every request with.
 const NOT_FOUND: u16 = 404;
 
 /// The trusted core's side of a pipe, read as a blocking stream.
-struct PipeReader {
+pub(super) struct PipeReader {
     chunks: mpsc::Receiver<Vec<u8>>,
     pending: Vec<u8>,
 }
@@ -48,7 +48,7 @@ impl Read for PipeReader {
 }
 
 /// A pipe's writing side.
-struct PipeWriter(mpsc::Sender<Vec<u8>>);
+pub(super) struct PipeWriter(pub(super) mpsc::Sender<Vec<u8>>);
 
 impl Write for PipeWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -61,7 +61,7 @@ impl Write for PipeWriter {
     }
 }
 
-fn pipe() -> (PipeWriter, PipeReader) {
+pub(super) fn pipe() -> (PipeWriter, PipeReader) {
     let (sender, chunks) = mpsc::channel();
     (PipeWriter(sender), PipeReader { chunks, pending: Vec::new() })
 }
@@ -105,7 +105,7 @@ fn served(port: u16) -> (PipeWriter, PipeReader, mpsc::Receiver<Result<(), Strin
     (to_fetcher, from_fetcher, end)
 }
 
-fn tell(pipe: &mut PipeWriter, tab: u32, message: &ToFetcher) {
+pub(super) fn tell(pipe: &mut PipeWriter, tab: u32, message: &ToFetcher) {
     write_to_fetcher_for(pipe, tab, message).unwrap();
 }
 
