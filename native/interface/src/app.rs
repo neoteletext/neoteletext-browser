@@ -37,6 +37,8 @@ mod present_phase;
 mod test_display;
 #[cfg(feature = "interaction")]
 mod typing;
+#[cfg(target_os = "linux")]
+mod wheel_buttons;
 mod windows;
 
 #[derive(Default)]
@@ -207,6 +209,10 @@ pub struct App {
     /// the window it left: that window opens there, at that size.
     torn_at: Option<WindowGeometry>,
     modifiers: ModifiersState,
+    /// Which wheel event is a wheel button's release, under X11, where a
+    /// notch given as a button is reported twice.
+    #[cfg(target_os = "linux")]
+    wheel_buttons: wheel_buttons::WheelButtons,
     output: outputs::CorePipe<io::Stdout>,
     /// The interface's own channel to the broker (DEC-1551 item 3).
     declarer: Option<confine::broker::Declarer>,
@@ -254,6 +260,8 @@ impl App {
             focused: protocol::FIRST_WINDOW,
             torn_at: None,
             modifiers: ModifiersState::empty(),
+            #[cfg(target_os = "linux")]
+            wheel_buttons: wheel_buttons::WheelButtons::default(),
             output: outputs::CorePipe::new(io::stdout()),
             declarer: files::declarer(),
             dropped: Vec::new(),
@@ -412,6 +420,20 @@ impl ApplicationHandler<Incoming> for App {
         }
     }
 
+    /// A raw button under X11 says whether a wheel button went down or
+    /// came up, which the window's wheel event for it does not; no other
+    /// device event is used.
+    #[cfg(target_os = "linux")]
+    fn device_event(&mut self, event_loop: &ActiveEventLoop, _device: winit::event::DeviceId, event: winit::event::DeviceEvent) {
+        use winit::platform::x11::ActiveEventLoopExtX11;
+        if let winit::event::DeviceEvent::Button { button, state } = event
+            && event_loop.is_x11()
+        {
+            self.wheel_buttons.raw_button(button, state == winit::event::ElementState::Pressed);
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
     fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device: winit::event::DeviceId, _event: winit::event::DeviceEvent) {}
 
     /// Redraws while something animates; otherwise sleeps until the next

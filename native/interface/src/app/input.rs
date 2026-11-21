@@ -181,6 +181,10 @@ impl App {
             // channel's over its page (REQ-RCH-005).
             #[cfg(feature = "interaction")]
             WindowEvent::MouseInput { state, button, .. } => self.other_button(event_loop, state, button),
+            // The release of a wheel button, which X11 reports as a second
+            // turn of the notch its press was.
+            #[cfg(target_os = "linux")]
+            WindowEvent::MouseWheel { delta, .. } if self.wheel_buttons.is_release(delta) => false,
             WindowEvent::MouseWheel { delta, .. } => self.wheel(event_loop, delta, now),
             // A touch screen's contacts, on Windows and Linux; macOS's
             // trackpads give none (`RETURN-CHANNEL.md` section 4.4). winit
