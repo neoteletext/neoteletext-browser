@@ -17,6 +17,7 @@ use crate::browser::fixture::{HEIGHT, WIDTH};
 use crate::browser::{AskedKey, AskedKeys, Cursor, Key, KeyNamed, Modifiers};
 use crate::controls::{FastextKey, PageControl, PageControls};
 use alloc::string::String;
+use neoteletext_input::event::{ALT, SHIFT};
 use neoteletext_input::keys::code;
 
 const NOW: u64 = 10_000;
@@ -291,4 +292,226 @@ fn the_strip_panels_and_the_browsers_chords_win_in_both_states() {
         assert_eq!(browser.selected, Some(pages[1]), "keys {keys}: the modifier with Down steps the page list");
         assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0], "keys {keys}: nothing to the channel");
     }
+}
+
+// The tests below are of REQ-7037 version 2 (DEC-7157, TODO-7158): how each
+// key is matched against the keys the open page's table names.
+
+/// A functional key by its name in the input protocol's table.
+fn named(name: &str) -> KeyCode {
+    KeyCode::Functional(code(name).expect("a key name"))
+}
+
+/// A key named under no modifier comparison.
+fn asked(key: KeyNamed) -> AskedKey {
+    AskedKey { key, ..AskedKey::EVERY_KEY }
+}
+
+/// The page open, its table naming `keys` and asking for text or not.
+fn asking(text: bool, keys: Vec<AskedKey>) -> (Browser, PageKey) {
+    let (mut browser, key) = viewer(true, true);
+    browser.set_asked_keys(AskedKeys { text, keys });
+    (browser, key)
+}
+
+/// Whether a press of `key` with `mods`, typing `text`, on the physical key
+/// `base`, is the page's.
+fn pages(browser: &Browser, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) -> bool {
+    browser.key_target(Action::Press, key, mods, text, base).is_some()
+}
+
+/// REQ-7037 item 3, RULE-10: a character key is named by its unshifted
+/// character, a named key by its functional code, and a physical key by
+/// the event's United States layout character when it has one, else by its
+/// character: on a French layout the key that types `a` is the physical
+/// key `q`, and the key that types `q` is not.
+#[test]
+fn character_named_and_physical_keys_match_as_rule_10_says() {
+    let (browser, key) =
+        asking(false, alloc::vec![asked(KeyNamed::Character('a')), asked(KeyNamed::Named(code("F5").unwrap())), asked(KeyNamed::Physical('q'))]);
+    let character = |character: char| KeyCode::Character(character);
+    assert_eq!(browser.key_target(Action::Press, character('a'), 0, Some("a"), Some('a')), Some(key), "the character a");
+    assert!(pages(&browser, character('a'), SHIFT, Some("A"), Some('a')), "the character a, shifted, is still its unshifted character");
+    assert!(!pages(&browser, character('b'), 0, Some("b"), Some('b')), "another character");
+    assert!(pages(&browser, named("F5"), 0, None, None), "the named key F5");
+    assert!(!pages(&browser, named("F6"), 0, None, None), "another named key");
+    assert!(pages(&browser, character('z'), 0, Some("z"), Some('q')), "the physical key q, whatever it types");
+    assert!(!pages(&browser, character('q'), 0, Some("q"), Some('w')), "the character q on another physical key");
+    assert!(pages(&browser, character('q'), 0, Some("q"), None), "with no base, the physical key is its character");
+}
+
+/// REQ-7037 item 3, RULE-9: a key named with a modifier mask and value is
+/// the page's only when the event's modifiers under the mask equal the
+/// value; bits outside the mask do not matter.
+#[test]
+fn a_modifier_mask_and_value_are_honoured() {
+    let shifted_s = AskedKey { key: KeyNamed::Character('s'), mods_mask: SHIFT, mods_value: SHIFT };
+    let s_without_control = AskedKey { key: KeyNamed::Character('t'), mods_mask: SHIFT | CONTROL, mods_value: SHIFT };
+    let (browser, _) = asking(false, alloc::vec![shifted_s, s_without_control]);
+    let s = KeyCode::Character('s');
+    assert!(!pages(&browser, s, 0, Some("s"), None), "s alone is not Shift-s");
+    assert!(pages(&browser, s, SHIFT, Some("S"), None), "Shift-s");
+    assert!(pages(&browser, s, SHIFT | ALT, Some("S"), None), "Alt is outside the mask");
+    let t = KeyCode::Character('t');
+    assert!(pages(&browser, t, SHIFT, Some("T"), None));
+    assert!(!pages(&browser, t, SHIFT | CONTROL, None, None), "Control is in the mask and must be up");
+}
+
+/// REQ-7037 items 2 and 3: "any key" under a modifier comparison names
+/// every key with those modifiers and no key without them.
+#[test]
+fn any_key_under_a_modifier_comparison() {
+    let (browser, _) = asking(false, alloc::vec![AskedKey { key: KeyNamed::Any, mods_mask: CONTROL, mods_value: CONTROL }]);
+    assert!(pages(&browser, KeyCode::Character('x'), CONTROL, None, None));
+    assert!(pages(&browser, named("F1"), CONTROL, None, None));
+    assert!(!pages(&browser, KeyCode::Character('x'), 0, Some("x"), None), "x alone is the viewer's");
+    assert!(!pages(&browser, named("F1"), 0, None, None), "F1 alone is the viewer's coloured key");
+}
+
+/// REQ-7037 items 3 and 5: a table that asks for text and names no key is
+/// given every character key and every key whose press typed a printable
+/// character, and the paste and the composition; a named key that types
+/// nothing (an arrow, Escape, F1) stays the viewer's.
+#[test]
+fn a_table_asking_for_text_is_given_every_key_that_types_and_no_other() {
+    let (mut browser, key) = asking(true, alloc::vec![]);
+    assert!(pages(&browser, KeyCode::Character('a'), 0, Some("a"), None), "a character key");
+    assert!(pages(&browser, KeyCode::Character('1'), 0, None, None), "a character key, whatever it typed");
+    assert!(pages(&browser, named("Numpad5"), 0, Some("5"), None), "a named key that typed a printable character");
+    for name in ["ArrowUp", "Escape", "F1", "Enter"] {
+        let text = (name == "Enter").then_some("\r");
+        assert!(!pages(&browser, named(name), 0, text, None), "{name} types nothing printable and is the viewer's");
+    }
+    assert_eq!(browser.text_target(), Some(key));
+    assert!(browser.composes_for_channel());
+    assert!(browser.terminal_paste("pasted"));
+    browser.terminal_text("typed");
+    assert!(browser.terminal_compose(1, "に"));
+    assert_eq!(
+        intents(&browser.take_outputs()),
+        [Intent::Paste("pasted".into()), Intent::Text("typed".into()), Intent::Compose { cursor: 1, text: "に".into() }]
+    );
+    route(&mut browser, Pressed::Colour(FastextKey::Red));
+    assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Fastext(FastextKey::Red))], "F1 follows the red link");
+}
+
+/// REQ-7037 item 5: a table that names keys and asks for no text is given
+/// no paste, no composition, no committed text and no phone text (which
+/// the window sends through `terminal_text`), and the input method is not
+/// switched on for it.
+#[test]
+fn a_table_naming_keys_and_no_text_is_given_no_text() {
+    let (mut browser, _) = asking(false, alloc::vec![AskedKey::EVERY_KEY]);
+    assert!(browser.keyboard_target().is_some(), "the keys are the page's");
+    assert_eq!(browser.text_target(), None);
+    assert!(!browser.composes_for_channel());
+    assert!(!browser.terminal_paste("pasted"));
+    assert!(!browser.terminal_compose(1, "に"));
+    browser.terminal_text("typed");
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0]);
+}
+
+/// REQ-7037 item 3: the repeat and the release of a key whose press the
+/// page was given go to the page whatever the modifiers have become; one
+/// whose press it was not given, or that came up, does not.
+#[test]
+fn a_keys_repeat_and_release_follow_its_press_after_the_modifiers_change() {
+    let (mut browser, key) = asking(false, alloc::vec![AskedKey { key: KeyNamed::Character('a'), mods_mask: SHIFT, mods_value: 0 }]);
+    let a = KeyCode::Character('a');
+    assert_eq!(browser.key_target(Action::Repeat, a, SHIFT, None, None), None, "not pressed yet: Shift-a is the viewer's");
+    browser.terminal_key(Action::Press, a, 0, Some("a"), None);
+    assert_eq!(browser.key_target(Action::Repeat, a, SHIFT, None, None), Some(key), "its repeat with Shift now down");
+    assert_eq!(browser.key_target(Action::Release, a, SHIFT, None, None), Some(key), "its release");
+    assert_eq!(browser.key_target(Action::Press, a, SHIFT, None, None), None, "a new press is matched afresh");
+    browser.terminal_key(Action::Release, a, SHIFT, None, None);
+    assert_eq!(browser.key_target(Action::Release, a, SHIFT, None, None), None, "up: no longer followed");
+    let sent = intents(&browser.take_outputs());
+    assert!(matches!(sent.as_slice(), [Intent::Key { action: Action::Press, .. }, Intent::Key { action: Action::Release, .. }]), "{sent:?}");
+}
+
+/// REQ-7037 item 3: the interface follows at most `MAX_HELD_KEYS` keys
+/// (sixteen) given to the page and still down; the seventeenth's release
+/// under a changed modifier is not followed.
+#[test]
+fn the_seventeenth_held_key_is_not_followed() {
+    use neoteletext_input::held::MAX_HELD_KEYS;
+    let (mut browser, key) = asking(false, alloc::vec![AskedKey { key: KeyNamed::Any, mods_mask: SHIFT, mods_value: 0 }]);
+    let keys: Vec<KeyCode> = ('a'..='z').take(MAX_HELD_KEYS + 1).map(KeyCode::Character).collect();
+    assert_eq!(keys.len(), 17, "MAX_HELD_KEYS is sixteen");
+    for &down in &keys {
+        browser.terminal_key(Action::Press, down, 0, None, None);
+    }
+    assert_eq!(intents(&browser.take_outputs()).len(), keys.len(), "every press is the page's");
+    assert_eq!(browser.key_target(Action::Release, keys[MAX_HELD_KEYS - 1], SHIFT, None, None), Some(key), "the sixteenth is followed");
+    assert_eq!(browser.key_target(Action::Release, keys[MAX_HELD_KEYS], SHIFT, None, None), None, "the seventeenth is not");
+}
+
+/// REQ-7037 item 3: the held keys are forgotten when typing goes off and
+/// when another page opens.
+#[test]
+fn the_held_keys_are_forgotten_when_typing_goes_off_or_another_page_opens() {
+    let only_unshifted = alloc::vec![AskedKey { key: KeyNamed::Character('a'), mods_mask: SHIFT, mods_value: 0 }];
+    let a = KeyCode::Character('a');
+    let (mut browser, key) = asking(false, only_unshifted.clone());
+    browser.terminal_key(Action::Press, a, 0, Some("a"), None);
+    browser.set_typing(TypingView { on: false, ..told(key, true, true) }, NOW);
+    browser.set_typing(told(key, true, true), NOW);
+    assert_eq!(browser.key_target(Action::Release, a, SHIFT, None, None), None, "typing went off");
+
+    let (mut browser, key) = asking(false, only_unshifted);
+    browser.terminal_key(Action::Press, a, 0, Some("a"), None);
+    browser.set_typing(told(key, true, true), NOW);
+    assert_eq!(browser.key_target(Action::Release, a, SHIFT, None, None), Some(key), "the same page told again keeps it");
+    browser.set_typing(told(PageKey { page: key.page + 1, ..key }, true, true), NOW);
+    assert_eq!(browser.key_target(Action::Release, a, SHIFT, None, None), None, "another page");
+}
+
+/// REQ-7037 items 3 and 4: with a table naming some keys, each of the
+/// viewer's keys, the coloured keys and the digits either goes to the page
+/// and the viewer does nothing, or the viewer acts and nothing goes to the
+/// page; never both, and the page gets exactly the keys named.
+#[test]
+fn no_key_goes_both_to_the_page_and_to_the_viewer() {
+    let (mut browser, key) = asking(
+        false,
+        alloc::vec![
+            asked(KeyNamed::Character('y')),
+            asked(KeyNamed::Character('?')),
+            asked(KeyNamed::Named(code("F4").unwrap())),
+            asked(KeyNamed::Character('5'))
+        ],
+    );
+    let mut pressed: Vec<(Pressed, bool)> = VIEWER_KEYS.iter().map(|&(text, _)| (Pressed::Text(text), matches!(text, "y" | "?"))).collect();
+    pressed.extend(COLOUR_KEYS.iter().map(|&colour| (Pressed::Colour(colour), colour == FastextKey::Cyan)));
+    pressed.push((Pressed::Text("5"), true));
+    for (press, named) in pressed {
+        route(&mut browser, press);
+        let outputs = browser.take_outputs();
+        let to_page = !intents(&outputs).is_empty();
+        let by_viewer = outputs.iter().any(|output| !matches!(output, Output::Terminal { .. }));
+        assert!(to_page != by_viewer, "{press:?} went one way only: {outputs:?}");
+        assert_eq!(to_page, named, "{press:?} goes to the page exactly when named: {outputs:?}");
+    }
+    assert_eq!(browser.opened(), Some(key), "the digit the table names selected no page");
+}
+
+/// REQ-7037 item 7 (REQ-2944, REQ-6390): with a table naming some keys,
+/// the strip's popover and the address field still take the keys it
+/// names, and the browser's chords stay the browser's.
+#[test]
+fn the_strip_and_the_chords_win_over_a_table_naming_some_keys() {
+    let (mut browser, key) = asking(false, alloc::vec![asked(KeyNamed::Character('r')), asked(KeyNamed::Named(code("ArrowDown").unwrap()))]);
+    let r = KeyCode::Character('r');
+    assert_eq!(browser.key_target(Action::Press, r, 0, Some("r"), None), Some(key));
+    browser.editing = true;
+    assert_eq!(browser.key_target(Action::Press, r, 0, Some("r"), None), None, "the address field");
+    browser.editing = false;
+    browser.set_star(crate::library::StarView { open: true, ..crate::library::StarView::default() });
+    assert_eq!(browser.key_target(Action::Press, r, 0, Some("r"), None), None, "the star's popover");
+    browser.set_star(crate::library::StarView::default());
+    browser.take_outputs();
+    let pages = browser.bank_pages();
+    assert!(browser.key(Key::Down, Modifiers { command: true, shift: true, ..Modifiers::default() }, NOW));
+    assert_eq!(browser.selected, Some(pages[1]), "the browser's chord steps the page list");
+    assert_eq!(intents(&browser.take_outputs()), [] as [Intent; 0]);
 }

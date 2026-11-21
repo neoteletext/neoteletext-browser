@@ -300,3 +300,59 @@ fn the_remotes_sub_page_control_counts_to_the_standards_maximum_and_returns_to_t
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
     assert!(!browser.remote.buttons.iter().any(|(button, _)| *button == Button::Latest), "a live channel's has no return");
 }
+
+/// REQ-7037 item 6 (TODO-7158): the remote's buttons that stand for keys
+/// are decided by the page's table as the keyboard's are. With a table
+/// naming only the digit 7 and the red key, those go to the channel; the
+/// digit 0 is the remote's own page entry and the green button follows the
+/// page's green link, and nothing of either goes to the channel.
+#[cfg(feature = "interaction")]
+#[test]
+fn the_remotes_keys_go_to_the_page_only_when_its_table_names_them() {
+    use crate::browser::typing::TypingView;
+    use crate::browser::{AskedKey, AskedKeys, KeyNamed};
+    use crate::canvas::PageKey;
+    use crate::channel::{Channel, PageInfo, Status};
+    use neoteletext_input::keys::code;
+    const KEY: PageKey = PageKey { channel: 4, page: 0x100 };
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    let mut channel = Channel::empty();
+    channel.channel = KEY.channel;
+    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded, subpages: 0 });
+    browser.set_channel(channel);
+    browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser.wall.zoom(KEY, 0);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    let typing = TypingView {
+        channel: KEY.channel,
+        page: KEY.page,
+        on: true,
+        secure: false,
+        refused: false,
+        cursor: None,
+        round_trip_us: None,
+        wheel: false,
+        asks: true,
+        keys: true,
+    };
+    browser.set_typing(typing, 10_000);
+    let named = |key: KeyNamed| AskedKey { key, ..AskedKey::EVERY_KEY };
+    browser.set_asked_keys(AskedKeys { text: false, keys: alloc::vec![named(KeyNamed::Character('7')), named(KeyNamed::Named(code("ColorF0Red").unwrap()))] });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    browser.take_outputs();
+    let terminal = |outputs: &[Output]| outputs.iter().filter(|output| matches!(output, Output::Terminal { .. })).count();
+    for button in [Button::Digit('7'), Button::Control(PageControl::Fastext(FastextKey::Red))] {
+        assert!(browser.remote_press(middle(rect_of(&browser, button)), 10_000));
+        let outputs = browser.take_outputs();
+        assert_eq!(terminal(&outputs), 2, "{button:?} is pressed and released on the page: {outputs:?}");
+        assert!(!outputs.iter().any(|output| matches!(output, Output::PageControl(_))), "{button:?}: the remote does not act");
+    }
+    assert!(browser.digits.is_empty(), "the 7 was the page's");
+    assert!(browser.remote_press(middle(rect_of(&browser, Button::Digit('0'))), 10_000));
+    assert_eq!(terminal(&browser.take_outputs()), 0, "0 is not named");
+    assert_eq!(browser.digits, "0", "the remote's own page entry");
+    let green = PageControl::Fastext(FastextKey::Green);
+    assert!(browser.remote_press(middle(rect_of(&browser, Button::Control(green))), 10_000));
+    assert_eq!(browser.take_outputs(), [Output::PageControl(green)], "the green link, and nothing to the channel");
+}

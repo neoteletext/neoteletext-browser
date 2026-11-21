@@ -447,3 +447,47 @@ fn the_exit_button_comes_at_the_top_edge_where_the_browser_draws_its_buttons() {
     mac.pointer_moved(WIDTH / 2.0, 1.0, 200);
     assert!(!cross(&draw(&mut mac, 200)));
 }
+
+/// REQ-7037 item 7 (TODO-7158): the notice says to hold Escape exactly when
+/// Escape pressed alone is a key the page is given: its table names
+/// Escape, or any key; not when it names other keys, Escape only under a
+/// modifier, or asks only for text (Escape types nothing).
+#[cfg(feature = "interaction")]
+#[test]
+fn the_notice_says_hold_escape_exactly_when_the_table_names_escape() {
+    use crate::browser::typing::TypingView;
+    use crate::browser::{AskedKey, AskedKeys, KeyNamed};
+    use neoteletext_input::event::CONTROL;
+    use neoteletext_input::keys::code;
+    let escape = KeyNamed::Named(code("Escape").unwrap());
+    let alone = |key: KeyNamed| AskedKey { key, ..AskedKey::EVERY_KEY };
+    let cases = [
+        ("Escape", AskedKeys { text: false, keys: alloc::vec![alone(escape)] }, true),
+        ("any key", AskedKeys { text: false, keys: alloc::vec![AskedKey::EVERY_KEY] }, true),
+        ("other keys", AskedKeys { text: false, keys: alloc::vec![alone(KeyNamed::Character('a')), alone(KeyNamed::Named(code("F1").unwrap()))] }, false),
+        ("Control-Escape", AskedKeys { text: false, keys: alloc::vec![AskedKey { key: escape, mods_mask: CONTROL, mods_value: CONTROL }] }, false),
+        ("text only", AskedKeys { text: true, keys: alloc::vec![] }, false),
+    ];
+    for (what, asked, hold) in cases {
+        let mut browser = in_full_screen();
+        let key = browser.wall().zoomed().expect("a page open");
+        let typing = TypingView {
+            channel: key.channel,
+            page: key.page,
+            on: true,
+            secure: false,
+            refused: false,
+            cursor: None,
+            round_trip_us: None,
+            wheel: false,
+            asks: true,
+            keys: true,
+        };
+        browser.set_typing(typing, 0);
+        browser.set_asked_keys(asked);
+        let texts = draw(&mut browser, 1_000).texts;
+        let said = |wanted: [&str; 2]| texts.iter().any(|(_, text)| wanted.contains(&text.as_str()));
+        assert_eq!(said([TYPING_NOTICE, SHORT_TYPING_NOTICE]), hold, "{what}: hold Escape: {texts:?}");
+        assert_eq!(said([NOTICE, SHORT_NOTICE]), !hold, "{what}: plain Escape: {texts:?}");
+    }
+}
