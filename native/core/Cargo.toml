@@ -38,7 +38,7 @@ neoteletext-core.workspace = true
 neoteletext-web.workspace = true
 web-opener = { workspace = true, optional = true }
 ring.workspace = true
-keyring.workspace = true
+secret-store.workspace = true
 # The launcher's state, the updater's messages and the installation's
 # places (installation-and-updates.md), and the port the updater's
 # sandbox gives it (section 8.1).

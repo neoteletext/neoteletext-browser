@@ -197,22 +197,19 @@ pub(crate) fn broker() -> Result<(), String> {
 /// random source (VS-108). The trusted core cannot reach the store. The
 /// cookie file's key is deleted, if it is there: cookies are gone (VS-603).
 fn viewer_keys_key() -> Result<Vec<u8>, String> {
-    if let Ok(old) = keyring::Entry::new(OLD_COOKIE_SERVICE, OLD_COOKIE_ACCOUNT) {
-        // Gone already, or a store that refuses: nothing reads it either way.
-        let _ = old.delete_credential();
+    use ring::rand::SecureRandom as _;
+    // Gone already, or a store that refuses: nothing reads it either way.
+    let _ = secret_store::delete(OLD_COOKIE_SERVICE, OLD_COOKIE_ACCOUNT);
+    if let Some(key) = secret_store::read(KEY_SERVICE, KEY_ACCOUNT).map_err(|error| error.to_string())? {
+        return Ok(key.as_bytes().to_vec());
     }
-    let entry = keyring::Entry::new(KEY_SERVICE, KEY_ACCOUNT).map_err(|error| format!("no secret store: {error}"))?;
-    match entry.get_secret() {
-        Ok(key) => Ok(key),
-        Err(keyring::Error::NoEntry) => {
-            use ring::rand::SecureRandom as _;
-            let mut key = vec![0_u8; confine::broker::SEALING_KEY_BYTES];
-            ring::rand::SystemRandom::new().fill(&mut key).map_err(|_| String::from("no random source"))?;
-            entry.set_secret(&key).map_err(|error| format!("the secret store refused the key: {error}"))?;
-            Ok(key)
-        }
-        Err(error) => Err(format!("the secret store refused: {error}")),
-    }
+    let mut made = vec![0_u8; confine::broker::SEALING_KEY_BYTES];
+    let filled = ring::rand::SystemRandom::new().fill(&mut made);
+    // Set to zero when it goes, on every path from here.
+    let key = secret_store::Secret::new(made);
+    filled.map_err(|_| String::from("no random source"))?;
+    secret_store::write(KEY_SERVICE, KEY_ACCOUNT, key.as_bytes()).map_err(|error| error.to_string())?;
+    Ok(key.as_bytes().to_vec())
 }
 
 fn lock(access: &Mutex<Access>) -> std::sync::MutexGuard<'_, Access> {

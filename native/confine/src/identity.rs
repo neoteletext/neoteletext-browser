@@ -76,7 +76,7 @@ pub fn opened_path(file: &File) -> io::Result<std::path::PathBuf> {
 /// When the system will not say.
 #[cfg(windows)]
 pub fn file_identity(file: &File) -> io::Result<FileIdentity> {
-    let born = file.metadata()?.created().map(nanoseconds).unwrap_or(0);
+    let born = file.metadata()?.created().map_or(0, nanoseconds);
     let (volume, file) = crate::windows::identity_of(file)?;
     Ok(FileIdentity { volume, file, born })
 }

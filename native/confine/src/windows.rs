@@ -52,7 +52,7 @@ mod channel;
 mod container;
 mod foreign_window;
 mod handles;
-pub use foreign_window::{ForeignWindow, pointer_in_window};
+pub use foreign_window::pointer_in_window;
 pub(crate) mod instance;
 mod job;
 mod process;

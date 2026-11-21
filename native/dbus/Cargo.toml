@@ -1,0 +1,16 @@
+[package]
+name = "neoteletext-dbus"
+description = "A minimal D-Bus client of the browser's own (DEC-7168): the session bus's address, SASL EXTERNAL authentication, the message format and method calls and signals, for the Linux file chooser portal and the Secret Service, with every length bounded"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The caller's user number for SASL EXTERNAL, through rustix's safe
+# interface, already in the tree (no crate added).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+
+[lints]
+workspace = true

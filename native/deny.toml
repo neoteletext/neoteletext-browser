@@ -8,19 +8,7 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = [
-    # zvariant, zvariant_derive and zbus_names were merged into zbus 6.0 on
-    # 16 October 2026 and are no longer published apart: not a fault. They
-    # come only from zbus 5, under two clients on Linux: the Secret Service
-    # client that keeps the viewer key file's sealing key (keyring's zbus store,
-    # secret-service) and the file chooser's desktop portal (ashpd). Neither
-    # has a release on zbus 6 (crates.io, 3 November 2026: secret-service
-    # 5.2.0, zbus-secret-service-keyring-store 1.0.1 and ashpd 0.13.13 all
-    # require zbus 5). Remove these three when both have moved.
-    { id = "RUSTSEC-2026-0370", reason = "zvariant merged into zbus 6; the Linux Secret Service and portal clients are not on zbus 6 yet" },
-    { id = "RUSTSEC-2026-0371", reason = "zbus_names merged into zbus 6; the Linux Secret Service and portal clients are not on zbus 6 yet" },
-    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive merged into zbus 6; the Linux Secret Service and portal clients are not on zbus 6 yet" },
-]
+ignore = []
 
 [licenses]
 version = 2

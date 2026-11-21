@@ -71,7 +71,7 @@ pub use time::{LocalTime, MAX_OFFSET, local_time};
 #[cfg(unix)]
 pub use unix::{DESCRIPTORS_NEEDED, TERMINATION_SIGNALS, raise_descriptor_limit, termination_requests};
 #[cfg(windows)]
-pub use windows::{ForeignWindow, grant_packages_read, pointer_in_window, remove_containers};
+pub use windows::{grant_packages_read, pointer_in_window, remove_containers};
 
 /// On Windows, the security identifier of the fetcher's `AppContainer` as
 /// text (`S-1-15-2-...`): a fetcher reaches this computer's own addresses

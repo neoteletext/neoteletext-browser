@@ -1,0 +1,33 @@
+[package]
+name = "neoteletext-secret-store"
+description = "The broker's store of one secret in the platform's own (DEC-7168, VS-108): the macOS keychain through Security.framework, Windows Credential Manager, and the freedesktop Secret Service over the browser's own D-Bus client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Linux and the other Unix desktops: the Secret Service, over D-Bus.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+dbus.workspace = true
+
+# The bindings winit, web-opener and confine already use, so no crate is
+# added; these features enable the Credential Manager's calls.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+
+# As the Dock menu's and the web opener's crates: unsafe code is denied,
+# not forbidden, and allowed only in the macOS and Windows modules, each
+# block with its reason (requirement 10.12).
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

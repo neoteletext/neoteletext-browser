@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser", "dbus", "secret-store", "dialog"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 
@@ -28,6 +28,16 @@ dock-menu = { path = "dock-menu", default-features = false }
 web-opener = { path = "web-opener", default-features = false }
 # The processes' sandboxes on every platform (decision 52).
 confine = { path = "confine", default-features = false }
+# The browser's own D-Bus client (DEC-7168): the Linux desktop portal for
+# the chooser and the Secret Service for the broker.
+dbus = { path = "dbus", package = "neoteletext-dbus" }
+# The viewer key file's sealing key in the platform's secret store, the
+# keychain, Credential Manager or the Secret Service (VS-108), read by the
+# broker alone: the browser's own calls (DEC-7168).
+secret-store = { path = "secret-store", package = "neoteletext-secret-store" }
+# The system's file dialogs on macOS and Windows, for the chooser: the
+# browser's own calls (DEC-7168).
+dialog = { path = "dialog", package = "neoteletext-dialog" }
 # What the launcher, the updater, the installer and the release tool
 # share (installation-and-updates.md).
 update = { path = "update" }
@@ -147,16 +157,12 @@ rustls = { version = "=0.23.46", default-features = false, features = ["ring", "
 # fetcher's WebSocket masks from the system's random source (TODO-6472,
 # RFC 6455 section 5.3).
 ring = { version = "=0.17.14", default-features = false }
-# MIT or Apache-2.0: the viewer key file's sealing key kept in the
-# platform's secret store, the Keychain, Credential Manager or the Secret
-# Service (VS-108), read by the broker alone.
-keyring = { version = "=4.2.0" }
 # MIT, Zlib or Apache-2.0: the release files' DEFLATE, read with a bound
 # on what it writes (installation-and-updates.md section 6). The PNG
 # reader that brought it into the browser left with decision 61.
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 # Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT, already under winit
-# and tempfile: the atomic exchange of two folders (`renameatx_np` with
+# and softbuffer: the atomic exchange of two folders (`renameatx_np` with
 # `RENAME_SWAP`, `renameat2` with `RENAME_EXCHANGE`, requirement 13.7)
 # through a safe interface.
 rustix = { version = "=1.1.6", default-features = false, features = ["std", "fs"] }

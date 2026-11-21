@@ -42,7 +42,7 @@ $out_of_date"
 # same no-panic lint list at its root.
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs native/fetcher/src/lib.rs
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-vello/src/lib.rs native/draw-embedded/src/lib.rs
-    native/web-opener/src/lib.rs native/dock-menu/src/lib.rs
+    native/web-opener/src/lib.rs native/dock-menu/src/lib.rs native/dbus/src/lib.rs native/secret-store/src/lib.rs native/dialog/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs
     native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
@@ -408,6 +408,16 @@ linux_steps() {
         (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
 }
 
+# libFuzzer's options for a target whose inputs must reach past its
+# default length limit of 4,096 bytes: dbus_message reads messages up to
+# neoteletext-dbus's MAX_MESSAGE_BYTES, 128 KiB (131,072 bytes), where the
+# security review of 22 November 2026 found its fault (TODO-7173 A1).
+fuzz_options() {
+    case "$1" in
+        dbus_message) echo "-max_len=131072" ;;
+    esac
+}
+
 check_fuzz() {
     # The browser's fuzz targets, and the updater workspace's (The Update
     # Framework's metadata through `tough`, the update host's responses).
@@ -423,7 +433,7 @@ check_fuzz() {
                 log="target/fuzz-$target.log"
                 mkdir -p target
                 cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" -- \
-                    -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 >"$log" 2>&1 ||
+                    -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 $(fuzz_options "$target") >"$log" 2>&1 ||
                     { tail -40 "$log"; fail "fuzz target $target found a fault; its input is in $folder/artifacts/$target/"; }
                 printf '%s: %s\n' "$target" "$(grep '^Done' "$log")"
             done
