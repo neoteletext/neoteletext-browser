@@ -4,12 +4,16 @@
 use crate::Error;
 
 /// The environment variable that names the session bus ("Well-known
-/// Message Bus Instances").
+/// Message Bus Instances"). The connection, and so the session bus's
+/// address, is built on Unix only, where the browser speaks D-Bus.
+#[cfg(unix)]
 pub const SESSION_BUS_VARIABLE: &str = "DBUS_SESSION_BUS_ADDRESS";
 /// The runtime folder, whose `bus` socket is the session bus when the
 /// variable is not set: the convention of the reference implementation and
 /// of systemd's user bus on Linux.
+#[cfg(unix)]
 const RUNTIME_VARIABLE: &str = "XDG_RUNTIME_DIR";
+#[cfg(unix)]
 const RUNTIME_SOCKET: &str = "bus";
 /// The longest address read, so that a hostile environment cannot make the
 /// parser allocate without bound: a page. A socket's path is at most 108
@@ -81,6 +85,7 @@ fn unescape(value: &str) -> Result<Vec<u8>, Error> {
 
 /// The session bus's addresses: the variable's, or the runtime folder's
 /// `bus` socket when it is not set.
+#[cfg(unix)]
 pub(crate) fn session_addresses() -> Result<Vec<Address>, Error> {
     if let Some(text) = std::env::var_os(SESSION_BUS_VARIABLE) {
         let text = text.into_string().map_err(|_| Error::NoBus(String::from("the address is not text")))?;

@@ -1,6 +1,7 @@
 //! The client against a real bus: a private `dbus-daemon` of the session
 //! kind, started for the test in its own folder, so that no desktop's bus
 //! is touched.
+#![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, reason = "a test")]
 
 use std::io::{BufRead as _, BufReader};

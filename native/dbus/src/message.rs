@@ -27,7 +27,9 @@ const PROTOCOL_VERSION: u8 = 1;
 /// The byte-order marks: `l` little-endian, `B` big-endian.
 const LITTLE_ENDIAN: u8 = b'l';
 const BIG_ENDIAN: u8 = b'B';
-/// "Message Format", flags: `NO_REPLY_EXPECTED`.
+/// "Message Format", flags: `NO_REPLY_EXPECTED`, which only the
+/// connection, built on Unix alone, sets.
+#[cfg(unix)]
 pub(crate) const NO_REPLY_EXPECTED: u8 = 0x1;
 
 /// "Header Fields": each field's code.
