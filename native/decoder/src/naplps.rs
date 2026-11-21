@@ -37,6 +37,13 @@
 //! presented, repainting only damage; and the objects that can be picked
 //! are sent as the picture's pick record, as a ReGIS picture's detectable
 //! drawings are (DEC-6522 item 11).
+//!
+//! A sub-page's stream may be painted as a show (DEC-7031 item 5): a PAINT
+//! record, read before the generation of the stream it names, states a
+//! line speed, and the player then gives that generation's bytes to the
+//! terminal at the line's pace (REQ-7024), each WAIT's time added to it.
+//! When the player has nothing left to draw the picture is painted, and
+//! the open page's rule table is told (REQ-7026).
 
 use std::collections::BTreeMap;
 
@@ -45,7 +52,7 @@ use naplps::limits::{
     DISPLAY_FIRST_LINE, DISPLAY_LINES, MAX_ANIMATED_OBJECTS, MAX_ANIMATION_PIXELS_PER_TICK, MAX_CYCLING_OBJECTS, RASTER_HEIGHT, RASTER_WIDTH,
     RECEIVER_CANVAS_HEIGHT, RECEIVER_CANVAS_WIDTH,
 };
-use naplps::{Animation, Canvas, Look, Object, Player, StrokeFont, Terminal};
+use naplps::{Animation, Canvas, Look, Object, Pace, Player, StrokeFont, Terminal};
 use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
 use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::limits::MAX_POINTER_OBJECTS;
@@ -53,7 +60,8 @@ use neoteletext_rules::table::{Target, TargetKind};
 use neoteletext_web::records::regis::RegisRecord;
 use protocol::regis::{REGIS_COLOURS, RegisPick, RegisViewer};
 
-use crate::animation::{Counters, next_cycle_tick};
+use crate::animation::frames::Paint;
+use crate::animation::{Counters, WholePicture, next_cycle_tick};
 use crate::parts::{Figures, Sent, parts_to_send};
 use crate::regis::Drawn;
 
@@ -131,6 +139,11 @@ struct Page {
     animation: Box<AnimationStore<MAX_ANIMATED_OBJECTS>>,
     /// The presentation tick it was last brought to.
     told: Option<u32>,
+    /// The presentation tick its player was last given the time to: its
+    /// WAIT, its BLINK processes and the bytes it holds for the line
+    /// speed. `None` while the player has nothing due, when no tick is
+    /// counted: the ticks before bytes arrive are not theirs (REQ-7024).
+    paced: Option<u32>,
     /// The pixels repainted for its animation in the tick `told`
     /// (ANIM-16).
     painted: u64,
@@ -148,6 +161,9 @@ struct Page {
     /// allowance, and its composing of objects at its bound, and whether
     /// each was told (DEC-6851): once a generation each.
     stopped: Stopped,
+    /// Whether the whole picture's "painted" event is owed (DEC-7031
+    /// item 5).
+    whole: WholePicture,
 }
 
 /// Which of the NAPLPS renderer's work bounds (DEC-6851) a sub-page's
@@ -256,12 +272,14 @@ impl Page {
             sent: None,
             animation: Box::new(AnimationStore::new()),
             told: None,
+            paced: None,
             painted: 0,
             motion: Motion::default(),
             counters: Counters::default(),
             viewer: RegisViewer::default(),
             cursor: Cursor::default(),
             stopped: Stopped::default(),
+            whole: WholePicture::default(),
         })
     }
 
@@ -473,9 +491,17 @@ impl Page {
     /// played runs down and what it held is drawn, the BLINK processes
     /// reach their phase (ANIM-20), and each cycling object whose frame
     /// is due is given it (ANIM-14).
+    ///
+    /// The ticks the player is given are counted from the last step that
+    /// left it something due. A step that leaves it nothing stops the
+    /// count, and the loop may then sleep for any time: bytes that arrive
+    /// afterwards have their tick 0 at the step that follows them, as a
+    /// new sub-page's have at its first, and are not given the ticks of
+    /// the sleep (REQ-7024: bytes on an idle line wait their full time,
+    /// and a WAIT among them its whole time).
     fn advance(&mut self, tick: u32) {
         self.blink(tick);
-        let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
+        let passed = self.paced.map_or(0, |paced| tick.saturating_sub(paced));
         if self.told != Some(tick) {
             self.painted = 0;
         }
@@ -487,6 +513,7 @@ impl Page {
             let _ = self.player.advance(&mut self.terminal, &mut self.canvas, passed);
             self.changed |= self.player.held_bytes() != held || self.palette() != colours;
         }
+        self.paced = self.player.ticks_to_next(&self.terminal).map(|_| tick);
         let mut due = Vec::new();
         // Under reduced motion a frame cycle shows its first frame, the
         // frame in force before it starts, and does not advance (PAR-33).
@@ -623,6 +650,21 @@ pub struct NaplpsPages {
     /// The sub-pages whose drawing met a work bound since the last take,
     /// for the developer console (DEC-6851).
     notes: Vec<StoppedNote>,
+    /// The PAINT record waiting for each sub-page's stream: the generation
+    /// it names and its values, at most one a sub-page (DEC-7031 item 1).
+    /// It is applied when that generation starts and dropped when any
+    /// other does.
+    pending: BTreeMap<(u16, u16), (u16, Paint)>,
+    /// The sub-page whose rule table names the page's whole picture in a
+    /// `painted` trigger (DEC-7031 items 4 and 5), which a terminal made
+    /// for it is told.
+    watch: Option<(u16, u16)>,
+}
+
+/// The pace of a line of `speed` bits a second (REQ-7024): as many bytes
+/// as its speed is bits a second, in the ticks the engine names.
+const fn line_pace(speed: u32) -> Pace {
+    Pace { bytes: speed, ticks: neoteletext_web::consts::LINE_PACE_TICKS }
 }
 
 /// What a `NAPLPS_OBJECTS` record does to its sub-page's objects (the
@@ -721,6 +763,17 @@ impl NaplpsPages {
             page.viewer = viewer;
             page.cursor.number = cursor;
             page.cursor.steady = self.reduced;
+            // The PAINT record waiting is this generation's or no stream's
+            // (DEC-7031 item 1): one that names another generation is
+            // dropped, and this stream is painted as one with none. The
+            // sheet was fed at once, when the terminal was made; the
+            // stream's bytes are given at the line's speed (REQ-7024),
+            // unless the viewer's setting is off or motion is reduced.
+            let paint = self.pending.remove(&key).filter(|(generation, _)| *generation == record.generation).map(|(_, paint)| paint);
+            if let Some(speed) = paint.and_then(|paint| paint.line_speed).filter(|_| !self.at_once && !self.reduced) {
+                page.player.set_pace(Some(line_pace(speed)));
+            }
+            page.whole.watch(self.watch == Some(key), false);
             // The objects sent ahead of this generation are its own; those
             // of any other are dropped (ANIM-11).
             if let Some(waiting) = self.waiting.remove(&key).filter(|waiting| waiting.generation == record.generation) {
@@ -738,10 +791,12 @@ impl NaplpsPages {
             return;
         }
         page.next = page.next.saturating_add(u32::try_from(record.data.len()).unwrap_or(u32::MAX));
-        // What is drawn at once is drawn; what follows a WAIT is held by
-        // the player until the clock has played it (ANIM-20). A bell is
-        // not rung (DEC-6407 item 4).
+        // What is drawn at once is drawn; what follows a WAIT, and every
+        // byte of a stream paced at a line's speed, is held by the player
+        // until the clock has played it (ANIM-20, DEC-7031 item 3). A bell
+        // is not rung (DEC-6407 item 4).
         let _ = page.player.push(&mut page.terminal, &mut page.canvas, record.data);
+        page.whole.drew();
         if page.newly_stopped() {
             Self::note(&mut self.notes, key, Self::stream_stopped_text());
         }
@@ -751,6 +806,48 @@ impl NaplpsPages {
         // The channel draws after each key typed: the cursor is shown again
         // at once, never hidden where the viewer looks for it (REQ-6378).
         page.cursor.again = true;
+    }
+
+    /// Takes a PAINT record for a sub-page's NAPLPS stream (DEC-7031 item
+    /// 1): kept, in place of any kept for the sub-page before, until the
+    /// generation it names starts. The engine's reader has checked its
+    /// values, and refuses a default paint rate for NAPLPS.
+    pub fn read_paint(&mut self, page: u16, sub: u16, generation: u16, paint: Paint) {
+        let key = (page, sub);
+        if !self.pending.contains_key(&key) && self.pending.len() >= MAX_WAITING {
+            self.pending.pop_first();
+        }
+        self.pending.insert(key, (generation, paint));
+    }
+
+    /// The open page's rule table names the whole picture of the sub-page
+    /// `key` in a `painted` trigger (DEC-7031 items 4 and 5), or with
+    /// `None` no table names one. The sub-page watched before is watched
+    /// no longer. A picture whose bytes have come already owes the table
+    /// just loaded the event.
+    pub fn set_watch(&mut self, watch: Option<(u16, u16)>) {
+        if let Some(held) = self.watch.take().and_then(|before| self.pages.get_mut(&before)) {
+            held.whole.watch(false, false);
+        }
+        self.watch = watch;
+        if let Some(held) = watch.and_then(|key| self.pages.get_mut(&key)) {
+            held.whole.watch(true, held.next != 0);
+        }
+    }
+
+    /// Takes the "painted" event of the whole picture of the sub-page
+    /// `sub` of `page` at presentation tick `tick`, if it is owed: its
+    /// table names the page, bytes were drawn, and the player holds none
+    /// and plays no WAIT (DEC-7031 item 5). At most once a tick.
+    pub fn take_whole(&mut self, page: u16, sub: u16, tick: u32) -> bool {
+        self.pages.get_mut(&(page, sub)).is_some_and(|held| held.whole.take(held.player.idle(), tick))
+    }
+
+    /// Whether the sub-page `sub` of `page` has the whole picture's
+    /// "painted" event to give its rule table.
+    #[must_use]
+    pub fn painted_due(&self, page: u16, sub: u16) -> bool {
+        self.pages.get(&(page, sub)).is_some_and(|held| held.whole.due(held.player.idle()))
     }
 
     /// The channel named the object that is a NAPLPS sub-page's cursor,
@@ -891,6 +988,7 @@ impl NaplpsPages {
         self.pages.remove(&(page, sub));
         self.sheets.remove(&(page, sub));
         self.waiting.remove(&(page, sub));
+        self.pending.remove(&(page, sub));
         if self.sent_sub.get(&page) == Some(&sub) {
             self.sent_sub.remove(&page);
         }
@@ -917,22 +1015,28 @@ impl NaplpsPages {
                 held.give(held.cursor.number);
             }
             held.player.set_delays(gradual && !reduced);
-            // What a WAIT held is drawn at once; the colours and frames
-            // change to their steady ones.
+            // The stream is paced no longer (DEC-7031 item 5).
+            if reduced {
+                held.player.set_pace(None);
+            }
+            // What a WAIT or a pace held is drawn at once; the colours and
+            // frames change to their steady ones.
             let _ = held.player.advance(&mut held.terminal, &mut held.canvas, 0);
             held.changed = true;
         }
     }
 
     /// The viewer's setting "Paint drawings gradually" (ANIM-15, ANIM-20):
-    /// off, no WAIT delays anything, and a WAIT being played ends.
+    /// off, no WAIT delays anything, a WAIT being played ends, and no
+    /// stream is given at a line's speed (DEC-7031 item 5).
     pub fn set_gradual(&mut self, gradual: bool) {
         self.at_once = !gradual;
         let reduced = self.reduced;
         for held in self.pages.values_mut() {
             held.player.set_delays(gradual && !reduced);
             if !gradual {
-                // What the wait held is drawn at once.
+                held.player.set_pace(None);
+                // What the wait or the pace held is drawn at once.
                 let _ = held.player.advance(&mut held.terminal, &mut held.canvas, 0);
                 held.changed = true;
             }

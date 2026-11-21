@@ -111,6 +111,33 @@ pub enum Held {
         /// The bytes.
         data: Vec<u8>,
     },
+    /// How one generation of a sub-page's ReGIS or NAPLPS stream is
+    /// painted (a PAINT record, DEC-7031 item 1): held like the stream it
+    /// comes before, so that a frame applies the two together.
+    Paint {
+        /// Which renderer's stream.
+        language: Language,
+        /// The page.
+        page: u16,
+        /// The sub-code.
+        sub: u16,
+        /// The generation of the stream the values are for.
+        generation: u16,
+        /// The values.
+        paint: Paint,
+    },
+}
+
+/// What a PAINT record states of one generation of a stream (DEC-7031
+/// item 1; REQ-7024, REQ-7025), as the engine's reader checked it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Paint {
+    /// The line speed the stream's bytes are fed at, in bits a second, or
+    /// none: the bytes are then fed as they arrive.
+    pub line_speed: Option<u32>,
+    /// The paint rate of every ReGIS numbered drawing that sets none, or
+    /// none. Never stated for NAPLPS.
+    pub default_rate: Option<u16>,
 }
 
 /// A record the animation takes: one to hold or apply, or a frame's mark.
@@ -217,6 +244,16 @@ impl Taken {
                 offset: record.offset,
                 data: record.data.to_vec(),
             },
+            ChannelRecord::Paint(record) => Held::Paint {
+                language: match record.language {
+                    SheetKind::Regis => Language::Regis,
+                    SheetKind::Naplps => Language::Naplps,
+                },
+                page: record.page.mpp(),
+                sub: record.subcode.value(),
+                generation: record.generation,
+                paint: Paint { line_speed: record.line_speed, default_rate: record.default_rate },
+            },
             _ => return None,
         }))
     }
@@ -234,7 +271,8 @@ impl Held {
             | Self::Animate { page, sub, .. }
             | Self::Sprites { page, sub, .. }
             | Self::Objects { page, sub, .. }
-            | Self::Sheet { page, sub, .. } => Some((*page, *sub)),
+            | Self::Sheet { page, sub, .. }
+            | Self::Paint { page, sub, .. } => Some((*page, *sub)),
         }
     }
 
@@ -248,6 +286,7 @@ impl Held {
             Self::Animate { operations, .. } => operations.len().saturating_mul(neoteletext_rules::animate::MAX_OPERATION_BYTES),
             Self::Sprites { sprites, .. } => sprites.len().saturating_mul(size_of::<Sprite>()),
             Self::Objects { objects, .. } => objects.len().saturating_mul(size_of::<naplps::Object>()),
+            Self::Paint { .. } => neoteletext_web::records::paint::BYTES,
         }
     }
 }

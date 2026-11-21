@@ -28,6 +28,17 @@ const _: () = assert!(neoteletext_core::consts::PRESENTATION_TICKS_PER_SECOND ==
 const _: () = assert!(regis::limits::MAX_CYCLING_OBJECTS == naplps::limits::MAX_CYCLING_OBJECTS);
 const _: () = assert!(regis::limits::MAX_CYCLING_OBJECTS == neoteletext_core::limits::MAX_CYCLING_OBJECTS);
 
+// DEC-7031 items 2 and 4: the ReGIS renderer watches as many drawings as
+// one rule table's `painted` triggers may name.
+const _: () = assert!(neoteletext_rules::limits::MAX_PAINT_WATCHED == regis::limits::MAX_WATCHED_PAINTINGS);
+// DEC-7031 items 2 and 3: a stream paced at a line's speed is held to the
+// same number of bytes in either renderer, so a replay lasts no longer in
+// one language than in the other.
+const _: () = assert!(regis::limits::MAX_REPLAY_HELD_BYTES == naplps::limits::MAX_WAIT_HELD_BYTES);
+// DEC-7031 item 1: a PAINT record's default rate is a rate the ReGIS
+// renderer takes as it is given.
+const _: () = assert!(neoteletext_web::consts::MAX_DEFAULT_PAINT_RATE == regis::limits::MAX_PAINT_RATE);
+
 /// The presentation clock's tick due at `now_us` of the decoder's clock
 /// (ANIM-1): tick `n` is due `n × 50,000 ÷ 3` microseconds after the
 /// decoder started.
@@ -89,6 +100,60 @@ impl Counters {
     #[must_use]
     pub const fn with(self, other: Self) -> Self {
         Self { slowed: self.slowed.saturating_add(other.slowed), skipped: self.skipped.saturating_add(other.skipped) }
+    }
+}
+
+/// Whether the "painted" event of a sub-page's whole picture is owed
+/// (DEC-7031 items 4 and 5, REQ-7026): the open page's rule table has a
+/// `painted` trigger that names the page, bytes of the picture's stream
+/// were drawn since the event last fired, and nothing of the stream waits
+/// to be drawn.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WholePicture {
+    /// The rule table of this sub-page names the page's whole picture in
+    /// a `painted` trigger.
+    wanted: bool,
+    /// Bytes of the stream were given to the renderer's replay or player
+    /// since the event last fired, or the table that wants the event was
+    /// loaded after bytes were.
+    drew: bool,
+    /// The presentation tick the event last fired at: it fires at most
+    /// once a tick.
+    fired: Option<u32>,
+}
+
+impl WholePicture {
+    /// The table that names the page's picture was loaded, or dropped.
+    /// Loaded when bytes of the stream have come already (`begun`), the
+    /// event is owed for the picture as it stands: a channel sends the
+    /// stream before the table (DEC-7031, "what it makes more exact").
+    pub const fn watch(&mut self, wanted: bool, begun: bool) {
+        self.wanted = wanted;
+        self.drew = wanted && (self.drew || begun);
+    }
+
+    /// Bytes of the stream were given to the replay or the player.
+    pub const fn drew(&mut self) {
+        self.drew = true;
+    }
+
+    /// Whether the event is owed now, `idle` saying that the replay or the
+    /// player has nothing left to draw.
+    #[must_use]
+    pub const fn due(&self, idle: bool) -> bool {
+        self.wanted && self.drew && idle
+    }
+
+    /// Takes the event at presentation tick `tick` if it is owed and none
+    /// fired in that tick; one owed in a tick that had one waits for the
+    /// next.
+    pub fn take(&mut self, idle: bool, tick: u32) -> bool {
+        if !self.due(idle) || self.fired == Some(tick) {
+            return false;
+        }
+        self.drew = false;
+        self.fired = Some(tick);
+        true
     }
 }
 

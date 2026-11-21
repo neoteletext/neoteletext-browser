@@ -106,11 +106,15 @@ pub const MAX_KEPT_PICTURE_SOURCE_BYTES: usize = 33_554_432;
 const RECORD_COST: usize = size_of::<Held>();
 
 /// One picture sub-page's source, as received (PAR-34): its sheet, its
-/// stream from the first byte, its objects, its cursor and its drawing
+/// stream from the first byte, how that stream is painted (its PAINT
+/// record, DEC-7031 item 1), its objects, its cursor and its drawing
 /// links. Its animation state is local and never kept (DEC-6587 item 3).
 #[derive(Debug, Default)]
 struct Source {
     sheet: Option<Held>,
+    /// The PAINT record last received, which is the kept stream's only
+    /// while it names that stream's language and generation.
+    paint: Option<Held>,
     stream: Option<Held>,
     objects: Vec<Held>,
     cursor: Option<Held>,
@@ -135,7 +139,7 @@ fn held_bytes(held: &Held) -> usize {
 
 impl Source {
     fn count(&mut self) {
-        let records = self.sheet.iter().chain(&self.stream).chain(&self.objects).chain(&self.cursor);
+        let records = self.sheet.iter().chain(&self.paint).chain(&self.stream).chain(&self.objects).chain(&self.cursor);
         let links = self.links.iter().flatten().map(|(_, target)| target.len().saturating_add(RECORD_COST)).fold(0, usize::saturating_add);
         self.bytes = records.map(held_bytes).fold(links, usize::saturating_add);
     }
@@ -158,6 +162,15 @@ impl Source {
             Some(Held::Stream { data: held, .. } | Held::Sheet { data: held, .. }) if follows => held.extend_from_slice(data),
             _ => *kept = None,
         }
+    }
+
+    /// The PAINT record kept, when it is the kept stream's: of its
+    /// language and its generation. A PAINT record comes before its
+    /// stream's first byte, so the one kept may be the next stream's,
+    /// which is not replayed with this one.
+    fn paint_of_stream(&self) -> Option<&Held> {
+        let Some(Held::Stream { language: of, generation: stream, .. }) = &self.stream else { return None };
+        self.paint.as_ref().filter(|paint| matches!(paint, Held::Paint { language, generation, .. } if language == of && generation == stream))
     }
 }
 
@@ -206,6 +219,9 @@ impl PictureSources {
                 source.objects.push(item.clone());
             }
             Held::Cursor { .. } => source.cursor = Some(item.clone()),
+            // Kept with the stream, so that a picture drawn again from its
+            // source is replayed as it was first painted (DEC-7031 item 1).
+            Held::Paint { .. } => source.paint = Some(item.clone()),
             _ => return,
         }
         source.stored_us = now_us;
@@ -267,7 +283,8 @@ impl PictureSources {
         let uses = self.uses;
         let source = self.sources.get_mut(&key)?;
         source.used = uses;
-        let records = source.sheet.iter().chain(&source.stream).chain(&source.objects).chain(&source.cursor).cloned().collect();
+        // The PAINT record goes before the stream it is for, as it came.
+        let records = source.sheet.iter().chain(source.paint_of_stream()).chain(&source.stream).chain(&source.objects).chain(&source.cursor).cloned().collect();
         let links = source.links.clone().map(|links| (key.0, key.1, links));
         Some((records, links))
     }
@@ -367,6 +384,38 @@ mod tests {
         assert!(sources.restore(PAGE, Some(SUB), 0).is_none(), "a gap loses the stream");
         assert!(sources.restore(PAGE + 1, Some(SUB), 0).is_none(), "another page has none");
         assert!(sources.restore(PAGE, Some(SUB + 1), 0).is_none(), "nor another sub-code of the page (DEC-6599)");
+    }
+
+    // DEC-7031 item 1 (PAINT kept with the stream so a restored page
+    // replays again), PAR-34: the PAINT record kept goes before the stream
+    // it is for, and only while it names that stream's language and
+    // generation; one for the next generation, or for the sub-page's other
+    // language, is not given back with the kept stream.
+    #[cfg(feature = "page-cache")]
+    #[test]
+    fn a_kept_paint_record_goes_before_its_stream_only_for_its_language_and_generation() {
+        use crate::animation::frames::Paint;
+        let paint =
+            |language, generation| Held::Paint { language, page: PAGE, sub: SUB, generation, paint: Paint { line_speed: Some(1200), default_rate: None } };
+        let mut sources = PictureSources::default();
+        sources.record(&paint(Language::Regis, 1), 0);
+        sources.record(&stream(PAGE, 1, 0, b"P[1,1]".to_vec()), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(
+            matches!(records.as_slice(), [Held::Paint { language: Language::Regis, generation: 1, .. }, Held::Stream { generation: 1, .. }]),
+            "the PAINT record first, then its stream: {records:?}"
+        );
+        // The next generation's PAINT record comes before its stream.
+        sources.record(&paint(Language::Regis, 2), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Stream { generation: 1, .. }]), "another generation's is not given back: {records:?}");
+        sources.record(&stream(PAGE, 2, 0, b"V[2,2]".to_vec()), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Paint { generation: 2, .. }, Held::Stream { generation: 2, .. }]), "{records:?}");
+        // The sub-page's other language.
+        sources.record(&paint(Language::Naplps, 2), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Stream { generation: 2, .. }]), "another language's is not given back: {records:?}");
     }
 
     // PAR-34: past MAX_KEPT_PICTURE_SOURCE_BYTES the source drawn longest
