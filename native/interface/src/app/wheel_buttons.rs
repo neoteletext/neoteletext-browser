@@ -73,3 +73,101 @@ impl WheelButtons {
         self.released.take().and_then(turn_of) == Some(delta)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use winit::dpi::PhysicalPosition;
+    use winit::event::MouseScrollDelta;
+
+    use super::{BUTTON_DOWN, BUTTON_LEFT, BUTTON_RIGHT, BUTTON_UP, NOTCH, WheelButtons, turn_of};
+
+    /// The buttons X11 gives a wheel's notches as, each with the wheel event
+    /// winit reports for it.
+    const WHEEL_BUTTONS: [(u32, MouseScrollDelta); 4] = [
+        (BUTTON_UP, MouseScrollDelta::LineDelta(0.0, NOTCH)),
+        (BUTTON_DOWN, MouseScrollDelta::LineDelta(0.0, -NOTCH)),
+        (BUTTON_LEFT, MouseScrollDelta::LineDelta(NOTCH, 0.0)),
+        (BUTTON_RIGHT, MouseScrollDelta::LineDelta(-NOTCH, 0.0)),
+    ];
+    /// The primary button, which is no wheel's.
+    const PRIMARY: u32 = 1;
+
+    /// One notch as X11 gives it for a button with no axis behind it (XTEST,
+    /// `xdotool click 5`): the raw press, the window's wheel event, the raw
+    /// release, the window's wheel event again. Which of the two wheel
+    /// events are kept.
+    fn notch(buttons: &mut WheelButtons, button: u32, turn: MouseScrollDelta) -> [bool; 2] {
+        buttons.raw_button(button, true);
+        let press = !buttons.is_release(turn);
+        buttons.raw_button(button, false);
+        let release = !buttons.is_release(turn);
+        [press, release]
+    }
+
+    /// TODO-7119 (REQ-5622, REQ-6534): a notch given as a press and a
+    /// release of a wheel button is one wheel event, the press's, for each
+    /// of the four buttons; notch after notch each is one.
+    #[test]
+    fn a_notch_given_as_a_button_is_one_wheel_event() {
+        for (button, turn) in WHEEL_BUTTONS {
+            assert_eq!(turn_of(button), Some(turn), "button {button}'s turn");
+            let mut buttons = WheelButtons::default();
+            for count in 0..3 {
+                assert_eq!(notch(&mut buttons, button, turn), [true, false], "button {button}, notch {count}: the press's kept, the release's dropped");
+            }
+        }
+    }
+
+    /// A wheel event with no raw button before it (an axis's, Wayland's, or
+    /// a window without the focus) is kept, every one.
+    #[test]
+    fn a_wheel_event_with_no_raw_button_is_kept() {
+        let mut buttons = WheelButtons::default();
+        for (_button, turn) in WHEEL_BUTTONS {
+            assert!(!buttons.is_release(turn));
+            assert!(!buttons.is_release(turn), "a second in a row too");
+        }
+        assert!(!buttons.is_release(MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -120.0))));
+    }
+
+    /// Only the first wheel event after a release is weighed, and only when
+    /// it is that button's turn: another turn, or a pixel delta, is kept
+    /// and ends the wait, so the wheel event after it is kept too.
+    #[test]
+    fn only_the_release_buttons_own_turn_next_is_dropped() {
+        let mut buttons = WheelButtons::default();
+        buttons.raw_button(BUTTON_DOWN, false);
+        assert!(!buttons.is_release(MouseScrollDelta::LineDelta(0.0, NOTCH)), "the other way: kept");
+        assert!(!buttons.is_release(MouseScrollDelta::LineDelta(0.0, -NOTCH)), "the wait ended");
+
+        buttons.raw_button(BUTTON_DOWN, false);
+        assert!(!buttons.is_release(MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -120.0))), "a pixel delta: kept");
+        assert!(!buttons.is_release(MouseScrollDelta::LineDelta(0.0, -NOTCH)), "the wait ended");
+
+        buttons.raw_button(BUTTON_DOWN, false);
+        assert!(buttons.is_release(MouseScrollDelta::LineDelta(0.0, -NOTCH)), "its own turn: dropped");
+        assert!(!buttons.is_release(MouseScrollDelta::LineDelta(0.0, -NOTCH)), "once");
+    }
+
+    /// A wheel button's press after a release whose wheel event never came
+    /// (the window did not have it) ends the wait: the press's wheel event
+    /// is the notch and is kept. Any other button is not a wheel's and
+    /// changes nothing.
+    #[test]
+    fn a_press_ends_the_wait_and_other_buttons_change_nothing() {
+        let down = MouseScrollDelta::LineDelta(0.0, -NOTCH);
+        let mut buttons = WheelButtons::default();
+        buttons.raw_button(BUTTON_DOWN, false);
+        buttons.raw_button(BUTTON_DOWN, true);
+        assert!(!buttons.is_release(down), "the press's wheel event is kept");
+
+        buttons.raw_button(BUTTON_DOWN, false);
+        buttons.raw_button(PRIMARY, true);
+        buttons.raw_button(PRIMARY, false);
+        assert!(buttons.is_release(down), "a click of the primary button between leaves the release's wheel event dropped");
+
+        buttons.raw_button(PRIMARY, false);
+        assert!(!buttons.is_release(down), "the primary button's release is no wheel's");
+        assert_eq!(turn_of(PRIMARY), None);
+    }
+}
