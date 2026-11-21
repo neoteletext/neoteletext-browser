@@ -191,6 +191,13 @@ pub enum ToDecoder {
     /// state change the channel or the page's rules make still applies. A
     /// decoder begins with it off.
     ReducedMotion(bool),
+    /// Whether this view's sound reaches the viewer (page-rules.md
+    /// RULE-27, DEC-7143): the sound helper runs, which it does only with
+    /// an output device, the setting Sound is on with a volume above 0,
+    /// and the view's tab is not muted. While it does not, the open
+    /// page's rules read no audio channel as playing. A decoder begins
+    /// with it on.
+    SoundHeard(bool),
     /// Draw the snapshot whose bytes came before as [`ToDecoder::Whole`]
     /// (REQ-6885 item 1), to a decoder in snapshot mode alone: the page,
     /// and the sub-code asked, 3F7F for the page as a whole.
@@ -499,6 +506,12 @@ pub enum FromDecoder {
     },
 }
 
+/// Adds the one flag a message of kind `kind` carries; the kind.
+fn push_flag(payload: &mut Vec<u8>, flag: bool, kind: u8) -> u8 {
+    payload.push(u8::from(flag));
+    kind
+}
+
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), ProtocolError> {
@@ -582,14 +595,9 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         | ToDecoder::ConnectionEnded
         | ToDecoder::CueHeard { .. }
         | ToDecoder::FramePhase(_) => push_rules_to_decoder(&mut payload, message)?,
-        ToDecoder::PaintGradually(gradual) => {
-            payload.push(u8::from(*gradual));
-            kinds::KIND_PAINT_GRADUALLY
-        }
-        ToDecoder::ReducedMotion(reduced) => {
-            payload.push(u8::from(*reduced));
-            kinds::KIND_REDUCED_MOTION
-        }
+        ToDecoder::PaintGradually(gradual) => push_flag(&mut payload, *gradual, kinds::KIND_PAINT_GRADUALLY),
+        ToDecoder::ReducedMotion(reduced) => push_flag(&mut payload, *reduced, kinds::KIND_REDUCED_MOTION),
+        ToDecoder::SoundHeard(heard) => push_flag(&mut payload, *heard, kinds::KIND_SOUND_HEARD),
         ToDecoder::PictureFont(part) => {
             crate::regis::push_font_part(&mut payload, part)?;
             kinds::KIND_PICTURE_FONT
@@ -801,6 +809,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         | kinds::KIND_FRAME_PHASE => read_rules_to_decoder(kind, &mut fields)?,
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         kinds::KIND_REDUCED_MOTION => ToDecoder::ReducedMotion(fields.flag("reduced motion")?),
+        kinds::KIND_SOUND_HEARD => ToDecoder::SoundHeard(fields.flag("sound heard")?),
         kinds::KIND_PICTURE_FONT => ToDecoder::PictureFont(crate::regis::read_font_part(&mut fields)?),
         kinds::KIND_SNAPSHOT => {
             let (page, sub) = (fields.u16()?, fields.u16()?);

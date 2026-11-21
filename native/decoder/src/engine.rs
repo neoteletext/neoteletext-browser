@@ -370,10 +370,18 @@ impl Engine {
         self.audio.open_page(page, &mut Outbox::new(&mut self.sounds, &mut self.heard));
     }
 
+    /// Whether the view's sound reaches the viewer, as the trusted core
+    /// says (page-rules.md RULE-27): while it does not, the open page's
+    /// rules read no audio channel as playing.
+    pub fn set_sound_heard(&mut self, heard: bool) {
+        self.heard.set_audible(heard);
+    }
+
     /// The time, in milliseconds from any start: a live sound with no new
     /// block for two seconds fades out (the engine's REQ-AUD-014). Called
     /// before each piece of data and at each tick.
     pub fn tick_audio(&mut self, now_ms: u64) {
+        self.heard.at(now_ms);
         self.audio.tick(now_ms, &mut Outbox::new(&mut self.sounds, &mut self.heard));
     }
 

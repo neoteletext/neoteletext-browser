@@ -113,6 +113,7 @@ impl Core {
         let home = matches!(change, SettingChange::Home(_));
         let painting = if let SettingChange::PaintGradually(on) = change { Some(on) } else { None };
         let pictures_off = change == SettingChange::TabPictures(false);
+        let sound_played = self.sound_plays();
         match checked_change(&mut self.settings, change, current.as_deref()) {
             Ok(security) => {
                 self.refusal = None;
@@ -141,6 +142,11 @@ impl Core {
                 }
                 if home {
                     self.home_named();
+                }
+                // Sound turned off or on, or the volume to or from 0: what
+                // each open page's rules read as playing follows (RULE-27).
+                if self.sound_plays() != sound_played {
+                    self.tell_sound_heard_all();
                 }
                 // Every decoder running paints by the setting from now
                 // (ANIM-15); one started later is told as it starts.

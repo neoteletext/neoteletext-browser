@@ -78,8 +78,14 @@ impl Core {
     /// muted tab's new channel starts muted.
     fn send_mutes(&mut self) {
         let tabs: Vec<(u32, bool)> = self.session.all_tabs().map(|tab| (tab.channel.id, tab.muted)).collect();
-        let sends = tabs.into_iter().filter_map(|(channel, muted)| self.hearing.mute(channel, muted)).collect();
+        let mut changed = Vec::new();
+        let sends = tabs.into_iter().filter_map(|(channel, muted)| self.hearing.mute(channel, muted).inspect(|_| changed.push(channel))).collect();
         self.deliver(sends);
+        // A muted tab's page is played nothing, so its rules read no
+        // sound as playing (page-rules.md RULE-27).
+        for channel in changed {
+            self.tell_sound_heard(channel);
+        }
     }
 
     /// The tabs again, after a change of mute, and the mutes themselves.

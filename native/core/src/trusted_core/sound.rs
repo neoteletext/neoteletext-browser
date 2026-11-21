@@ -5,6 +5,7 @@ use confine::broker::Program;
 use neoteletext::outbox::Outbox;
 use protocol::ToInterface;
 use protocol::console::Level;
+use protocol::decoder::ToDecoder;
 use protocol::sound::{ToSound, read_from_sound, write_to_sound};
 
 use super::processes::{relay, spawn};
@@ -16,6 +17,35 @@ impl Core {
     pub(super) fn tell_sound(&mut self, message: &ToSound) {
         if let Some((_, input)) = self.sound.as_mut() {
             let _ = write_to_sound(input, message);
+        }
+    }
+
+    /// Whether any view's sound reaches the viewer (page-rules.md RULE-27,
+    /// DEC-7143): the sound helper runs, which it does only while it has
+    /// an output device, and the setting Sound is on with a volume above 0.
+    pub(super) fn sound_plays(&self) -> bool {
+        self.sound.is_some() && self.settings.sound && self.settings.volume != 0
+    }
+
+    /// Whether `channel`'s sound reaches the viewer: sound plays and the
+    /// channel's tab is not muted.
+    pub(super) fn sound_heard(&self, channel: u32) -> bool {
+        self.sound_plays() && !self.hearing.muted(channel)
+    }
+
+    /// Tells `channel`'s decoder whether its sound reaches the viewer, for
+    /// what its open page's rules read as playing (RULE-27).
+    pub(super) fn tell_sound_heard(&mut self, channel: u32) {
+        let heard = self.sound_heard(channel);
+        self.tell(channel, ToDecoder::SoundHeard(heard));
+    }
+
+    /// Tells every decoder whether its sound reaches the viewer: the sound
+    /// helper started or ended, or the settings' sound or volume changed.
+    pub(super) fn tell_sound_heard_all(&mut self) {
+        let channels: Vec<u32> = self.decoders.keys().copied().collect();
+        for channel in channels {
+            self.tell_sound_heard(channel);
         }
     }
 
@@ -52,5 +82,6 @@ impl Core {
         self.sound = Some((child, Outbox::new(input)));
         let message = ToSound::Settings { sound: self.settings.sound, volume: self.settings.volume };
         self.tell_sound(&message);
+        self.tell_sound_heard_all();
     }
 }

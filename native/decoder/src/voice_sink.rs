@@ -4,6 +4,17 @@
 //! RULE-27, RULE-30): what plays there, and for a local sound the
 //! family's tracker, fed with the sound's setup and then with every `midi`
 //! action, so that no question is ever put to the sound helper.
+//!
+//! A channel reads as playing only while its sound is played to the viewer
+//! (RULE-27, "while any sound plays on the channel in this view";
+//! DEC-7143): not while the trusted core says the view's sound is unheard
+//! (no sound helper, which is so on a machine with no output device; the
+//! setting Sound off or its volume at 0; the tab muted), and not after a
+//! stored sound of samples that does not repeat has played its length.
+//! The sound helper does not say when a voice ends, so that end is timed
+//! here from the sound's length, on the clock the decoder's ticks carry.
+
+use std::collections::BTreeMap;
 
 use neoteletext_audio::port::{LocalStart, SoundFormat, SoundId, Start, VoiceSink};
 use neoteletext_audio::{CHANNELS, MOST_BANKS};
@@ -11,11 +22,18 @@ use neoteletext_audio_instruments::midi::Banks;
 use neoteletext_audio_instruments::watch::Watched;
 use protocol::audio::{Audio, MAX_MESSAGE_SAMPLES, Sound};
 
+/// Milliseconds in a second.
+const MILLISECONDS_PER_SECOND: u64 = 1_000;
+
 /// What plays on one audio channel, as the sink was last told.
 #[derive(Debug, Default)]
 pub(crate) struct ChannelSound {
-    /// A sound was started and not stopped since.
+    /// A sound was started and neither stopped nor ended since.
     playing: bool,
+    /// When the sound ends by itself, on the clock of [`Heard::at`]: of a
+    /// stored sound of samples that does not repeat. None of a sound that
+    /// repeats, a stream, whose end the receiver tells, and a local sound.
+    ends_at_ms: Option<u64>,
     /// The sound playing, while one is.
     sound: Option<SoundId>,
     /// The channel's gain as last commanded, 0 to 100.
@@ -28,9 +46,26 @@ pub(crate) struct ChannelSound {
 }
 
 /// What a page's rules read of the four audio channels.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Heard {
     channels: [ChannelSound; CHANNELS as usize],
+    /// Whether the view's sound reaches the viewer, as the trusted core
+    /// last said (`ToDecoder::SoundHeard`).
+    audible: bool,
+    /// The time of the decoder's newest tick, in milliseconds.
+    now_ms: u64,
+    /// The length in milliseconds of each stored sound of samples the sink
+    /// holds, by handle with its generation: one for each of the 256
+    /// handles at most.
+    lengths_ms: BTreeMap<u8, (u16, u64)>,
+}
+
+impl Default for Heard {
+    /// Nothing plays, and what will is heard until the trusted core says
+    /// otherwise.
+    fn default() -> Self {
+        Self { channels: Default::default(), audible: true, now_ms: 0, lengths_ms: BTreeMap::new() }
+    }
 }
 
 impl Heard {
@@ -38,9 +73,33 @@ impl Heard {
         self.channels.get_mut(usize::from(channel))
     }
 
+    /// The trusted core said whether the view's sound reaches the viewer.
+    pub(crate) fn set_audible(&mut self, audible: bool) {
+        self.audible = audible;
+    }
+
+    /// The decoder's clock moved to `now_ms`: a sound whose length has
+    /// passed plays no longer. Called between the handlings of the page's
+    /// rules, never within one (RULE-7, "The world").
+    pub(crate) fn at(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+        for heard in &mut self.channels {
+            if heard.ends_at_ms.is_some_and(|end| end <= now_ms) {
+                *heard = ChannelSound { gain: heard.gain, ..ChannelSound::default() };
+            }
+        }
+    }
+
     /// The sound on `channel` as a rule's condition reads it (RULE-27):
-    /// whether one plays, its handle and gain, whether it is local, and a
-    /// local sound's family and variant.
+    /// as [`Heard::state`], and playing only while the viewer is played it.
+    pub(crate) fn read(&self, channel: u8) -> neoteletext_rules::evaluator::SoundState {
+        let state = self.state(channel);
+        neoteletext_rules::evaluator::SoundState { playing: state.playing && self.audible, ..state }
+    }
+
+    /// The sound on `channel` as the sink was told, heard or not: whether
+    /// one was started and has not stopped or ended, its handle and gain,
+    /// whether it is local, and a local sound's family and variant.
     pub(crate) fn state(&self, channel: u8) -> neoteletext_rules::evaluator::SoundState {
         let Some(heard) = self.channels.get(usize::from(channel)) else { return neoteletext_rules::evaluator::SoundState::default() };
         let (family, variant) = heard.local.as_ref().map_or((0, 0), |(family, variant, _)| (*family, *variant));
@@ -78,9 +137,20 @@ impl Heard {
         }
     }
 
-    fn started(&mut self, channel: u8, sound: SoundId, gain: u8) {
+    fn started(&mut self, channel: u8, start: &Start) {
+        let length_ms = self
+            .lengths_ms
+            .get(&start.sound.handle)
+            .filter(|(generation, _)| *generation == start.sound.generation && !start.looped)
+            .map(|(_, length)| *length);
+        let now_ms = self.now_ms;
         if let Some(heard) = self.channel(channel) {
-            *heard = ChannelSound { playing: true, sound: Some(sound), gain, banks: Vec::new(), local: None };
+            // A sound that waits for the channel's current one begins at
+            // that one's end; where that end is not known here, neither
+            // is its own.
+            let begins_ms = if start.after_current && heard.playing { heard.ends_at_ms } else { Some(now_ms) };
+            let ends_at_ms = begins_ms.zip(length_ms).map(|(begins, length)| begins.saturating_add(length));
+            *heard = ChannelSound { playing: true, ends_at_ms, sound: Some(start.sound), gain: start.gain, banks: Vec::new(), local: None };
         }
     }
 }
@@ -106,6 +176,9 @@ fn sound(id: SoundId) -> Sound {
 
 impl VoiceSink for Outbox<'_> {
     fn define(&mut self, id: SoundId, format: SoundFormat) {
+        // Rounded up: a sound is never taken to have ended before it has.
+        let length_ms = u64::from(format.samples).saturating_mul(MILLISECONDS_PER_SECOND).div_ceil(u64::from(format.rate_hz.max(1)));
+        self.heard.lengths_ms.insert(id.handle, (id.generation, length_ms));
         self.sounds.push(Audio::Define { sound: sound(id), rate_hz: format.rate_hz, samples: format.samples });
     }
 
@@ -118,6 +191,11 @@ impl VoiceSink for Outbox<'_> {
     }
 
     fn forget(&mut self, id: SoundId) {
+        // A voice already playing it plays to its end, so the end noted
+        // for a channel stands.
+        if self.heard.lengths_ms.get(&id.handle).is_some_and(|(generation, _)| *generation == id.generation) {
+            self.heard.lengths_ms.remove(&id.handle);
+        }
         self.sounds.push(Audio::Forget(sound(id)));
     }
 
@@ -150,7 +228,7 @@ impl VoiceSink for Outbox<'_> {
     }
 
     fn start(&mut self, channel: u8, start: Start) {
-        self.heard.started(channel, start.sound, start.gain);
+        self.heard.started(channel, &start);
         self.sounds.push(Audio::Start {
             channel,
             sound: sound(start.sound),
@@ -206,7 +284,7 @@ impl VoiceSink for Outbox<'_> {
                 tracker.take_block(start.setup, &Banks::new(&images));
                 (start.family, start.variant, Box::new(tracker))
             });
-            *heard = ChannelSound { playing: true, sound: Some(start.sound), gain: start.gain, banks, local: tracker };
+            *heard = ChannelSound { playing: true, ends_at_ms: None, sound: Some(start.sound), gain: start.gain, banks, local: tracker };
         }
         self.sounds.push(Audio::Local {
             channel,

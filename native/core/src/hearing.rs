@@ -96,6 +96,12 @@ impl Hearing {
         Some(Send::Sound(ToSound::Audio { channel, audio: Audio::Mute(muted) }))
     }
 
+    /// Whether the user muted `channel`'s tab.
+    #[must_use]
+    pub fn muted(&self, channel: u32) -> bool {
+        self.channels.get(&channel).is_some_and(|heard| heard.muted)
+    }
+
     /// A voice operation from the decoder of `channel`: what to pass on, if
     /// anything. An operation on a sound never defined, beyond its length,
     /// or beyond the ledger is dropped.

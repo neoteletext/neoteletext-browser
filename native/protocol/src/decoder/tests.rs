@@ -138,6 +138,9 @@ fn every_kind_round_trips() {
         // ANIM-15 (REQ-6536): the viewer's setting, either way.
         ToDecoder::PaintGradually(false),
         ToDecoder::PaintGradually(true),
+        // RULE-27 (DEC-7143): whether the view's sound is heard, either way.
+        ToDecoder::SoundHeard(false),
+        ToDecoder::SoundHeard(true),
         ToDecoder::PictureFont(FontPart { language: interface_core::canvas::PictureLanguage::Regis, total: 0, offset: 0, bytes: Vec::new() }),
         ToDecoder::PictureFont(FontPart { language: interface_core::canvas::PictureLanguage::Naplps, total: 9, offset: 4, bytes: b"glyph".to_vec() }),
         ToDecoder::View(View { page: 0x302, reveal: true, hold: false, mix: true, subpage: Some(2) }),

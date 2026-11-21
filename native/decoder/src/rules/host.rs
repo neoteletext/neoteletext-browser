@@ -256,7 +256,7 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
     }
 
     fn sound(&self, channel: u8) -> SoundState {
-        let mut state = self.parts.heard.state(channel);
+        let mut state = self.parts.heard.read(channel);
         // A synthesizer sound played from the server's blocks is rendered
         // by the receiver, which holds its family and variant (RULE-28).
         if state.playing

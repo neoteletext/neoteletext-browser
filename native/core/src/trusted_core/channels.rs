@@ -92,6 +92,12 @@ impl Core {
                 self.generation = self.generation.wrapping_add(1);
                 let pages = self.store_pages.get(id).copied().unwrap_or(FIRST_STORE_PAGES);
                 let mut decoder = start_decoder(self.broker()?, *id, self.generation, pages, self.events.clone())?;
+                // A new decoder is told that its sound does not reach the
+                // viewer, when it does not, before any page it is given can
+                // play one (page-rules.md RULE-27).
+                if !self.sound_heard(*id) {
+                    let _ = decoder.tell(&ToDecoder::SoundHeard(false));
+                }
                 for message in self.sleep.kept(*id) {
                     let _ = decoder.tell(message);
                 }
@@ -339,6 +345,7 @@ impl Core {
         {
             self.log(Level::Error, None, "no sound: the sound helper stopped reading");
             self.sound = None;
+            self.tell_sound_heard_all();
         }
         self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
         // A replaced decoder starts again at once if its tab is awake.

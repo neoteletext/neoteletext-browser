@@ -117,6 +117,10 @@ pub(super) const KIND_PICTURE_TITLE: u8 = 201;
 // parity PAR-33), in the next number free across every pipe on 19
 // November 2026.
 pub(super) const KIND_REDUCED_MOTION: u8 = 202;
+// Trusted core to decoder: whether the view's sound reaches the viewer
+// (page-rules.md RULE-27, DEC-7143), in the next number free across every
+// pipe on 22 November 2026, after the interface's 232.
+pub(super) const KIND_SOUND_HEARD: u8 = 233;
 // A decoder's snapshot mode (neoteletext-common's `docs/tab-thumbnails.md`
 // section 10, REQ-6885), in the next numbers free across every pipe on 19
 // November 2026, after the snapshot fetcher's 210 to 213: the place to

@@ -70,6 +70,8 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
                 end_aside(helper);
             }
             core.sounding(&[])?;
+            // No page's rules read a sound as playing from here (RULE-27).
+            core.tell_sound_heard_all();
             // It served every tab: each says so until it is reloaded
             // (REQ-683). A helper that merely ended leaves the browser silent.
             if broke {

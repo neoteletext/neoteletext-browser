@@ -393,6 +393,12 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 engine.set_paint_gradually(gradual);
                 Vec::new()
             }
+            // Whether the view's sound reaches the viewer (RULE-27): a
+            // change the page's rules read from their next handling on.
+            ToDecoder::SoundHeard(heard) => {
+                engine.set_sound_heard(heard);
+                continue;
+            }
             // A part of the font the viewer chose for pictures (PAR-35):
             // whole, it is in force for every new terminal of its language,
             // or refused with the parser's message and the font in force
