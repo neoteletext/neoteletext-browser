@@ -114,7 +114,10 @@ impl Painter {
                     let x = (area.x0 + f64::from(glyph.x)) * scale;
                     let y = (area.y0 + f64::from(glyph.y)) * scale;
                     let y = if hinted { y.round() } else { y };
-                    #[expect(clippy::cast_possible_truncation, reason = "a device coordinate, far inside f32's range")]
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        reason = "a device coordinate; past f32's range it saturates to infinity, and an edge not finite is dropped"
+                    )]
                     let (x, y) = (x as f32, y as f32);
                     scratch.lines.clear();
                     scratch.lines.extend(face.glyph(glyph.id).iter().map(|edge| Line { x0: edge.x0 + x, y0: edge.y0 + y, x1: edge.x1 + x, y1: edge.y1 + y }));

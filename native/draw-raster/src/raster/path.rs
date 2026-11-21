@@ -36,7 +36,10 @@ impl<'a> Edges<'a> {
 
     /// An edge from the current point to `point`.
     pub(crate) fn line_to(&mut self, point: (f64, f64)) {
-        #[expect(clippy::cast_possible_truncation, reason = "a device coordinate, far inside f32's range")]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a device coordinate; past f32's range it saturates to infinity, and an edge not finite is dropped"
+        )]
         self.lines.push(Line { x0: self.at.0 as f32, y0: self.at.1 as f32, x1: point.0 as f32, y1: point.1 as f32 });
         self.at = point;
     }
