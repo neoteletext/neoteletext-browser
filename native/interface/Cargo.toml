@@ -31,7 +31,7 @@ interface-core.workspace = true
 draw-vello.workspace = true
 protocol.workspace = true
 winit.workspace = true
-softbuffer.workspace = true
+presenter.workspace = true
 dock-menu.workspace = true
 
 # Windows's "Animation effects", read through the one crate allowed the

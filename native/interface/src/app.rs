@@ -11,8 +11,8 @@ use draw_vello::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;
+use presenter::Surface;
 use protocol::ToCore;
-use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -66,9 +66,7 @@ enum WindowFull {
 
 struct Graphics {
     window: Rc<Window>,
-    surface: Surface<Rc<Window>, Rc<Window>>,
-    /// Kept for the surface's lifetime.
-    _context: Context<Rc<Window>>,
+    surface: Surface<Rc<Window>>,
     /// The interface asked for the next redraw. One it did not ask for is
     /// the system's, as when the window is uncovered, and every pixel is
     /// drawn and presented again.

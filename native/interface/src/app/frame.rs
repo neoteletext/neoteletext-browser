@@ -4,17 +4,18 @@
 //!
 //! Presentation keeps at most one frame queued on every platform
 //! (requirement 18.14, REQ-RCH-004): drawing is on the processor
-//! (`vello_cpu`), with no swap chain, and softbuffer 0.4.8 presents
-//! synchronously. On macOS it sets the layer's contents to the frame in a
-//! Core Animation transaction, which the next refresh shows, a newer frame
-//! replacing one not yet shown; on Wayland it attaches one of two shared
-//! memory buffers and commits, waiting before drawing into the other until
-//! the compositor has released it, and winit, told before each present,
-//! asks for the next redraw only once the compositor's frame callback has
-//! come; on X11 its next frame waits for the server to finish the last
-//! shared-memory `PutImage`, or goes in the request itself without shared
-//! memory, which the server handles in order; on Windows `BitBlt` copies it into the window at once, for
-//! the compositor to show at its next refresh.
+//! (`vello_cpu`), with no swap chain, and the browser's own `presenter`
+//! presents synchronously (DEC-7168). On macOS it sets a layer's contents
+//! to the frame in a Core Animation transaction, which the next refresh
+//! shows, a newer frame replacing one not yet shown; on Wayland it attaches
+//! one of two shared memory buffers and commits, waiting before drawing
+//! into the other until the compositor has released it, and winit, told
+//! before each present, asks for the next redraw only once the
+//! compositor's frame callback has come; on X11 its next frame waits for
+//! the server to finish the last shared-memory `PutImage`, or goes in the
+//! requests themselves without shared memory, which the server handles in
+//! order; on Windows `SetDIBitsToDevice` copies each changed box into the
+//! window at once, for the compositor to show at its next refresh.
 
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -176,12 +177,12 @@ impl App {
         #[cfg(feature = "timed-test")]
         protocol::timed_test::mark("interface", "copied", Instant::now(), format_args!(""));
         graphics.window.pre_present_notify();
-        let rects: Vec<softbuffer::Rect> = damage
+        let rects: Vec<presenter::Rect> = damage
             .boxes()
             .iter()
             .filter_map(|area| {
                 let (width, height) = (NonZeroU32::new(u32::from(area.width()))?, NonZeroU32::new(u32::from(area.height()))?);
-                Some(softbuffer::Rect { x: u32::from(area.x0), y: u32::from(area.y0), width, height })
+                Some(presenter::Rect { x: u32::from(area.x0), y: u32::from(area.y0), width, height })
             })
             .collect();
         let presented = buffer.present_with_damage(&rects).is_ok();

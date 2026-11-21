@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "sound-output", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "presenter", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "sound-output", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 
@@ -130,11 +130,9 @@ fontique = { version = "=0.12.0", default-features = false, features = ["fontcon
 # (RUSTSEC-2026-0192), was compiled in and never drawn (DEC-2339). The
 # other defaults are kept as they were.
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
-# The same Linux displays as winit's default features, loaded at run time
-# as winit loads them; without a backend softbuffer does not build on
-# Linux. Its kms backend draws to the console with no window, which winit
-# cannot drive.
-softbuffer = { version = "=0.4.8", default-features = false, features = ["wayland", "wayland-dlopen", "x11", "x11-dlopen"] }
+# The interface's own presenting of its drawn pixels to the window, on
+# each platform's own path (DEC-7168, replacing softbuffer).
+presenter = { path = "presenter" }
 # MIT or Apache-2.0, with no default features, so no standard library.
 embedded-graphics = { version = "=0.8.2", default-features = false }
 # Transport Layer Security for the fetcher and the phone keyboard (decision

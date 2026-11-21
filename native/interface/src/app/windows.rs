@@ -7,8 +7,8 @@ use std::rc::Rc;
 use dock_menu::DockTab;
 use interface_core::browser::{TabInfo, WindowAction};
 use interface_core::library::WindowGeometry;
+use presenter::Surface;
 use protocol::ToCore;
-use softbuffer::{Context, Surface};
 use winit::dpi::LogicalPosition;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Fullscreen, ResizeDirection};
@@ -259,19 +259,17 @@ impl App {
             return;
         };
         let window = Rc::new(window);
-        let Ok(context) = Context::new(window.clone()) else {
-            self.exit = Some("cannot reach the display".into());
-            event_loop.exit();
-            return;
-        };
-        let Ok(surface) = Surface::new(&context, window.clone()) else {
-            self.exit = Some("cannot draw into the window".into());
-            event_loop.exit();
-            return;
+        let surface = match Surface::new(window.clone()) {
+            Ok(surface) => surface,
+            Err(error) => {
+                self.exit = Some(format!("cannot draw into the window: {error}"));
+                event_loop.exit();
+                return;
+            }
         };
         self.windows.insert(window.id(), self.window);
         self.view.wheel_pointers = wheel_pointers(event_loop, window.scale_factor());
-        self.view.graphics = Some(Graphics { window, surface, _context: context, asked: false });
+        self.view.graphics = Some(Graphics { window, surface, asked: false });
         self.follow_reduced_motion(event_loop);
         self.show_tabs();
         self.report_window(event_loop);
