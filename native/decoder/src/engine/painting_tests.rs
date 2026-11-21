@@ -507,7 +507,6 @@ fn a_naplps_wait_under_a_line_speed_adds_its_time_to_the_lines() {
 /// full time from the step that follows them, however long the decoder
 /// slept before; the ticks of that sleep are not spent on them.
 #[test]
-#[ignore = "fault: a stream's bytes arriving after its replay ran dry are fed the ticks the decoder slept (stale told), reported for a Fable fix"]
 fn bytes_after_a_replay_ran_dry_wait_their_line_time_from_the_next_step() {
     let first = v1_lines(4);
     let more = b"W(I5)P[0,300]V[799,300]P[0,310]V[799,310]".to_vec();
@@ -532,7 +531,6 @@ fn bytes_after_a_replay_ran_dry_wait_their_line_time_from_the_next_step() {
 
 /// REQ-7024, DEC-7031 item 3, on NAPLPS: the same for the player.
 #[test]
-#[ignore = "fault: a stream's bytes arriving after its replay ran dry are fed the ticks the decoder slept (stale told), reported for a Fable fix"]
 fn naplps_bytes_after_a_replay_ran_dry_wait_their_line_time_from_the_next_step() {
     let first = naplps_rectangles(2);
     let more = rectangle(6, 0, 0, 64, 64);
@@ -654,7 +652,6 @@ fn a_regis_page_with_no_default_rate_paints_as_before() {
 /// its commit): a drawing committed after the decoder slept ten seconds
 /// paints from its commit, and is not given the ticks of the sleep.
 #[test]
-#[ignore = "fault: a drawing committed after the decoder slept is given the slept ticks (stale told; also on livedevelopment with its own T), reported for a Fable fix"]
 fn a_drawing_committed_after_a_sleep_paints_from_its_commit() {
     let mut engine = Engine::new();
     feed(&mut engine, START, &paint_of(PAGE, SUB, SheetKind::Regis, 1, None, Some(20)));

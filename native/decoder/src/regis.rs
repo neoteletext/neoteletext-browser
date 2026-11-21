@@ -90,8 +90,12 @@ struct Page {
     /// Whether it is painting and whether it is owed a repaint for its
     /// animation.
     motion: Motion,
-    /// The presentation tick the renderer was last told the time at.
-    told: Option<u32>,
+    /// The presentation tick its paced work was last given the time to:
+    /// the replay's bytes at the line speed and the drawings' painting at
+    /// their rates. `None` while it has none, when no tick is counted:
+    /// the ticks before work arrives are not that work's (REQ-7024,
+    /// REQ-7025).
+    paced: Option<u32>,
     /// What its animation has cost, not yet reported (ANIM-16).
     counters: Counters,
     /// Feeds the stream's bytes to the terminal: at once, or at the pace
@@ -182,7 +186,7 @@ impl Page {
             picked: None,
             animation: Box::new(AnimationStore::new()),
             motion: Motion::default(),
-            told: None,
+            paced: None,
             counters: Counters::default(),
             replay: Replay::new(),
             painted: Vec::new(),
@@ -403,6 +407,15 @@ impl Page {
     /// passed, which its drawings with a paint rate earn work by
     /// (ANIM-15). With `at_once`, the viewer's setting "Paint drawings
     /// gradually" off, every drawing is whole at once.
+    ///
+    /// The ticks that passed are counted from the last step that left a
+    /// replay running or a drawing painting. A step that leaves neither
+    /// stops the count, and the loop may then sleep for any time: bytes or
+    /// a commit that arrive afterwards have their tick 0 at the step that
+    /// follows them, as a new sub-page's have at its first, and are not
+    /// given the ticks of the sleep (REQ-7024: bytes on an idle line wait
+    /// their full time; REQ-7025: a drawing earns the ticks after its
+    /// commit).
     fn advance(&mut self, tick: u32, at_once: bool) {
         let mut due = Vec::new();
         // Under reduced motion a frame cycle shows its first frame, the
@@ -411,8 +424,7 @@ impl Page {
         for number in due {
             self.give(number);
         }
-        let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
-        self.told = Some(tick);
+        let passed = self.paced.map_or(0, |paced| tick.saturating_sub(paced));
         // The bytes the line has delivered by this tick (REQ-7024), and
         // what their commits changed.
         if !self.replay.idle() {
@@ -426,6 +438,7 @@ impl Page {
             self.changed = true;
             self.motion.animated = true;
         }
+        self.paced = (!self.replay.idle() || self.motion.painting).then_some(tick);
         self.note_painted();
     }
 

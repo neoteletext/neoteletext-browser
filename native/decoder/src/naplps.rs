@@ -139,6 +139,11 @@ struct Page {
     animation: Box<AnimationStore<MAX_ANIMATED_OBJECTS>>,
     /// The presentation tick it was last brought to.
     told: Option<u32>,
+    /// The presentation tick its player was last given the time to: its
+    /// WAIT, its BLINK processes and the bytes it holds for the line
+    /// speed. `None` while the player has nothing due, when no tick is
+    /// counted: the ticks before bytes arrive are not theirs (REQ-7024).
+    paced: Option<u32>,
     /// The pixels repainted for its animation in the tick `told`
     /// (ANIM-16).
     painted: u64,
@@ -267,6 +272,7 @@ impl Page {
             sent: None,
             animation: Box::new(AnimationStore::new()),
             told: None,
+            paced: None,
             painted: 0,
             motion: Motion::default(),
             counters: Counters::default(),
@@ -485,9 +491,17 @@ impl Page {
     /// played runs down and what it held is drawn, the BLINK processes
     /// reach their phase (ANIM-20), and each cycling object whose frame
     /// is due is given it (ANIM-14).
+    ///
+    /// The ticks the player is given are counted from the last step that
+    /// left it something due. A step that leaves it nothing stops the
+    /// count, and the loop may then sleep for any time: bytes that arrive
+    /// afterwards have their tick 0 at the step that follows them, as a
+    /// new sub-page's have at its first, and are not given the ticks of
+    /// the sleep (REQ-7024: bytes on an idle line wait their full time,
+    /// and a WAIT among them its whole time).
     fn advance(&mut self, tick: u32) {
         self.blink(tick);
-        let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
+        let passed = self.paced.map_or(0, |paced| tick.saturating_sub(paced));
         if self.told != Some(tick) {
             self.painted = 0;
         }
@@ -499,6 +513,7 @@ impl Page {
             let _ = self.player.advance(&mut self.terminal, &mut self.canvas, passed);
             self.changed |= self.player.held_bytes() != held || self.palette() != colours;
         }
+        self.paced = self.player.ticks_to_next(&self.terminal).map(|_| tick);
         let mut due = Vec::new();
         // Under reduced motion a frame cycle shows its first frame, the
         // frame in force before it starts, and does not advance (PAR-33).
