@@ -202,6 +202,25 @@ impl Browser {
         self.filmstrip.shown()
     }
 
+    /// Whether the filmstrip may open: not while the address field has the
+    /// keys (TODO-7014, the owner's "if the url bar has focus then
+    /// disable the tabs dropdown"), so that a pointer passing over the
+    /// tabs while an address is typed lays no row of pictures over the
+    /// field and its suggestions.
+    pub(super) const fn filmstrip_available(&self) -> bool {
+        !self.editing
+    }
+
+    /// The address field took the keys: an open filmstrip slides away, and
+    /// a rest waiting to open it opens nothing.
+    pub(super) fn filmstrip_withdraw(&mut self) {
+        match self.filmstrip.phase {
+            Phase::Open | Phase::Leaving(_) => self.filmstrip_hide(self.drawn_at),
+            Phase::Resting(_) => self.filmstrip.phase = Phase::Shut,
+            Phase::Shut | Phase::Dismissed => {}
+        }
+    }
+
     /// Every move takes its time, or none with reduced motion (REQ-754).
     fn filmstrip_motion(&mut self) {
         let reduced = self.wall.reduced_motion();
@@ -412,7 +431,8 @@ impl Browser {
         let on_tabs = self.tab_strip.tabs_area.contains(point);
         let on_strip = Rect::new(0.0, 0.0, self.regions.strip.x1, STRIP_HEIGHT).contains(point);
         let on_filmstrip = self.filmstrip.panel.contains(point);
-        let pressing = self.tab_strip_pressed();
+        // Unavailable, it rests as a press on a tab does: it never opens.
+        let pressing = self.tab_strip_pressed() || !self.filmstrip_available();
         if !self.tab_strip.count.contains(point) {
             self.filmstrip.rested_on_count = false;
         }
@@ -491,6 +511,12 @@ impl Browser {
     /// the press was the filmstrip's.
     pub(super) fn filmstrip_press(&mut self, point: Point, now: u64) -> bool {
         if self.tab_strip.count.contains(point) {
+            // The count drawn unavailable opens nothing; the press takes the
+            // keys from the address field, as a press anywhere off it does.
+            if !self.filmstrip_available() {
+                self.stop_editing();
+                return true;
+            }
             if self.filmstrip.shown() && self.filmstrip.rested_on_count {
                 self.filmstrip.rested_on_count = false;
             } else if self.filmstrip.shown() {

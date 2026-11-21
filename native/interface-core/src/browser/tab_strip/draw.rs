@@ -16,7 +16,7 @@ use crate::browser::regions::{Regions, TabRegion};
 use crate::canvas::Canvas;
 use crate::geometry::{Point, Rect};
 use crate::text::{border, centred, cross, left_centred, outline};
-use crate::theme::{BLACK, BUTTON, COSTLY, GLYPH, GREEN, MUTED, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
+use crate::theme::{BLACK, BUTTON, COSTLY, DIM, GLYPH, GREEN, MUTED, PRIVATE, RED, ROW_STATUS, RULE, SELECTED, TAB_COLOURS, TAB_TITLE, WHITE, YELLOW};
 use crate::tween::{STANDARD, Tween};
 
 impl Browser {
@@ -119,7 +119,10 @@ impl Browser {
             let count_rect = Rect::new(x, TAB_TOP_INACTIVE, x + COUNT_WIDTH, STRIP_HEIGHT - TAB_GAP);
             canvas.fill(count_rect, 0.0, if self.filmstrip_open() { SELECTED } else { BUTTON });
             outline(canvas, count_rect, RULE);
-            centred(canvas, count_rect, &format!("+{}", count.saturating_sub(fit)), ROW_STATUS, WHITE);
+            // Unavailable while the address field has the keys, it is drawn
+            // dim, as Back is with nowhere to go.
+            let ink = if self.filmstrip_available() { WHITE } else { DIM };
+            centred(canvas, count_rect, &format!("+{}", count.saturating_sub(fit)), ROW_STATUS, ink);
             self.tab_strip.count = count_rect;
             x = count_rect.x1 + TAB_GAP;
         }

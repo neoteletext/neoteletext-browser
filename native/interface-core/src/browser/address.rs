@@ -48,6 +48,7 @@ impl Browser {
         }
         if !self.editing {
             self.editing = true;
+            self.filmstrip_withdraw();
             self.editor.set(&self.strip.address);
             self.field_scroll = 0.0;
             self.outputs.push(Output::TextInput(true));

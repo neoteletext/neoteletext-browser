@@ -9,7 +9,7 @@ use super::*;
 use crate::browser::fixture::{HEIGHT, WIDTH, channel, middle};
 use crate::browser::{Frame, Key, Modifiers, TabInfo};
 use crate::test_canvas::{Painted, Recorder};
-use crate::theme::{BLACK, WHITE};
+use crate::theme::{BLACK, DIM, WHITE};
 
 /// The fixture channel's number: the first tab's.
 const FIRST: u32 = 7;
@@ -111,6 +111,53 @@ fn the_count_opens_the_filmstrip_at_once_and_the_panel_is_gone() {
     point_at(&mut browser, count, 1_000);
     browser.pointer_pressed(&mut canvas, false, 1_000);
     assert!(!browser.filmstrip_open(), "a second press shuts it");
+}
+
+/// The ink the count's "+N" was last drawn in.
+fn count_ink(browser: &mut Browser) -> crate::theme::Colour {
+    let mut canvas = Recorder::new();
+    browser.draw(&mut canvas, WIDTH, HEIGHT, browser.drawn_at);
+    canvas.inks.iter().rev().find(|(text, _)| text.starts_with('+') && text.len() > 1).map(|&(_, ink)| ink).expect("the count is drawn")
+}
+
+/// The owner, 21 November 2026: "if the url bar has focus then disable the
+/// tabs dropdown" (TODO-7014). Taking the address field's focus
+/// slides an open filmstrip away; while the field has it, a rest on the
+/// tabs opens nothing and the count, drawn dim, opens nothing; once the
+/// field lets go, both open it again. Before, the filmstrip stayed open
+/// and opened over the field being typed in.
+#[test]
+fn the_filmstrip_cannot_open_while_the_address_field_has_the_keys() {
+    let (mut browser, mut canvas) = browser_of(30);
+    let out = open(&mut browser, &mut canvas, 0);
+    assert!(browser.filmstrip_open());
+    let command = Modifiers { command: true, ..Modifiers::default() };
+    browser.key(Key::Text("l"), command, out);
+    assert!(browser.editing, "Open Location gives the field the keys");
+    assert!(!browser.filmstrip_open(), "the open filmstrip slides away");
+    assert_eq!(count_ink(&mut browser), DIM, "the count is drawn unavailable");
+
+    let tab = browser.regions.tabs[1].tab;
+    point_at(&mut browser, tab, 10_000);
+    browser.settle(10_000 + FILMSTRIP_DELAY_MILLISECONDS * 2);
+    assert!(!browser.filmstrip_open(), "a rest on the tabs opens nothing");
+    let count = browser.tab_strip.count;
+    point_at(&mut browser, count, 11_000);
+    browser.pointer_pressed(&mut canvas, false, 11_000);
+    browser.pointer_released();
+    assert!(!browser.filmstrip_open(), "a press on the count opens nothing");
+    assert!(!browser.editing, "and takes the keys from the field, as a press off it does");
+
+    assert_eq!(count_ink(&mut browser), WHITE, "the count is available again");
+    browser.pointer_pressed(&mut canvas, false, 12_000);
+    browser.pointer_released();
+    assert!(browser.filmstrip_open(), "the count opens it again");
+    browser.key(Key::Escape, Modifiers::default(), 12_100);
+    let field = browser.regions.field;
+    point_at(&mut browser, field, 12_200);
+    browser.settle(13_000);
+    point_at(&mut browser, tab, 14_000);
+    assert!(browser.settle(14_000 + FILMSTRIP_DELAY_MILLISECONDS) && browser.filmstrip_open(), "and a rest opens it again");
 }
 
 /// REQ-6640 item 1 (TODO-6758): a hand that comes to rest on the count to
