@@ -199,7 +199,7 @@ A launcher release replaces `bin/` by `renameat2(…, RENAME_EXCHANGE)`, measure
 **A build that starts on every distribution.** Measured: a build on the owner's Ubuntu 26.04 needs the C library 2.43. So releases are built in a container with C library 2.28 (AlmaLinux 8, with `podman` on `foundintelquiet4060`). Those binaries run on every distribution since 2018: RHEL 8, Debian 10, Ubuntu 18.10 and later.
 
 - **fontconfig** is loaded at run time (`fontique`'s `fontconfig-dlopen`), so a machine without it still starts.
-- **ALSA's library** is linked by `cpal` and cannot be loaded later, so it is linked only by the sound helper, `neoteletext-sound` (decision 55). The interface starts without it, and where it is missing the sound helper fails to start and the browser runs silent (requirement 16.6).
+- **ALSA's library** is linked by the sound helper's own output stream (`sound-output`, DEC-7168) and cannot be loaded later, so it is linked only by the sound helper, `neoteletext-sound` (decision 55). The interface starts without it, and where it is missing the sound helper fails to start and the browser runs silent (requirement 16.6).
 
 **Signing:** Linux has no platform signature. Each release file carries a detached Ed25519 signature by the release key (section 5), which the launcher checks with `ring`, already in the browser.
 

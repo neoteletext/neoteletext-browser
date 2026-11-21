@@ -529,7 +529,7 @@ The window is decision 35's, drawn by the interface process from the interface c
  drawing interface (ours, small: rectangles, rounded rectangles,
                     shadows, images in rectangles, text runs, dimming)
         │
-        ├── vello_cpu + Parley ── softbuffer ── winit     desktops and phones (the minimum)
+        ├── vello_cpu + Parley ── presenter ── winit      desktops and phones (the minimum)
         ├── Vello on the graphics processor ── winit       optional, where it helps (not built)
         └── embedded-graphics + bitmap fonts               microcontrollers, features cut
 ```
@@ -586,7 +586,7 @@ With no web engine the application is far smaller: the interface process is abou
 
 | Platform | Window and input | Drawing | State |
 |---|---|---|---|
-| macOS | winit | `vello_cpu`, shown with softbuffer | **Built and run** on macOS 15.6, Apple silicon; **sound built and run** through `cpal` and Core Audio (decision 37) |
+| macOS | winit | `vello_cpu`, shown by `presenter` through a Core Animation layer | **Built and run** on macOS 15.6, Apple silicon; **sound built and run** through Core Audio (decision 37), by `sound-output`'s default output unit since DEC-7168 |
 | Windows | winit | as above | **Built, tested and run** on Windows 11 (build 26200) in a virtual machine, 19 October 2026: the whole workspace's tests pass, a page's sound plays through WASAPI (decision 40), and no console window opens. Every process but the broker and the launcher confined since 22 October 2026 (decisions 52, 56 and 58); the Dock menu has no Windows counterpart (a taskbar jump list) |
 | Linux | winit (X11 and Wayland) | as above | **Built, tested and run** on Ubuntu 26.04, 19 October 2026, under X11: the whole workspace's tests pass, and a live sound plays through ALSA (decision 40). Every process but the broker and the launcher confined since 22 October 2026 (decisions 52, 56 and 58), on kernel 6.10 or later with unprivileged user namespaces (`sandboxing.md` section 8.2) |
 | iOS, Android | winit | as above; the graphics-processor back end may matter most here | Later (decision 24); frame time at phone resolutions to be measured |
@@ -681,6 +681,12 @@ neoteletext-browser/
                             12); unsafe code in src/windows.rs alone
     sound/                  the sound helper (neoteletext-sound): its loop, the mixers (audio.rs) and the
                             output device (audio/device.rs)
+    sound-output/           the sound helper's one output stream (DEC-7168): ALSA (src/alsa.rs), the
+                            default output audio unit (src/macos.rs), WASAPI (src/windows.rs); unsafe
+                            code in those three alone
+    presenter/              the interface's presenting of its drawn pixels (DEC-7168): X11 (src/x11.rs),
+                            Wayland (src/wayland.rs) and their shared memory (src/shared_memory.rs), Core
+                            Animation (src/macos.rs), GDI (src/windows.rs); unsafe code in those alone
     site/                   a development tool, not shipped (neoteletext-site): builds and serves a test
                             channel; the podcast (+ podcast/wave.rs)
       src/terminal/         the reference channel that takes input: the server, pages, the session (+
@@ -715,7 +721,7 @@ neoteletext-browser/
   rust-toolchain.toml       the pinned compiler
 ```
 
-Unsafe code is allowed only in the modules requirement 10.12 names, each saying so with its own `#![expect(unsafe_code, reason)]` or `#![allow(unsafe_code, reason)]`: in `confine`, `src/windows.rs` and every leaf of `src/windows/` but `channel.rs`, `src/linux/namespace.rs`, `runtime.rs` and `probe.rs`, and `src/unix/descriptors.rs` and `time.rs`; `os-install`'s `src/macos.rs` and `src/windows.rs`; `dock-menu`'s `src/mac.rs`; and `web-opener`'s `src/windows.rs`.
+Unsafe code is allowed only in the modules requirement 10.12 names, each saying so with its own `#![expect(unsafe_code, reason)]` or `#![allow(unsafe_code, reason)]`: in `confine`, `src/windows.rs` and every leaf of `src/windows/` but `channel.rs`, `src/linux/namespace.rs`, `runtime.rs` and `probe.rs`, and `src/unix/descriptors.rs` and `time.rs`; `os-install`'s `src/macos.rs` and `src/windows.rs`; `dock-menu`'s `src/mac.rs`; `web-opener`'s `src/windows.rs`; `sound-output`'s `src/alsa.rs`, `src/macos.rs` and `src/windows.rs`; and `presenter`'s `src/x11.rs`, `src/wayland.rs`, `src/shared_memory.rs`, `src/macos.rs` and `src/windows.rs` (DEC-7168).
 
 `scripts/updates-e2e.sh` and `scripts/updates-e2e.ps1` are the end-to-end tests of installation and updates, run by hand; `scripts/release/` holds the release procedure's steps (`installation-and-updates.md` section 10).
 
@@ -805,7 +811,7 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 | `sandbox-exec` | The macOS program that starts another program under a sandbox profile written in the system's sandbox language. |
 | seccomp filter | A Linux mechanism by which a process restricts which system calls it may make. |
 | SIL Open Font License | A permissive licence for fonts. |
-| softbuffer | A Rust library that shows pixels drawn on the processor in a window. |
+| presenter | The browser's crate that shows the pixels the interface drew on the processor in its window, by each platform's own path (DEC-7168): X11 shared memory or `PutImage`, Wayland `wl_shm`, a Core Animation layer, GDI. |
 | Teletext Text Interchange | A text file format for teletext pages, used by page editors; the page files of a web channel. |
 | The Update Framework | A specification for secure software updates that survive compromised servers and stolen keys, using signed, expiring metadata in separate roles. |
 | `tough` | A Rust implementation of The Update Framework. |

@@ -25,7 +25,7 @@ They are records in rdm, reached through its MCP tools (search, get_record, list
 - **Security first** (decision 4, requirement 1.2): the browser runs as separate processes (the launcher, then the broker, the trusted core, a decoder for each channel, the fetcher, the interface, the keyboard, the sound helper, the file chooser and the updater), and security never depends on the interface's code (decision 20). A change touching requirement sections 3 to 8, 10, 11 or 13 is reviewed against `security-analysis.md`.
 - **The engine does the teletext** (requirement 2.1): recognition, decoding, rendering and web-protocol reading are the engine's; every limit is an engine constant used by name (requirement 2.4). What the engine lacks is added there, by its own process, and the pin moved here (`DEVELOPMENT.md` section 11).
 - **No script engine, web engine or interpreter** in the tree (requirement 1.3).
-- **Unsafe code** only in `dock-menu` (`src/mac.rs`), `web-opener` (`src/windows.rs`), `confine`'s platform modules (its `linux/`, `unix/` and `windows/` leaves) and `os-install` (requirement 10.12).
+- **Unsafe code** only in `dock-menu` (`src/mac.rs`), `web-opener` (`src/windows.rs`), `confine`'s platform modules (its `linux/`, `unix/` and `windows/` leaves), `os-install`, and the platform modules of `presenter` and `sound-output` (requirement 10.12, DEC-7168).
 - **No broadcast recordings or sites built from them** are committed; they stay in ignored folders such as `native/target/sites` (requirement 14.6).
 
 ## Commands
