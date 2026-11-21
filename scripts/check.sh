@@ -295,6 +295,18 @@ check_compiles() {
     (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings)
 }
 
+# Cargo's line for the one package a development build compiles on every
+# run, the trusted core's (native/core, the package `neoteletext`): its
+# name alone before the version, so that no `neoteletext-...` package
+# matches, and its folder after it.
+readonly COUNTED_PACKAGE_COMPILE='^ +Compiling neoteletext v[^ ]+ \(.*/native/core\)$'
+
+# Of Cargo's output on standard input, the lines that say a package was
+# compiled, other than the trusted core's.
+needless_compiles() {
+    grep -E '^ +Compiling ' | grep -vE "$COUNTED_PACKAGE_COMPILE" || true
+}
+
 # What the push gate adds: every feature shape, and the tests.
 check_shapes_and_tests() {
     # Hyperlinks are a feature on by default; the browser must build without
@@ -334,11 +346,20 @@ check_shapes_and_tests() {
     # which ones, each with what would make it run.
     step "the tests that have not run: each ignored test and its reason (DEVELOPMENT.md section 9.2)"
     git grep -n -A1 -F '#[ignore' -- 'native/*.rs'
-    # A build with nothing changed must build nothing. A build script that
-    # watched files that do not exist once rebuilt the crates under it on
-    # every Cargo run, which cost each step of this gate minutes.
-    step "native: a build with nothing changed builds nothing"
-    (cd native && ! cargo nextest run --workspace --no-run 2>&1 | grep -E '^ +Compiling')
+    # A build with nothing changed must build nothing it need not. A build
+    # script that watched files that do not exist once rebuilt the crates
+    # under it on every Cargo run, which cost each step of this gate
+    # minutes. One package is built again by design: the trusted core's,
+    # whose build script runs on every development compile to count it
+    # (REQ-7047 item 1), and Cargo compiles again the package whose script
+    # ran. That one line is expected; any other fails the step.
+    step "native: a build with nothing changed builds nothing but the trusted core's package (REQ-7047)"
+    local built others
+    built="$(cd native && cargo nextest run --workspace --no-run 2>&1)" || fail "the build failed:
+$built"
+    others="$(needless_compiles <<<"$built")"
+    [[ -z "$others" ]] || fail "a build with nothing changed compiled again:
+$others"
 }
 
 # Requirement 15.3 (REQ-789, DEC-2357): the interface core and its
