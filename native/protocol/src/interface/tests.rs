@@ -31,6 +31,7 @@ fn strip() -> StripState {
         refused: Some(CertificateProblem::Revoked),
         denied: Some(interface_core::browser::Denied::NotFound),
         failed: Some(interface_core::browser::Failed::Page(Some(500))),
+        navigating: false,
         redirecting: "https://elsewhere.invalid/teletext/".into(),
         known: interface_core::viewer_state::Known::Visit,
         can_remember: true,

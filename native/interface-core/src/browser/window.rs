@@ -8,7 +8,7 @@ use crate::browser::bookmarks_bar::BAR_HEIGHT;
 use crate::browser::list_focus::ListFocus;
 use crate::browser::toolbar::{TOOLBAR_HEIGHT, TOOLBAR_TOP};
 use crate::browser::{Browser, Output};
-use crate::canvas::{Canvas, PageKey};
+use crate::canvas::{Canvas, PageKey, Unpainted};
 use crate::channel::{bank_indices, page_number};
 use crate::geometry::Rect;
 use crate::surface::Surface;
@@ -120,6 +120,7 @@ impl Browser {
     fn screen_alone<C: Canvas + ?Sized>(&self, canvas: &mut C) -> Option<Colour> {
         if !self.wall.single()
             || !self.strip.redirecting.is_empty()
+            || self.strip.navigating
             || self.strip.refused.is_some()
             || self.strip.denied.is_some()
             || self.strip.failed.is_some()
@@ -138,23 +139,20 @@ impl Browser {
         // A redirect's notice clears the page area: nothing of the channel
         // being left is drawn (REQ-1686 item 5).
         self.redirecting_area = Rect::ZERO;
+        self.navigating_area = Rect::ZERO;
         if self.draw_redirecting(canvas, zoom) {
             return;
         }
-        // The titles are borrowed from the channel while the wall draws:
-        // the fields are borrowed apart.
-        let (channel, updates) = (&self.channel, &self.updates);
-        let pages: Vec<WallPage<'_>> = bank_indices(self.bank)
-            .filter_map(|index| {
-                let info = channel.pages.get(index)?.as_ref()?;
-                let key = PageKey { channel: channel.channel, page: page_number(index)? };
-                let updated_at = updates.iter().find(|&&(which, _)| which == index).map(|&(_, at)| at);
-                Some(WallPage { key, title: &info.title, updated: updated_at })
-            })
-            .collect();
-        let selected = self.selected.and_then(|index| self.page_key(index));
-        self.wall.draw(canvas, zoom, &pages, selected, now);
-        drop(pages);
+        if self.strip.navigating {
+            // The pages are laid out and not painted: the trusted core
+            // hears which of the new channel's are on screen, and so makes
+            // ready the page these words wait for (REQ-7164 item 3).
+            self.draw_wall(&mut Unpainted::over(canvas), zoom, now);
+            self.report_visible();
+            self.draw_navigating(canvas, zoom);
+            return;
+        }
+        self.draw_wall(canvas, zoom, now);
         if self.wall.single() {
             outline(canvas, zoom, surface.rule);
         }
@@ -172,6 +170,23 @@ impl Browser {
         // A refused certificate: its screen in place of the pages.
         self.draw_refusal(canvas, zoom);
         self.report_visible();
+    }
+
+    /// The chosen bank's pages on the wall in `zoom`.
+    fn draw_wall<C: Canvas + ?Sized>(&mut self, canvas: &mut C, zoom: Rect, now: u64) {
+        // The titles are borrowed from the channel while the wall draws:
+        // the fields are borrowed apart.
+        let (channel, updates) = (&self.channel, &self.updates);
+        let pages: Vec<WallPage<'_>> = bank_indices(self.bank)
+            .filter_map(|index| {
+                let info = channel.pages.get(index)?.as_ref()?;
+                let key = PageKey { channel: channel.channel, page: page_number(index)? };
+                let updated_at = updates.iter().find(|&&(which, _)| which == index).map(|&(_, at)| at);
+                Some(WallPage { key, title: &info.title, updated: updated_at })
+            })
+            .collect();
+        let selected = self.selected.and_then(|index| self.page_key(index));
+        self.wall.draw(canvas, zoom, &pages, selected, now);
     }
 
     /// The pages on screen, told to the trusted core when they changed.

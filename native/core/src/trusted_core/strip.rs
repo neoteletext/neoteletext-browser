@@ -41,6 +41,9 @@ impl Core {
         }
         strip.denied = self.denial_shown();
         strip.failed = self.failure_shown();
+        // Why the tab shows nothing of the channel replaces the words that
+        // it is on its way there (REQ-7164 item 3).
+        strip.navigating = strip.navigating && strip.refused.is_none() && strip.denied.is_none() && strip.failed.is_none();
         self.viewer_strip(&mut strip);
         strip
     }

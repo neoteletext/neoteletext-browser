@@ -83,6 +83,10 @@ pub struct StripState {
     /// it leads to, which the page area shows in place of the pages for a
     /// second (REQ-1686); empty otherwise.
     pub redirecting: String,
+    /// The tab is going to another channel: the page area is cleared and
+    /// says so, until the trusted core says the channel's page may show
+    /// (REQ-7164).
+    pub navigating: bool,
     /// The channel refused what the tab selected: the page area says so, in
     /// the browser's own words (DOC-1961, REQ-1481).
     pub denied: Option<Denied>,

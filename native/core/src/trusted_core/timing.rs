@@ -78,6 +78,9 @@ impl Core {
         if let Some(due) = self.redirect_due_at() {
             next = next.map(|at| at.min(due));
         }
+        if let Some(due) = self.navigating_due_at() {
+            next = next.map(|at| at.min(due));
+        }
         if let Some(due) = self.refresh_due_at() {
             next = next.map(|at| at.min(due));
         }
@@ -132,6 +135,9 @@ impl Core {
         }
         if self.redirect_due_at().is_some_and(|due| now >= due) {
             self.finish_redirects(now)?;
+        }
+        if self.navigating_due_at().is_some_and(|due| now >= due) {
+            self.navigating_tick(now)?;
         }
         #[cfg(feature = "interaction")]
         self.fill_tick(now)?;

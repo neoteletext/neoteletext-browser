@@ -19,6 +19,7 @@ mod library;
 #[cfg(feature = "links")]
 mod links;
 mod loopback;
+mod navigating;
 mod numbers;
 mod outside;
 mod page_controls;

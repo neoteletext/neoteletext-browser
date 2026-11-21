@@ -47,6 +47,7 @@ mod list_focus;
 mod menu;
 mod remember;
 pub use remember::REMEMBERED_DAYS;
+mod navigating;
 mod output;
 mod overview;
 mod page_controls;
@@ -130,6 +131,9 @@ pub struct Browser {
     strip: StripState,
     /// Where a redirect's notice was last drawn; empty while none shows.
     redirecting_area: Rect,
+    /// Where the words of a tab going to another channel were last drawn;
+    /// empty while none show.
+    navigating_area: Rect,
     channel: Channel,
     /// A page the trusted core opened that the window does not list yet.
     show_when_listed: Option<PageKey>,
@@ -275,6 +279,7 @@ impl Browser {
             sounding: BTreeSet::new(),
             strip: StripState::default(),
             redirecting_area: Rect::ZERO,
+            navigating_area: Rect::ZERO,
             channel: Channel::empty(),
             show_when_listed: None,
             file_drag: file_drag::FileDrag::default(),

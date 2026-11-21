@@ -6,7 +6,7 @@ use interface_core::library::{MAX_CHAPTER_STOPS, MAX_TAB_LIST};
 use neoteletext::address::{Address, parse, parse_typed, redirect_destination};
 use std::time::Instant;
 
-use super::{MAX_REDIRECTS, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
+use super::{MAX_REDIRECTS, Navigating, Pending, RedirectBy, Redirecting, Session, Tab, Visit, Went};
 
 /// Why a server's redirect from an `https` channel to a plain `http`
 /// address is not followed: the engine's REQ-420 (REQ-SEC-007), REQ-701
@@ -38,9 +38,15 @@ impl Session {
     }
 
     pub(super) fn visit(&mut self, address: Address, by_page: bool, typed: bool) -> Result<(), String> {
-        let channel = self.channel_for(&address);
+        let mut channel = self.channel_for(&address);
         let now = self.now;
         let tab = self.tabs.get_mut(self.active).ok_or("no tab is open")?;
+        // Another page of the channel shown, at an address typed or opened,
+        // opens the channel afresh and is no change of channel (REQ-7164
+        // item 4).
+        if tab.address().is_some_and(|shown| !shown.same_channel(&address)) {
+            channel.navigating = Some(Navigating::starting(Instant::now()));
+        }
         tab.push(Visit::new(address, by_page, now));
         tab.channel = channel;
         tab.pending = Some(Pending { typed, drawn: false, reload: false });
@@ -116,6 +122,9 @@ impl Session {
         };
         let mut next = self.channel_for(&address);
         next.redirects = chain;
+        // The redirect's notice was the second the page area stays cleared
+        // for; this one lasts until the destination is ready (DEC-7166).
+        next.navigating = Some(Navigating::after_redirect());
         let now = self.now;
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return false };
         let typed = tab.pending.is_some_and(|pending| pending.typed);
@@ -166,7 +175,10 @@ impl Session {
         let Some(position) = position.filter(|_| steps > 0) else { return Went::Nowhere };
         let Some(visit) = tab.history.get(position).cloned() else { return Went::Nowhere };
         let same = tab.address().is_some_and(|current| current.same_channel(&visit.address));
-        let channel = (!same).then(|| self.channel_for(&visit.address));
+        let channel = (!same).then(|| self.channel_for(&visit.address)).map(|mut channel| {
+            channel.navigating = Some(Navigating::starting(Instant::now()));
+            channel
+        });
         let now = self.now;
         let Some(tab) = self.tabs.get_mut(self.active) else { return Went::Nowhere };
         tab.position = position;

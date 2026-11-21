@@ -228,6 +228,7 @@ impl Core {
         #[cfg(feature = "links")]
         self.links_of_image(key, version)?;
         self.send(&ToInterface::Frame { key, version, image })?;
+        self.page_ready(key)?;
         // The page drew: its tab's visit is recorded (requirement 20.1).
         self.record_pending(key.channel)
     }

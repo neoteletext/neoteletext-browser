@@ -86,9 +86,9 @@ impl Browser {
         if self.refused_press(self.pointer) {
             return Some(true);
         }
-        // A redirect's notice has no buttons, and the pages it covers take
-        // no press.
-        if self.redirecting_area.contains(self.pointer) {
+        // A redirect's notice and the words of a tab going to another
+        // channel have no buttons, and the pages they cover take no press.
+        if self.redirecting_area.contains(self.pointer) || self.navigating_area.contains(self.pointer) {
             return Some(true);
         }
         if self.remote_press(self.pointer, now) {

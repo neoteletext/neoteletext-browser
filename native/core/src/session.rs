@@ -28,7 +28,7 @@ mod selected;
 mod tab;
 mod windows;
 
-pub use channel::{ChannelState, Files, RedirectBy, Redirecting, SinceSelected};
+pub use channel::{ChannelState, Files, Navigating, RedirectBy, Redirecting, SinceSelected};
 #[cfg(test)]
 pub use navigation::DOWNGRADE_REFUSED;
 pub use outside::left_of_drop;
@@ -306,6 +306,8 @@ impl Session {
             redirecting: tab.channel.redirecting.as_ref().map(|redirect| clean(&redirect.address.text, MAX_ADDRESS)).unwrap_or_default(),
             denied: None,
             failed: None,
+            // A channel with nothing to read has no page to wait for.
+            navigating: tab.channel.navigating.is_some() && tab.channel.problem.is_none(),
             // The trusted core's viewer state says these (VS-114).
             ..StripState::default()
         }

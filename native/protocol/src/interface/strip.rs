@@ -8,6 +8,10 @@ use crate::fetcher::STATUS_CODES;
 use crate::viewer_state::{Known, known_code, known_of};
 use crate::{Fields, MAX_ADDRESS, MAX_IDENTITY, MAX_STRIP_NOTICE, ProtocolError, push_text};
 
+/// The tab is not going to another channel.
+const NOT_NAVIGATING: u8 = 0;
+/// The tab is going to another channel (REQ-7164).
+const NAVIGATING: u8 = 1;
 /// In place of a status: the channel refused nothing.
 const NOT_DENIED: u16 = 0;
 /// In place of a failure: the tab has not failed.
@@ -45,6 +49,7 @@ pub(super) fn push_strip(payload: &mut Vec<u8>, strip: &StripState) -> Result<()
     push_text(payload, &strip.notice, MAX_STRIP_NOTICE)?;
     payload.push(strip.refused.map_or(0, problem_code));
     push_text(payload, &strip.redirecting, MAX_ADDRESS)?;
+    payload.push(if strip.navigating { NAVIGATING } else { NOT_NAVIGATING });
     payload.extend_from_slice(&strip.denied.map_or(NOT_DENIED, Denied::status).to_be_bytes());
     let (failed, status) = match strip.failed {
         None => (NOT_FAILED, None),
@@ -82,6 +87,11 @@ pub(super) fn read_strip(fields: &mut Fields<'_>) -> Result<StripState, Protocol
             code => Some(problem_of(code).ok_or(ProtocolError::BadValue("certificate problem"))?),
         },
         redirecting: fields.text(MAX_ADDRESS)?,
+        navigating: match fields.u8()? {
+            NOT_NAVIGATING => false,
+            NAVIGATING => true,
+            _ => return Err(ProtocolError::BadValue("strip navigating")),
+        },
         denied: match fields.u16()? {
             NOT_DENIED => None,
             status => Some(Denied::of_status(status).ok_or(ProtocolError::BadValue("denied status"))?),

@@ -26,6 +26,39 @@ pub struct Redirecting {
     pub by: RedirectBy,
 }
 
+/// How long at least a tab that goes to another channel shows that it does,
+/// its page area cleared (REQ-7164 item 3).
+pub const NAVIGATING_NOTICE: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A tab came to this channel from another: its page area is cleared and
+/// says so until both the notice's time has passed and a page of the
+/// channel is ready (REQ-7164).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Navigating {
+    /// When the notice's least time ends, on the monotonic clock; none once
+    /// it has.
+    pub until: Option<std::time::Instant>,
+    /// A page of the channel is ready to show in its place.
+    pub ready: bool,
+}
+
+impl Navigating {
+    /// A notice that starts at `now` and lasts [`NAVIGATING_NOTICE`] at
+    /// least.
+    #[must_use]
+    pub fn starting(now: std::time::Instant) -> Self {
+        Self { until: Some(now.checked_add(NAVIGATING_NOTICE).unwrap_or(now)), ready: false }
+    }
+
+    /// A notice after a redirect's, whose second was the least time the
+    /// page area stays cleared (DEC-7166): it lasts only until a page is
+    /// ready.
+    #[must_use]
+    pub const fn after_redirect() -> Self {
+        Self { until: None, ready: false }
+    }
+}
+
 /// What happened to a tab's page since it was selected: what a program's
 /// redirect goes by (neoteletext-common's DEC-1684).
 #[derive(Clone, Copy, Debug, Default)]
@@ -115,6 +148,11 @@ pub struct ChannelState {
     /// A redirect waiting out its notice. It is the channel's, so anything
     /// that gives the tab another channel drops it (REQ-1686 item 7).
     pub redirecting: Option<Redirecting>,
+    /// The tab came here from another channel and still says so in its
+    /// page area (REQ-7164). It is the channel's, so a navigation that
+    /// replaces it gives the tab a channel with a notice of its own, or
+    /// with none.
+    pub navigating: Option<Navigating>,
     /// The page its descriptor opens at, once it was read.
     pub initial_page: Option<u16>,
     /// What happened to the page selected since it was selected.
@@ -208,6 +246,7 @@ impl ChannelState {
             connecting: false,
             redirects: Vec::new(),
             redirecting: None,
+            navigating: None,
             initial_page: None,
             since_selected: SinceSelected::default(),
             denied: None,
@@ -225,6 +264,34 @@ impl ChannelState {
         let changed = name != self.name;
         self.name = name;
         changed
+    }
+
+    /// Time has come to `now`: the notice's least time may have passed.
+    /// True when the notice ended by it, a page being ready.
+    pub fn navigating_at(&mut self, now: std::time::Instant) -> bool {
+        let Some(notice) = self.navigating.as_mut() else { return false };
+        if notice.until.is_some_and(|until| until <= now) {
+            notice.until = None;
+        }
+        self.end_navigating()
+    }
+
+    /// A page of the channel is ready to show. True when the notice ended
+    /// by it, its least time having passed.
+    pub fn navigating_ready(&mut self) -> bool {
+        let Some(notice) = self.navigating.as_mut() else { return false };
+        notice.ready = true;
+        self.end_navigating()
+    }
+
+    /// Ends the notice once its least time has passed and a page is ready
+    /// (REQ-7164 item 3). True when it ended.
+    fn end_navigating(&mut self) -> bool {
+        let over = self.navigating.is_some_and(|notice| notice.until.is_none() && notice.ready);
+        if over {
+            self.navigating = None;
+        }
+        over
     }
 
     /// Another page is selected: its count of input starts afresh, and it

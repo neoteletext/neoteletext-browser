@@ -429,6 +429,43 @@ pub trait Canvas {
     }
 }
 
+/// A canvas that measures as the one under it does and paints nothing: what
+/// is drawn on it is laid out, and none of it reaches the screen.
+pub struct Unpainted<'canvas, C: Canvas + ?Sized>(&'canvas mut C);
+
+impl<'canvas, C: Canvas + ?Sized> Unpainted<'canvas, C> {
+    /// A canvas over `canvas` that paints nothing on it.
+    pub const fn over(canvas: &'canvas mut C) -> Self {
+        Self(canvas)
+    }
+}
+
+impl<C: Canvas + ?Sized> Canvas for Unpainted<'_, C> {
+    fn fill(&mut self, _: Rect, _: f64, _: Colour) {}
+    fn dim(&mut self, _: Rect, _: f32) {}
+    fn polygon(&mut self, _: &[Point], _: Colour) {}
+    fn push_clip(&mut self, _: Rect) {}
+    fn pop_clip(&mut self) {}
+    fn gradient(&mut self, _: Rect, _: f64, _: &[(f32, Colour)]) {}
+    fn page(&mut self, key: PageKey, _: Rect) -> bool {
+        // A back end that holds an image of a page knows its screen.
+        self.0.screen(key).is_some()
+    }
+    fn screen(&mut self, key: PageKey) -> Option<Colour> {
+        self.0.screen(key)
+    }
+    fn text(&mut self, _: Rect, _: &str, _: Style, _: Colour) {}
+    fn text_width(&mut self, text: &str, style: Style) -> f64 {
+        self.0.text_width(text, style)
+    }
+    fn line_height(&mut self, style: Style) -> f64 {
+        self.0.line_height(style)
+    }
+    fn device_scale(&self) -> f64 {
+        self.0.device_scale()
+    }
+}
+
 /// A still's width in pixels (REQ-6640 item 3): a page with its screen
 /// shown about a fifth of a large window wide, 256 points on a window of
 /// 1,280, is drawn from it at about one and a half of a display's pixels
