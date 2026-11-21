@@ -13,10 +13,10 @@ use crate::transport::Tcp;
 
 /// The snapshot request for page 100 as a whole, as the engine writes it:
 /// neoteletext-common's wire vector `input hello_snapshot`.
-const HELLO_SNAPSHOT: &str = "ff090a8080801eff4003313030";
+const HELLO_SNAPSHOT: &str = "ff090b8080801eff4003313030";
 /// WELCOME agreeing exactly `SNAPSHOT_OFFER`: the wire vector `record
 /// welcome_snapshot`.
-const WELCOME_SNAPSHOT: &str = "a1ead05e000002050007ff010a8080801e013d43d7000000000000000000000000000000000000009cfb";
+const WELCOME_SNAPSHOT: &str = "a1ead05e000002050007ff010b8080801e3c5d6a6700000000000000000000000000000000000000d17e";
 /// A WebSocket close frame's code for a normal close (RFC 6455 section
 /// 7.4.1).
 const CLOSE_NORMAL: u16 = 1000;
