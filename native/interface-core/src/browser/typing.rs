@@ -11,6 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use neoteletext_input::event::{Action, KeyCode, MouseAction, Point, printable};
+use neoteletext_input::held::MAX_HELD_KEYS;
 use neoteletext_input::{MAX_COMPOSE, MAX_PASTE};
 
 use crate::browser::{Browser, Output};
@@ -20,7 +21,10 @@ use crate::wall::cell_in;
 
 use super::pointer::wheel_owner::WheelOwner;
 
+mod asked;
 mod draw;
+
+pub use asked::{AskedKey, AskedKeys, KeyNamed};
 
 pub use crate::regis::BLINK_MILLISECONDS;
 /// A bar cursor's width as a share of a cell.
@@ -87,9 +91,10 @@ pub struct TypingView {
     /// over its picture is then the page's (DEC-6633 item 2, REQ-6632).
     pub asks: bool,
     /// The open page's rule table asks for the keyboard, keys or text
-    /// (RULE-52 item 1): the keyboard is then the page's. Otherwise
-    /// nothing typed would leave for the page (REQ-6523), and the keyboard
-    /// is the browser's own viewer's (REQ-756, REQ-890).
+    /// (RULE-52 item 1): the keys it names are then the page's
+    /// ([`AskedKeys`], REQ-7037). Otherwise nothing typed would leave for
+    /// the page (REQ-6523), and the whole keyboard is the browser's own
+    /// viewer's (REQ-756, REQ-890).
     pub keys: bool,
 }
 
@@ -97,6 +102,12 @@ pub struct TypingView {
 #[derive(Debug, Default)]
 pub(super) struct TerminalUi {
     typing: Option<TypingView>,
+    /// What of the keyboard the open page's table asks for (REQ-7037).
+    asked: AskedKeys,
+    /// The keys whose press went to the page and that are still down, at
+    /// most as many as the trusted core follows: their repeats and their
+    /// release go to the page too, whatever the modifiers have become.
+    page_keys: Vec<KeyCode>,
     /// The browser's own modifier is held: Command on macOS, Control and
     /// Shift elsewhere. A click is then the browser's, not the host's.
     browser_modifier: bool,
@@ -133,6 +144,11 @@ impl Browser {
     pub fn set_typing(&mut self, typing: TypingView, now: u64) {
         let state = &mut self.typing;
         let moved = state.typing.and_then(|old| old.cursor) != typing.cursor;
+        // Another page, or none taking input: the trusted core releases
+        // what the page before held (REQ-207).
+        if !typing.on || state.typing.is_none_or(|old| (old.channel, old.page) != (typing.channel, typing.page)) {
+            state.page_keys.clear();
+        }
         if !typing.on {
             // The trusted core sends gone for what the channel held.
             state.buttons = 0;
@@ -162,17 +178,54 @@ impl Browser {
         self.mouse_target()
     }
 
-    /// The page the keyboard goes to now, if any: the page keys would go
-    /// to, while its rule table asks for the keyboard. A page with no
-    /// table, or one whose table asks for no key and no text, is sent
-    /// nothing typed (REQ-6523, RULE-50); were its keys still given to its
-    /// channel they would be dropped there, so they stay the browser's own
-    /// viewer's, as on a channel that takes no input: page numbers, the
-    /// Fastext keys, Index, reveal, hold and mix (REQ-756, REQ-890). A
-    /// list or the strip that has the keys keeps them from both (REQ-2944).
+    /// What of the keyboard the open page's table asks for, as the
+    /// trusted core said with its word on typing (REQ-7037).
+    pub fn set_asked_keys(&mut self, asked: AskedKeys) {
+        self.typing.asked = asked;
+    }
+
+    /// The page some of the keyboard goes to now, if any: the page keys
+    /// would go to, while its rule table asks for the keyboard. A page
+    /// with no table, or one whose table asks for no key and no text, is
+    /// sent nothing typed (REQ-6523, RULE-50); were its keys still given
+    /// to its channel they would be dropped there, so they stay the
+    /// browser's own viewer's, as on a channel that takes no input: page
+    /// numbers, the Fastext keys, Index, reveal, hold and mix (REQ-756,
+    /// REQ-890). A list or the strip that has the keys keeps them from
+    /// both (REQ-2944). Which keys go is [`Browser::key_target`]'s to
+    /// say, and whether text goes [`Browser::text_target`]'s.
     #[must_use]
     pub fn keyboard_target(&self) -> Option<PageKey> {
         self.typing_target().filter(|_| self.typing.typing.is_some_and(|typing| typing.keys))
+    }
+
+    /// The page a key goes to, if it is the page's and not the viewer's
+    /// (REQ-7037): the page some of the keyboard goes to, when its table
+    /// names the key, or asks for text and the key types. A repeat or a
+    /// release follows its press: a key the page was given going down is
+    /// the page's until it comes up, so the page never holds a key whose
+    /// release the viewer took. Every other key is the browser's own
+    /// viewer's, which then acts on it; no key goes to both.
+    #[must_use]
+    pub fn key_target(&self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) -> Option<PageKey> {
+        let state = &self.typing;
+        let held = action != Action::Press && state.page_keys.contains(&key);
+        self.keyboard_target().filter(|_| held || state.asked.takes(key, mods, text, base))
+    }
+
+    /// Whether Escape, pressed alone, is the page's key and not the
+    /// browser's (REQ-7037, REQ-6362 item 1).
+    pub(super) fn escape_is_pages(&self) -> bool {
+        neoteletext_input::keys::code("Escape").is_some_and(|escape| self.key_target(Action::Press, KeyCode::Functional(escape), 0, None, None).is_some())
+    }
+
+    /// The page text that is no key goes to, if any: a paste, an input
+    /// method's composition and what it commits, and a phone's typed
+    /// text, while the page's table asks for text (REQ-7037). Otherwise
+    /// they are the browser's own, as on a channel that takes no input.
+    #[must_use]
+    pub fn text_target(&self) -> Option<PageKey> {
+        self.keyboard_target().filter(|_| self.typing.asked.text)
     }
 
     /// Whether the open page's channel takes input, by the trusted core's
@@ -218,10 +271,10 @@ impl Browser {
     }
 
     /// Whether the input method's preedit goes to the channel (`interaction.md` section 7.3):
-    /// whenever the keyboard goes to it.
+    /// whenever text goes to it.
     #[must_use]
     pub fn composes_for_channel(&self) -> bool {
-        self.keyboard_target().is_some()
+        self.text_target().is_some()
     }
 
     /// The browser's own modifier is held or released.
@@ -288,13 +341,20 @@ impl Browser {
         self.outputs.push(Output::Terminal { key: target, intent });
     }
 
-    /// A key while keys go to a channel: `key` is its unshifted character
-    /// or functional code, `mods` the protocol's bits, `text` what it
-    /// typed and `base` the United States layout's character of the same
-    /// physical key. Nothing is drawn for it: the channel draws what it
-    /// makes of the key.
+    /// A key the page asks for, while keys go to a channel: `key` is its
+    /// unshifted character or functional code, `mods` the protocol's
+    /// bits, `text` what it typed and `base` the United States layout's
+    /// character of the same physical key. A key that is not the page's
+    /// ([`Browser::key_target`]) is not sent. Nothing is drawn for it: the
+    /// channel draws what it makes of the key.
     pub fn terminal_key(&mut self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) {
-        let Some(target) = self.keyboard_target() else { return };
+        let Some(target) = self.key_target(action, key, mods, text, base) else { return };
+        let held = &mut self.typing.page_keys;
+        match action {
+            Action::Press if !held.contains(&key) && held.len() < MAX_HELD_KEYS => held.push(key),
+            Action::Release => held.retain(|down| *down != key),
+            Action::Press | Action::Repeat => {}
+        }
         let text = text.map(|text| cut(text, neoteletext_input::MAX_KEY_TEXT)).filter(|text| !text.is_empty()).map(String::from);
         self.send(target, Intent::Key { action, key, mods, text, base });
     }
@@ -303,7 +363,7 @@ impl Browser {
     /// a channel: one intent, without control characters. Nothing is
     /// drawn for it: the channel draws what it makes of the text.
     pub fn terminal_text(&mut self, text: &str) {
-        let Some(target) = self.keyboard_target() else { return };
+        let Some(target) = self.text_target() else { return };
         let printable: String = cut(text, MAX_PASTE).chars().filter(|&character| printable(character)).collect();
         if !printable.is_empty() {
             self.send(target, Intent::Text(printable));
@@ -313,7 +373,7 @@ impl Browser {
     /// The browser's paste shortcut while keys go to a channel: the text as
     /// one PASTE (REQ-INT-136), data the channel never takes as keys.
     pub fn terminal_paste(&mut self, text: &str) -> bool {
-        let Some(target) = self.keyboard_target() else { return false };
+        let Some(target) = self.text_target() else { return false };
         let text = cut(text, MAX_PASTE);
         if text.is_empty() {
             return false;
@@ -325,7 +385,7 @@ impl Browser {
     /// The input method's preedit, `cursor` a code-point offset into it; an
     /// empty preedit ends composition.
     pub fn terminal_compose(&mut self, cursor: u32, text: &str) -> bool {
-        let Some(target) = self.keyboard_target() else { return false };
+        let Some(target) = self.text_target() else { return false };
         let text = cut(text, MAX_COMPOSE);
         let length = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
         self.send(target, Intent::Compose { cursor: cursor.min(length), text: String::from(text) });

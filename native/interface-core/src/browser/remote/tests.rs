@@ -164,6 +164,8 @@ fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
         },
         10_000,
     );
+    // REQ-7037: its table asks for every key.
+    browser.set_asked_keys(crate::browser::AskedKeys::everything());
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
     browser.take_outputs();
     let functional = |name: &str| KeyCode::Functional(code(name).unwrap());
@@ -248,6 +250,7 @@ fn the_remotes_keys_are_the_viewers_while_the_page_asks_for_no_keyboard() {
         assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Fastext(colour))], "{colour:?} asks for its link");
     }
     browser.set_typing(TypingView { keys: true, ..typing }, 10_000);
+    browser.set_asked_keys(crate::browser::AskedKeys::everything());
     browser.take_outputs();
     assert!(browser.remote_press(middle(rect_of(&browser, Button::Control(PageControl::Fastext(FastextKey::Red)))), 10_000));
     assert_eq!(terminal(&browser.take_outputs()), 2, "with the keyboard the page's, pressed and released for the channel");

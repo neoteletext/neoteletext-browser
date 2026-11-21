@@ -91,7 +91,7 @@ pub use pointer::Cursor;
 pub use shown::{CertificateProblem, Denied, Failed, Frame, StripState, TabInfo};
 pub use tab_strip::DropTarget;
 #[cfg(feature = "interaction")]
-pub use typing::{CursorView, TypingView, notched};
+pub use typing::{AskedKey, AskedKeys, CursorView, KeyNamed, TypingView, notched};
 
 /// The address field's limit, as the trusted core's address rules: the
 /// engine's one bound on an address (neoteletext-common's REQ-1661).

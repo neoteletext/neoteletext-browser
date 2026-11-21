@@ -252,18 +252,19 @@ fn keyboard_key(button: Button) -> Option<(neoteletext_input::event::KeyCode, Op
 
 impl Browser {
     /// A remote button pressed while keys go to a channel: a key the
-    /// keyboard has goes to the channel, pressed then released, as
-    /// `terminal_key` sends the keyboard's (REQ-1373). Returns whether it
-    /// went.
+    /// keyboard has, and the page asks for (REQ-7037), goes to the
+    /// channel, pressed then released, as `terminal_key` sends the
+    /// keyboard's (REQ-1373). Returns whether it went; a key the page does
+    /// not ask for is the remote's own to act on.
     #[cfg(feature = "interaction")]
     fn remote_key_to_channel(&mut self, button: Button) -> bool {
         use neoteletext_input::event::Action;
         let Some((key, text)) = keyboard_key(button) else { return false };
-        if self.keyboard_target().is_none() {
-            return false;
-        }
         let mut typed = [0_u8; 4];
         let text = text.map(|character| &*character.encode_utf8(&mut typed));
+        if self.key_target(Action::Press, key, 0, text, None).is_none() {
+            return false;
+        }
         self.terminal_key(Action::Press, key, 0, text, None);
         self.terminal_key(Action::Release, key, 0, None, None);
         true

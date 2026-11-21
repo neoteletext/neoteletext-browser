@@ -91,7 +91,7 @@ impl App {
             }
             EditAction::Paste => {
                 #[cfg(feature = "interaction")]
-                if self.view.browser.keyboard_target().is_some() {
+                if self.view.browser.text_target().is_some() {
                     return self.paste();
                 }
                 self.clipboard_text().is_some_and(|text| self.view.browser.paste_text(&text, now))

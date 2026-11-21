@@ -372,8 +372,11 @@ impl Browser {
             return true;
         };
         if notice {
+            // Escape is held to leave only while it is the page's key
+            // (REQ-7037); a page that does not ask for it leaves it the
+            // browser's, and one press leaves.
             #[cfg(feature = "interaction")]
-            let typing = self.keyboard_target().is_some();
+            let typing = self.escape_is_pages();
             #[cfg(not(feature = "interaction"))]
             let typing = false;
             draw_notice(canvas, area, page, typing);

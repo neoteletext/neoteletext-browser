@@ -3,8 +3,8 @@
 //! page's channel decodes and evaluates the table; the trusted core is the
 //! gate. These are the payloads they exchange: the viewer's input given to
 //! the decoder with a sequence number, the metered values, what the
-//! decoder tells of a table (its interest mask, watch list and wheel
-//! rectangles), the reports it asks for, a state query and its answer, a
+//! decoder tells of a table (its interest mask, the keys it names, its
+//! watch list and wheel rectangles), the reports it asks for, a state query and its answer, a
 //! fault and the counters.
 //!
 //! The decoder never supplies an input event's bytes (RULE-52 item 3): a
@@ -18,6 +18,7 @@ pub use neoteletext_rules::limits::NO_RULE;
 use neoteletext_rules::limits::VARIABLES;
 use neoteletext_rules::limits::{LAST_SUBCODE, MAX_CONTROL, MAX_RECTS, MAX_ROWS, MAX_RULES, MAX_STATE_BYTES};
 use neoteletext_rules::table::VALUE_BYTES;
+pub use neoteletext_rules::table::{Key, KeyKind};
 
 use crate::audio::{MAX_WATCH_SLOTS, WatchSlot};
 use crate::{Fields, ProtocolError};
@@ -41,6 +42,16 @@ pub const QUERY_INTERVAL_TICKS: u32 = 60;
 /// The most wheel rectangles a decoder tells (RULE-51 item 4): the rule
 /// table's `MAX_RECTS`.
 pub const MAX_WHEEL_RECTS: usize = MAX_RECTS;
+/// The most keys a decoder tells of a table (REQ-7037). The keys the
+/// component library asks every page for to select pages by are 28: ten
+/// of the digit row, ten of the keypad, F1 to F4 and the four coloured
+/// keys (RULE-54 item 5); this leaves a page 100 of its own, a musical
+/// keyboard on every letter row among them. A table that names more is
+/// told as asking for any key, which is the whole keyboard, so the bound
+/// costs such a page the viewer's keys and nothing of its own. A count
+/// fits the message's one byte.
+pub const MAX_KEY_ASKS: usize = 128;
+const _: () = assert!(MAX_KEY_ASKS <= u8::MAX as usize);
 /// The most bytes of a state answer after its stamp (RULE-47): the rule
 /// table's `MAX_STATE_BYTES`, which bounds the answer with its stamp.
 pub const MAX_PAGE_STATE: usize = MAX_STATE_BYTES;
@@ -356,8 +367,39 @@ pub(crate) fn read_page_sub(fields: &mut Fields<'_>) -> Result<PageSub, Protocol
     Ok(PageSub { page, sub })
 }
 
+/// A key the open page's table asks for, with the modifiers it compares
+/// (RULE-9, RULE-10): what a `key` or `key_up` trigger names, or a key
+/// whose state a value of the table reads (RULE-24). The interface gives
+/// a key to the page only when one of these names it, and keeps every
+/// other key for the browser's own viewer (REQ-7037).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KeyAsk {
+    /// The key, named as the table names it; `None` for any key.
+    pub key: Option<Key>,
+    /// The modifier bits compared.
+    pub mods_mask: u8,
+    /// What they must be: a key is asked for when
+    /// `(mods AND mask) = value`.
+    pub mods_value: u8,
+}
+
+impl KeyAsk {
+    /// Any key, whatever the modifiers: the whole keyboard.
+    pub const EVERY_KEY: Self = Self { key: None, mods_mask: 0, mods_value: 0 };
+}
+
+/// What of the keyboard the open page's table asks for (REQ-7037).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeyAsks {
+    /// It asks for text that is no key: a paste, a composition and its
+    /// committed text (the interest mask's text class, RULE-52 item 1).
+    pub text: bool,
+    /// The keys it names, at most [`MAX_KEY_ASKS`].
+    pub keys: Vec<KeyAsk>,
+}
+
 /// What a decoder tells of the open page's table (RULE-52 item 1, RULE-33
-/// item 1, RULE-51 item 4). It is told when a table is decoded for the
+/// item 1, RULE-51 item 4, REQ-7037). It is told when a table is decoded for the
 /// open page, again when the watch list or the wheel rectangles change,
 /// and with `generation` 0 and nothing else when the page has no table or
 /// stops being the open page.
@@ -373,6 +415,9 @@ pub struct RulesOpen {
     pub watch: Vec<WatchSlot>,
     /// Where an enabled `wheel` rule applies, at most [`MAX_WHEEL_RECTS`].
     pub wheel: Vec<WheelRect>,
+    /// The keys the table names, at most [`MAX_KEY_ASKS`]; none unless
+    /// `interest` has the keys' class (REQ-7037).
+    pub keys: Vec<KeyAsk>,
 }
 
 /// What a report is of (RULE-22, RULE-52 item 3).
@@ -563,8 +608,46 @@ pub(crate) fn push_open(payload: &mut Vec<u8>, open: &RulesOpen) -> Result<(), P
             payload.extend_from_slice(&field.to_be_bytes());
         }
     }
+    push_key_asks(payload, &open.keys)?;
     // What would be refused on arrival is refused on sending.
     read_open(&mut Fields::new(payload)).map(|_| ())
+}
+
+/// The byte of a key ask that names no key: any key. A key's kind is 1
+/// to 3 (RULE-10).
+const ANY_KEY: u8 = 0;
+
+pub(crate) fn push_key_asks(payload: &mut Vec<u8>, asks: &[KeyAsk]) -> Result<(), ProtocolError> {
+    crate::push_count_u8(payload, asks.len(), MAX_KEY_ASKS, "key asks")?;
+    for ask in asks {
+        payload.push(ask.key.map_or(ANY_KEY, |key| key.kind.code()));
+        payload.extend_from_slice(&ask.key.map_or(0, |key| key.code).to_be_bytes());
+        payload.extend_from_slice(&[ask.mods_mask, ask.mods_value]);
+    }
+    Ok(())
+}
+
+pub(crate) fn read_key_asks(fields: &mut Fields<'_>) -> Result<Vec<KeyAsk>, ProtocolError> {
+    let count = fields.count_u8(MAX_KEY_ASKS, "key asks")?;
+    let mut asks = Vec::with_capacity(count);
+    for _ in 0..count {
+        let (kind, code) = (fields.u8()?, fields.u32()?);
+        let key = match (kind, KeyKind::from_code(kind)) {
+            (ANY_KEY, _) if code == 0 => None,
+            // A character or a physical key is named by a Unicode scalar
+            // value; a named key by a functional code, which only the
+            // input protocol's table knows (RULE-10).
+            (_, Some(kind)) if kind == KeyKind::Named || char::from_u32(code).is_some() => Some(Key::of(kind, code)),
+            _ => return Err(ProtocolError::BadValue("key ask")),
+        };
+        let (mods_mask, mods_value) = (fields.u8()?, fields.u8()?);
+        // A value with a bit the mask does not compare matches no key.
+        if mods_value & !mods_mask != 0 {
+            return Err(ProtocolError::BadValue("key ask modifiers"));
+        }
+        asks.push(KeyAsk { key, mods_mask, mods_value });
+    }
+    Ok(asks)
 }
 
 pub(crate) fn read_open(fields: &mut Fields<'_>) -> Result<RulesOpen, ProtocolError> {
@@ -588,11 +671,16 @@ pub(crate) fn read_open(fields: &mut Fields<'_>) -> Result<RulesOpen, ProtocolEr
         }
         wheel.push(rect);
     }
+    let keys = read_key_asks(fields)?;
     // A page with no table asks for nothing (RULE-50).
-    if generation == 0 && (interest != 0 || !watch.is_empty() || !wheel.is_empty()) {
+    if generation == 0 && (interest != 0 || !watch.is_empty() || !wheel.is_empty() || !keys.is_empty()) {
         return Err(ProtocolError::BadValue("rules of no table"));
     }
-    Ok(RulesOpen { page, generation, interest, watch, wheel })
+    // Keys are named only by a table that asks for the keys' class.
+    if interest & INTEREST_KEYS == 0 && !keys.is_empty() {
+        return Err(ProtocolError::BadValue("key asks without the keys' class"));
+    }
+    Ok(RulesOpen { page, generation, interest, watch, wheel, keys })
 }
 
 pub(crate) fn push_report(payload: &mut Vec<u8>, report: &Report) -> Result<(), ProtocolError> {
@@ -817,8 +905,9 @@ mod tests {
             interest: INTEREST_ALL,
             watch: (0..MAX_WATCH_SLOTS).map(|slot| WatchSlot { channel: 3, kind: 2, part: u8::try_from(slot % 16).unwrap() }).collect(),
             wheel: vec![WheelRect { x: 0, y: 0, width: 800, height: 480 }; MAX_WHEEL_RECTS],
+            keys: vec![KeyAsk { key: Some(Key::of(KeyKind::Physical, 'q' as u32)), mods_mask: 1, mods_value: 1 }; MAX_KEY_ASKS],
         };
-        let none = RulesOpen { page: PageSub::new(0x101, 1), generation: 0, interest: 0, watch: vec![], wheel: vec![] };
+        let none = RulesOpen { page: PageSub::new(0x101, 1), generation: 0, interest: 0, watch: vec![], wheel: vec![], keys: vec![] };
         for open in [full, none] {
             assert_eq!(from_decoder(&FromDecoder::RulesOpen(open.clone())).unwrap(), Some(FromDecoder::RulesOpen(open)));
         }
@@ -872,7 +961,7 @@ mod tests {
         assert!(to_decoder(&ToDecoder::Metered { page: PageSub::new(0x101, 1), values: vec![0; MAX_WATCH_SLOTS + 1] }).is_err());
 
         let open = |change: &dyn Fn(&mut RulesOpen)| {
-            let mut open = RulesOpen { page: PageSub::new(0x101, 1), generation: 1, interest: 1, watch: vec![], wheel: vec![] };
+            let mut open = RulesOpen { page: PageSub::new(0x101, 1), generation: 1, interest: 1, watch: vec![], wheel: vec![], keys: vec![] };
             change(&mut open);
             from_decoder(&FromDecoder::RulesOpen(open)).is_err()
         };

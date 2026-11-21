@@ -24,7 +24,7 @@ fn untold() -> Typing {
 }
 
 fn asks(interest: u8) -> RulesOpen {
-    RulesOpen { page: OPEN, generation: 1, interest, watch: Vec::new(), wheel: Vec::new() }
+    RulesOpen { page: OPEN, generation: 1, interest, watch: Vec::new(), wheel: Vec::new(), keys: Vec::new() }
 }
 
 fn intent(intent: Intent) -> InputIntent {
@@ -276,7 +276,7 @@ fn reports_go_only_for_the_open_page() {
     // Once its decoder says the page asks for nothing, nothing goes at all.
     let mut typing = ready(SELECT_CAP);
     typing.opened(Some(PAGE.channel), None, 2 * MS);
-    typing.rules_told(PAGE.channel, &RulesOpen { generation: 0, interest: 0, wheel: Vec::new(), ..send_all() }, 2 * MS);
+    typing.rules_told(PAGE.channel, &RulesOpen { generation: 0, interest: 0, wheel: Vec::new(), keys: Vec::new(), ..send_all() }, 2 * MS);
     assert_eq!(went(&typing.report(PAGE.channel, &report(Reported::Fired), 2 * MS)), (0, 0));
     // A decoder cannot make its page the open page by saying so.
     let other = RulesOpen { page: protocol::rules::PageSub::new(0x300, 0), ..send_all() };

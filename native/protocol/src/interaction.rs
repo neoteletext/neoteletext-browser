@@ -161,6 +161,10 @@ pub struct Typing {
     /// (REQ-6523), and the keyboard is the browser's own viewer's, as on a
     /// channel that takes no input (REQ-756, REQ-890).
     pub keys: bool,
+    /// What of the keyboard that table asks for, key by key: a key it
+    /// names is the page's, and every other key stays the viewer's
+    /// (REQ-7037). Nothing unless `keys`.
+    pub asked: crate::rules::KeyAsks,
 }
 
 /// An input message for the fetcher to write: whole items of the engine's

@@ -374,6 +374,9 @@ impl Typing {
             // A page whose table asks for no key and no text is sent none
             // (REQ-6523): its keyboard stays the browser's own viewer's.
             keys: on && state.is_some_and(|state| state.gate.asks_keyboard()),
+            // Which keys: one the table names is the page's, and every
+            // other key stays the viewer's (REQ-7037).
+            asked: state.filter(|_| on).map(|state| state.gate.asked_keys()).unwrap_or_default(),
         })
     }
 
@@ -661,6 +664,7 @@ impl Typing {
                 wheel: false,
                 asks: false,
                 keys: false,
+                asked: protocol::rules::KeyAsks::default(),
             }));
         }
         self.tell_interface(&mut sends);

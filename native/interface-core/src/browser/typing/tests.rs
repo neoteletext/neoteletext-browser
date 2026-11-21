@@ -24,6 +24,9 @@ fn browser() -> Browser {
     browser.wall.zoom(KEY, 0);
     browser.draw(&mut Recorder::new(), 1440.0, 900.0, 10_000);
     browser.take_outputs();
+    // REQ-7037: the page's table, once the core says keys go ([`typing`]),
+    // asks for every key and for text.
+    browser.set_asked_keys(AskedKeys::everything());
     browser
 }
 

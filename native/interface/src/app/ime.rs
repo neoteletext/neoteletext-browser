@@ -59,7 +59,7 @@ impl App {
     /// keys go to a channel, whose composed text then goes to it.
     pub(super) fn sync_ime(&mut self) {
         #[cfg(feature = "interaction")]
-        let allowed = self.view.ime.address || self.view.browser.keyboard_target().is_some();
+        let allowed = self.view.ime.address || self.view.browser.text_target().is_some();
         #[cfg(not(feature = "interaction"))]
         let allowed = self.view.ime.address;
         if allowed != self.view.ime.allowed

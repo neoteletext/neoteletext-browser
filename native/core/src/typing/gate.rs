@@ -29,8 +29,8 @@ use neoteletext_input::event::{self, Action, Event, Item, KeyCode, MouseAction, 
 use neoteletext_input::rules::{FaultCode, PageStateEvent, RuleBody, RuleEvent, RulesFault};
 use neoteletext_rules::table::{Target, TargetKind, Value};
 use protocol::rules::{
-    INPUT_RING, INTEREST_KEYS, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, INTEREST_TEXT, KeyAction, PageSub, PointerAction, Report, Reported, RuleInput,
-    RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
+    INPUT_RING, INTEREST_KEYS, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, INTEREST_TEXT, KeyAction, KeyAsk, KeyAsks, PageSub, PointerAction, Report, Reported,
+    RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
 };
 
 use super::{Channel, Send, clock};
@@ -60,6 +60,8 @@ pub(super) struct Asked {
     pub(super) interest: u8,
     /// Where an enabled `wheel` rule applies, in the picture's pixels.
     pub(super) wheel: Vec<WheelRect>,
+    /// The keys the table names (REQ-7037).
+    keys: Vec<KeyAsk>,
     /// The page as a stamp: what a report with no event is stamped with.
     stamp: Stamp,
     /// The page stopped being the open page at this time: its decoder's
@@ -179,6 +181,20 @@ impl Gate {
     /// disagree.
     pub(super) fn asks_keyboard(&self) -> bool {
         self.asked.as_ref().is_some_and(|asked| asked.closing_us.is_none() && asked.interest & (INTEREST_KEYS | INTEREST_TEXT) != 0)
+    }
+
+    /// What of the keyboard the open page's table, still open, asks for,
+    /// for the interface to give the page those keys and no other
+    /// (REQ-7037): text when its interest mask has the text's class, and
+    /// the keys its decoder said it names when the mask has the keys'
+    /// class. It reads the mask `asks_keyboard` reads, so a table that
+    /// does not ask for the keyboard asks for no key here. The list is
+    /// passed on unread: this gate still gives by class (RULE-52 item 1),
+    /// and what leaves is still only what a rule reports (REQ-6523).
+    pub(super) fn asked_keys(&self) -> KeyAsks {
+        let Some(asked) = self.asked.as_ref().filter(|asked| asked.closing_us.is_none()) else { return KeyAsks::default() };
+        let keys = if asked.interest & INTEREST_KEYS == 0 { Vec::new() } else { asked.keys.clone() };
+        KeyAsks { text: asked.interest & INTEREST_TEXT != 0, keys }
     }
 
     /// The pointer is at `at`, a point of a pointer intent.
@@ -411,8 +427,15 @@ impl Channel {
             return;
         }
         let same = self.gate.asked.as_ref().is_some_and(|asked| asked.page == told.page && asked.generation == told.generation && asked.closing_us.is_none());
-        self.gate.asked =
-            Some(Asked { page: told.page, generation: told.generation, interest: told.interest, wheel: told.wheel.clone(), stamp, closing_us: None });
+        self.gate.asked = Some(Asked {
+            page: told.page,
+            generation: told.generation,
+            interest: told.interest,
+            wheel: told.wheel.clone(),
+            keys: told.keys.clone(),
+            stamp,
+            closing_us: None,
+        });
         // A new table's evaluator starts afresh, and has heard nothing.
         if !same {
             self.gate.focused = false;

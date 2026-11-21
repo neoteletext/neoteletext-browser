@@ -141,6 +141,7 @@ fuzz_target!(|data: &[u8]| {
                     interest: if generation == 0 { 0 } else { INTEREST_ALL },
                     watch: Vec::new(),
                     wheel: Vec::new(),
+                    keys: Vec::new(),
                 };
                 let (sends, accepted) = typing.rules_told(CHANNEL, &told, now_us);
                 // Taken only for the open page: a decoder cannot make

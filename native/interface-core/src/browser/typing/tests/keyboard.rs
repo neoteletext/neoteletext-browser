@@ -1,19 +1,20 @@
-//! REQ-7037: the keyboard is the open page's only while its rule table asks
-//! for keys or text (the trusted core's `keys`); otherwise page numbers,
-//! the Fastext keys, Index, reveal, hold and mix are the browser's own
-//! viewer's, and nothing typed goes to the channel. The pointer, the wheel
-//! and the badge go by the channel taking input, as before.
+//! REQ-7037: a key is the open page's only when its rule table asks for
+//! it (the trusted core's `keys`, and the keys it names); every other key
+//! is the browser's own viewer's: page numbers, the Fastext keys, Index,
+//! reveal, hold and mix, and nothing of it goes to the channel. The
+//! pointer, the wheel and the badge go by the channel taking input, as
+//! before.
 //!
 //! The interface's window code (`window_input` in
 //! `native/interface/src/app/input.rs`) gives a key to `terminal_key` while
-//! `keyboard_target` names a page and the browser's modifier is not held,
-//! and to the browser's own `key` handling otherwise, with F1 to F4 as the
+//! `key_target` names a page for it and the browser's modifier is not
+//! held, and to the browser's own `key` handling otherwise, with F1 to F4 as the
 //! coloured keys (`App::key`). It needs a window, so [`route`] stands in
 //! for it here.
 
 use super::*;
 use crate::browser::fixture::{HEIGHT, WIDTH};
-use crate::browser::{Cursor, Key, Modifiers};
+use crate::browser::{AskedKey, AskedKeys, Cursor, Key, KeyNamed, Modifiers};
 use crate::controls::{FastextKey, PageControl, PageControls};
 use alloc::string::String;
 use neoteletext_input::keys::code;
@@ -45,6 +46,9 @@ fn viewer(asks: bool, keys: bool) -> (Browser, PageKey) {
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, NOW);
     browser.set_page_controls(PageControls { channel: key.channel, page: Some(key.page), subpages: 1, fastext: [true; 5], ..PageControls::default() });
     browser.set_typing(told(key, asks, keys), NOW);
+    // A table that asks for the keyboard asks, here, for every key and for
+    // text; a test of a table naming some keys says which after.
+    browser.set_asked_keys(if keys { AskedKeys::everything() } else { AskedKeys::default() });
     browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, NOW);
     browser.take_outputs();
     assert_eq!(browser.opened(), Some(key));
@@ -54,22 +58,21 @@ fn viewer(asks: bool, keys: bool) -> (Browser, PageKey) {
 /// What the interface's window code does with a key press (see the
 /// module's note).
 fn route(browser: &mut Browser, pressed: Pressed) {
-    if browser.keyboard_target().is_some() {
-        match pressed {
-            Pressed::Text(text) => {
-                let character = text.chars().next().expect("a character");
-                browser.terminal_key(Action::Press, KeyCode::Character(character.to_ascii_lowercase()), 0, Some(text), None);
-            }
-            Pressed::Colour(colour) => {
-                let name = match colour {
-                    FastextKey::Red => "F1",
-                    FastextKey::Green => "F2",
-                    FastextKey::Yellow => "F3",
-                    FastextKey::Cyan | FastextKey::Index => "F4",
-                };
-                browser.terminal_key(Action::Press, KeyCode::Functional(code(name).expect("a key name")), 0, None, None);
-            }
+    let (key, text) = match pressed {
+        Pressed::Text(text) => (KeyCode::Character(text.chars().next().expect("a character").to_ascii_lowercase()), Some(text)),
+        Pressed::Colour(colour) => {
+            let name = match colour {
+                FastextKey::Red => "F1",
+                FastextKey::Green => "F2",
+                FastextKey::Yellow => "F3",
+                FastextKey::Cyan | FastextKey::Index => "F4",
+            };
+            (KeyCode::Functional(code(name).expect("a key name")), None)
         }
+    };
+    // REQ-7037: a key the page's table asks for is the page's.
+    if browser.key_target(Action::Press, key, 0, text, None).is_some() {
+        browser.terminal_key(Action::Press, key, 0, text, None);
         return;
     }
     match pressed {
@@ -201,18 +204,21 @@ fn a_table_asking_for_the_keyboard_takes_every_key() {
     );
 }
 
-/// TODO-7038, the gap REQ-7037 leaves for the owner: the trusted core
-/// tells the interface only whether the table asks for keys at all, so a
-/// table that names one key (the music player's piano keys, say) is given
-/// every key, and a page number or coloured key it does not name goes to
-/// the channel's table, which drops it, and the viewer does not act. This
-/// test holds today's behaviour so that a change to it is not unnoticed;
-/// when TODO-7038 is decided it is rewritten to the choice.
+/// REQ-7037 as TODO-7038 settled it: a table that names some keys is
+/// given those and no other. The keys it names go to the channel and the
+/// viewer does not act on them; every other key is the viewer's, which
+/// acts on it, and nothing of it goes to the channel. Here the table
+/// names the character `r`, the physical key `1` and F2, and asks for no
+/// text. On the code before, every key went to the table, which dropped
+/// the ones it did not name.
 #[test]
-fn a_table_asking_for_some_keys_is_given_them_all_todo_7038() {
-    // The trusted core's word for such a table is `keys` (its own test,
-    // `a_table_naming_one_key_is_given_every_key`).
+fn a_table_asking_for_some_keys_is_given_those_and_no_other() {
     let (mut browser, key) = viewer(true, true);
+    let named = |key: KeyNamed| AskedKey { key, ..AskedKey::EVERY_KEY };
+    browser.set_asked_keys(AskedKeys {
+        text: false,
+        keys: alloc::vec![named(KeyNamed::Character('r')), named(KeyNamed::Physical('1')), named(KeyNamed::Named(code("F2").expect("a key name")))],
+    });
     for pressed in [Pressed::Text("r"), Pressed::Text("1"), Pressed::Colour(FastextKey::Green)] {
         route(&mut browser, pressed);
         let outputs = browser.take_outputs();
@@ -220,6 +226,12 @@ fn a_table_asking_for_some_keys_is_given_them_all_todo_7038() {
         assert!(!outputs.iter().any(|output| matches!(output, Output::PageControl(_))), "{pressed:?}: the viewer does not act");
     }
     assert_eq!(browser.opened(), Some(key));
+    for (pressed, control) in [(Pressed::Text("g"), FastextKey::Green), (Pressed::Colour(FastextKey::Red), FastextKey::Red)] {
+        route(&mut browser, pressed);
+        assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Fastext(control))], "{pressed:?} is the viewer's");
+    }
+    assert!(!browser.terminal_paste("pasted"), "a table that asks for no text is given no paste");
+    assert!(!browser.composes_for_channel(), "nor a composition");
 }
 
 /// REQ-7037, REQ-6632: whether the table asks for the keyboard changes

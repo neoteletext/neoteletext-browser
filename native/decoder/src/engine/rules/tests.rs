@@ -220,7 +220,9 @@ fn send_all(page: PageSub, wheel: bool) -> Box<Table> {
 fn a_table_for_the_open_page_tells_the_trusted_core_what_it_asks_for() {
     let (mut engine, told_now) = opened(&send_all(OPEN, false));
     let every = INTEREST_KEYS | INTEREST_TEXT | INTEREST_POINTER_BUTTONS | INTEREST_MOVES | INTEREST_FOCUS;
-    assert_eq!(told(&told_now), [RulesOpen { page: OPEN, generation: 1, interest: every, watch: vec![], wheel: vec![] }]);
+    // REQ-7037: its `keys` rule is on any key, the whole keyboard.
+    let every_key = protocol::rules::KeyAsk::EVERY_KEY;
+    assert_eq!(told(&told_now), [RulesOpen { page: OPEN, generation: 1, interest: every, watch: vec![], wheel: vec![], keys: vec![every_key] }]);
     assert!(engine.rules_due_us().is_some(), "the evaluator wakes the decoder for its ticks");
 
     send_table(&mut engine, OPEN, 2, Some(&send_all(OPEN, true)));
@@ -228,7 +230,7 @@ fn a_table_for_the_open_page_tells_the_trusted_core_what_it_asks_for() {
     let whole = WheelRect { x: 0, y: 0, width: 480, height: 500 };
     assert_eq!(
         told_now.last(),
-        Some(&RulesOpen { page: OPEN, generation: 2, interest: every | INTEREST_WHEEL, watch: vec![], wheel: vec![whole] }),
+        Some(&RulesOpen { page: OPEN, generation: 2, interest: every | INTEREST_WHEEL, watch: vec![], wheel: vec![whole], keys: vec![every_key] }),
         "{told_now:?}"
     );
 }
@@ -385,7 +387,7 @@ fn a_sub_page_is_a_page_of_its_own() {
     let closed = set_open(&mut engine, Some(OTHER), after(3));
     let closing = reports(&closed);
     assert!(matches!(closing.as_slice(), [Report { page: OPEN, rule: 1, what: Reported::Fired, .. }]), "the close rule's report: {closed:?}");
-    assert!(closed.contains(&FromDecoder::RulesOpen(RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![] })));
+    assert!(closed.contains(&FromDecoder::RulesOpen(RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![], keys: vec![] })));
     assert!(closed.iter().any(|message| matches!(message, FromDecoder::Audio(Audio::Stop { channel: CHANNEL, .. }))), "its local sound ends: {closed:?}");
     assert_eq!(engine.rules_due_us(), None, "nothing of the first page is evaluated");
     assert_eq!(input(&mut engine, OPEN, 2, key(KeyAction::Press, 'a'), after(3) + 10), [], "nor given input");
@@ -419,7 +421,7 @@ fn a_paused_page_keeps_its_state_and_does_nothing() {
     let ticks = engine.rules.counters().unwrap().ticks;
 
     let paused = set_open(&mut engine, None, after(2) + 10);
-    assert!(told(&paused).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![] }), "{paused:?}");
+    assert!(told(&paused).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![], keys: vec![] }), "{paused:?}");
     assert_eq!(engine.rules_due_us(), None, "no wake while paused");
     assert_eq!(input(&mut engine, OPEN, 2, key(KeyAction::Press, 'a'), after(3)), []);
     assert_eq!(run(&mut engine, after(100)), []);
@@ -453,7 +455,7 @@ fn a_connection_that_ends_drops_everything_with_no_close() {
     let ended = engine.rule_message(ToDecoder::ConnectionEnded).unwrap();
     assert_eq!(reports(&ended), [], "no close tick: {ended:?}");
     assert!(ended.iter().any(|message| matches!(message, FromDecoder::Audio(Audio::Stop { channel: CHANNEL, .. }))), "the local sound stops: {ended:?}");
-    assert!(told(&ended).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![] }));
+    assert!(told(&ended).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![], keys: vec![] }));
     assert_eq!(engine.rules_due_us(), None);
 }
 
@@ -466,7 +468,7 @@ fn an_empty_rules_record_drops_the_table() {
     run(&mut engine, after(1));
     send_table(&mut engine, OPEN, 2, None);
     let dropped = run(&mut engine, after(2));
-    assert!(told(&dropped).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![] }), "{dropped:?}");
+    assert!(told(&dropped).contains(&RulesOpen { page: OPEN, generation: 0, interest: 0, watch: vec![], wheel: vec![], keys: vec![] }), "{dropped:?}");
     assert_eq!(engine.rules_due_us(), None);
 }
 

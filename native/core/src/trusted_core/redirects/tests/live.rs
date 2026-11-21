@@ -293,6 +293,7 @@ fn draw(test: &mut Test, channel: u32, page: u16) {
         interest: protocol::rules::INTEREST_ALL,
         watch: Vec::new(),
         wheel: Vec::new(),
+        keys: vec![protocol::rules::KeyAsk::EVERY_KEY],
     };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
 }

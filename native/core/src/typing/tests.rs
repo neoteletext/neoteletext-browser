@@ -82,7 +82,14 @@ fn typed(typing: &mut Typing, intent: &InputIntent, now_us: u64) -> Vec<Send> {
 /// page: what the server's default table for a channel asks (RULE-53).
 fn send_all() -> protocol::rules::RulesOpen {
     let whole = protocol::rules::WheelRect { x: 0, y: 0, width: 480, height: 500 };
-    protocol::rules::RulesOpen { page: OPEN, generation: 1, interest: protocol::rules::INTEREST_ALL, watch: Vec::new(), wheel: vec![whole] }
+    protocol::rules::RulesOpen {
+        page: OPEN,
+        generation: 1,
+        interest: protocol::rules::INTEREST_ALL,
+        watch: Vec::new(),
+        wheel: vec![whole],
+        keys: vec![protocol::rules::KeyAsk::EVERY_KEY],
+    }
 }
 
 /// Microseconds in a millisecond, for times written in milliseconds.

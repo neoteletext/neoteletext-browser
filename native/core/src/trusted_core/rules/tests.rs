@@ -99,7 +99,7 @@ fn a_key_leaves_only_as_the_report_its_pages_table_asks_for() {
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "no table: the decoder is given nothing");
     assert_eq!(input_sent(&sent_to_fetcher(&mut test.core, channel, &fetcher)), [], "and the channel is sent nothing");
 
-    let asks = RulesOpen { page: OPEN, generation: 3, interest: INTEREST_KEYS, watch: Vec::new(), wheel: Vec::new() };
+    let asks = RulesOpen { page: OPEN, generation: 3, interest: INTEREST_KEYS, watch: Vec::new(), wheel: Vec::new(), keys: Vec::new() };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
     // The key is given under the gate's first sequence number, and its
     // report asked for at once, as a decoder's next tick does: this core's
@@ -165,7 +165,7 @@ fn the_watch_list_goes_to_the_sound_helper_and_a_report_of_its_length_comes_back
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [], "no list was passed for this view");
 
     let watch = vec![WatchSlot { channel: 0, kind: 1, part: 0 }, WatchSlot { channel: 0, kind: 3, part: 2 }];
-    let asks = RulesOpen { page: OPEN, generation: 1, interest: 0, watch: watch.clone(), wheel: Vec::new() };
+    let asks = RulesOpen { page: OPEN, generation: 1, interest: 0, watch: watch.clone(), wheel: Vec::new(), keys: Vec::new() };
     test.core.decoded(channel, FromDecoder::RulesOpen(asks)).unwrap();
     assert_eq!(sent_to_sound(&mut test, &sound), [ToSound::Audio { channel, audio: Audio::Watch(watch) }]);
 
@@ -177,8 +177,14 @@ fn the_watch_list_goes_to_the_sound_helper_and_a_report_of_its_length_comes_back
     assert_eq!(sent_to_decoder(&mut test, channel, &decoder), [ToDecoder::Metered { page: OPEN, values: vec![200, 3] }]);
 
     // A decoder cannot have another page's table watched.
-    let other =
-        RulesOpen { page: PageSub::new(0x200, 0), generation: 1, interest: 0, watch: vec![WatchSlot { channel: 1, kind: 1, part: 0 }], wheel: Vec::new() };
+    let other = RulesOpen {
+        page: PageSub::new(0x200, 0),
+        generation: 1,
+        interest: 0,
+        watch: vec![WatchSlot { channel: 1, kind: 1, part: 0 }],
+        wheel: Vec::new(),
+        keys: Vec::new(),
+    };
     test.core.decoded(channel, FromDecoder::RulesOpen(other)).unwrap();
     assert_eq!(
         sent_to_sound(&mut test, &sound),

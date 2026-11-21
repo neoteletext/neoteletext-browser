@@ -119,6 +119,7 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
         wheel: true,
         asks: true,
         keys: true,
+        asked: crate::rules::KeyAsks::default(),
     };
     let mut payload = Vec::new();
     push_typing(&mut payload, &typing).unwrap();
@@ -143,8 +144,19 @@ fn the_keyboard_flag_is_bit_128_and_every_flags_byte_reads() {
     /// Where the flags byte is: after the channel's four bytes and the page's two.
     const FLAGS_AT: usize = 6;
     const KEYS_BIT: u8 = 128;
-    let bare =
-        Typing { channel: 3, page: 0x200, on: false, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false, asks: false, keys: false };
+    let bare = Typing {
+        channel: 3,
+        page: 0x200,
+        on: false,
+        secure: false,
+        refused: false,
+        cursor: None,
+        round_trip_us: None,
+        wheel: false,
+        asks: false,
+        keys: false,
+        asked: crate::rules::KeyAsks::default(),
+    };
     for keys in [false, true] {
         let typing = Typing { keys, ..bare.clone() };
         let mut payload = Vec::new();

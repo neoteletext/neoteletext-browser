@@ -379,6 +379,9 @@ fn the_notice_says_hold_escape_only_while_the_keyboard_is_the_pages() {
             keys,
         };
         browser.set_typing(typing, 0);
+        // REQ-7037: a table that asks for the keyboard here asks for every
+        // key, Escape among them.
+        browser.set_asked_keys(if keys { crate::browser::AskedKeys::everything() } else { crate::browser::AskedKeys::default() });
         assert_eq!(browser.typing_target(), Some(key), "keys {keys}: keys go to the channel");
         let texts = draw(&mut browser, 1_000).texts;
         let said = |wanted: [&str; 2]| texts.iter().any(|(_, text)| wanted.contains(&text.as_str()));

@@ -5,6 +5,7 @@
 use neoteletext_input::cursor;
 
 use super::{CursorState, Typing};
+use crate::rules::{KeyAsks, push_key_asks, read_key_asks};
 use crate::{Fields, ProtocolError};
 
 const FLAG_ON: u8 = 1;
@@ -37,6 +38,17 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
     check_cursor(typing.page, typing.cursor)?;
     payload.extend_from_slice(&[place.row, place.column, place.flags]);
     payload.extend_from_slice(&typing.round_trip_us.unwrap_or(0).to_be_bytes());
+    check_asked(typing.keys, &typing.asked)?;
+    crate::push_flag(payload, typing.asked.text);
+    push_key_asks(payload, &typing.asked.keys)
+}
+
+/// What of the keyboard a table asks for is told only of a table that
+/// asks for the keyboard (REQ-7037): without `keys` nothing is asked.
+fn check_asked(keys: bool, asked: &KeyAsks) -> Result<(), ProtocolError> {
+    if !keys && (asked.text || !asked.keys.is_empty()) {
+        return Err(ProtocolError::BadValue("keys asked of no keyboard"));
+    }
     Ok(())
 }
 
@@ -63,6 +75,8 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     let cursor = (flags & FLAG_CURSOR != 0).then_some(place);
     check_cursor(page, cursor)?;
     let round_trip = fields.u32()?;
+    let asked = KeyAsks { text: fields.flag("text asked")?, keys: read_key_asks(fields)? };
+    check_asked(flags & FLAG_KEYS != 0, &asked)?;
     Ok(Typing {
         channel,
         page,
@@ -74,5 +88,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         wheel: flags & FLAG_WHEEL != 0,
         asks: flags & FLAG_ASKS != 0,
         keys: flags & FLAG_KEYS != 0,
+        asked,
     })
 }

@@ -29,12 +29,14 @@ use neoteletext_rules::evaluator::{
 };
 use neoteletext_rules::limits::{MAX_POINTER_OBJECTS, MAX_RECTS, MAX_STATE_BYTES, TICKS_PER_SECOND};
 use neoteletext_rules::state::PageState;
-use neoteletext_rules::table::{SPACE_SYNTH, Table, Target};
+use neoteletext_rules::table::{
+    INPUT_BUTTON, INPUT_CHARACTER, INPUT_NAMED, INPUT_PHYSICAL, INPUT_POINTER, Index, Key, KeyKind, SPACE_INPUT, SPACE_SYNTH, Table, Target,
+};
 use neoteletext_rules::{Evaluator, World};
 use neoteletext_web::records::rules::{Assembled, Assembler, RulesRecord};
 use protocol::audio::{Audio, WatchSlot};
 use protocol::decoder::FromDecoder;
-use protocol::rules::{PageSub, QUERY_INTERVAL_TICKS, RuleCounters, RuleInput, RulesOpen, WheelRect};
+use protocol::rules::{KeyAsk, MAX_KEY_ASKS, PageSub, QUERY_INTERVAL_TICKS, RuleCounters, RuleInput, RulesOpen, WheelRect};
 
 use super::picture::Picture;
 use crate::voice_sink::{Heard, Outbox};
@@ -79,6 +81,8 @@ struct Held {
     /// When the pause began: the clock's start moves on by the time
     /// paused, so the page tick does not advance meanwhile (RULE-4).
     paused_at_us: Option<u64>,
+    /// The keys the table names (REQ-7037): the table's own, found once.
+    keys: Vec<KeyAsk>,
     /// What the trusted core was last told the table asks for.
     told: RulesOpen,
     /// The ReGIS drawing the trusted core last said the pointer is on
@@ -347,7 +351,47 @@ fn page_state(page: PageSub, state: &PageState) -> Option<FromDecoder> {
 /// What the trusted core is told when a page has no table, or is not the
 /// open page any more.
 const fn nothing_asked(page: PageSub) -> RulesOpen {
-    RulesOpen { page, generation: 0, interest: 0, watch: Vec::new(), wheel: Vec::new() }
+    RulesOpen { page, generation: 0, interest: 0, watch: Vec::new(), wheel: Vec::new(), keys: Vec::new() }
+}
+
+/// The keys a table asks for (REQ-7037): each key a `key` or `key_up`
+/// trigger names with the modifiers it compares (RULE-9, RULE-10), and
+/// each key whose state a value of the table reads (RULE-24), whatever
+/// the modifiers. A trigger on any key, the count of keys down (kind 6)
+/// and a table that names more than [`MAX_KEY_ASKS`] keys each ask for
+/// every key. The list is of the table as written: a rule's rows, its
+/// condition and whether it is enabled do not change it, so the keys a
+/// page has do not move while it is open.
+fn key_asks(table: &Table, index: &Index) -> Vec<KeyAsk> {
+    let named = table.rules.iter().flat_map(|rule| rule.triggers.iter()).filter_map(|trigger| trigger.keys().copied()).flat_map(|keys| {
+        let ask = move |key| KeyAsk { key, mods_mask: keys.mods_mask, mods_value: keys.mods_value };
+        // A set with no key is any key (RULE-10).
+        let any = keys.keys.is_empty().then(|| ask(None));
+        any.into_iter().chain(keys.keys.as_slice().to_vec().into_iter().map(move |key| ask(Some(key))))
+    });
+    let read = index.values.iter().filter(|value| value.space == SPACE_INPUT).filter_map(|value| {
+        // RULE-24: the key's 32-bit code is `b` (its high half) and `c`.
+        let ([high, higher], [low, lower]) = (value.b.to_be_bytes(), value.c.to_be_bytes());
+        let key = |kind| Some(KeyAsk { key: Some(Key::of(kind, u32::from_be_bytes([high, higher, low, lower]))), ..KeyAsk::EVERY_KEY });
+        match value.a {
+            INPUT_BUTTON | INPUT_POINTER => None,
+            INPUT_CHARACTER => key(KeyKind::Character),
+            INPUT_NAMED => key(KeyKind::Named),
+            INPUT_PHYSICAL => key(KeyKind::Physical),
+            // The count of keys down, which every key changes.
+            _ => Some(KeyAsk::EVERY_KEY),
+        }
+    });
+    let mut asks = Vec::new();
+    for ask in named.chain(read) {
+        if ask == KeyAsk::EVERY_KEY || (asks.len() >= MAX_KEY_ASKS && !asks.contains(&ask)) {
+            return vec![KeyAsk::EVERY_KEY];
+        }
+        if !asks.contains(&ask) {
+            asks.push(ask);
+        }
+    }
+    asks
 }
 
 /// The evaluator's input event for what the trusted core gave.
@@ -409,9 +453,9 @@ fn event(sequence: u32, input: RuleInput, held: &mut Held, picture: &dyn Picture
 }
 
 impl Held {
-    /// What the table asks for now: its interest mask, its watch list and
-    /// where a `wheel` rule applies (RULE-52 item 1, RULE-33 item 1,
-    /// RULE-51 item 4). A paused page asks for nothing.
+    /// What the table asks for now: its interest mask, the keys it names,
+    /// its watch list and where a `wheel` rule applies (RULE-52 item 1,
+    /// REQ-7037, RULE-33 item 1, RULE-51 item 4). A paused page asks for nothing.
     fn asks<const OBJECTS: usize, const RECORDS: usize>(&self, parts: &mut Parts<'_, OBJECTS, RECORDS>) -> RulesOpen {
         if self.paused {
             return nothing_asked(self.page);
@@ -443,7 +487,7 @@ impl Held {
                 Some(WheelRect { x, y, width, height })
             })
             .collect();
-        RulesOpen { page: self.page, generation: self.generation, interest: index.interest, watch, wheel }
+        RulesOpen { page: self.page, generation: self.generation, interest: index.interest, watch, wheel, keys: self.keys.clone() }
     }
 
     /// Counts a fault to report (RULE-48).
@@ -633,6 +677,7 @@ impl Rules {
         self.held = Some(Held {
             page,
             generation,
+            keys: key_asks(evaluator.table(), evaluator.index()),
             evaluator,
             clock: Clock::new(),
             start_us: None,
