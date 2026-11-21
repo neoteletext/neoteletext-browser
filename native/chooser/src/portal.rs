@@ -85,10 +85,6 @@ fn request_path(unique_name: &str) -> String {
     format!("{PORTAL_PATH}/request/{}/{HANDLE_TOKEN}", unique_name.trim_start_matches(':').replace('.', "_"))
 }
 
-fn response_rule(path: &str) -> String {
-    format!("type='signal',sender='{PORTAL}',path='{path}',interface='{REQUEST}',member='Response'")
-}
-
 /// The chosen file's address, or none when the dialog was cancelled.
 pub(crate) fn choose(dialog: &Dialog<'_>) -> Result<Option<String>, String> {
     let failed = |error: Error| error.to_string();
@@ -97,7 +93,7 @@ pub(crate) fn choose(dialog: &Dialog<'_>) -> Result<Option<String>, String> {
     // The rule is in place before the request is made, so the answer
     // cannot come before it (the `Request` documentation's advice).
     let expected = request_path(bus.unique_name());
-    bus.add_match(&response_rule(&expected)).map_err(failed)?;
+    bus.expect_signal(&owner, &expected, REQUEST, "Response").map_err(failed)?;
     let member = if dialog.save_name.is_some() { "SaveFile" } else { "OpenFile" };
     let call = Message::method_call(
         PORTAL,
@@ -112,7 +108,7 @@ pub(crate) fn choose(dialog: &Dialog<'_>) -> Result<Option<String>, String> {
     };
     // A portal older than the token's rule answers on a path of its own.
     if handle != expected {
-        bus.add_match(&response_rule(&handle)).map_err(failed)?;
+        bus.expect_signal(&owner, &handle, REQUEST, "Response").map_err(failed)?;
     }
     let response = bus.wait_for_signal(&owner, &handle, REQUEST, "Response").map_err(failed)?;
     chosen(&response)

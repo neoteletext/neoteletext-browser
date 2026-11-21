@@ -146,10 +146,9 @@ impl Session {
         if prompt == NONE {
             return Ok(());
         }
-        let rule = format!("type='signal',sender='{SERVICE}',path='{prompt}',interface='{PROMPT_INTERFACE}',member='Completed'");
-        self.bus.add_match(&rule).map_err(refused)?;
-        self.call(prompt, PROMPT_INTERFACE, "Prompt", vec![Value::String(NO_WINDOW.to_owned())])?;
         let owner = self.owner.clone();
+        self.bus.expect_signal(&owner, prompt, PROMPT_INTERFACE, "Completed").map_err(refused)?;
+        self.call(prompt, PROMPT_INTERFACE, "Prompt", vec![Value::String(NO_WINDOW.to_owned())])?;
         match self.bus.wait_for_signal(&owner, prompt, PROMPT_INTERFACE, "Completed").map_err(refused)?.as_slice() {
             [Value::Boolean(false), _] => Ok(()),
             [Value::Boolean(true), _] => Err(Error::Refused(String::from("the prompt was dismissed"))),

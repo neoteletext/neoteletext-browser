@@ -18,10 +18,19 @@ use crate::{Address, Error, Kind, Message, Value};
 /// answers, a dialog's or an unlock prompt's, has no timeout: the person
 /// may take minutes.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(25);
-/// The most signals kept while a reply is awaited. Only signals matching a
-/// rule this connection added, and the bus's own `NameAcquired`, reach it,
-/// and its callers wait for one or two; more than this is a fault.
+/// The most signals kept while a reply is awaited. Only a signal a wait can
+/// take is kept: one [`Connection::expect_signal`] named, from the unique
+/// name that owned the service when the expectation was made, which the bus
+/// and not the sender fills in. Every other signal is wiped and dropped as
+/// it comes, so no other process can fill the connection or fail its calls
+/// (the security review of 22 November 2026, TODO-7173 findings A1 and A2).
+/// A caller waits for one or two; more than this from the service itself
+/// is the service's fault.
 pub const MAX_WAITING_SIGNALS: usize = 32;
+/// The most signals expected at once: the chooser expects the portal's
+/// `Response` on at most two paths (the predicted one and an older portal's
+/// own), the key store one prompt's `Completed` at a time.
+pub const MAX_EXPECTED_SIGNALS: usize = 4;
 /// The longest line of the authentication exchange read: the server's
 /// `OK` and its 32-digit identity are 35 bytes, `REJECTED` and its list of
 /// mechanisms a few dozen ("Authentication Protocol").
@@ -37,6 +46,31 @@ pub struct Connection {
     serial: u32,
     unique_name: String,
     signals: VecDeque<Message>,
+    expected: Vec<Expected>,
+}
+
+/// A signal a wait will take: its sender's unique name, its path, its
+/// interface and its member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Expected {
+    sender: String,
+    path: String,
+    interface: String,
+    member: String,
+}
+
+impl Expected {
+    fn new(sender: &str, path: &str, interface: &str, member: &str) -> Self {
+        Self { sender: sender.to_owned(), path: path.to_owned(), interface: interface.to_owned(), member: member.to_owned() }
+    }
+
+    fn matches(&self, message: &Message) -> bool {
+        message.kind == Kind::Signal
+            && message.sender.as_deref() == Some(self.sender.as_str())
+            && message.path.as_deref() == Some(self.path.as_str())
+            && message.interface.as_deref() == Some(self.interface.as_str())
+            && message.member.as_deref() == Some(self.member.as_str())
+    }
 }
 
 impl Connection {
@@ -71,7 +105,7 @@ impl Connection {
         .map_err(|error| Error::NoBus(error.to_string()))?;
         stream.set_read_timeout(Some(CALL_TIMEOUT))?;
         stream.set_write_timeout(Some(CALL_TIMEOUT))?;
-        let mut connection = Self { stream, serial: 0, unique_name: String::new(), signals: VecDeque::new() };
+        let mut connection = Self { stream, serial: 0, unique_name: String::new(), signals: VecDeque::new(), expected: Vec::new() };
         connection.authenticate()?;
         let reply = connection.call(Message::method_call(BUS_NAME, BUS_PATH, BUS_INTERFACE, "Hello", Vec::new()))?;
         connection.unique_name = match reply.as_slice() {
@@ -157,8 +191,8 @@ impl Connection {
     }
 
     /// Sends `call` and waits at most [`CALL_TIMEOUT`] for its reply,
-    /// keeping the signals that come meanwhile for
-    /// [`Connection::wait_for_signal`].
+    /// keeping the expected signals that come meanwhile for
+    /// [`Connection::wait_for_signal`] and dropping every other.
     ///
     /// # Errors
     ///
@@ -179,15 +213,17 @@ impl Connection {
                     message.wipe();
                     return Err(Error::Remote { name: message.error_name.unwrap_or_default(), message: text });
                 }
-                Kind::Signal => {
+                Kind::Signal if self.expected.iter().any(|expected| expected.matches(&message)) => {
                     if self.signals.len() >= MAX_WAITING_SIGNALS {
+                        message.wipe();
                         return Err(Error::TooManySignals);
                     }
                     self.signals.push_back(message);
                 }
-                // Calls to this connection, which serves nothing, and
-                // replies to nothing it asked: the caller of a call gets
-                // its error from the bus when this connection closes.
+                // Signals no wait will take, calls to this connection, which
+                // serves nothing, and replies to nothing it asked: the
+                // caller of a call gets its error from the bus when this
+                // connection closes.
                 _ => message.wipe(),
             }
         }
@@ -225,34 +261,67 @@ impl Connection {
         self.call(Message::method_call(BUS_NAME, BUS_PATH, BUS_INTERFACE, "AddMatch", vec![Value::String(rule.to_owned())])).map(|_| ())
     }
 
+    /// Asks the bus for the signal `member` of `interface` on `path` sent by
+    /// `sender`, a unique name (`AddMatch`), and keeps it if it comes while
+    /// a call awaits its reply, for [`Connection::wait_for_signal`]. Only a
+    /// signal expected here is kept during a call.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::TooManySignals`] beyond [`MAX_EXPECTED_SIGNALS`],
+    /// [`Error::Malformed`] when a part could not be quoted in a match
+    /// rule, and [`Error::Remote`] when the bus refuses the rule.
+    pub fn expect_signal(&mut self, sender: &str, path: &str, interface: &str, member: &str) -> Result<(), Error> {
+        let expected = Expected::new(sender, path, interface, member);
+        if self.expected.contains(&expected) {
+            return Ok(());
+        }
+        if self.expected.len() >= MAX_EXPECTED_SIGNALS {
+            return Err(Error::TooManySignals);
+        }
+        // "Match Rules": a value is quoted with `'`, which none of a valid
+        // name or path holds.
+        if [sender, path, interface, member].iter().any(|part| part.contains(['\'', '\\'])) {
+            return Err(Error::Malformed("a match rule's value holding a quote"));
+        }
+        self.add_match(&format!("type='signal',sender='{sender}',path='{path}',interface='{interface}',member='{member}'"))?;
+        self.expected.push(expected);
+        Ok(())
+    }
+
+    /// How many signals are kept for [`Connection::wait_for_signal`].
+    #[must_use]
+    pub fn waiting_signals(&self) -> usize {
+        self.signals.len()
+    }
+
     /// Waits, with no timeout, for the signal `member` of `interface` on
     /// `path` sent by `sender`, a unique name; returns its arguments. Any
     /// other signal is dropped. A person answers the signals waited for
     /// here, so the wait ends when they do or when the bus closes.
+    /// The expectation [`Connection::expect_signal`] made for it, if any,
+    /// ends with the wait.
     ///
     /// # Errors
     ///
     /// The socket's or a message's failure.
     pub fn wait_for_signal(&mut self, sender: &str, path: &str, interface: &str, member: &str) -> Result<Vec<Value>, Error> {
-        let wanted = |message: &Message| {
-            message.kind == Kind::Signal
-                && message.sender.as_deref() == Some(sender)
-                && message.path.as_deref() == Some(path)
-                && message.interface.as_deref() == Some(interface)
-                && message.member.as_deref() == Some(member)
-        };
-        while let Some(mut message) = self.signals.pop_front() {
-            if wanted(&message) {
-                return Ok(message.body);
-            }
-            message.wipe();
+        let wanted = Expected::new(sender, path, interface, member);
+        self.expected.retain(|expected| *expected != wanted);
+        // Signals kept for another expectation stay kept.
+        if let Some(at) = self.signals.iter().position(|message| wanted.matches(message)) {
+            return self.signals.remove(at).map(|message| message.body).ok_or(Error::Malformed("a kept signal went missing"));
         }
         loop {
             let mut message = self.receive(None)?;
-            if wanted(&message) {
+            if wanted.matches(&message) {
                 return Ok(message.body);
             }
-            message.wipe();
+            if message.kind == Kind::Signal && self.expected.iter().any(|expected| expected.matches(&message)) && self.signals.len() < MAX_WAITING_SIGNALS {
+                self.signals.push_back(message);
+            } else {
+                message.wipe();
+            }
         }
     }
 }

@@ -90,3 +90,61 @@ fn a_signal_from_another_sender_is_not_taken() {
     let sender = genuine.unique_name().to_owned();
     assert_eq!(listener.wait_for_signal(&sender, "/org/example", "org.example.Test", "Response").unwrap(), vec![Value::String("genuine".into())]);
 }
+
+/// A signal of `member` on `/org/example`, to `destination` if one is given.
+fn signal_to(destination: Option<&str>, member: &str, text: &str) -> Message {
+    let mut signal = Message::method_call("org.freedesktop.DBus", "/org/example", "org.example.Test", member, vec![Value::String(text.into())]);
+    signal.kind = Kind::Signal;
+    signal.destination = destination.map(str::to_owned);
+    signal
+}
+
+/// The signals a connection sent reach their destination before the reply
+/// to its next call reaches it: the bus handles one connection's messages
+/// in order, so once that reply is in, the signals are in the destination's
+/// socket, ahead of any reply the destination is sent later.
+fn flush(connection: &mut Connection) {
+    connection.name_owner("org.freedesktop.DBus").unwrap();
+}
+
+/// TODO-7173 finding A2: 33 unasked-for signals, sent straight to another
+/// connection's unique name (which the session bus allows any connection),
+/// failed that connection's next call with `TooManySignals`; and finding
+/// A1: such signals were kept, up to 32 of them, whatever their size.
+#[test]
+#[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
+fn unasked_for_signals_neither_fail_a_call_nor_are_kept() {
+    let bus = Bus::start("unasked");
+    let mut victim = bus.connect();
+    let mut sender = bus.connect();
+    let flood = neoteletext_dbus::MAX_WAITING_SIGNALS + 8;
+    for number in 0..flood {
+        sender.call_without_reply(signal_to(Some(victim.unique_name()), "Flood", &number.to_string())).unwrap();
+    }
+    flush(&mut sender);
+    assert_eq!(victim.name_owner("org.freedesktop.DBus").unwrap(), "org.freedesktop.DBus");
+    assert_eq!(victim.waiting_signals(), 0);
+}
+
+/// The signal a wait expects is kept when it comes during a call, and the
+/// flood that comes with it is not.
+#[test]
+#[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
+fn an_expected_signal_during_a_call_is_kept_for_its_wait() {
+    let bus = Bus::start("expected");
+    let mut listener = bus.connect();
+    let mut service = bus.connect();
+    let mut impostor = bus.connect();
+    let owner = service.unique_name().to_owned();
+    listener.expect_signal(&owner, "/org/example", "org.example.Test", "Response").unwrap();
+    for _ in 0..neoteletext_dbus::MAX_WAITING_SIGNALS + 8 {
+        impostor.call_without_reply(signal_to(Some(listener.unique_name()), "Response", "forged")).unwrap();
+    }
+    flush(&mut impostor);
+    service.call_without_reply(signal_to(None, "Response", "genuine")).unwrap();
+    flush(&mut service);
+    listener.name_owner("org.freedesktop.DBus").unwrap();
+    assert_eq!(listener.waiting_signals(), 1);
+    assert_eq!(listener.wait_for_signal(&owner, "/org/example", "org.example.Test", "Response").unwrap(), vec![Value::String("genuine".into())]);
+    assert_eq!(listener.waiting_signals(), 0);
+}

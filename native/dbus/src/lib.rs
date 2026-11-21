@@ -15,8 +15,8 @@
 //! The decoder is fuzzed (`native/fuzz`, `dbus_message`).
 //!
 //! It passes no file descriptors, serves no objects and keeps no state but
-//! one connection's serial number and the signals that came in while a
-//! reply was awaited.
+//! one connection's serial number, the signals it expects, and those of
+//! them that came in while a reply was awaited.
 
 // No panicking constructs: this crate reads what any process of the user's
 // on the session bus may send. The same list is in each such crate;
@@ -43,7 +43,7 @@ mod wire;
 
 pub use address::{Address, parse_addresses};
 #[cfg(unix)]
-pub use connection::{CALL_TIMEOUT, Connection, MAX_WAITING_SIGNALS};
+pub use connection::{CALL_TIMEOUT, Connection, MAX_EXPECTED_SIGNALS, MAX_WAITING_SIGNALS};
 pub use error::Error;
 pub use message::{Kind, MAX_MESSAGE_BYTES, Message};
 pub use value::{
