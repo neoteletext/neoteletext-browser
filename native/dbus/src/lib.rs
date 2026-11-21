@@ -9,7 +9,8 @@
 //!
 //! Everything read from the bus is untrusted: a message is at most
 //! [`MAX_MESSAGE_BYTES`], a signature at most [`MAX_SIGNATURE_BYTES`] and
-//! nested at most [`MAX_DEPTH`] containers deep, and every string, padding
+//! nested at most [`MAX_DEPTH`] containers deep, decodes to at most
+//! [`MAX_DECODED_NODES_PER_BYTE`] values a byte, and every string, padding
 //! byte and header field is checked as the specification says it must be.
 //! The decoder is fuzzed (`native/fuzz`, `dbus_message`).
 //!
@@ -45,4 +46,6 @@ pub use address::{Address, parse_addresses};
 pub use connection::{CALL_TIMEOUT, Connection, MAX_WAITING_SIGNALS};
 pub use error::Error;
 pub use message::{Kind, MAX_MESSAGE_BYTES, Message};
-pub use value::{MAX_ARRAY_DEPTH, MAX_DEPTH, MAX_SIGNATURE_BYTES, MAX_STRUCT_DEPTH, Type, Value, parse_signature, valid_object_path, wipe};
+pub use value::{
+    MAX_ARRAY_DEPTH, MAX_DECODED_NODES_PER_BYTE, MAX_DEPTH, MAX_SIGNATURE_BYTES, MAX_STRUCT_DEPTH, Type, Value, nodes, parse_signature, valid_object_path, wipe,
+};

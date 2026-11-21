@@ -169,9 +169,20 @@ pub(crate) struct Reader<'a> {
     pub(crate) bytes: &'a [u8],
     pub(crate) position: usize,
     pub(crate) big_endian: bool,
+    /// The nodes still allowed to be decoded (each value, and each type an
+    /// array or a dictionary keeps; [`crate::value::nodes`]), so that what a
+    /// message decodes to is bounded by its size
+    /// ([`crate::value::MAX_DECODED_NODES_PER_BYTE`]).
+    pub(crate) budget: usize,
 }
 
 impl<'a> Reader<'a> {
+    /// Spends `count` nodes of the budget, or refuses the message.
+    fn charge(&mut self, count: usize) -> Result<(), Error> {
+        self.budget = self.budget.checked_sub(count).ok_or(Error::Malformed("a message that decodes to more values than it has bytes"))?;
+        Ok(())
+    }
+
     fn take(&mut self, count: usize) -> Result<&'a [u8], Error> {
         let end = self.position.checked_add(count).ok_or_else(too_long)?;
         let taken = self.bytes.get(self.position..end).ok_or(Error::Malformed("a message ends inside a value"))?;
@@ -261,6 +272,7 @@ impl<'a> Reader<'a> {
             return Err(Error::Malformed("containers nested more than 64 deep"));
         }
         let inner = depth.saturating_add(1);
+        self.charge(1)?;
         Ok(match kind {
             Type::Byte => Value::Byte(self.u8()?),
             Type::Boolean => match self.u32()? {
@@ -291,6 +303,7 @@ impl<'a> Reader<'a> {
                 Value::Bytes(self.take(count)?.to_vec())
             }
             Type::Array(element) => {
+                self.charge(element.nodes())?;
                 let end = self.array_end(element)?;
                 let mut elements = Vec::new();
                 while !self.array_done(end)? {
@@ -299,6 +312,7 @@ impl<'a> Reader<'a> {
                 Value::Array((**element).clone(), elements)
             }
             Type::Dict(key, value) => {
+                self.charge(key.nodes().saturating_add(value.nodes()))?;
                 let entry = Type::Struct(Vec::new());
                 let end = self.array_end(&entry)?;
                 let mut entries = Vec::new();
@@ -333,7 +347,7 @@ mod tests {
     }
 
     fn read(bytes: &[u8], kind: &Type) -> Result<Value, Error> {
-        let mut reader = Reader { bytes, position: 0, big_endian: false };
+        let mut reader = Reader { bytes, position: 0, big_endian: false, budget: bytes.len() };
         let value = reader.value(kind, 0)?;
         assert_eq!(reader.position, bytes.len());
         Ok(value)
@@ -419,7 +433,7 @@ mod tests {
 
     #[test]
     fn a_big_endian_number_reads_as_its_value() {
-        let mut reader = Reader { bytes: &[0, 0, 1, 2], position: 0, big_endian: true };
+        let mut reader = Reader { bytes: &[0, 0, 1, 2], position: 0, big_endian: true, budget: 0 };
         assert_eq!(reader.u32().unwrap(), 0x0102);
     }
 

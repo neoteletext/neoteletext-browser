@@ -2,7 +2,7 @@
 //! its header fields and its body.
 
 use crate::Error;
-use crate::value::{Type, Value, parse_signature, signature_of, wipe};
+use crate::value::{MAX_DECODED_NODES_PER_BYTE, Type, Value, parse_signature, signature_of, wipe};
 use crate::wire::{Reader, Writer};
 
 /// The longest message this client sends or reads: 128 KiB. The
@@ -186,7 +186,8 @@ impl Message {
             return Err(Error::Malformed("a message's length is not its header's"));
         }
         let big_endian = bytes.first() == Some(&BIG_ENDIAN);
-        let mut reader = Reader { bytes, position: 0, big_endian };
+        let budget = bytes.len().saturating_mul(MAX_DECODED_NODES_PER_BYTE);
+        let mut reader = Reader { bytes, position: 0, big_endian, budget };
         reader.u8()?;
         let kind = Kind::of(reader.u8()?);
         let flags = reader.u8()?;
@@ -290,7 +291,7 @@ pub(crate) fn frame_length(head: &[u8]) -> Result<usize, Error> {
         return Err(Error::Malformed("an unknown byte order"));
     }
     let number_at = |at: usize| -> Result<usize, Error> {
-        let mut reader = Reader { bytes: head, position: at, big_endian: order == BIG_ENDIAN };
+        let mut reader = Reader { bytes: head, position: at, big_endian: order == BIG_ENDIAN, budget: 0 };
         usize::try_from(reader.u32()?).map_err(|_| Error::TooLong)
     };
     let fields = number_at(FIELDS_LENGTH_AT)?;

@@ -15,6 +15,20 @@ pub const MAX_STRUCT_DEPTH: usize = 32;
 /// variant: containers of every kind, variants among them, nest at most 64
 /// deep in all, which also bounds the decoder's recursion.
 pub const MAX_DEPTH: usize = 64;
+/// The most nodes (each [`Value`], and each [`Type`] an array or a
+/// dictionary keeps, as [`nodes`] counts them) a message may decode to, per
+/// byte of the message: one. Without it a message's memory is not bounded
+/// by its size: an array of empty arrays of a 250-field structure keeps the
+/// structure's type in each of its 16,342 elements, and one 128 KiB message
+/// of that shape decoded to 99 MB (the security review of 22 November 2026,
+/// TODO-7173 finding A1). One a byte holds every message the browser reads:
+/// a header field (`(yv)`, at least 8 bytes) is four nodes, a dictionary
+/// entry of the portal's `a{sv}` three in at least 12 bytes. So a message
+/// of at most [`crate::MAX_MESSAGE_BYTES`] holds at most that many nodes,
+/// each at most `size_of::<Value>()` bytes and twice that in a growing
+/// vector, plus its strings and byte arrays, which are no longer than the
+/// message.
+pub const MAX_DECODED_NODES_PER_BYTE: usize = 1;
 
 /// A complete type, as one signature names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +118,20 @@ impl Type {
             Self::Boolean | Self::Int32 | Self::Uint32 | Self::UnixFd | Self::String | Self::ObjectPath | Self::Array(_) | Self::Dict(..) => 4,
             Self::Int64 | Self::Uint64 | Self::Double | Self::Struct(_) => 8,
         }
+    }
+
+    /// The nodes of the type's tree: one for itself and one for each type
+    /// it holds. A decoded array keeps its element's type, so the decoder
+    /// counts these against its budget ([`MAX_DECODED_NODES_PER_BYTE`]).
+    #[must_use]
+    pub fn nodes(&self) -> usize {
+        let held = match self {
+            Self::Array(element) => element.nodes(),
+            Self::Dict(key, value) => key.nodes().saturating_add(value.nodes()),
+            Self::Struct(fields) => fields.iter().map(Self::nodes).fold(0, usize::saturating_add),
+            _ => 0,
+        };
+        held.saturating_add(1)
     }
 
     /// Whether this is a basic type, the only kind a dictionary's key may
@@ -284,6 +312,29 @@ impl Value {
     pub fn variant_dict(pairs: Vec<(&str, Value)>) -> Self {
         Self::Dict(Type::String, Type::Variant, pairs.into_iter().map(|(key, value)| (Self::String(key.to_owned()), Self::Variant(Box::new(value)))).collect())
     }
+}
+
+/// The nodes `values` hold: each value, each value inside it, and each type
+/// an array or a dictionary keeps. A decoded message holds at most
+/// [`MAX_DECODED_NODES_PER_BYTE`] for each of its bytes.
+#[must_use]
+pub fn nodes(values: &[Value]) -> usize {
+    values
+        .iter()
+        .map(|value| {
+            let held = match value {
+                Value::Array(element, elements) => element.nodes().saturating_add(nodes(elements)),
+                Value::Dict(key, entry, entries) => entries
+                    .iter()
+                    .map(|(name, held)| nodes(std::slice::from_ref(name)).saturating_add(nodes(std::slice::from_ref(held))))
+                    .fold(key.nodes().saturating_add(entry.nodes()), usize::saturating_add),
+                Value::Struct(fields) => nodes(fields),
+                Value::Variant(inner) => nodes(std::slice::from_ref(inner.as_ref())),
+                _ => 0,
+            };
+            held.saturating_add(1)
+        })
+        .fold(0, usize::saturating_add)
 }
 
 /// Clears every byte array in `values`, to their last byte, before they
