@@ -35,6 +35,8 @@ mod animation_tests;
 mod feed;
 #[cfg(test)]
 mod font_tests;
+#[cfg(test)]
+mod painting_tests;
 mod render;
 mod rules;
 mod snapshot;

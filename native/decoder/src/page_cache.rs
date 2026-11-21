@@ -386,6 +386,38 @@ mod tests {
         assert!(sources.restore(PAGE, Some(SUB + 1), 0).is_none(), "nor another sub-code of the page (DEC-6599)");
     }
 
+    // DEC-7031 item 1 (PAINT kept with the stream so a restored page
+    // replays again), PAR-34: the PAINT record kept goes before the stream
+    // it is for, and only while it names that stream's language and
+    // generation; one for the next generation, or for the sub-page's other
+    // language, is not given back with the kept stream.
+    #[cfg(feature = "page-cache")]
+    #[test]
+    fn a_kept_paint_record_goes_before_its_stream_only_for_its_language_and_generation() {
+        use crate::animation::frames::Paint;
+        let paint =
+            |language, generation| Held::Paint { language, page: PAGE, sub: SUB, generation, paint: Paint { line_speed: Some(1200), default_rate: None } };
+        let mut sources = PictureSources::default();
+        sources.record(&paint(Language::Regis, 1), 0);
+        sources.record(&stream(PAGE, 1, 0, b"P[1,1]".to_vec()), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(
+            matches!(records.as_slice(), [Held::Paint { language: Language::Regis, generation: 1, .. }, Held::Stream { generation: 1, .. }]),
+            "the PAINT record first, then its stream: {records:?}"
+        );
+        // The next generation's PAINT record comes before its stream.
+        sources.record(&paint(Language::Regis, 2), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Stream { generation: 1, .. }]), "another generation's is not given back: {records:?}");
+        sources.record(&stream(PAGE, 2, 0, b"V[2,2]".to_vec()), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Paint { generation: 2, .. }, Held::Stream { generation: 2, .. }]), "{records:?}");
+        // The sub-page's other language.
+        sources.record(&paint(Language::Naplps, 2), 0);
+        let (records, _) = sources.restore(PAGE, Some(SUB), 0).unwrap();
+        assert!(matches!(records.as_slice(), [Held::Stream { generation: 2, .. }]), "another language's is not given back: {records:?}");
+    }
+
     // PAR-34: past MAX_KEPT_PICTURE_SOURCE_BYTES the source drawn longest
     // ago is dropped; one larger than the whole budget is not kept.
     // Without the feature nothing is kept (REQ-1558 item 7).
