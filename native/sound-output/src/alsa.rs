@@ -102,6 +102,12 @@ const STUCK_PERIODS: u32 = 20;
 const LEAST_WAIT_MS: u32 = 100;
 /// Milliseconds in a second.
 const MILLISECONDS_PER_SECOND: u64 = 1_000;
+/// The longest single wait for room, in milliseconds: between waits the
+/// thread looks whether its stream was dropped, so a dropped stream's
+/// owner waits at most this long for the thread, however long the stuck
+/// wait of [`STUCK_PERIODS`] is (minutes, for the longest period at the
+/// lowest rate). The least wait, so one wait serves the usual period.
+const SLICE_MS: c_int = LEAST_WAIT_MS.cast_signed();
 
 /// The text of an ALSA error number.
 fn text(code: c_int) -> String {
@@ -389,7 +395,7 @@ fn write(pcm: &Pcm, period: usize, wait_ms: c_int, control: &Control, mut fill: 
                     running = true;
                 }
                 fill(&mut samples);
-                if let Err(error) = write_period(pcm, &samples, wait_ms, &mut trouble) {
+                if let Err(error) = write_period(pcm, &samples, wait_ms, control, &mut trouble) {
                     trouble(&error.to_string());
                     // SAFETY: as above.
                     unsafe { snd_pcm_drop(pcm.0) };
@@ -405,17 +411,51 @@ fn write(pcm: &Pcm, period: usize, wait_ms: c_int, control: &Control, mut fill: 
     }
 }
 
+/// What came of waiting for room in the device's buffer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Room {
+    /// `snd_pcm_wait`'s answer: room (positive) or an error (negative).
+    Ready(c_int),
+    /// The stream was dropped while the thread waited.
+    Closing,
+    /// No room for the whole stuck wait.
+    Stuck,
+}
+
+/// Waits up to `stuck_ms` for room, through `wait` (`snd_pcm_wait`) in
+/// waits of at most [`SLICE_MS`], looking between them whether the stream
+/// was dropped.
+fn wait_for_room(mut wait: impl FnMut(c_int) -> c_int, stuck_ms: c_int, control: &Control) -> Room {
+    let mut waited: c_int = 0;
+    loop {
+        let slice = SLICE_MS.min(stuck_ms.saturating_sub(waited)).max(0);
+        let ready = wait(slice);
+        if ready != 0 {
+            return Room::Ready(ready);
+        }
+        if control.wanted().0 == Wanted::Closing {
+            return Room::Closing;
+        }
+        waited = waited.saturating_add(slice);
+        if waited >= stuck_ms {
+            return Room::Stuck;
+        }
+    }
+}
+
 /// Writes one period, waiting for room. An underrun or a suspend is told
 /// and recovered from (`snd_pcm_recover`), and the rest written; any other
 /// failure, or a device with no room for [`STUCK_PERIODS`], is returned.
-fn write_period(pcm: &Pcm, samples: &[i16], wait_ms: c_int, trouble: &mut Trouble) -> Result<(), Error> {
+/// A stream dropped meanwhile leaves the rest unwritten.
+fn write_period(pcm: &Pcm, samples: &[i16], wait_ms: c_int, control: &Control, trouble: &mut Trouble) -> Result<(), Error> {
     let mut rest = samples;
     while !rest.is_empty() {
         // SAFETY: the handle is open and used by this thread alone.
-        let ready = unsafe { snd_pcm_wait(pcm.0, wait_ms) };
-        if ready == 0 {
-            return Err(Error::new("the output took no samples for twenty periods"));
-        }
+        let ready = match wait_for_room(|slice| unsafe { snd_pcm_wait(pcm.0, slice) }, wait_ms, control) {
+            Room::Ready(ready) => ready,
+            Room::Closing => return Ok(()),
+            Room::Stuck => return Err(Error::new("the output took no samples for twenty periods")),
+        };
         let frames = Uframes::try_from(rest.len() / CHANNELS).unwrap_or(0);
         let written = if ready < 0 {
             Sframes::from(ready)
@@ -490,6 +530,42 @@ mod tests {
         let started = Instant::now();
         drop(stream);
         assert!(started.elapsed() < SETTLE, "dropped, the thread ends at once");
+    }
+
+    /// A device with no room is waited on in short waits: a stream
+    /// dropped meanwhile ends the wait within one of them, however long
+    /// the stuck wait (finding B3 of TODO-7174's security review), and a
+    /// stream not dropped is told stuck only after the whole stuck wait.
+    #[test]
+    fn a_dropped_stream_ends_the_wait_for_room_at_once() {
+        let longest_stuck_wait_ms = c_int::MAX;
+        let control = Control::new();
+        control.set(Wanted::Playing);
+        let mut asked = Vec::new();
+        let never_room = |slice: c_int| {
+            asked.push(slice);
+            if asked.len() == 3 {
+                control.set(Wanted::Closing);
+            }
+            0
+        };
+        assert_eq!(wait_for_room(never_room, longest_stuck_wait_ms, &control), Room::Closing);
+        assert_eq!(asked, vec![SLICE_MS; 3], "each wait is at most the slice, and the drop is seen after the wait it came in");
+
+        let control = Control::new();
+        control.set(Wanted::Playing);
+        let stuck_ms = SLICE_MS * 2 + 1;
+        let mut asked = Vec::new();
+        let never_room = |slice: c_int| {
+            asked.push(slice);
+            0
+        };
+        assert_eq!(wait_for_room(never_room, stuck_ms, &control), Room::Stuck);
+        assert_eq!(asked, vec![SLICE_MS, SLICE_MS, 1], "the whole stuck wait, and no more");
+
+        assert_eq!(wait_for_room(|_| 1, stuck_ms, &control), Room::Ready(1), "room is taken at once");
+        let underrun = -32; // -EPIPE (errno.h), which snd_pcm_wait gives for an underrun
+        assert_eq!(wait_for_room(|_| underrun, stuck_ms, &control), Room::Ready(underrun), "an error is handed on to be recovered from");
     }
 
     /// The device's own period is taken when no size is asked for.
