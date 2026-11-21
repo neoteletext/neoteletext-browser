@@ -1068,4 +1068,96 @@ mod tests {
         );
         assert_eq!(INTEREST_KEYS | INTEREST_TEXT | INTEREST_POINTER_BUTTONS | INTEREST_MOVES | INTEREST_WHEEL | INTEREST_FOCUS, INTEREST_ALL);
     }
+
+    /// REQ-7037 (TODO-7158): the keys a table names, at their bound and of
+    /// every form, cross from the decoder whole.
+    #[allow(clippy::arithmetic_side_effects, reason = "a test's offsets into a payload")]
+    fn every_form_of_key_ask() -> Vec<KeyAsk> {
+        let mut asks = vec![
+            KeyAsk::EVERY_KEY,
+            KeyAsk { key: None, mods_mask: 3, mods_value: 2 },
+            KeyAsk { key: Some(Key::of(KeyKind::Named, u32::MAX)), mods_mask: 0, mods_value: 0 },
+            KeyAsk { key: Some(Key::of(KeyKind::Physical, u32::from('q'))), mods_mask: 0xFF, mods_value: 0x81 },
+        ];
+        let characters = (u32::from('A')..).take(MAX_KEY_ASKS - asks.len());
+        asks.extend(characters.map(|code| KeyAsk { key: Some(Key::of(KeyKind::Character, code)), mods_mask: 0, mods_value: 0 }));
+        asks
+    }
+
+    /// A table asking for the keys' class and naming `keys`.
+    fn naming(keys: Vec<KeyAsk>) -> RulesOpen {
+        RulesOpen { page: PageSub::new(0x101, 1), generation: 1, interest: INTEREST_KEYS, watch: vec![], wheel: vec![], keys }
+    }
+
+    /// The payload of `open`, which its writer has checked.
+    fn open_payload(open: &RulesOpen) -> Vec<u8> {
+        let mut payload = Vec::new();
+        push_open(&mut payload, open).unwrap();
+        payload
+    }
+
+    /// The bytes of one key ask on the wire: its kind, its 32-bit code,
+    /// and the modifier mask and value.
+    const ASK_BYTES: usize = 7;
+
+    // REQ-7037 item 1 (c): exactly `MAX_KEY_ASKS` distinct keys of every
+    // form round-trip in `RulesOpen`.
+    #[test]
+    fn key_asks_round_trip_in_rules_open_at_their_bound() {
+        let open = naming(every_form_of_key_ask());
+        assert_eq!(open.keys.len(), MAX_KEY_ASKS);
+        assert_eq!(read_open(&mut Fields::new(&open_payload(&open))).unwrap(), open);
+        assert_eq!(from_decoder(&FromDecoder::RulesOpen(open.clone())).unwrap(), Some(FromDecoder::RulesOpen(open)));
+    }
+
+    // REQ-7037 item 1: each malformed form of the list is refused, on
+    // sending where the writer can see it and on arrival in any case.
+    #[test]
+    #[allow(clippy::arithmetic_side_effects, reason = "a test's offsets into a payload")]
+    fn malformed_key_asks_are_refused() {
+        let one = |ask: KeyAsk| naming(vec![ask]);
+        let character = |code: u32| KeyAsk { key: Some(Key::of(KeyKind::Character, code)), mods_mask: 0, mods_value: 0 };
+        // Refused by the writer, which reads what it wrote.
+        assert!(push_open(&mut Vec::new(), &naming(vec![character(u32::from('a')); MAX_KEY_ASKS + 1])).is_err(), "one more than the bound");
+        assert!(push_open(&mut Vec::new(), &one(character(0xD800))).is_err(), "a character that is no Unicode scalar value");
+        assert!(
+            push_open(&mut Vec::new(), &one(KeyAsk { key: Some(Key::of(KeyKind::Physical, 0x11_0000)), ..character(0) })).is_err(),
+            "a physical key past Unicode"
+        );
+        assert!(
+            push_open(&mut Vec::new(), &one(KeyAsk { mods_mask: 1, mods_value: 2, ..character(u32::from('a')) })).is_err(),
+            "a modifier value bit outside its mask"
+        );
+        assert!(push_open(&mut Vec::new(), &RulesOpen { interest: INTEREST_TEXT, ..one(character(u32::from('a'))) }).is_err(), "keys without the keys' class");
+        assert!(push_open(&mut Vec::new(), &RulesOpen { generation: 0, interest: 0, ..one(character(u32::from('a'))) }).is_err(), "keys of no table");
+
+        // Refused on arrival: the bytes of a good list, changed.
+        let good = open_payload(&one(character(u32::from('a'))));
+        let ask_at = good.len() - ASK_BYTES;
+        let changed = |at: usize, byte: u8| {
+            let mut bytes = good.clone();
+            bytes[at] = byte;
+            read_open(&mut Fields::new(&bytes))
+        };
+        assert!(changed(ask_at, 4).is_err(), "a kind above 3");
+        assert!(changed(ask_at, 0xFF).is_err(), "a kind of 255");
+        // Kind 0, any key, with the code of `a` still in place.
+        assert!(changed(ask_at, 0).is_err(), "any key with a code");
+        assert!(changed(ask_at + 1, 0xFF).is_err(), "a character code past Unicode");
+        assert!(changed(ask_at + 6, 1).is_err(), "a modifier value bit outside its mask of 0");
+        assert!(changed(ask_at - 1, 2).is_err(), "a count past the asks given");
+        // Kind 0 with code 0 is any key, and reads.
+        let mut any = good.clone();
+        any[ask_at..ask_at + 5].copy_from_slice(&[0; 5]);
+        assert_eq!(read_open(&mut Fields::new(&any)).unwrap().keys, [KeyAsk::EVERY_KEY]);
+
+        // 129 entries: the bound's list with one more ask and its count raised.
+        let full = open_payload(&naming(every_form_of_key_ask()));
+        let count_at = full.len() - MAX_KEY_ASKS * ASK_BYTES - 1;
+        assert_eq!(usize::from(full[count_at]), MAX_KEY_ASKS);
+        let mut over = full.clone();
+        over[count_at] = u8::try_from(MAX_KEY_ASKS + 1).unwrap();
+        over.extend_from_slice(&full[full.len() - ASK_BYTES..]);
+        assert!(read_open(&mut Fields::new(&over)).is_err(), "129 entries");
+    }
 }

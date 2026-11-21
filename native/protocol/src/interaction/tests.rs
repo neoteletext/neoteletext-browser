@@ -271,3 +271,77 @@ pub(crate) fn rule_event() -> Vec<u8> {
     let length = write(&Item::Event(Event::RuleEvent(event)), &mut out).unwrap();
     out[..length].to_vec()
 }
+
+/// REQ-7037 item 1 (TODO-7158): what of the keyboard the open page's table
+/// asks for rides on the typing message, at its bound, and is told only of
+/// a table that asks for the keyboard.
+#[test]
+fn the_keys_asked_ride_on_the_typing_message_and_only_with_the_keyboard() {
+    use crate::rules::{Key, KeyAsk, KeyAsks, KeyKind, MAX_KEY_ASKS};
+    /// The bytes of one key ask: its kind, its 32-bit code, the mask and value.
+    const ASK_BYTES: usize = 7;
+    /// Where the flags byte is: after the channel's four bytes and the page's two.
+    const FLAGS_AT: usize = 6;
+    const KEYS_BIT: u8 = 128;
+    let first = u32::from('A');
+    let keys: Vec<KeyAsk> = (first..first + u32::try_from(MAX_KEY_ASKS).unwrap())
+        .map(|code| KeyAsk { key: Some(Key::of(if code % 2 == 0 { KeyKind::Character } else { KeyKind::Physical }, code)), mods_mask: 1, mods_value: 1 })
+        .collect();
+    let typing = Typing {
+        channel: 3,
+        page: 0x200,
+        on: true,
+        secure: false,
+        refused: false,
+        cursor: None,
+        round_trip_us: None,
+        wheel: false,
+        asks: true,
+        keys: true,
+        asked: KeyAsks { text: true, keys: keys.clone() },
+    };
+    let mut payload = Vec::new();
+    push_typing(&mut payload, &typing).unwrap();
+    assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), typing, "at the bound");
+    let any = Typing { asked: KeyAsks { text: false, keys: vec![KeyAsk::EVERY_KEY] }, ..typing.clone() };
+    let mut any_payload = Vec::new();
+    push_typing(&mut any_payload, &any).unwrap();
+    assert_eq!(read_typing(&mut Fields::new(&any_payload)).unwrap(), any, "any key");
+
+    // Nothing is asked of no keyboard, on sending and on arrival.
+    let off = Typing { keys: false, ..typing.clone() };
+    assert!(push_typing(&mut Vec::new(), &off).is_err(), "keys asked with the keys flag off");
+    let text_off = Typing { keys: false, asked: KeyAsks { text: true, keys: Vec::new() }, ..typing.clone() };
+    assert!(push_typing(&mut Vec::new(), &text_off).is_err(), "text asked with the keys flag off");
+    let mut flag_off = payload.clone();
+    flag_off[FLAGS_AT] &= !KEYS_BIT;
+    assert!(read_typing(&mut Fields::new(&flag_off)).is_err(), "the keys flag cleared under a list");
+
+    // One more than the bound, on sending and on arrival.
+    let over = Typing { asked: KeyAsks { text: true, keys: [keys.clone(), vec![KeyAsk::EVERY_KEY]].concat() }, ..typing.clone() };
+    assert!(push_typing(&mut Vec::new(), &over).is_err());
+    let count_at = payload.len() - MAX_KEY_ASKS * ASK_BYTES - 1;
+    assert_eq!(usize::from(payload[count_at]), MAX_KEY_ASKS);
+    let mut longer = payload.clone();
+    longer[count_at] = u8::try_from(MAX_KEY_ASKS + 1).unwrap();
+    longer.extend_from_slice(&payload[payload.len() - ASK_BYTES..]);
+    assert!(read_typing(&mut Fields::new(&longer)).is_err(), "129 entries");
+
+    // A malformed ask, on arrival.
+    let last = payload.len() - ASK_BYTES;
+    for (at, byte, what) in [
+        (last, 4, "a kind above 3"),
+        (last, 0, "any key with a code"),
+        (last + 1, 0xD8, "no Unicode scalar value"),
+        (last + 6, 3, "a value bit outside its mask"),
+    ] {
+        let mut bad = payload.clone();
+        bad[at] = byte;
+        assert!(read_typing(&mut Fields::new(&bad)).is_err(), "{what}");
+    }
+    // The text flag is a flag: neither false nor true is refused.
+    let text_at = count_at - 1;
+    let mut text = payload.clone();
+    text[text_at] = 2;
+    assert!(read_typing(&mut Fields::new(&text)).is_err(), "a text flag of 2");
+}

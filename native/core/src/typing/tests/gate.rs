@@ -476,3 +476,110 @@ fn a_fault_is_passed_once_a_second_for_each_code() {
     assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 2, 1, 3 * SECOND)).len(), 0, "the withdrawn code 2");
     assert_eq!(faults(&typing.rules_fault(PAGE.channel, OPEN, 1, 11, 1, 3 * SECOND)).len(), 0, "no such fault");
 }
+
+/// REQ-7037 (TODO-7158): what of the keyboard the open page's table asks
+/// for, as the interface is told it with the typing state.
+mod asked_keys {
+    use super::*;
+    use protocol::rules::{Key, KeyAsk, KeyAsks, KeyKind};
+
+    /// Shift, in the modifier bits as DOC-1935 numbers them.
+    const SHIFT: u8 = 1;
+
+    /// The keys a table names: `a` with Shift, and F2.
+    fn named() -> Vec<KeyAsk> {
+        let f2 = neoteletext_input::keys::code("F2").unwrap();
+        vec![
+            KeyAsk { key: Some(Key::of(KeyKind::Character, u32::from('a'))), mods_mask: SHIFT, mods_value: SHIFT },
+            KeyAsk { key: Some(Key::of(KeyKind::Named, f2)), mods_mask: 0, mods_value: 0 },
+        ]
+    }
+
+    fn table(generation: u16, interest: u8, keys: Vec<KeyAsk>) -> RulesOpen {
+        RulesOpen { generation, keys, ..asks(interest) }
+    }
+
+    /// The last typing state among `sends`, as the interface is told it.
+    fn told(sends: &[Send]) -> Option<KeyAsks> {
+        sends.iter().rev().find_map(|send| if let Send::Interface(state) = send { Some(state.asked.clone()) } else { None })
+    }
+
+    // REQ-7037 item 1: text exactly when the mask has the text's class,
+    // and the decoder's list only when it has the keys' class.
+    #[test]
+    fn the_typing_state_carries_text_and_the_keys_by_class() {
+        let with = |text, keys| KeyAsks { text, keys };
+        for (interest, expected) in [
+            (INTEREST_KEYS, with(false, named())),
+            (INTEREST_TEXT, with(true, Vec::new())),
+            (INTEREST_KEYS | INTEREST_TEXT, with(true, named())),
+            (INTEREST_POINTER_BUTTONS, KeyAsks::default()),
+            (INTEREST_WHEEL | INTEREST_MOVES, KeyAsks::default()),
+        ] {
+            let mut typing = untold();
+            let (taken, open) = typing.rules_told(PAGE.channel, &table(1, interest, named()), 0);
+            assert!(open);
+            assert_eq!(told(&taken), Some(expected.clone()), "interest {interest:#010b}: {taken:?}");
+            assert_eq!(typing.state().map(|state| state.asked), Some(expected), "interest {interest:#010b}");
+        }
+    }
+
+    // REQ-7037 item 1: nothing is asked with no table, once the table
+    // ends, while the table is closing, or while input is off.
+    #[test]
+    fn nothing_is_asked_with_no_table_closing_or_off() {
+        let typing = untold();
+        assert_eq!(typing.state().map(|state| state.asked), Some(KeyAsks::default()), "no table");
+
+        let mut typing = untold();
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS | INTEREST_TEXT, named()), 0);
+        let (ended, _) = typing.rules_told(PAGE.channel, &table(0, 0, Vec::new()), MS);
+        assert_eq!(told(&ended), Some(KeyAsks::default()), "the table ended: {ended:?}");
+
+        let mut typing = untold();
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS | INTEREST_TEXT, named()), 0);
+        let closing = typing.drawn(PAGE, 1);
+        assert_eq!(told(&closing), Some(KeyAsks::default()), "another sub-code on screen: the table is closing: {closing:?}");
+
+        let mut typing = untold();
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS | INTEREST_TEXT, named()), 0);
+        let off = typing.input(PAGE.channel, false, false, MS);
+        assert_eq!(told(&off), Some(KeyAsks::default()), "input off: {off:?}");
+        assert!(typing.state().is_none_or(|state| state.asked == KeyAsks::default()));
+
+        // A session not yet welcomed: its page's table is held, and input
+        // is off until the channel says it takes it.
+        let mut typing = Typing::default();
+        typing.input(PAGE.channel, true, false, 0);
+        typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+        typing.drawn(PAGE, 0);
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS | INTEREST_TEXT, named()), 0);
+        let state = typing.state().unwrap();
+        assert!(!state.on, "not welcomed");
+        assert_eq!(state.asked, KeyAsks::default(), "nothing asked while input is off");
+    }
+
+    // REQ-7037 item 1: a new table of the same page that names other keys
+    // is told again, though its mask is the same.
+    #[test]
+    fn a_new_table_naming_other_keys_is_told_again() {
+        let mut typing = untold();
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS, named()), 0);
+        let other = vec![KeyAsk { key: Some(Key::of(KeyKind::Physical, u32::from('q'))), mods_mask: 0, mods_value: 0 }];
+        let (again, open) = typing.rules_told(PAGE.channel, &table(2, INTEREST_KEYS, other.clone()), MS);
+        assert!(open);
+        assert_eq!(told(&again), Some(KeyAsks { text: false, keys: other }), "{again:?}");
+    }
+
+    // REQ-7037 item 7 and DEC-7157 item 4: the gate still gives by class,
+    // so a key the list does not name is still given to the decoder of a
+    // table whose mask has the keys' class (the interface is what keeps
+    // it from being sent).
+    #[test]
+    fn the_gate_still_gives_a_key_the_list_does_not_name() {
+        let mut typing = untold();
+        typing.rules_told(PAGE.channel, &table(1, INTEREST_KEYS, named()), 0);
+        let sends = typing.input_intent(&key('z'), 20 * MS);
+        assert!(matches!(sends.as_slice(), [Send::Decoder { input: RuleInput::Key { .. }, .. }]), "{sends:?}");
+    }
+}

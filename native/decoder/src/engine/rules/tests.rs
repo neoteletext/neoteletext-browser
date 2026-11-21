@@ -1003,3 +1003,220 @@ fn a_streamed_sound_ends_only_when_the_receiver_ends_it() {
     let read = playing_at(&mut engine, 2..=stall_tick + 10);
     assert_eq!(split(&read), ((2..stall_tick).collect(), (stall_tick..=stall_tick + 10).collect()), "{read:?}");
 }
+
+/// REQ-7037 (TODO-7158): the keys a table names, as the decoder tells the
+/// trusted core with what the table asks for; the interface gives the page
+/// these keys and keeps every other key for the viewer.
+mod key_asks {
+    use super::*;
+    use neoteletext_rules::table::{INPUT_CHARACTER, INPUT_NAMED, INPUT_PHYSICAL, RowRun};
+    use protocol::rules::{KeyAsk, MAX_KEY_ASKS};
+
+    /// A named key's code. The decoder passes a named key's code on
+    /// unread (only the input protocol's table knows them, RULE-10), so any
+    /// code serves, and the input crate is not built without typing.
+    fn f2() -> u32 {
+        57_365
+    }
+
+    fn ask(kind: KeyKind, code: u32, mods_mask: u8, mods_value: u8) -> KeyAsk {
+        KeyAsk { key: Some(Key::of(kind, code)), mods_mask, mods_value }
+    }
+
+    /// A key match on `keys` under the modifier mask and value.
+    fn keys_under(keys: &[Key], mods_mask: u8, mods_value: u8) -> KeyMatch {
+        KeyMatch { mods_mask, mods_value, ..KeyMatch::of(keys) }
+    }
+
+    /// The keys told for `table`, opened as the open page.
+    fn told_keys(table: &Table) -> Vec<KeyAsk> {
+        let (_, told_now) = opened(table);
+        let told = told(&told_now);
+        assert_eq!(told.len(), 1, "{told_now:?}");
+        told[0].keys.clone()
+    }
+
+    // REQ-7037 item 2: each key of a `key` or `key_up` trigger, of each
+    // kind, with that trigger's modifier mask and value, in the table's
+    // order.
+    #[test]
+    fn named_keys_of_each_kind_are_told_with_their_modifiers() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let shift = 1;
+        let table = builder
+            .rule(
+                Trigger::Key { keys: keys_under(&[Key::of(KeyKind::Character, u32::from('a'))], shift, shift), repeat: true },
+                &[],
+                std::slice::from_ref(&said),
+            )
+            .rule(Trigger::KeyUp { keys: KeyMatch::of(&[Key::of(KeyKind::Named, f2())]) }, &[], std::slice::from_ref(&said))
+            .rule(Trigger::Key { keys: keys_under(&[Key::of(KeyKind::Physical, u32::from('q'))], shift, 0), repeat: false }, &[], &[said])
+            .table;
+        assert_eq!(
+            told_keys(&table),
+            [ask(KeyKind::Character, u32::from('a'), shift, shift), ask(KeyKind::Named, f2(), 0, 0), ask(KeyKind::Physical, u32::from('q'), shift, 0)]
+        );
+    }
+
+    // REQ-7037 item 2: a trigger whose key set is empty is any key; under
+    // no modifier comparison it is the whole keyboard, told as that one
+    // entry whatever else the table names.
+    #[test]
+    fn an_any_key_trigger_is_the_whole_keyboard() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table =
+            builder.rule(on_key('a', false), &[], std::slice::from_ref(&said)).rule(Trigger::Key { keys: KeyMatch::any(), repeat: false }, &[], &[said]).table;
+        assert_eq!(told_keys(&table), [KeyAsk::EVERY_KEY]);
+    }
+
+    // REQ-7037 item 2: any key under a modifier comparison is an entry of
+    // its own, and the table's other keys are told beside it.
+    #[test]
+    fn any_key_under_a_modifier_is_told_with_its_modifiers() {
+        let control = 2;
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder
+            .rule(on_key('a', false), &[], std::slice::from_ref(&said))
+            .rule(Trigger::Key { keys: KeyMatch { mods_mask: control, mods_value: control, ..KeyMatch::any() }, repeat: false }, &[], &[said])
+            .table;
+        assert_eq!(told_keys(&table), [ask(KeyKind::Character, u32::from('a'), 0, 0), KeyAsk { key: None, mods_mask: control, mods_value: control }]);
+    }
+
+    // REQ-7037 item 2: a `key_up` trigger names its keys as a `key`
+    // trigger does.
+    #[test]
+    fn a_key_up_trigger_names_its_keys() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder.rule(on_key('z', true), &[], &[said]).table;
+        assert_eq!(told_keys(&table), [ask(KeyKind::Character, u32::from('z'), 0, 0)]);
+    }
+
+    // REQ-7037 item 2 with RULE-105: a rule with one key a row names every
+    // key of its set.
+    #[test]
+    fn a_by_row_key_set_names_each_of_its_keys() {
+        let mut builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let keys = [Key::of(KeyKind::Character, u32::from('1')), Key::of(KeyKind::Character, u32::from('2')), Key::of(KeyKind::Character, u32::from('3'))];
+        let group = {
+            let body = said.1.clone();
+            builder.table.push_group(&[Framed { kind: said.0, body: &body, bindings: &[] }]).unwrap()
+        };
+        for row in 1..=3 {
+            builder.table.rows.push(row).unwrap();
+        }
+        let mut rule = Rule::new(Trigger::Key { keys: KeyMatch::by_row(&keys), repeat: false }, group);
+        rule.rows = Some(RowRun { first: 0, count: 3 });
+        builder.table.rules.push(rule).unwrap();
+        assert_eq!(told_keys(&builder.table), keys.map(|key| KeyAsk { key: Some(key), ..KeyAsk::EVERY_KEY }));
+    }
+
+    // REQ-7037 item 2, RULE-24: a key whose state a value reads is asked
+    // for under no modifier, of each kind.
+    #[test]
+    fn a_key_state_value_of_each_kind_asks_for_its_key() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let down = |kind, code| Node::compare(Value::key(kind, code), Operator::Equal, 1);
+        let table = builder
+            .rule(Trigger::Becomes, &[down(INPUT_CHARACTER, u32::from('x'))], std::slice::from_ref(&said))
+            .rule(Trigger::Becomes, &[down(INPUT_NAMED, f2())], std::slice::from_ref(&said))
+            .rule(Trigger::Becomes, &[down(INPUT_PHYSICAL, u32::from('w'))], &[said])
+            .table;
+        let mut told = told_keys(&table);
+        told.sort_by_key(|ask| ask.key.map(|key| (key.kind.code(), key.code)));
+        assert_eq!(told, [ask(KeyKind::Character, u32::from('x'), 0, 0), ask(KeyKind::Named, f2(), 0, 0), ask(KeyKind::Physical, u32::from('w'), 0, 0)]);
+    }
+
+    // REQ-7037 item 2, RULE-24: the count of keys down changes with every
+    // key, so a table that reads it asks for the whole keyboard.
+    #[test]
+    fn the_count_of_keys_down_asks_for_every_key() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder
+            .rule(on_key('a', false), &[], std::slice::from_ref(&said))
+            .rule(Trigger::Becomes, &[Node::compare(Value::keys_down(), Operator::Equal, 2)], &[said])
+            .table;
+        assert_eq!(told_keys(&table), [KeyAsk::EVERY_KEY]);
+    }
+
+    // REQ-7037 item 2: a key named twice, by two triggers or by a trigger
+    // and a value, is told once.
+    #[test]
+    fn a_key_named_twice_is_told_once() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder
+            .rule(on_key('a', false), &[], std::slice::from_ref(&said))
+            .rule(on_key('a', true), &[Node::compare(Value::key(INPUT_CHARACTER, u32::from('a')), Operator::Equal, 1)], &[said])
+            .table;
+        assert_eq!(told_keys(&table), [ask(KeyKind::Character, u32::from('a'), 0, 0)]);
+    }
+
+    /// A table naming `count` distinct characters, sixteen to a trigger.
+    fn naming(count: u32) -> Box<Table> {
+        let mut builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let all: Vec<Key> = (0..count).map(|offset| Key::of(KeyKind::Character, u32::from('A') + offset)).collect();
+        for chunk in all.chunks(neoteletext_rules::limits::MAX_KEYS_PER_TRIGGER) {
+            builder = builder.rule(Trigger::Key { keys: KeyMatch::of(chunk), repeat: false }, &[], std::slice::from_ref(&said));
+        }
+        builder.table
+    }
+
+    // REQ-7037 item 2: exactly `MAX_KEY_ASKS` distinct keys are told as
+    // they are; one more is told as any key, the whole keyboard.
+    #[test]
+    fn the_bound_of_key_asks_is_exact() {
+        let bound = u32::try_from(MAX_KEY_ASKS).unwrap();
+        let told = told_keys(&naming(bound));
+        assert_eq!(told.len(), MAX_KEY_ASKS);
+        assert_eq!(told, (0..bound).map(|offset| ask(KeyKind::Character, u32::from('A') + offset, 0, 0)).collect::<Vec<_>>());
+        assert_eq!(told_keys(&naming(bound + 1)), [KeyAsk::EVERY_KEY]);
+    }
+
+    // REQ-7037 item 2: a table with no key trigger and no key value names
+    // no key.
+    #[test]
+    fn a_table_with_no_key_trigger_names_none() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder.rule(Trigger::Becomes, &[Node::compare(Value::variable(1), Operator::Equal, 1)], &[said]).table;
+        let (_, told_now) = opened(&table);
+        assert!(told(&told_now).iter().all(|open| open.keys.is_empty()), "{told_now:?}");
+    }
+
+    // REQ-7037 item 2: the list is the table's as written: a rule's
+    // condition does not remove its keys.
+    #[test]
+    fn a_rules_condition_does_not_change_its_keys() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let never = Node::compare(Value::variable(1), Operator::Equal, 99);
+        let table = builder.rule(on_key('k', false), &[never], &[said]).table;
+        assert_eq!(told_keys(&table), [ask(KeyKind::Character, u32::from('k'), 0, 0)]);
+    }
+
+    // REQ-7037 item 2 with the protocol's reader: a trigger whose modifier
+    // value has a bit its mask does not compare matches no key (RULE-9),
+    // and the table's rules accept it; the decoder must still tell what
+    // the table asks for, not fail its message. Recorded as TODO-7207.
+    #[test]
+    #[ignore = "fault: a key trigger whose modifier value has a bit outside its mask, which the table's checks accept, makes the decoder's RulesOpen message unsendable (the protocol's reader refuses it), reported for a Fable fix"]
+    fn a_modifier_value_outside_its_mask_is_still_told() {
+        let builder = Builder::new(OPEN);
+        let said = builder.report(None);
+        let table = builder.rule(Trigger::Key { keys: keys_under(&[Key::of(KeyKind::Character, u32::from('a'))], 0, 1), repeat: false }, &[], &[said]).table;
+        let (_, told_now) = opened(&table);
+        let told = told(&told_now);
+        assert_eq!(told.len(), 1, "the trusted core is told of the table: {told_now:?}");
+        let mut bytes = Vec::new();
+        let sent = protocol::decoder::write_to_core(&mut bytes, &FromDecoder::RulesOpen(told[0].clone()));
+        assert!(sent.is_ok(), "the decoder's message is sent: {sent:?}");
+    }
+}

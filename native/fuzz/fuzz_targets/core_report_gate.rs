@@ -20,7 +20,9 @@ use neoteletext_input::control::{Control, MAX_BODY, write_body};
 use neoteletext_input::event::{Action, Event, Item, KeyCode, is_page_input, read_message};
 use neoteletext_input::rules::RuleBody;
 use protocol::interaction::{InputIntent, Intent};
-use protocol::rules::{INTEREST_ALL, NO_RULE, PageSub, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET};
+use protocol::rules::{
+    INTEREST_ALL, Key, KeyAsk, KeyKind, NO_RULE, PageSub, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET,
+};
 
 /// The view's channel.
 const CHANNEL: u32 = 7;
@@ -99,10 +101,44 @@ impl Seen {
                     });
                     assert!(read.is_ok(), "the trusted core wrote what the channel cannot read");
                 }
+                Send::Interface(state) => {
+                    // REQ-7037 item 1: nothing is asked of a page whose
+                    // table does not ask for the keyboard.
+                    assert!(state.keys || state.asked == protocol::rules::KeyAsks::default(), "keys asked of no keyboard: {state:?}");
+                    // What is told must cross to the interface whole.
+                    let mut bytes = Vec::new();
+                    assert!(
+                        protocol::write_to_interface(&mut bytes, &protocol::ToInterface::Typing(state.clone())).is_ok(),
+                        "an untellable typing state: {state:?}"
+                    );
+                }
                 _ => {}
             }
         }
     }
+}
+
+/// The keys a hostile decoder says its table names (REQ-7037), from the
+/// generation byte so that the scripts kept stay as they were: none for no
+/// table, else one to four keys of every form the reader takes. The gate
+/// gives by class, so what it is told changes nothing it gives; it is
+/// passed on to the interface unread.
+fn key_asks(generation: u8) -> Vec<KeyAsk> {
+    if generation == 0 {
+        return Vec::new();
+    }
+    let mods_mask = generation >> 5;
+    let ask = |offset: u8| {
+        let code = u32::from(b'a' + generation.wrapping_add(offset) % 26);
+        let key = match (generation.wrapping_add(offset)) % 4 {
+            0 => None,
+            1 => Some(Key::of(KeyKind::Character, code)),
+            2 => Some(Key::of(KeyKind::Named, u32::from(generation))),
+            _ => Some(Key::of(KeyKind::Physical, code)),
+        };
+        KeyAsk { key, mods_mask, mods_value: mods_mask & generation }
+    };
+    (0..=generation % 4).map(ask).collect()
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -141,7 +177,7 @@ fuzz_target!(|data: &[u8]| {
                     interest: if generation == 0 { 0 } else { INTEREST_ALL },
                     watch: Vec::new(),
                     wheel: Vec::new(),
-                    keys: Vec::new(),
+                    keys: key_asks(generation),
                 };
                 let (sends, accepted) = typing.rules_told(CHANNEL, &told, now_us);
                 // Taken only for the open page: a decoder cannot make
