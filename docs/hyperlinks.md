@@ -157,7 +157,7 @@ The trusted core classifies each target when it accepts the link, from the targe
 
 **Why from the target and not from what the server returns.** Asking the server to find out would contact a server the user has not agreed to visit, telling it that they looked and from where. And the strip could not say "opens in your web browser" before the click.
 
-**When a teletext address turns out not to be teletext.** A link to another channel opens as a typed address would. If content detection refuses it as not teletext (requirement 6.3), the strip offers to open it in the system's web browser instead (section 12). The same offer is made when an address typed into the strip turns out not to be teletext.
+**When a teletext address turns out not to be teletext.** A link to another channel opens as a typed address would: the tab's page area is cleared and says "navigating to new channel" in its middle for at least a second, and until the new channel's page is ready (REQ-7164), so that one channel's page never seems to continue into another's. If content detection refuses it as not teletext (requirement 6.3), the strip offers to open it in the system's web browser instead (section 12). The same offer is made when an address typed into the strip turns out not to be teletext.
 
 ### 7.2 A target form for the web
 
