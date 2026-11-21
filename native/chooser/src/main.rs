@@ -87,26 +87,24 @@ const PICTURE_TYPES: [&str; 5] = ["image/png", "image/jpeg", "image/gif", "image
 /// `win32:` and a window's handle in hexadecimal, or nothing. macOS centres
 /// the panel on the screen, as it cannot be placed from another process.
 #[cfg(not(target_os = "linux"))]
-#[allow(clippy::unnecessary_wraps, reason = "the same signature as Linux's, whose portal can fail")]
 #[cfg_attr(not(windows), allow(unused_variables, reason = "only a window handle of Windows means anything in another process"))]
 fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Option<PathBuf>, String> {
-    let mut dialog = rfd::FileDialog::new().set_title(title(kind));
-    if let Some(folder) = folder {
-        dialog = dialog.set_directory(folder);
-    }
     #[cfg(windows)]
-    if let Some(window) = parent.strip_prefix("win32:").and_then(|handle| isize::from_str_radix(handle, HEXADECIMAL).ok()).and_then(confine::ForeignWindow::new)
-    {
-        dialog = dialog.set_parent(&window);
-    }
-    if kind == ChooseKind::Picture {
-        dialog = dialog.add_filter("Pictures", &PICTURE_ENDINGS);
-    }
-    Ok(match kind {
-        ChooseKind::Folder => dialog.pick_folder(),
-        ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => dialog.set_file_name(save_name(kind)).save_file(),
-        ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture | ChooseKind::RegisFont | ChooseKind::NaplpsFont => dialog.pick_file(),
-    })
+    let owner = parent.strip_prefix("win32:").and_then(|handle| isize::from_str_radix(handle, HEXADECIMAL).ok()).filter(|&handle| handle != 0);
+    #[cfg(not(windows))]
+    let owner = None;
+    let dialog = dialog::Dialog {
+        title: title(kind),
+        kind: match kind {
+            ChooseKind::Folder => dialog::Kind::Folder,
+            ChooseKind::SaveTti | ChooseKind::SaveT42 | ChooseKind::SaveRegis | ChooseKind::SaveNaplps => dialog::Kind::Save(save_name(kind)),
+            ChooseKind::File | ChooseKind::Bookmarks | ChooseKind::Picture | ChooseKind::RegisFont | ChooseKind::NaplpsFont => dialog::Kind::File,
+        },
+        folder,
+        filter: (kind == ChooseKind::Picture).then_some(("Pictures", PICTURE_ENDINGS.as_slice())),
+        owner,
+    };
+    dialog::choose(&dialog)
 }
 
 /// The desktop portal's dialog on Linux, parented by `parent`: `x11:` and a

@@ -36,9 +36,6 @@ libc = "=0.2.190"
 # Windows: the bindings winit and web-opener already use, so no crate is
 # added; the features enable the token, job, pipe and process calls.
 [target.'cfg(windows)'.dependencies]
-# What winit and rfd name a window by, for a dialog owned by another
-# process's window: already in the tree through both.
-raw-window-handle = "=0.6.2"
 windows-sys = { version = "=0.52.0", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

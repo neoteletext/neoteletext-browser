@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser", "dbus", "secret-store"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser", "dbus", "secret-store", "dialog"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 
@@ -35,6 +35,9 @@ dbus = { path = "dbus", package = "neoteletext-dbus" }
 # keychain, Credential Manager or the Secret Service (VS-108), read by the
 # broker alone: the browser's own calls (DEC-7168).
 secret-store = { path = "secret-store", package = "neoteletext-secret-store" }
+# The system's file dialogs on macOS and Windows, for the chooser: the
+# browser's own calls (DEC-7168).
+dialog = { path = "dialog", package = "neoteletext-dialog" }
 # What the launcher, the updater, the installer and the release tool
 # share (installation-and-updates.md).
 update = { path = "update" }

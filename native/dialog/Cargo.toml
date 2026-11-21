@@ -1,0 +1,36 @@
+[package]
+name = "neoteletext-dialog"
+description = "The system's file dialogs on macOS and Windows for the chooser (DEC-1551, DEC-7168): AppKit's NSOpenPanel and NSSavePanel, and the shell's IFileOpenDialog and IFileSaveDialog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The same Objective-C bindings, at the same versions, as winit and the Dock
+# menu use: no crate is added to the build.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.5.3"
+objc2-foundation = { version = "=0.2.2", features = ["NSArray", "NSString", "NSThread", "NSURL"] }
+objc2-app-kit = { version = "=0.2.2", features = ["NSApplication", "NSPanel", "NSResponder", "NSRunningApplication", "NSSavePanel", "NSOpenPanel", "NSWindow"] }
+
+# The bindings winit, web-opener and confine already use, so no crate is
+# added; these features enable COM and the shell's item calls.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell"] }
+
+# As the Dock menu's and the web opener's crates: unsafe code is denied,
+# not forbidden, and allowed only in the macOS and Windows modules, each
+# block with its reason (requirement 10.12).
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

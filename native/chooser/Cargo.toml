@@ -10,11 +10,10 @@ publish.workspace = true
 [dependencies]
 confine.workspace = true
 
-# The system's dialogs with no unsafe code of this project's (DEC-1551 item
-# 2): MIT. Without its Linux backends: the desktop portal is reached through
-# the browser's own D-Bus client.
+# The system's dialogs (DEC-1551 item 2): AppKit's panels and the shell's
+# Common Item Dialog, called by the browser's own crate (DEC-7168).
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
-rfd = { version = "=0.17.2", default-features = false }
+dialog.workspace = true
 
 # The XDG desktop portal's FileChooser, which can be parented to the browser's
 # window from another process (DEC-1551 item 2), and its Settings, from which
