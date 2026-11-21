@@ -908,6 +908,15 @@ impl RegisPages {
         self.shown(page, sub).and_then(|key| self.pages.get(&key))?.target_state(number)
     }
 
+    /// The numbered drawing the pick record of the sub-page of `page` on
+    /// screen names at a pixel of its picture as it was last composed, the
+    /// picture the viewer points at; 0 for none (page-rules.md RULE-12;
+    /// the renderer's `docs/regis-v2.md`, "Picking").
+    #[must_use]
+    pub fn drawing_at(&self, page: u16, sub: Option<u16>, x: u16, y: u16) -> u16 {
+        self.shown(page, sub).and_then(|key| self.pages.get(&key)).map_or(0, |held| held.picture.pick(u32::from(x), u32::from(y)).drawing)
+    }
+
     /// What the animation of the sub-page of `page` on screen has cost
     /// since it was last asked, for the rule table's host to report
     /// (ANIM-16, RULE-48).

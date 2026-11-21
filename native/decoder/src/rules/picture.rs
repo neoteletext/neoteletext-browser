@@ -29,9 +29,18 @@ pub trait Picture {
 
     /// The objects a pixel of the picture is inside (RULE-12), written to
     /// the front of `objects`; the count written. A ReGIS picture answers
-    /// none: the trusted core says which of its detectable drawings the
-    /// pointer is on (`DRAWING_HOVER`, RULE-46), and the host adds it.
+    /// none: the host adds the drawing the pointer is on, which a move
+    /// takes from the trusted core (`DRAWING_HOVER`, RULE-46) and a press,
+    /// a release and the wheel from [`Self::drawing_at`].
     fn objects_at(&self, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize;
+
+    /// The numbered drawing a ReGIS picture's pick record names at a pixel
+    /// (RULE-12; the renderer's `docs/regis-v2.md`, "Picking"), 0 for
+    /// none. A picture of another kind answers 0: its objects are those
+    /// [`Self::objects_at`] gives.
+    fn drawing_at(&self, _x: u16, _y: u16) -> u16 {
+        0
+    }
 
     /// The teletext control, numbered from 1, that is shown at a pixel of
     /// the picture, when the animation state hides the one the trusted

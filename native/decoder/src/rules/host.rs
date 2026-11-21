@@ -84,6 +84,13 @@ struct Held {
     /// The ReGIS drawing the trusted core last said the pointer is on
     /// (`DRAWING_HOVER`); 0 for none.
     hovered: u16,
+    /// The ReGIS drawing the pointer is on for the event in hand (RULE-12,
+    /// RULE-46), 0 for none: for a move the one hovered, so that a
+    /// drawing's `enter` and `leave` fire on its `DRAWING_HOVER`; for a
+    /// press, a release and the wheel the one the picture's pick record
+    /// names at the event's pixel, as a press on a teletext page names the
+    /// control under its cell.
+    drawing: u16,
     /// Where the pointer last was, what it held and the control under it.
     pointer: (u16, u16, u8, u16),
     /// The page tick at which a state query was last answered.
@@ -144,7 +151,9 @@ struct PageWorld<'a, 'b, const OBJECTS: usize, const RECORDS: usize> {
     parts: &'a mut Parts<'b, OBJECTS, RECORDS>,
     page: PageSub,
     generation: u16,
-    hovered: u16,
+    /// The ReGIS drawing the pointer is on for the event in hand
+    /// ([`Held::drawing`]).
+    drawing: u16,
     /// A group's sound messages, which leave before everything else
     /// (RULE-64).
     urgent: &'a mut Vec<FromDecoder>,
@@ -226,14 +235,16 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
 
     fn objects_at(&self, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize {
         let mut count = self.parts.picture.objects_at(x, y, objects).min(MAX_POINTER_OBJECTS);
-        // The drawing of a ReGIS picture the trusted core's pick record
-        // names under the pointer (RULE-46: `DRAWING_HOVER`).
-        let listed = objects.get(..count).is_some_and(|listed| listed.contains(&self.hovered));
-        if self.hovered != 0
+        // The drawing of a ReGIS picture the pointer is on (RULE-12): the
+        // one its pick record names at the pixel of a press, a release or
+        // the wheel, and for a move the one the trusted core's
+        // `DRAWING_HOVER` named (RULE-46).
+        let listed = objects.get(..count).is_some_and(|listed| listed.contains(&self.drawing));
+        if self.drawing != 0
             && !listed
             && let Some(slot) = objects.get_mut(count)
         {
-            *slot = self.hovered;
+            *slot = self.drawing;
             count = count.saturating_add(1);
         }
         count
@@ -363,9 +374,17 @@ fn event(sequence: u32, input: RuleInput, held: &mut Held, picture: &dyn Picture
             } else {
                 held.pointer = (x, y, held.pointer.2, control);
             }
+            held.drawing = match action {
+                PointerAction::Press | PointerAction::Release => picture.drawing_at(x, y),
+                PointerAction::Move => held.hovered,
+                PointerAction::Gone => 0,
+            };
             Input::Pointer { action, button, x, y, control }
         }
-        RuleInput::Wheel { x, y, control } => Input::Wheel { x, y, control: picture.control_shown(control) },
+        RuleInput::Wheel { x, y, control } => {
+            held.drawing = picture.drawing_at(x, y);
+            Input::Wheel { x, y, control: picture.control_shown(control) }
+        }
         RuleInput::Focus => Input::Focus,
         RuleInput::Blur => Input::Blur,
         // The pointer came onto or went off a drawing where it is: a move
@@ -376,6 +395,7 @@ fn event(sequence: u32, input: RuleInput, held: &mut Held, picture: &dyn Picture
             } else if held.hovered == drawing {
                 held.hovered = 0;
             }
+            held.drawing = held.hovered;
             let (x, y, button, control) = held.pointer;
             Input::Pointer { action: PointerAction::Move, button, x, y, control }
         }
@@ -401,7 +421,7 @@ impl Held {
             parts,
             page: self.page,
             generation: self.generation,
-            hovered: self.hovered,
+            drawing: self.drawing,
             urgent: &mut urgent,
             out: &mut out,
             picture: &mut commands,
@@ -615,6 +635,7 @@ impl Rules {
             paused_at_us: None,
             told: nothing_asked(page),
             hovered: 0,
+            drawing: 0,
             pointer: (0, 0, 0, 0),
             answered: None,
             reported: Counters::default(),
@@ -664,7 +685,7 @@ impl Rules {
                     parts,
                     page: held.page,
                     generation: held.generation,
-                    hovered: held.hovered,
+                    drawing: held.drawing,
                     urgent: &mut urgent,
                     out: &mut self.out,
                     picture: &mut self.picture,
@@ -846,7 +867,7 @@ impl Rules {
         let live = held.as_mut().filter(|held| !held.paused && open == Some(held.page) && held.start_us.is_some() && page.is_none_or(|page| page == held.page));
         match live {
             Some(held) => {
-                let mut world = PageWorld { parts, page: held.page, generation: held.generation, hovered: held.hovered, urgent: &mut urgent, out, picture };
+                let mut world = PageWorld { parts, page: held.page, generation: held.generation, drawing: held.drawing, urgent: &mut urgent, out, picture };
                 let _ = held.evaluator.handle(event, &mut world);
                 urgent.append(out);
             }
@@ -884,7 +905,7 @@ impl Rules {
         match held.as_mut().filter(|held| held.page == page && !held.paused && open == Some(page)) {
             Some(held) => {
                 let tick = held.evaluator.page_tick();
-                let mut world = PageWorld { parts, page, generation: held.generation, hovered: held.hovered, urgent: &mut urgent, out, picture };
+                let mut world = PageWorld { parts, page, generation: held.generation, drawing: held.drawing, urgent: &mut urgent, out, picture };
                 let _ = world.command(TYPE_LOCAL_MIDI, body, tick);
             }
             None => *commands_dropped = commands_dropped.saturating_add(1),
@@ -958,7 +979,7 @@ impl Rules {
                     parts: &mut *parts,
                     page: held.page,
                     generation: held.generation,
-                    hovered: held.hovered,
+                    drawing: held.drawing,
                     urgent: &mut urgent,
                     out: &mut out,
                     picture,
