@@ -367,8 +367,9 @@ impl Drop for Stream {
     }
 }
 
-/// The stream's thread: while the owner wants it playing, fills a period
-/// and writes it; stopped, drops what the device holds and waits.
+/// The stream's thread: while the owner wants it playing, waits for room
+/// for a period, fills it and writes it; stopped, drops what the device
+/// holds and waits.
 fn write(pcm: &Pcm, period: usize, wait_ms: c_int, control: &Control, mut fill: Fill, mut trouble: Trouble) {
     let mut samples = vec![0_i16; period.saturating_mul(CHANNELS)];
     let mut follower = Follower::new();
@@ -394,8 +395,7 @@ fn write(pcm: &Pcm, period: usize, wait_ms: c_int, control: &Control, mut fill: 
                     }
                     running = true;
                 }
-                fill(&mut samples);
-                if let Err(error) = write_period(pcm, &samples, wait_ms, control, &mut trouble) {
+                if let Err(error) = play_period(pcm, &mut samples, &mut fill, wait_ms, control, &mut trouble) {
                     trouble(&error.to_string());
                     // SAFETY: as above.
                     unsafe { snd_pcm_drop(pcm.0) };
@@ -443,37 +443,70 @@ fn wait_for_room(mut wait: impl FnMut(c_int) -> c_int, stuck_ms: c_int, control:
     }
 }
 
-/// Writes one period, waiting for room. An underrun or a suspend is told
-/// and recovered from (`snd_pcm_recover`), and the rest written; any other
-/// failure, or a device with no room for [`STUCK_PERIODS`], is returned.
-/// A stream dropped meanwhile leaves the rest unwritten.
-fn write_period(pcm: &Pcm, samples: &[i16], wait_ms: c_int, control: &Control, trouble: &mut Trouble) -> Result<(), Error> {
-    let mut rest = samples;
-    while !rest.is_empty() {
+/// What a period is written through: the PCM handle, or a test's
+/// stand-in.
+trait Device {
+    /// `snd_pcm_wait`: room (positive), none within `ms` (zero) or an
+    /// error (negative).
+    fn wait(&self, ms: c_int) -> c_int;
+    /// `snd_pcm_writei` of whole interleaved frames: the frames taken, or
+    /// an error (negative).
+    fn write(&self, frames: &[i16]) -> Sframes;
+    /// `snd_pcm_recover` from an underrun or a suspend, silently.
+    fn recover(&self, code: c_int) -> c_int;
+}
+
+impl Device for Pcm {
+    fn wait(&self, ms: c_int) -> c_int {
         // SAFETY: the handle is open and used by this thread alone.
-        let ready = match wait_for_room(|slice| unsafe { snd_pcm_wait(pcm.0, slice) }, wait_ms, control) {
+        unsafe { snd_pcm_wait(self.0, ms) }
+    }
+
+    fn write(&self, frames: &[i16]) -> Sframes {
+        let count = Uframes::try_from(frames.len() / CHANNELS).unwrap_or(0);
+        // SAFETY: as above; `frames` holds `count` whole frames of
+        // interleaved 16-bit samples, the format the device was configured
+        // with, and lives until the call returns.
+        unsafe { snd_pcm_writei(self.0, frames.as_ptr().cast(), count) }
+    }
+
+    fn recover(&self, code: c_int) -> c_int {
+        // SAFETY: as above; silent, as the caller tells the trouble.
+        unsafe { snd_pcm_recover(self.0, code, 1) }
+    }
+}
+
+/// Plays one period: waits for room for it, then fills it and writes it,
+/// so the samples are made as late as they can be and reach the device at
+/// once, not a period after they were made. An underrun or a suspend is
+/// told and recovered from (`snd_pcm_recover`), and the rest written; any
+/// other failure, or a device with no room for [`STUCK_PERIODS`], is
+/// returned. A stream dropped meanwhile leaves the rest unwritten.
+fn play_period(device: &impl Device, samples: &mut [i16], fill: &mut Fill, wait_ms: c_int, control: &Control, trouble: &mut Trouble) -> Result<(), Error> {
+    let mut filled = false;
+    let mut written_samples = 0;
+    while !filled || written_samples < samples.len() {
+        let ready = match wait_for_room(|slice| device.wait(slice), wait_ms, control) {
             Room::Ready(ready) => ready,
             Room::Closing => return Ok(()),
             Room::Stuck => return Err(Error::new("the output took no samples for twenty periods")),
         };
-        let frames = Uframes::try_from(rest.len() / CHANNELS).unwrap_or(0);
         let written = if ready < 0 {
             Sframes::from(ready)
         } else {
-            // SAFETY: `rest` holds `frames` whole frames of interleaved
-            // 16-bit samples, the format the device was configured with,
-            // and lives until the call returns.
-            unsafe { snd_pcm_writei(pcm.0, rest.as_ptr().cast(), frames) }
+            if !filled {
+                fill(samples);
+                filled = true;
+            }
+            device.write(samples.get(written_samples..).unwrap_or(&[]))
         };
         if written < 0 {
             let code = c_int::try_from(written).unwrap_or(c_int::MIN);
             trouble(&text(code));
-            // SAFETY: as above; silent, as the trouble was just told.
-            checked(unsafe { snd_pcm_recover(pcm.0, code, 1) }, "recovering the output")?;
+            checked(device.recover(code), "recovering the output")?;
             continue;
         }
-        let taken = usize::try_from(written).unwrap_or(0).saturating_mul(CHANNELS);
-        rest = rest.get(taken..).unwrap_or(&[]);
+        written_samples = written_samples.saturating_add(usize::try_from(written).unwrap_or(0).saturating_mul(CHANNELS)).min(samples.len());
     }
     Ok(())
 }
@@ -566,6 +599,65 @@ mod tests {
         assert_eq!(wait_for_room(|_| 1, stuck_ms, &control), Room::Ready(1), "room is taken at once");
         let underrun = -32; // -EPIPE (errno.h), which snd_pcm_wait gives for an underrun
         assert_eq!(wait_for_room(|_| underrun, stuck_ms, &control), Room::Ready(underrun), "an error is handed on to be recovered from");
+    }
+
+    /// A stand-in device that tells what was asked of it, in one list
+    /// with the fill's calls: a wait, and a write of so many samples,
+    /// taking at most `takes` frames a write.
+    struct Told {
+        happened: Arc<std::sync::Mutex<Vec<String>>>,
+        takes: usize,
+    }
+
+    impl Told {
+        fn tell(&self, what: String) {
+            self.happened.lock().unwrap().push(what);
+        }
+    }
+
+    impl Device for Told {
+        fn wait(&self, _: c_int) -> c_int {
+            self.tell("wait".into());
+            1
+        }
+
+        fn write(&self, frames: &[i16]) -> Sframes {
+            self.tell(format!("write {}", frames.len()));
+            Sframes::try_from((frames.len() / CHANNELS).min(self.takes)).unwrap()
+        }
+
+        fn recover(&self, _: c_int) -> c_int {
+            0
+        }
+    }
+
+    /// A period is filled only once the device has room for it, then
+    /// written at once, so its samples do not wait a period before they
+    /// reach the device; what the device does not take at once is written
+    /// after the next wait, without filling again.
+    #[test]
+    fn a_period_is_filled_only_once_the_device_has_room() {
+        let period_frames = 4;
+        let takes = 3;
+        let happened = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let device = Told { happened: Arc::clone(&happened), takes };
+        let filling = Arc::clone(&happened);
+        let mut fill: Fill = Box::new(move |data: &mut [i16]| {
+            filling.lock().unwrap().push("fill".into());
+            data.fill(1);
+        });
+        let mut samples = vec![0_i16; period_frames * CHANNELS];
+        let control = Control::new();
+        control.set(Wanted::Playing);
+        let mut trouble: Trouble = Box::new(|_| {});
+        play_period(&device, &mut samples, &mut fill, c_int::MAX, &control, &mut trouble).unwrap();
+        let (whole, rest) = (period_frames * CHANNELS, (period_frames - takes) * CHANNELS);
+        assert_eq!(
+            *happened.lock().unwrap(),
+            ["wait".to_owned(), "fill".to_owned(), format!("write {whole}"), "wait".to_owned(), format!("write {rest}")],
+            "a wait, then the fill and the whole period, then only the rest after another wait"
+        );
+        assert!(samples.iter().all(|&sample| sample == 1), "the filled samples are what was written");
     }
 
     /// The device's own period is taken when no size is asked for.
