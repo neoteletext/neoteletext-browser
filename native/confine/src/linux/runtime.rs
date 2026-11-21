@@ -46,7 +46,7 @@ const PULSE_SOCKET: &str = "native";
 const PULSE_FOLDER: &str = "pulse";
 /// The prefix of a local socket in `PULSE_SERVER` (`pulse-client.conf(5)`).
 const PULSE_LOCAL: &str = "unix:";
-/// Where POSIX shared memory is made (`shm_open(3)`): softbuffer, the
+/// Where POSIX shared memory is made (`shm_open(3)`): `presenter`, the
 /// interface's presenter, makes the image it shares with the X server
 /// there (`MIT-SHM`), and with none it sends the whole window through the
 /// X socket at every frame (DEC-6659 item 24).

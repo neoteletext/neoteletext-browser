@@ -64,13 +64,24 @@ fn a_tone_plays_through_the_confined_sound_helper() {
     }
     input.flush().unwrap();
     let started = Instant::now();
-    assert_eq!(read_from_sound(&mut output).unwrap(), Some(FromSound::Sounding(vec![1])), "channel 1 sounds");
+    assert_eq!(next_sounding(&mut output), Some(FromSound::Sounding(vec![1])), "channel 1 sounds");
     assert!(started.elapsed() < WAIT);
-    assert_eq!(read_from_sound(&mut output).unwrap(), Some(FromSound::Sounding(Vec::new())), "and stops when the second has played");
+    assert_eq!(next_sounding(&mut output), Some(FromSound::Sounding(Vec::new())), "and stops when the second has played");
     let played = started.elapsed();
     assert!(played >= Duration::from_millis(800) && played < WAIT, "the device consumed the second in real time: {played:?}");
     std::thread::sleep(HELD_SILENT);
     write_to_sound(&mut input, &ToSound::Close).unwrap();
     input.flush().unwrap();
     assert!(process.wait().unwrap().success());
+}
+
+/// The helper's next report of the channels sounding, past the time it
+/// reports spending on each (REQ-6626 item 1 b), which comes between.
+fn next_sounding(output: &mut impl std::io::BufRead) -> Option<FromSound> {
+    loop {
+        match read_from_sound(output).unwrap() {
+            Some(FromSound::Spent { .. }) => {}
+            other => return other,
+        }
+    }
 }

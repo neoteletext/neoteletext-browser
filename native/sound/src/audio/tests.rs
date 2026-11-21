@@ -21,13 +21,13 @@ fn playing(value: i16) -> Mutex<Mixers> {
 #[test]
 fn the_cores_operations_play_through_the_mixer_in_every_channel() {
     let mixer = playing(8_000);
-    let mut data = vec![0.0_f32; 2 * 400];
+    let mut data = vec![0_i16; 2 * 400];
     let mut scratch = vec![0_i32; 128];
     render(&mixer, &mut data, 2, &mut scratch);
-    // Settled after the 5 ms ramp: both channels at 8 000 / 32 768.
-    let expected = f32::from_i16(8_000);
-    assert!((data[700] - expected).abs() < 0.01, "{} against {expected}", data[700]);
-    assert_eq!(data[700].to_bits(), data[701].to_bits(), "both channels alike");
+    // Settled after the 5 ms ramp: both channels at 8 000, within the
+    // hundredth of full scale the limiter may take.
+    assert!((data[700] - 8_000).abs() < 328, "{} against 8000", data[700]);
+    assert_eq!(data[700], data[701], "both channels alike");
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn the_cost_of_filling_a_device_buffer_is_printed() {
     const BLOCKS: usize = 2_000;
     for (name, peak) in [("over the ceiling", 30_000.0), ("under the ceiling", 2_000.0)] {
         let mixers = loud_tabs(3, peak);
-        let mut data = vec![0.0_f32; 2 * BLOCK];
+        let mut data = vec![0_i16; 2 * BLOCK];
         let mut scratch = [0; 2 * BLOCK];
         let mut costs = Vec::with_capacity(BLOCKS);
         for _ in 0..BLOCKS {

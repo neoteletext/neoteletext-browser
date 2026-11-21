@@ -1,0 +1,52 @@
+[package]
+name = "presenter"
+description = "Hands the interface's drawn pixels to its window, limited to what changed where the platform allows: X11 shared memory or PutImage, Wayland wl_shm, a Core Animation layer's image on macOS, GDI on Windows (DEC-7168)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The window's handles, as winit gives them: the version winit uses.
+[dependencies]
+raw-window-handle = "=0.6.2"
+
+# Every crate below is already in the build for winit (or, on macOS, for
+# arboard's AppKit), at these versions; these only enable the parts the
+# presentation calls. On Linux: x11rb with libxcb loaded at run time and
+# the shared-memory extension (MIT-SHM); x11-dl for Xlib's
+# `XGetXCBConnection`, which winit has already loaded; wayland-client over
+# the system's libwayland-client, loaded at run time as winit loads it;
+# rustix for the shared memory.
+[target.'cfg(all(unix, not(target_vendor = "apple")))'.dependencies]
+x11rb = { version = "=0.13.2", default-features = false, features = ["allow-unsafe-code", "dl-libxcb", "shm"] }
+x11-dl = "=2.21.0"
+wayland-client = "=0.31.15"
+wayland-backend = { version = "=0.3.17", features = ["client_system"] }
+rustix = { workspace = true, features = ["fs", "mm", "shm"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["std", "objc2", "CGColorSpace", "CGDataProvider", "CGImage"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "objc2-core-foundation", "CALayer", "CATransaction"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.52.0", features = ["Win32_Foundation", "Win32_Graphics_Gdi"] }
+
+# As `confine` and `os-install` (requirement 10.12, REQ-745): unsafe code is
+# denied, not forbidden, and allowed only in each platform's module, every
+# block with its reason. No platform offers a safe way to hand a window
+# pixels.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

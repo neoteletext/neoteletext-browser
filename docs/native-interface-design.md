@@ -94,7 +94,7 @@ The teletext engine, `neoteletext`, is maintained in its own repository (`~/deve
  drawing interface (ours, small: rectangles, rounded rectangles, gradients,
                     images under an affine transform, text runs)
         │
-        ├── vello_cpu + Parley ───────── softbuffer ── winit     every desktop and phone (the minimum)
+        ├── vello_cpu + Parley ───────── presenter ── winit      every desktop and phone (the minimum)
         ├── Vello on the graphics processor ────────── winit     optional, where it helps
         └── embedded-graphics + bitmap fonts                     microcontrollers, features cut
 ```
@@ -175,8 +175,8 @@ On iOS and microcontrollers, with one process, frames go from decoder to interfa
 
 | Platform | Window and input | Drawing | Notes |
 |---|---|---|---|
-| macOS, Windows, Linux | winit | `vello_cpu`, shown with softbuffer; Vello on the graphics processor optional | macOS measured; others not yet |
-| iOS, Android | winit | as above | Phone screens have up to four times the pixels of this test; frame time to be measured, and the optional graphics-processor back end may matter most here. softbuffer's and winit's phone support to be confirmed in a build. |
+| macOS, Windows, Linux | winit | `vello_cpu`, shown by the browser's own `presenter` (softbuffer until DEC-7168); Vello on the graphics processor optional | macOS measured; others not yet |
+| iOS, Android | winit | as above | Phone screens have up to four times the pixels of this test; frame time to be measured, and the optional graphics-processor back end may matter most here. A presenter for each phone, and winit's phone support, to be written and confirmed in a build. |
 | Microcontrollers | the board's own display and input drivers | `embedded-graphics`, bitmap fonts | `neoteletext-core`, `-formats`, `-image`, `-slicer` and `-web` are already `no_std`; `vello_cpu` can also run without the standard library (its `libm` feature) on chips with enough memory |
 
 **What the microcontroller build cuts** (to be decided with the owner): smooth text, screen readers, input methods, multiple tabs and windows, developer tools, and probably the network fetcher, depending on where its teletext comes from. It keeps pages, page-number and Fastext keys, flash, and a simple page wall. Its security model is that of a single-purpose device and needs its own analysis.
@@ -198,7 +198,7 @@ Every library below is under a permissive licence, as far as checked; each still
 | Taffy | Layout (option B, and possibly within Masonry) | MIT |
 | AccessKit | Screen readers | Apache-2.0 or MIT |
 | winit | Windows and input | Apache-2.0 |
-| softbuffer | Showing processor-drawn pixels | MIT or Apache-2.0 |
+| presenter (ours, since DEC-7168; softbuffer before) | Showing processor-drawn pixels | MIT |
 | `ui-events` | Uniform input events | to confirm |
 | `arboard` | Clipboard | to confirm |
 | `muda` | Native menu bar (requirement 12.5) | to confirm |
@@ -447,7 +447,7 @@ On the owner's requests of 23 October 2026 (decision 63): Reload joined the stri
 
 ### 12.7 Drawing only what changed (23 October 2026)
 
-The painter keeps each frame's drawing calls, with the clips around each and the device pixels each can change, and compares them with the last frame's: the calls the same at the start and at the end, and the same call by call between, are drawn as before; the boxes holding the rest, at most 16 (`MAX_BOXES`), joined where they meet, are drawn again, each by its own `vello_cpu` context sized to it, from only the calls that reach it. A page whose image alone changed counts only the dots that changed, so a header clock ticking is a few hundred pixels. Text counts its laid-out box, not the area it was given, which is often open-ended. A frame that changed nothing is not presented; the window keeps the last. Every frame the system asks for, rather than the interface, as when the window is uncovered or resized, is drawn whole. The surface is given the boxes (`present_with_damage`), which Wayland, X11 and Windows use; on macOS softbuffer hands Core Animation a fresh copy of the whole window each time, which only unsafe code or another presentation library would change (`TECH-DEBT.md`).
+The painter keeps each frame's drawing calls, with the clips around each and the device pixels each can change, and compares them with the last frame's: the calls the same at the start and at the end, and the same call by call between, are drawn as before; the boxes holding the rest, at most 16 (`MAX_BOXES`), joined where they meet, are drawn again, each by its own `vello_cpu` context sized to it, from only the calls that reach it. A page whose image alone changed counts only the dots that changed, so a header clock ticking is a few hundred pixels. Text counts its laid-out box, not the area it was given, which is often open-ended. A frame that changed nothing is not presented; the window keeps the last. Every frame the system asks for, rather than the interface, as when the window is uncovered or resized, is drawn whole. The surface is given the boxes (`present_with_damage`), which Wayland, X11 and Windows use; on macOS a layer's contents are one whole image, so Core Animation is handed a fresh copy of the whole window each time, though since DEC-7168 the interface's own buffer keeps the last frame and only the boxes are drawn into it (DEC-1255).
 
 Tests compare a damage-limited frame with the same frame drawn whole, pixel for pixel, for a page's dots changing and for a hover; a damage box planted too small fails all of them.
 
