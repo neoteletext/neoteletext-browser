@@ -3,10 +3,13 @@
 //! REQ-6615, DEC-6587, DEC-6599).
 
 use neoteletext_audio::encode::{Command as SoundCommand, Sound as Writer, packets};
+use neoteletext_audio::record::{FLAG_AFTER_CURRENT, FLAG_LOOP};
 use neoteletext_core::consts::presentation_tick_due_us;
 use neoteletext_core::types::{PageAddress, SubCode};
-use neoteletext_rules::command::{self, Command, Operand, TYPE_ANIMATE, TYPE_LOCAL_MIDI, TYPE_REPORT, TYPE_VARIABLE, VariableOperation};
-use neoteletext_rules::table::{CLASS_NOTE, Framed, Key, KeyKind, KeyMatch, Node, Operator, Rule, SOUND_LOCAL, Table, Trigger, Value, default_send_all};
+use neoteletext_rules::command::{self, Command, Operand, TYPE_ANIMATE, TYPE_CONTROL, TYPE_LOCAL_MIDI, TYPE_REPORT, TYPE_VARIABLE, VariableOperation};
+use neoteletext_rules::table::{
+    CLASS_NOTE, Framed, Key, KeyKind, KeyMatch, Node, Operator, Rule, SOUND_HANDLE, SOUND_LOCAL, SOUND_PLAYING, Table, Trigger, Value, default_send_all,
+};
 use protocol::audio::Audio;
 use protocol::decoder::{FromDecoder, ToDecoder};
 use protocol::rules::{
@@ -14,6 +17,7 @@ use protocol::rules::{
     RulesOpen, WheelRect,
 };
 
+use super::super::tests::{OPUS_FRAME_SAMPLES, OPUS_PACKET, opus_frames};
 use crate::Engine;
 
 /// The page number the tests open.
@@ -693,4 +697,307 @@ fn a_naplps_pages_pointer_is_a_raster_dot_the_rules_take_unchanged() {
     assert_eq!(fired(&mut engine, 100, 10, 3), [1], "object 2's rule, at a dot of row 0 its bounds reach");
     assert_eq!(fired(&mut engine, 100, 30, 5), [] as [u8; 0], "neither object holds the dot (100, 30)");
     assert_eq!(engine.animation_picture(PAGE).size(), (480, 500), "the evaluator's world: the teletext raster");
+}
+
+/// The audio channel the stored sounds of the tests of what a page hears
+/// play on.
+const HEARD_CHANNEL: u8 = 1;
+/// The handle of the first stored sound those tests play.
+const FIRST_SOUND: u8 = 5;
+/// The handle of the second, played after the first.
+const SECOND_SOUND: u8 = 6;
+/// Milliseconds of one Opus frame: [`OPUS_FRAME_SAMPLES`] at 48 kHz.
+const OPUS_FRAME_MS: u64 = 20;
+/// The 48 kHz rate of the Opus frames, in samples a millisecond.
+const OPUS_SAMPLES_PER_MS: u64 = 48;
+const _: () = assert!(OPUS_FRAME_SAMPLES as u64 == OPUS_SAMPLES_PER_MS * OPUS_FRAME_MS);
+/// Microseconds in a millisecond: the decoder's wake gives the sounds'
+/// clock in milliseconds (`process.rs`, `tick`).
+const MICROSECONDS_PER_MILLISECOND: u64 = 1_000;
+
+/// What the decoder does at each wake, as `process.rs`'s `tick` does it:
+/// the sounds' clock first, then each tick of the open page's rules due.
+fn wake(engine: &mut Engine, now: u64) -> Vec<FromDecoder> {
+    engine.tick_audio(now / MICROSECONDS_PER_MILLISECOND);
+    run(engine, now)
+}
+
+/// The records of a stored Opus sound of `frames` 20 ms frames on
+/// [`HEARD_CHANNEL`], whose samples are exactly those frames, so that it
+/// is `frames × 20` ms long, and of its play for [`PAGE`] with `flags`.
+fn stored_sound(handle: u8, frames: usize, sequence: u16, flags: u8) -> Vec<Vec<u8>> {
+    let samples = u32::try_from(frames * OPUS_FRAME_SAMPLES).unwrap();
+    let stored = Writer::opus(handle, 1, OPUS_PACKET, &opus_frames(frames), samples).unwrap();
+    let mut records = vec![stored.object_record().unwrap()];
+    records.extend(stored.data_records());
+    let play = SoundCommand {
+        channel: HEARD_CHANNEL,
+        sequence,
+        operation: 1,
+        handle,
+        generation: 1,
+        gain: 80,
+        fade_ms: 0,
+        flags,
+        duck: 0,
+        page: Some(PAGE),
+        music: None,
+    };
+    records.push(play.record());
+    records
+}
+
+/// Gives the engine `records` from the server, with [`PAGE`]'s sounds
+/// open, at the sounds' clock `now`.
+fn play_records(engine: &mut Engine, records: &[Vec<u8>], now: u64) {
+    engine.tick_audio(now / MICROSECONDS_PER_MILLISECOND);
+    engine.open_page(Some(PAGE));
+    engine.feed(&packets(0, 0, records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
+    engine.finish();
+}
+
+/// The body of a group's `CONTROL` that stops [`HEARD_CHANNEL`], as the
+/// audio profile frames its body: no sequence and the table's page
+/// (RULE-119).
+fn stop_body() -> Vec<u8> {
+    let stop = SoundCommand {
+        channel: HEARD_CHANNEL,
+        sequence: 0,
+        operation: 2,
+        handle: 0,
+        generation: 0,
+        gain: 0,
+        fade_ms: 0,
+        flags: 0,
+        duck: 0,
+        page: Some(PAGE),
+        music: None,
+    };
+    let record = stop.record();
+    record[neoteletext_audio::RECORD_HEADER..record.len() - neoteletext_audio::RECORD_CRC].to_vec()
+}
+
+/// The readings rule `rule` reported in `messages`, in order.
+fn readings(messages: &[FromDecoder], rule: u8) -> Vec<i32> {
+    reports(messages)
+        .iter()
+        .filter(|report| report.rule == rule)
+        .filter_map(|report| if let Reported::Value { reading, .. } = report.what { Some(reading) } else { None })
+        .collect()
+}
+
+/// Which rules fired with no value in `messages`.
+fn fired(messages: &[FromDecoder]) -> Vec<u8> {
+    reports(messages).iter().filter(|report| report.what == Reported::Fired).map(|report| report.rule).collect()
+}
+
+/// A table on [`OPEN`] whose rules 0 to 2 report [`HEARD_CHANNEL`]'s
+/// `playing`, `handle` and `local` at every tick step; rule 3 fires when
+/// `playing` becomes 0; rule 4 reports `playing` when the key `k` is
+/// pressed; and rule 5 stops the channel by a group's `CONTROL` when the
+/// key `s` is.
+fn hearing_table() -> Box<Table> {
+    let every = || Trigger::Every { timer: neoteletext_rules::limits::PAGE_TIMER, ticks: 1 };
+    let playing = Value::sound(HEARD_CHANNEL, SOUND_PLAYING);
+    let builder = Builder::new(OPEN);
+    let (said_playing, said_handle, said_local) = (
+        builder.report(Some(playing)),
+        builder.report(Some(Value::sound(HEARD_CHANNEL, SOUND_HANDLE))),
+        builder.report(Some(Value::sound(HEARD_CHANNEL, SOUND_LOCAL))),
+    );
+    let (ended, keyed) = (builder.report(None), builder.report(Some(playing)));
+    let stop = (TYPE_CONTROL, stop_body());
+    builder
+        .rule(every(), &[], &[said_playing])
+        .rule(every(), &[], &[said_handle])
+        .rule(every(), &[], &[said_local])
+        .rule(Trigger::Becomes, &[Node::compare(playing, Operator::Equal, 0)], &[ended])
+        .rule(on_key('k', false), &[], &[keyed])
+        .rule(on_key('s', false), &[], &[stop])
+        .table
+}
+
+/// RULE-27, RULE-7 "The world" (DEC-7143 items 1, 3 and 4; TODO-7141 item
+/// 3): a stored sound played on an audio channel reads `playing` 1 and its
+/// handle; once the trusted core says the view's sound is not heard
+/// (`ToDecoder::SoundHeard(false)`, which `process.rs` gives to
+/// `Engine::set_sound_heard`) it reads 0, with `handle` -1 and `local` 0;
+/// the change is seen by the next handling, a key's, and a `becomes` rule
+/// on `playing` being 0 fires at the next tick step, not in the key's
+/// handling; heard again, it reads 1 with no new start of the sound.
+#[test]
+fn a_sound_reads_as_playing_only_while_the_view_hears_it() {
+    let (mut engine, _) = opened(&hearing_table());
+    play_records(&mut engine, &stored_sound(FIRST_SOUND, 10, 1, FLAG_LOOP), T0);
+    let sounds = engine.take_sounds();
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::Start { channel: HEARD_CHANNEL, .. })), "{sounds:?}");
+    wake(&mut engine, after(1));
+    let heard = wake(&mut engine, after(2));
+    assert_eq!(readings(&heard, 0), [1], "playing while heard: {heard:?}");
+    assert_eq!(readings(&heard, 1), [i32::from(FIRST_SOUND)], "its handle");
+    assert_eq!(readings(&heard, 2), [0], "not a local sound");
+    assert_eq!(fired(&heard), [] as [u8; 0]);
+
+    engine.set_sound_heard(false);
+    let keyed = input(&mut engine, OPEN, 1, key(KeyAction::Press, 'k'), after(2) + 10);
+    assert_eq!(readings(&keyed, 4), [0], "the next handling reads the change: {keyed:?}");
+    assert_eq!(fired(&keyed), [] as [u8; 0], "no `becomes` within the key's handling");
+    let unheard = wake(&mut engine, after(3));
+    assert_eq!(fired(&unheard), [3], "`becomes` fires at the next tick step: {unheard:?}");
+    assert_eq!(readings(&unheard, 0), [0], "not playing while unheard");
+    assert_eq!(readings(&unheard, 1), [-1], "no handle while not playing");
+    assert_eq!(readings(&unheard, 2), [0]);
+    let later = readings(&wake(&mut engine, after(30)), 0);
+    assert!(!later.is_empty() && later.iter().all(|reading| *reading == 0), "still unheard later: {later:?}");
+
+    engine.set_sound_heard(true);
+    let again = wake(&mut engine, after(31));
+    assert_eq!(readings(&again, 0), [1], "heard again: {again:?}");
+    assert_eq!(readings(&again, 1), [i32::from(FIRST_SOUND)]);
+    let sounds = engine.take_sounds();
+    assert!(!sounds.iter().any(|sound| matches!(sound, Audio::Start { .. } | Audio::Define { .. })), "the page did not start it again: {sounds:?}");
+}
+
+/// RULE-27, RULE-118, RULE-21 (DEC-7143 item 4): while the view is not
+/// heard, a group's `CONTROL` stop still stops what the page started, so
+/// that it is not heard again when sound comes back; and a key's
+/// `LOCAL_MIDI` still leaves for a local sound, which reads `local` 0
+/// while unheard and 1 when heard again.
+#[test]
+fn what_a_page_started_is_still_stopped_and_played_while_unheard() {
+    let (mut engine, _) = opened(&hearing_table());
+    play_records(&mut engine, &stored_sound(FIRST_SOUND, 10, 1, FLAG_LOOP), T0);
+    engine.take_sounds();
+    wake(&mut engine, after(1));
+    engine.set_sound_heard(false);
+    assert_eq!(readings(&wake(&mut engine, after(2)), 0), [0]);
+    let stopped = input(&mut engine, OPEN, 1, key(KeyAction::Press, 's'), after(2) + 10);
+    assert!(stopped.iter().any(|message| matches!(message, FromDecoder::Audio(Audio::Stop { channel: HEARD_CHANNEL, .. }))), "{stopped:?}");
+    engine.set_sound_heard(true);
+    let after_stop = wake(&mut engine, after(3));
+    assert_eq!(readings(&after_stop, 0), [0], "stopped while unheard, so not playing when heard: {after_stop:?}");
+    assert_eq!(readings(&after_stop, 1), [-1]);
+
+    // A local sound on audio channel CHANNEL, played by a key's LOCAL_MIDI.
+    let builder = Builder::new(OPEN);
+    let local = Value::sound(CHANNEL, SOUND_LOCAL);
+    let (on, said) = (builder.midi(0x90, 60, 100), builder.report(Some(local)));
+    let every = Trigger::Every { timer: neoteletext_rules::limits::PAGE_TIMER, ticks: 1 };
+    let builder = builder.rule(on_key('a', false), &[], &[on]).rule(every, &[], &[said]);
+    let (mut engine, _) = opened(&builder.table);
+    play_local(&mut engine);
+    engine.take_sounds();
+    wake(&mut engine, after(1));
+    assert_eq!(readings(&wake(&mut engine, after(2)), 1), [1], "local while heard");
+    engine.set_sound_heard(false);
+    assert_eq!(readings(&wake(&mut engine, after(3)), 1), [0], "local reads 0 while unheard");
+    let played = input(&mut engine, OPEN, 1, key(KeyAction::Press, 'a'), after(3) + 10);
+    assert_eq!(midi(&played), [(0x90, 60)], "the note still leaves: {played:?}");
+    engine.set_sound_heard(true);
+    assert_eq!(readings(&wake(&mut engine, after(4)), 1), [1], "local again when heard");
+}
+
+/// The readings of rule 0 of [`hearing_table`], `playing`, at the wakes of
+/// ticks `ticks`, one each: from the wake at `after(2)`, the first whose
+/// tick step is past page tick 0, when `every 1` first fires (RULE-15).
+fn playing_at(engine: &mut Engine, ticks: core::ops::RangeInclusive<u32>) -> Vec<(u32, i32)> {
+    ticks
+        .map(|tick| {
+            let read = readings(&wake(engine, after(tick)), 0);
+            assert_eq!(read.len(), 1, "one reading at tick {tick}: {read:?}");
+            (tick, read[0])
+        })
+        .collect()
+}
+
+/// The wakes of `ticks` that read `playing` 1, and those that read 0.
+fn split(read: &[(u32, i32)]) -> (Vec<u32>, Vec<u32>) {
+    (
+        read.iter().filter(|(_, reading)| *reading == 1).map(|(tick, _)| *tick).collect(),
+        read.iter().filter(|(_, reading)| *reading == 0).map(|(tick, _)| *tick).collect(),
+    )
+}
+
+/// RULE-27, TODO-6576 item 2 (DEC-7143 item 5): a stored sound of samples
+/// that does not repeat, 200 ms long and started at [`T0`], reads
+/// `playing` 1 at every wake before T0 + 200 ms (the last at tick 11,
+/// T0 + 183 ms) and 0 from the wake at T0 + 200 ms (tick 12) on, by the
+/// sounds' clock the wake moves first; a sound that repeats reads 1 all
+/// the while.
+#[test]
+fn a_stored_sound_that_does_not_repeat_stops_playing_at_its_length() {
+    /// Ten 20 ms frames: 200 ms, ending exactly at tick 12's time.
+    const FRAMES: usize = 10;
+    let length_ms = u64::try_from(FRAMES).unwrap() * OPUS_FRAME_MS;
+    assert_eq!(presentation_tick_due_us(12), length_ms * MICROSECONDS_PER_MILLISECOND, "tick 12 is due as the sound ends");
+    let (mut engine, _) = opened(&hearing_table());
+    play_records(&mut engine, &stored_sound(FIRST_SOUND, FRAMES, 1, 0), T0);
+    wake(&mut engine, after(1));
+    let read = playing_at(&mut engine, 2..=30);
+    assert_eq!(split(&read), ((2..=11).collect(), (12..=30).collect()), "{read:?}");
+
+    let (mut engine, _) = opened(&hearing_table());
+    play_records(&mut engine, &stored_sound(FIRST_SOUND, FRAMES, 1, FLAG_LOOP), T0);
+    wake(&mut engine, after(1));
+    let read = playing_at(&mut engine, 2..=60);
+    assert_eq!(split(&read), ((2..=60).collect(), Vec::new()), "a repeating sound has no end: {read:?}");
+}
+
+/// RULE-27 (DEC-7143 item 5): a sound started "after the current one"
+/// behind a stored sound of 200 ms is timed from that one's end: a 100 ms
+/// sound reads `playing` 1 until T0 + 300 ms (the last wake at tick 17,
+/// T0 + 283 ms) and 0 from tick 18, T0 + 300 ms, on.
+#[test]
+fn a_sound_after_the_current_one_ends_at_the_sum_of_their_lengths() {
+    assert_eq!(presentation_tick_due_us(18), (10 + 5) * OPUS_FRAME_MS * MICROSECONDS_PER_MILLISECOND, "tick 18 is due as the second ends");
+    let (mut engine, _) = opened(&hearing_table());
+    let mut records = stored_sound(FIRST_SOUND, 10, 1, 0);
+    records.extend(stored_sound(SECOND_SOUND, 5, 2, FLAG_AFTER_CURRENT));
+    play_records(&mut engine, &records, T0);
+    let starts: Vec<(u8, bool)> = engine
+        .take_sounds()
+        .iter()
+        .filter_map(|sound| if let Audio::Start { sound, after_current, .. } = sound { Some((sound.handle, *after_current)) } else { None })
+        .collect();
+    assert_eq!(starts, [(FIRST_SOUND, false), (SECOND_SOUND, true)], "both given to the sound helper, the second to wait");
+    wake(&mut engine, after(1));
+    let read = playing_at(&mut engine, 2..=30);
+    assert_eq!(split(&read), ((2..=17).collect(), (18..=30).collect()), "{read:?}");
+}
+
+/// RULE-27 (DEC-7143 item 5): a stream has no length the decoder times;
+/// it reads `playing` 1 until the receiver ends it, here a live sound
+/// whose blocks stopped, which the receiver fades two seconds after its
+/// last block (the engine's REQ-AUD-014), and 0 from then on.
+#[test]
+fn a_streamed_sound_ends_only_when_the_receiver_ends_it() {
+    let live = Writer::live(FIRST_SOUND, 1, neoteletext_audio::Codec::Opus, 48_000, OPUS_PACKET).unwrap();
+    let play = SoundCommand {
+        channel: HEARD_CHANNEL,
+        sequence: 1,
+        operation: 1,
+        handle: FIRST_SOUND,
+        generation: 1,
+        gain: 50,
+        fade_ms: 0,
+        flags: 0,
+        duck: 0,
+        page: Some(PAGE),
+        music: None,
+    };
+    let mut records = vec![live.object_record().unwrap(), play.record()];
+    for (index, frame) in (0_u16..).zip(opus_frames(4).chunks(usize::from(OPUS_PACKET))) {
+        records.extend(live.packet_records(index, frame).unwrap());
+    }
+    let (mut engine, _) = opened(&hearing_table());
+    play_records(&mut engine, &records, T0);
+    let sounds = engine.take_sounds();
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::Stream { channel: HEARD_CHANNEL, .. })), "a stream: {sounds:?}");
+    // The stall, LIVE_STALL_MS after the last block at T0: the first tick
+    // due then.
+    let stall_tick = neoteletext_core::consts::presentation_tick_at_us(neoteletext_audio::LIVE_STALL_MS * MICROSECONDS_PER_MILLISECOND);
+    assert_eq!(presentation_tick_due_us(stall_tick), neoteletext_audio::LIVE_STALL_MS * MICROSECONDS_PER_MILLISECOND, "a tick is due as it stalls");
+    wake(&mut engine, after(1));
+    let read = playing_at(&mut engine, 2..=stall_tick + 10);
+    assert_eq!(split(&read), ((2..stall_tick).collect(), (stall_tick..=stall_tick + 10).collect()), "{read:?}");
 }

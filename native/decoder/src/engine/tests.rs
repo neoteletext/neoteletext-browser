@@ -615,13 +615,13 @@ fn a_new_version_of_a_page_is_reported_as_updated() {
 }
 
 /// A constant-rate 16 kbit/s Opus packet is 40 bytes (decision E.124).
-const OPUS_PACKET: u16 = 40;
+pub(super) const OPUS_PACKET: u16 = 40;
 /// Samples of one 20 ms Opus frame at 48 kHz.
-const OPUS_FRAME_SAMPLES: usize = 960;
+pub(super) const OPUS_FRAME_SAMPLES: usize = 960;
 
 /// `count` CELT-only full-band 20 ms Opus frames (RFC 6716 configuration
 /// 31) from a seed: no recording is kept in the repository.
-fn opus_frames(count: usize) -> Vec<u8> {
+pub(super) fn opus_frames(count: usize) -> Vec<u8> {
     const CELT_FULL_BAND_20_MS: u8 = 31 << 3;
     let mut state: u32 = 9;
     (0..count)
