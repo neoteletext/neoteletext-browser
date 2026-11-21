@@ -9,8 +9,8 @@ use neoteletext_input::caps::TOUCH_CAP;
 use neoteletext_input::rules::RuleBody;
 use protocol::interaction::TouchPhase;
 use protocol::rules::{
-    INTEREST_KEYS, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, INTEREST_WHEEL, KeyAction, PointerAction, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET,
-    SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
+    INTEREST_KEYS, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, INTEREST_TEXT, INTEREST_WHEEL, KeyAction, PointerAction, Report, Reported, RuleInput, RulesOpen,
+    SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
 };
 
 /// A session welcomed, its page open and on screen, and no table told.
@@ -334,12 +334,25 @@ fn the_wheel_is_the_pages_only_inside_a_wheel_rule() {
     assert_eq!(wheels(&typing.input_intent(&wheel(10, 5), MS)), 0);
 }
 
+/// The `asks` and `keys` the interface was last told among `sends`.
+fn told_input(sends: &[Send]) -> Option<(bool, bool)> {
+    sends.iter().rev().find_map(|send| if let Send::Interface(state) = send { Some((state.asks, state.keys)) } else { None })
+}
+
 /// REQ-6632 item 2 (DEC-6633 item 2): the interface is told whether the
 /// open page's table asks for input, as its table is taken and as it ends,
 /// so that over the picture of such a page the wheel is the page's and the
 /// pointer the ordinary arrow; a table that asks for nothing, or no table,
 /// leaves the wheel the browser's to step. On the code before, the
 /// interface was told nothing of it.
+///
+/// REQ-7037: it is told too whether the table asks for the keyboard,
+/// `keys`: true exactly while its interest holds the keys' class or the
+/// text's (RULE-52 item 1), from the same mask as `asks`; told again when a
+/// new table of the page asks otherwise, though `asks` is unchanged; false
+/// once the table ends, while a page left closes it, for a table of another
+/// sub-code, and when the connection goes. Before REQ-7037 the interface
+/// had no such word and gave every key to the page.
 #[test]
 fn the_interface_hears_whether_the_open_pages_table_asks_for_input() {
     let told = |sends: &[Send]| sends.iter().find_map(|send| if let Send::Interface(state) = send { Some(state.asks) } else { None });
@@ -352,6 +365,74 @@ fn the_interface_hears_whether_the_open_pages_table_asks_for_input() {
     let mut typing = untold();
     let (nothing, _) = typing.rules_told(PAGE.channel, &RulesOpen { watch: Vec::new(), ..asks(0) }, 0);
     assert_ne!(told(&nothing), Some(true), "a table asking for no input: {nothing:?}");
+    assert_eq!(typing.state().map(|state| state.keys), Some(false), "nor for the keyboard");
+    // REQ-7037: `keys`, from the same mask, says whether the table asks
+    // for the keyboard (see the doc comment above).
+    let generation = |generation: u16, interest: u8| RulesOpen { generation, ..asks(interest) };
+    for (interest, expected) in [
+        (INTEREST_KEYS, (true, true)),
+        (INTEREST_TEXT, (true, true)),
+        (INTEREST_KEYS | INTEREST_POINTER_BUTTONS, (true, true)),
+        (INTEREST_POINTER_BUTTONS, (true, false)),
+        (INTEREST_MOVES, (true, false)),
+        (INTEREST_WHEEL | INTEREST_MOVES, (true, false)),
+        (neoteletext_rules::table::INTEREST_FOCUS, (true, false)),
+    ] {
+        let mut typing = untold();
+        let (taken, open) = typing.rules_told(PAGE.channel, &asks(interest), 0);
+        assert!(open);
+        assert_eq!(told_input(&taken), Some(expected), "interest {interest:#08b}: {taken:?}");
+    }
+    // A new table of the same page: re-sent when only `keys` changes.
+    let mut typing = untold();
+    typing.rules_told(PAGE.channel, &asks(INTEREST_POINTER_BUTTONS), 0);
+    let (texts, _) = typing.rules_told(PAGE.channel, &generation(2, INTEREST_POINTER_BUTTONS | INTEREST_TEXT), MS);
+    assert_eq!(told_input(&texts), Some((true, true)), "a table that now asks for text: {texts:?}");
+    let (pointer, _) = typing.rules_told(PAGE.channel, &generation(3, INTEREST_POINTER_BUTTONS), 2 * MS);
+    assert_eq!(told_input(&pointer), Some((true, false)), "and back to the pointer alone: {pointer:?}");
+    let (ended, _) = typing.rules_told(PAGE.channel, &generation(0, 0), 3 * MS);
+    assert_eq!(told_input(&ended), Some((false, false)), "the table ended: {ended:?}");
+    // Another sub-code on screen closes the table of the one left
+    // (RULE-112): while it is closing it asks for nothing.
+    let mut typing = untold();
+    typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS), 0);
+    let other = typing.drawn(PAGE, 1);
+    assert_eq!(told_input(&other), Some((false, false)), "another sub-code on screen: {other:?}");
+    // A table for a sub-code that is not on screen is not taken.
+    let (not_open, open) = typing.rules_told(PAGE.channel, &RulesOpen { page: protocol::rules::PageSub::new(PAGE.page, 3), ..asks(INTEREST_KEYS) }, MS);
+    assert!(!open);
+    assert_ne!(told_input(&not_open), Some((true, true)), "{not_open:?}");
+    assert_eq!(typing.state().map(|state| state.keys), Some(false), "a table for sub-code 3");
+    // The page left: its table closes and keys go to it no more.
+    let mut typing = untold();
+    typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS), 0);
+    let left = typing.opened(Some(PAGE.channel), Some(PageKey { page: 0x201, ..PAGE }), MS);
+    assert_eq!(told_input(&left), Some((false, false)), "another page opened: {left:?}");
+    // The connection gone: `on` is false, and so is `keys`.
+    let mut typing = untold();
+    typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS), 0);
+    let gone = typing.input(PAGE.channel, false, false, MS);
+    assert!(
+        matches!(gone.iter().rev().find_map(|send| if let Send::Interface(state) = send { Some(state) } else { None }), Some(state) if !state.on && !state.keys),
+        "{gone:?}"
+    );
+}
+
+/// TODO-7038, the gap REQ-7037 leaves for the owner: a table's interest is
+/// by class, so a table whose only key rule names one key asks for the keys'
+/// class, the interface is told `keys`, and every key the viewer presses
+/// is given to the page's decoder, which drops those no rule names; none
+/// leaves for the channel unless a rule reports it. This holds today's
+/// behaviour so that a change to it is not unnoticed.
+#[test]
+fn a_table_naming_one_key_is_given_every_key() {
+    let mut typing = untold();
+    let (taken, _) = typing.rules_told(PAGE.channel, &asks(INTEREST_KEYS), 0);
+    assert_eq!(told_input(&taken), Some((true, true)));
+    for (index, character) in ['a', 'r', '1'].into_iter().enumerate() {
+        let sends = typing.input_intent(&key(character), (u64::try_from(index).unwrap() + 1) * 20 * MS);
+        assert!(matches!(sends.as_slice(), [Send::Decoder { input: RuleInput::Key { .. }, .. }]), "{character} is the table's: {sends:?}");
+    }
 }
 
 /// RULE-46, RULE-52 item 1 (REQ-6534): the trusted core gives the control

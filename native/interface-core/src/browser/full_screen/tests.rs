@@ -354,6 +354,45 @@ fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
     }
 }
 
+/// REQ-7037, REQ-6362: in full screen the notice says to hold Escape only
+/// while the keyboard is the page's; while its table asks for no keys and
+/// no text, plain Escape is the browser's and the notice says so, and the
+/// key leaves full screen. On the code before, the notice said to hold
+/// Escape whenever keys went to the channel.
+#[cfg(feature = "interaction")]
+#[test]
+fn the_notice_says_hold_escape_only_while_the_keyboard_is_the_pages() {
+    use crate::browser::typing::TypingView;
+    for keys in [false, true] {
+        let mut browser = in_full_screen();
+        let key = browser.wall().zoomed().expect("a page open");
+        let typing = TypingView {
+            channel: key.channel,
+            page: key.page,
+            on: true,
+            secure: false,
+            refused: false,
+            cursor: None,
+            round_trip_us: None,
+            wheel: false,
+            asks: true,
+            keys,
+        };
+        browser.set_typing(typing, 0);
+        assert_eq!(browser.typing_target(), Some(key), "keys {keys}: keys go to the channel");
+        let texts = draw(&mut browser, 1_000).texts;
+        let said = |wanted: [&str; 2]| texts.iter().any(|(_, text)| wanted.contains(&text.as_str()));
+        if keys {
+            assert!(said([TYPING_NOTICE, SHORT_TYPING_NOTICE]), "hold Escape: {texts:?}");
+        } else {
+            assert!(said([NOTICE, SHORT_NOTICE]) && !said([TYPING_NOTICE, SHORT_TYPING_NOTICE]), "plain Escape: {texts:?}");
+            assert_eq!(browser.keyboard_target(), None, "so the interface gives Escape to the browser");
+            assert!(browser.key(Key::Escape, Modifiers::default(), 2_000));
+            assert!(!browser.full_screen(), "which leaves full screen");
+        }
+    }
+}
+
 /// REQ-6362 item 1: Escape held a second and a half leaves full screen,
 /// as it must while keys go to a channel, whose key Escape otherwise is; a
 /// shorter press does not, and the notice shows again while it is held.

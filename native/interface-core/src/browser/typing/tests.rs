@@ -10,6 +10,8 @@ use crate::geometry::Rect;
 use crate::input::Intent;
 use crate::test_canvas::Recorder;
 
+mod keyboard;
+
 const KEY: PageKey = PageKey { channel: 4, page: 0x100 };
 
 fn browser() -> Browser {

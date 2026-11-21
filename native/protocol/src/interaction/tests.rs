@@ -134,6 +134,41 @@ fn typing_round_trips_and_a_bad_cursor_is_refused() {
     assert!(push_typing(&mut Vec::new(), &echo).is_err());
 }
 
+/// REQ-7037: whether the open page's table asks for the keyboard is flag
+/// bit 128 of the typing flags byte, alone, and round-trips by itself; with
+/// every bit of the byte now a fact, a byte of every flag reads, each true.
+/// On the code before, bit 128 was refused as no flag.
+#[test]
+fn the_keyboard_flag_is_bit_128_and_every_flags_byte_reads() {
+    /// Where the flags byte is: after the channel's four bytes and the page's two.
+    const FLAGS_AT: usize = 6;
+    const KEYS_BIT: u8 = 128;
+    let bare =
+        Typing { channel: 3, page: 0x200, on: false, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false, asks: false, keys: false };
+    for keys in [false, true] {
+        let typing = Typing { keys, ..bare.clone() };
+        let mut payload = Vec::new();
+        push_typing(&mut payload, &typing).unwrap();
+        assert_eq!(payload[FLAGS_AT], if keys { KEYS_BIT } else { 0 }, "keys {keys}: the bit alone");
+        assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), typing, "keys {keys}");
+    }
+    let every = Typing {
+        on: true,
+        secure: true,
+        refused: true,
+        cursor: Some(CursorState { row: 5, column: 6, flags: cursor::BLOCK }),
+        round_trip_us: Some(7),
+        wheel: true,
+        asks: true,
+        keys: true,
+        ..bare
+    };
+    let mut payload = Vec::new();
+    push_typing(&mut payload, &every).unwrap();
+    assert_eq!(payload[FLAGS_AT], u8::MAX, "every flag");
+    assert_eq!(read_typing(&mut Fields::new(&payload)).unwrap(), every);
+}
+
 /// REQ-INT-133 (REQ-1381): the fetcher takes whole items of the stream, at
 /// most the input protocol's `MAX_MESSAGE`, 8,192 bytes (DEC-1715).
 #[test]

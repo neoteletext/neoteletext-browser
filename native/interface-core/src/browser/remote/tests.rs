@@ -201,6 +201,58 @@ fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
     assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Reveal)]);
 }
 
+/// REQ-7037: while the open page's rule table asks for no keys and no
+/// text, the remote's keys are the browser's viewer's, as on a channel that
+/// takes no input: a digit is typed into the page number and a coloured
+/// key asks for its link, and nothing goes to the channel, though keys
+/// still go to it for the mouse. On the code before, the remote's keys went
+/// to the channel, which dropped them.
+#[cfg(feature = "interaction")]
+#[test]
+fn the_remotes_keys_are_the_viewers_while_the_page_asks_for_no_keyboard() {
+    use crate::browser::typing::TypingView;
+    use crate::canvas::PageKey;
+    use crate::channel::{Channel, PageInfo, Status};
+    const KEY: PageKey = PageKey { channel: 4, page: 0x100 };
+    let mut browser = Browser::new(Frame { left_inset: 0.0, window_buttons: false });
+    let mut channel = Channel::empty();
+    channel.channel = KEY.channel;
+    channel.pages[0] = Some(PageInfo { title: "Terminal".into(), status: Status::Loaded, subpages: 0 });
+    browser.set_channel(channel);
+    browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 0);
+    browser.wall.zoom(KEY, 0);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    let typing = TypingView {
+        channel: KEY.channel,
+        page: KEY.page,
+        on: true,
+        secure: false,
+        refused: false,
+        cursor: None,
+        round_trip_us: None,
+        wheel: false,
+        asks: true,
+        keys: false,
+    };
+    browser.set_typing(typing, 10_000);
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, 10_000);
+    browser.take_outputs();
+    assert_eq!(browser.typing_target(), Some(KEY), "keys go to the channel");
+    let terminal = |outputs: &[Output]| outputs.iter().filter(|output| matches!(output, Output::Terminal { .. })).count();
+    assert!(browser.remote_press(middle(rect_of(&browser, Button::Digit('7'))), 10_000));
+    assert_eq!(terminal(&browser.take_outputs()), 0, "no digit goes to the channel");
+    assert_eq!(browser.digits, "7", "the digit is the page number's");
+    for colour in [FastextKey::Red, FastextKey::Green, FastextKey::Yellow, FastextKey::Cyan] {
+        assert!(browser.remote_press(middle(rect_of(&browser, Button::Control(PageControl::Fastext(colour)))), 10_000));
+        assert_eq!(browser.take_outputs(), [Output::PageControl(PageControl::Fastext(colour))], "{colour:?} asks for its link");
+    }
+    browser.set_typing(TypingView { keys: true, ..typing }, 10_000);
+    browser.take_outputs();
+    assert!(browser.remote_press(middle(rect_of(&browser, Button::Control(PageControl::Fastext(FastextKey::Red)))), 10_000));
+    assert_eq!(terminal(&browser.take_outputs()), 2, "with the keyboard the page's, pressed and released for the channel");
+}
+
 /// REQ-894 (decision 112 item 4): the remote's sub-page control, the
 /// control the page area's had before decision 126, shows how many
 /// sub-pages there are and which is shown, to the standard's 8,190; steps
