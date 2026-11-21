@@ -27,9 +27,12 @@ const HINTING: HintingOptions = HintingOptions {
     target: Target::Smooth { mode: SmoothMode::Lcd, symmetric_rendering: false, preserve_linear_metrics: true },
 };
 /// More glyphs than the interface's text shows at once in every size it
-/// uses; past this the store is emptied and refills with what is drawn.
+/// uses: when a glyph not yet held would pass this, every face's glyphs
+/// are dropped (their hinting kept) and refill with what is drawn, so the
+/// store never holds more, however long one face goes on being used.
 pub(crate) const GLYPH_CACHE_LIMIT: usize = 8192;
-/// More faces (a font at a size and weight) than the interface draws in.
+/// More faces (a font at a size and weight) than the interface draws in;
+/// past this the store is emptied and refills with what is drawn.
 pub(crate) const FACE_CACHE_LIMIT: usize = 64;
 
 /// A font at one size and one setting of its variation axes, by the
@@ -39,6 +42,7 @@ type FaceKey = (u64, u32, u32, Vec<i16>);
 
 /// A font at one size, with its hinting and the glyphs drawn in it.
 struct Face {
+    key: FaceKey,
     hinting: Option<HintingInstance>,
     /// Each glyph's edges, in device pixels from its origin, y down.
     glyphs: HashMap<u32, Vec<Line>>,
@@ -47,7 +51,9 @@ struct Face {
 /// The faces and glyphs drawn so far.
 #[derive(Default)]
 pub(crate) struct Glyphs {
-    faces: HashMap<FaceKey, Face>,
+    /// At most [`FACE_CACHE_LIMIT`], so found by looking through them.
+    faces: Vec<Face>,
+    /// Glyphs held in every face, at most [`GLYPH_CACHE_LIMIT`].
     kept: usize,
 }
 
@@ -80,7 +86,8 @@ impl OutlinePen for Pen<'_> {
 
 /// One run's font at its size, ready to give glyphs.
 pub(crate) struct RunFace<'a> {
-    face: &'a mut Face,
+    faces: &'a mut [Face],
+    index: usize,
     font: FontRef<'a>,
     size: f32,
     coordinates: &'a [NormalizedCoord],
@@ -93,29 +100,46 @@ impl Glyphs {
     pub(crate) fn face<'a>(&'a mut self, font: &'a FontData, size: f32, coordinates: &'a [NormalizedCoord]) -> Option<RunFace<'a>> {
         let reference = FontRef::from_index(font.data.data(), font.index).ok()?;
         let key: FaceKey = (font.data.id(), font.index, size.to_bits(), coordinates.iter().map(|coordinate| coordinate.to_bits()).collect());
-        if !self.faces.contains_key(&key) && (self.faces.len() >= FACE_CACHE_LIMIT || self.kept >= GLYPH_CACHE_LIMIT) {
-            self.faces.clear();
-            self.kept = 0;
-        }
-        let face = self.faces.entry(key).or_insert_with(|| {
+        let index = if let Some(index) = self.faces.iter().position(|face| face.key == key) {
+            index
+        } else {
+            if self.faces.len() >= FACE_CACHE_LIMIT {
+                self.faces.clear();
+                self.kept = 0;
+            }
             let hinting = HintingInstance::new(&reference.outline_glyphs(), Size::new(size), LocationRef::new(coordinates), HINTING).ok();
-            Face { hinting, glyphs: HashMap::new() }
-        });
-        Some(RunFace { face, font: reference, size, coordinates, kept: &mut self.kept })
+            self.faces.push(Face { key, hinting, glyphs: HashMap::new() });
+            self.faces.len().saturating_sub(1)
+        };
+        Some(RunFace { faces: &mut self.faces, index, font: reference, size, coordinates, kept: &mut self.kept })
+    }
+
+    /// The glyphs and faces held.
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> (usize, usize) {
+        (self.faces.iter().map(|face| face.glyphs.len()).sum(), self.faces.len())
     }
 }
 
 impl RunFace<'_> {
     /// Whether the face is hinted, so that glyphs sit on whole pixels down.
     pub(crate) fn hinted(&self) -> bool {
-        self.face.hinting.is_some()
+        self.faces.get(self.index).is_some_and(|face| face.hinting.is_some())
     }
 
     /// The edges of glyph `id`, from its origin; none for a glyph with no
     /// outline.
     pub(crate) fn glyph(&mut self, id: u32) -> &[Line] {
-        let Self { face, font, size, coordinates, kept } = self;
-        let Face { hinting, glyphs } = face;
+        let Self { faces, index, font, size, coordinates, kept } = self;
+        let held = faces.get(*index).is_some_and(|face| face.glyphs.contains_key(&id));
+        if !held && **kept >= GLYPH_CACHE_LIMIT {
+            // Dropped rather than cleared, so their tables' room goes too.
+            for face in faces.iter_mut() {
+                face.glyphs = HashMap::new();
+            }
+            **kept = 0;
+        }
+        let Some(Face { hinting, glyphs, .. }) = faces.get_mut(*index) else { return &[] };
         glyphs.entry(id).or_insert_with(|| {
             let mut lines = Vec::new();
             if let Some(outline) = font.outline_glyphs().get(GlyphId::new(id)) {
@@ -134,3 +158,6 @@ impl RunFace<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
