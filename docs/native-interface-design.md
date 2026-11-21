@@ -355,7 +355,7 @@ These are easy to lose in a move away from a browser engine, and each is require
 | Part | Crate | State |
 |---|---|---|
 | Interface core: tab state, layout, slider, transitions, hit-testing of page cells, visible pages | `interface-core` | `no_std`, draws only through its `Canvas` trait |
-| Drawing on the processor | `draw-vello` | `vello_cpu` and Parley; 1280 by 820 drawn in 10.0 milliseconds (first frame, fonts loading) |
+| Drawing on the processor | `draw-raster` (named `draw-vello` until DEC-7196) | Its own anti-aliased rasteriser (DEC-7168, which replaced `vello_cpu` on 22 November 2026) and Parley; 1280 by 820 drawn in 10.0 milliseconds (first frame, fonts loading, measured with `vello_cpu`) |
 | Drawing on a microcontroller | `draw-embedded` | `embedded-graphics`, `no_std`; the same tab drawn into an 800 by 480 display in memory |
 | Messages between trusted core and interface | `protocol` | Framed and bounded; each side refuses the other side's kinds; text checked for hidden characters on both sides |
 | Interface process | `neoteletext-interface` | 4.7 megabytes with its two fonts; reads indexed images with the `png` crate; on macOS runs under a sandbox profile with no network and no file writes |

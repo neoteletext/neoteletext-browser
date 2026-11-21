@@ -1,6 +1,7 @@
 //! The interface core's drawing interface on the processor (design section
-//! 4.1): `vello_cpu` draws every pixel with no graphics processor, and
-//! Parley lays out and shapes text. The interface's own text is in a font
+//! 4.1): its own rasteriser draws every pixel with no graphics processor,
+//! anti-aliased by the exact area each pixel's inside covers, and Parley
+//! lays out and shapes text, whose glyphs' outlines skrifa reads. The interface's own text is in a font
 //! shipped inside the program, Roboto or Open Sans (both from Google Fonts,
 //! under the SIL Open Font License 1.1, `fonts/`); system fonts fill in
 //! scripts those fonts lack.
@@ -26,6 +27,7 @@
 )]
 
 mod damage;
+mod glyphs;
 mod pages;
 mod raster;
 mod record;
@@ -40,22 +42,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH, PageKey};
-use interface_core::geometry::Rect;
-use interface_core::theme::Colour;
 use parley::fontique::Blob;
 use parley::{FontContext, Layout, LayoutContext};
-use vello_cpu::color::{AlphaColor, Srgb};
-use vello_cpu::kurbo::{self, Point};
-use vello_cpu::{Pixmap, RenderContext, Resources};
 
+use crate::glyphs::Glyphs;
 use crate::pages::{PageImage, RegisImage, Still};
+use crate::raster::Scratch;
+use crate::raster::surface::Surface;
 use crate::record::Frame;
 use crate::text::StyleKey;
 
-/// How closely curves are flattened into lines, in pixels.
-const TOLERANCE: f64 = 0.1;
 const OPAQUE: u8 = u8::MAX;
-const RGBA_BYTES: usize = 4;
 const PAGE_DOTS: usize = PAGE_WIDTH as usize * PAGE_HEIGHT as usize;
 const ROBOTO: &[u8] = include_bytes!("../fonts/Roboto.ttf");
 const OPEN_SANS: &[u8] = include_bytes!("../fonts/OpenSans.ttf");
@@ -78,26 +75,16 @@ impl Family {
     }
 }
 
-fn colour(colour: Colour) -> AlphaColor<Srgb> {
-    AlphaColor::from_rgb8(colour.red, colour.green, colour.blue)
-}
-
-fn rect(rect: Rect) -> kurbo::Rect {
-    kurbo::Rect::new(rect.x0, rect.y0, rect.x1, rect.y1)
-}
-
-fn point(point: interface_core::geometry::Point) -> Point {
-    Point::new(point.x, point.y)
-}
-
-/// The drawing back end on the processor: draws into a pixel buffer with
-/// `vello_cpu` and lays text out with `parley`.
+/// The drawing back end on the processor: draws into the window's pixels
+/// with its own rasteriser and lays text out with `parley`.
 pub struct Painter {
-    /// Draws the damaged box, sized to it.
-    context: RenderContext,
-    resources: Resources,
-    /// The damaged box's pixels, drawn.
-    target: Pixmap,
+    /// The whole window, one 0RGB word a pixel, as the last frame left it,
+    /// and the clips open while a box is drawn.
+    surface: Surface,
+    /// The rasteriser's working store.
+    scratch: Scratch,
+    /// Glyph outlines, hinted at the sizes drawn.
+    glyphs: Glyphs,
     fonts: FontContext,
     layouts: LayoutContext<()>,
     pages: HashMap<PageKey, PageImage>,
@@ -127,15 +114,11 @@ pub struct Painter {
     /// The frame being drawn, and the last one drawn.
     frame: Frame,
     last: Frame,
-    /// The whole window, one 0RGB word a pixel, as the last frame left it.
-    words: Vec<u32>,
     /// The surface's size in device pixels.
     width: u16,
     height: u16,
     /// The next frame is drawn whole: the first, or after a resize.
     whole: bool,
-    /// Where the damaged box's top-left corner lies, while it is drawn.
-    origin: (f64, f64),
     /// Text laid out once and reused: the interface draws the same
     /// strings every frame, and measures each before drawing it. By style,
     /// then by text, so a lookup borrows the text rather than copying it.
@@ -167,9 +150,9 @@ impl Painter {
             fonts.collection.register_fonts(Blob::new(Arc::new(data)), None);
         }
         Self {
-            context: RenderContext::new(1, 1),
-            resources: Resources::new(),
-            target: Pixmap::new(1, 1),
+            surface: Surface::new(0, 0),
+            scratch: Scratch::default(),
+            glyphs: Glyphs::default(),
             fonts,
             layouts: LayoutContext::new(),
             pages: HashMap::new(),
@@ -182,11 +165,9 @@ impl Painter {
             regis_changed: HashMap::new(),
             frame: Frame::new(DeviceBox::default()),
             last: Frame::default(),
-            words: Vec::new(),
             width: 0,
             height: 0,
             whole: true,
-            origin: (0.0, 0.0),
             layouts_made: HashMap::new(),
             layouts_kept: 0,
             family,
@@ -202,7 +183,7 @@ impl Painter {
         if !same {
             self.width = width;
             self.height = height;
-            self.words = vec![0; usize::from(width).saturating_mul(usize::from(height))];
+            self.surface = Surface::new(width, height);
             self.whole = true;
         }
         self.scale = scale;
@@ -223,6 +204,7 @@ impl Painter {
     /// the window, and says where: empty when nothing did.
     pub fn render(&mut self) -> Damage {
         let frame = std::mem::take(&mut self.frame);
+        self.glyphs.next_frame();
         let damage = if self.whole {
             let mut whole = Damage::default();
             whole.add(self.surface());
@@ -236,11 +218,6 @@ impl Painter {
         for &area in damage.boxes() {
             self.draw_box(&frame, area);
         }
-        // The context holds the paints it drew with, the ReGIS pictures'
-        // pixel buffers among them, until it is reset: reset now, so that
-        // the next part laid over a picture changes its buffer in place and
-        // does not copy all 800 by 480 pixels of it first (RULE-65).
-        self.context.reset();
         self.last = frame;
         damage
     }
@@ -249,8 +226,9 @@ impl Painter {
     /// pixel: only `damage` when the surface holds the last frame (an
     /// `age` of one), or all of it.
     pub fn copy_to(&self, words: &mut [u32], damage: &Damage, age: u8) {
-        if age != 1 || words.len() != self.words.len() {
-            words.iter_mut().zip(&self.words).for_each(|(word, &drawn)| *word = drawn);
+        let drawn = &self.surface.words;
+        if age != 1 || words.len() != drawn.len() {
+            words.iter_mut().zip(drawn).for_each(|(word, &drawn)| *word = drawn);
             return;
         }
         let width = usize::from(self.width);
@@ -258,7 +236,7 @@ impl Painter {
             for row in area.y0..area.y1 {
                 let Some(start) = usize::from(row).checked_mul(width).and_then(|start| start.checked_add(usize::from(area.x0))) else { continue };
                 let range = start..start.saturating_add(usize::from(area.width()));
-                if let (Some(to), Some(from)) = (words.get_mut(range.clone()), self.words.get(range)) {
+                if let (Some(to), Some(from)) = (words.get_mut(range.clone()), drawn.get(range)) {
                     to.copy_from_slice(from);
                 }
             }

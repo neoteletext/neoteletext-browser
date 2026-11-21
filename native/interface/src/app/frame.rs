@@ -4,7 +4,8 @@
 //!
 //! Presentation keeps at most one frame queued on every platform
 //! (requirement 18.14, REQ-RCH-004): drawing is on the processor
-//! (`vello_cpu`), with no swap chain, and softbuffer 0.4.8 presents
+//! (the drawing back end's own
+//! rasteriser), with no swap chain, and softbuffer 0.4.8 presents
 //! synchronously. On macOS it sets the layer's contents to the frame in a
 //! Core Animation transaction, which the next refresh shows, a newer frame
 //! replacing one not yet shown; on Wayland it attaches one of two shared

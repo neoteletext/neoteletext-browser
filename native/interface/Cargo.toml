@@ -28,7 +28,7 @@ neoteletext-input = { workspace = true, optional = true }
 # paste (decision 84).
 arboard.workspace = true
 interface-core.workspace = true
-draw-vello.workspace = true
+draw-raster.workspace = true
 protocol.workspace = true
 winit.workspace = true
 softbuffer.workspace = true
