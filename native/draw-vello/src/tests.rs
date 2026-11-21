@@ -4,6 +4,8 @@
 
 use super::*;
 use crate::text::small_capitals;
+use interface_core::geometry::Rect;
+use interface_core::theme::Colour;
 
 use decoder::Engine;
 use interface_core::browser::{Browser, Frame as WindowFrame, TabInfo};
@@ -750,13 +752,13 @@ fn a_still_is_the_page_as_drawn_and_stays_as_it_was() {
 /// colour taken from a table of the sixteen.
 const PARTS_TAKEN_MEDIAN: std::time::Duration = std::time::Duration::from_micros(60);
 /// The most drawing the frame of the two parts and the cost line may cost
-/// in the median, in an optimised build: measured at 355 to 755
-/// microseconds on chunko at a load average of 6 to 11, against RULE-98's
-/// lead of 4 milliseconds for the decoder's compose and the interface's
-/// drawing together. In this window the picture is shown at 0.92 of its
-/// size, so `vello_cpu` samples it smoothly; sampled with gdb, that
-/// sampling is about a third of the frame and the cost line's text, laid
-/// out and its glyphs filled again for each new figure, about a sixth.
+/// in the median, in an optimised build, against RULE-98's lead of 4
+/// milliseconds for the decoder's compose and the interface's drawing
+/// together: measured on chunko at 355 to 755 microseconds with the
+/// drawing library used before (load average 6 to 11), and at 256 to 470
+/// with the painter's own rasteriser (DEC-7168; load average 45 to 63, 22
+/// November 2026). In this window the picture is shown at 0.92 of its
+/// size, so it is sampled smoothly.
 const PARTS_DRAWN_MEDIAN: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// The music player's key-and-meter frame as the interface draws it

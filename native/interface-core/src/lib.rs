@@ -2,7 +2,8 @@
 //! the browser window's state, layout, animation, hit-testing and input
 //! handling,
 //! written once for every target. It draws only through [`canvas::Canvas`],
-//! so the same code runs over `vello_cpu` on a desktop or a phone and over
+//! so the same code runs over the processor back end's own rasteriser on a
+//! desktop or a phone and over
 //! `embedded-graphics` on a microcontroller.
 //!
 //! It needs no standard library, only an allocator, and reads no clock: the

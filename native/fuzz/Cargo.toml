@@ -15,6 +15,7 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 protocol = { path = "../protocol" }
 interface-core = { path = "../interface-core" }
+draw-vello = { path = "../draw-vello" }
 decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
@@ -74,6 +75,13 @@ bench = false
 [[bin]]
 name = "engine"
 path = "fuzz_targets/engine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "painter_calls"
+path = "fuzz_targets/painter_calls.rs"
 test = false
 doc = false
 bench = false

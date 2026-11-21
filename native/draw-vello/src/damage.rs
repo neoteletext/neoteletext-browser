@@ -3,11 +3,12 @@
 //! kept and compared with the last frame's; only the box that holds every
 //! call that differs is drawn again.
 
+use crate::Painter;
+use crate::raster::paint::Pixels;
+use crate::raster::surface::Rgba;
 use crate::record::{Command, Frame, Recorded};
-use crate::{Painter, RGBA_BYTES};
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::geometry::Rect;
-use vello_cpu::Pixmap;
 
 #[cfg(test)]
 mod tests;
@@ -256,19 +257,18 @@ impl Painter {
 const SAMPLING_REACH: f64 = 1.0;
 
 /// The box of dots whose colour differs between a held page image and a
-/// new one's red, green, blue and alpha bytes.
-pub(crate) fn changed_dots(held: &Pixmap, rgba: &[u8]) -> DeviceBox {
-    changed_pixels(held, rgba, PAGE_WIDTH)
+/// new one's pixels.
+pub(crate) fn changed_dots(held: &Pixels, rgba: &[Rgba]) -> DeviceBox {
+    changed_pixels(held, rgba)
 }
 
-/// The box of pixels whose colour differs between a held image `width`
-/// pixels across and a new one's red, green, blue and alpha bytes.
-pub(crate) fn changed_pixels(held: &Pixmap, rgba: &[u8], width: u16) -> DeviceBox {
+/// The box of pixels whose colour differs between a held image and a new
+/// one's pixels, of the same size.
+pub(crate) fn changed_pixels(held: &Pixels, rgba: &[Rgba]) -> DeviceBox {
     let mut found = DeviceBox::default();
-    let width = usize::from(width);
-    let (dots, _) = rgba.as_chunks::<RGBA_BYTES>();
-    for (index, (pixel, &[red, green, blue, _])) in held.data().iter().zip(dots).enumerate() {
-        if [pixel.r, pixel.g, pixel.b] != [red, green, blue] {
+    let width = usize::from(held.width());
+    for (index, (&[red, green, blue, _], &[new_red, new_green, new_blue, _])) in held.data().iter().zip(rgba).enumerate() {
+        if [red, green, blue] != [new_red, new_green, new_blue] {
             let (Some(column), Some(row)) = (index.checked_rem(width), index.checked_div(width)) else { continue };
             let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else { continue };
             found = found.union(DeviceBox { x0: x, y0: y, x1: x.saturating_add(1), y1: y.saturating_add(1) });

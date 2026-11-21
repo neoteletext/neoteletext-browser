@@ -61,7 +61,7 @@ NeoTeletext is an application for browsing teletext, on desktops, then phones, a
 | **Updater** | Nothing secret; the release it is staging | The update host's one port and its staging folder (`installation-and-updates.md` section 8.1) | Files in its staging folder, which the launcher accepts only when both keys signed them |
 | **Launcher** | The installed versions and the state file | Everything the user may; not confined | The user's rights; it parses only its own state, signed manifests, the version mark and the broker's health line (`installation-and-updates-security.md` section 4a) |
 | **Interface core** | The library, without the standard library, that holds the window's state, layout, animation, hit-testing and input handling, and draws only through its drawing interface. |
-| **Drawing back end** | An implementation of the drawing interface: `vello_cpu` and Parley on the processor for desktops and phones, `embedded-graphics` for microcontrollers. |
+| **Drawing back end** | An implementation of the drawing interface: our own anti-aliased rasteriser and Parley on the processor for desktops and phones (DEC-7168), `embedded-graphics` for microcontrollers. |
 | **Trusted strip** | The toolbar along the top of the window: Back, Forward, the encryption state, the address with its host emphasised, the bookmark star and the menu. It shows only what the trusted core sends, and its input reaches the trusted core as strip input, message kinds that page intents never use. It is drawn by the interface process (section 6.1). |
 | **Fetcher** | The process that holds one web channel's network connections, for every tab of one jar that shows it, and reads its network formats through the engine's web module (REQ-6980). |
 | **Decoder** | The process that recognises, decodes and renders one channel's teletext. It has no network and no secrets. |
@@ -147,7 +147,7 @@ Decision 18's shape, with the interface process in place of the web-engine windo
 │ channel                   │  │ content detection, readers,      │  │ the window, tabs, trusted strip,     │
 │ the engine's user agent;  │  │ decoding, Presentation Levels    │  │ banks, page list, page area,         │
 │ network connections and   │  │ 1.0 to 3.5, rendering            │  │ overview; interface core drawn by    │
-│ protocol readers          │  │ no network, no file writes,      │  │ vello_cpu and Parley                 │
+│ protocol readers          │  │ no network, no file writes,      │  │ our own rasteriser and Parley        │
 │ network, no file writes   │  │ no secrets                       │  │ no network, no file writes, no       │
 │                           │  │                                  │  │ secrets                              │
 └───────────────────────────┘  └──────────────────────────────────┘  └──────────────────────────────────────┘
@@ -529,7 +529,7 @@ The window is decision 35's, drawn by the interface process from the interface c
  drawing interface (ours, small: rectangles, rounded rectangles,
                     shadows, images in rectangles, text runs, dimming)
         │
-        ├── vello_cpu + Parley ── softbuffer ── winit     desktops and phones (the minimum)
+        ├── rasteriser + Parley ── softbuffer ── winit    desktops and phones (the minimum)
         ├── Vello on the graphics processor ── winit       optional, where it helps (not built)
         └── embedded-graphics + bitmap fonts               microcontrollers, features cut
 ```
@@ -586,7 +586,7 @@ With no web engine the application is far smaller: the interface process is abou
 
 | Platform | Window and input | Drawing | State |
 |---|---|---|---|
-| macOS | winit | `vello_cpu`, shown with softbuffer | **Built and run** on macOS 15.6, Apple silicon; **sound built and run** through `cpal` and Core Audio (decision 37) |
+| macOS | winit | our own rasteriser, shown with softbuffer | **Built and run** on macOS 15.6, Apple silicon; **sound built and run** through `cpal` and Core Audio (decision 37) |
 | Windows | winit | as above | **Built, tested and run** on Windows 11 (build 26200) in a virtual machine, 19 October 2026: the whole workspace's tests pass, a page's sound plays through WASAPI (decision 40), and no console window opens. Every process but the broker and the launcher confined since 22 October 2026 (decisions 52, 56 and 58); the Dock menu has no Windows counterpart (a taskbar jump list) |
 | Linux | winit (X11 and Wayland) | as above | **Built, tested and run** on Ubuntu 26.04, 19 October 2026, under X11: the whole workspace's tests pass, and a live sound plays through ALSA (decision 40). Every process but the broker and the launcher confined since 22 October 2026 (decisions 52, 56 and 58), on kernel 6.10 or later with unprivileged user namespaces (`sandboxing.md` section 8.2) |
 | iOS, Android | winit | as above; the graphics-processor back end may matter most here | Later (decision 24); frame time at phone resolutions to be measured |
@@ -622,8 +622,10 @@ neoteletext-browser/
                             bookmarks bar beside them
       src/wall/             the page area: the grid, the page under the pointer, the zoom, update marks,
                             the page-size control, and its drawing
-    draw-vello/             the drawing back end for desktops and phones: vello_cpu and Parley, with the
-                            fonts; a frame's recorded calls, its damage, rasterising, text and page images
+    draw-vello/             the drawing back end for desktops and phones: our own anti-aliased rasteriser
+                            (exact-area coverage, clips as layers, image sampling) and Parley, with skrifa
+                            for glyph outlines, and the fonts; a frame's recorded calls, its damage, text
+                            and page images
     draw-embedded/          the drawing back end for microcontrollers: embedded-graphics
     protocol/               every message between processes: framing, fields, bounds, kinds, text cleaning,
                             page images (frame.rs), and a module for each pipe and feature: sound, audio,
@@ -811,7 +813,6 @@ Unsafe code is allowed only in the modules requirement 10.12 names, each saying 
 | `tough` | A Rust implementation of The Update Framework. |
 | Transmission Control Protocol | The connection protocol the HyperText Transfer Protocol runs over. |
 | Transport Layer Security | The protocol that encrypts and authenticates network connections. |
-| `vello_cpu` | A Rust two-dimensional renderer that draws on the processor; the desktop drawing back end. |
 | wasmi | A WebAssembly interpreter written in Rust, without just-in-time compilation. |
 | WebAssembly | A portable binary code format, which an interpreter can run so that a fault stays inside its memory. |
 | WebSocket | A protocol for a long-lived two-way connection over the web. |

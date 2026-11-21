@@ -114,11 +114,12 @@ naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-na
 cpal = "=0.18.2"
 # MIT or Apache-2.0: sine, cosine and rounding without the standard library.
 libm = "=0.2.16"
-# Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's
-# worker threads kept a whole core busy while the window was idle
-# (prototypes/spikes/vello-wall, at the tag prototypes-final).
-vello_cpu = { version = "=0.3.0", default-features = false, features = ["std", "text", "u8_pipeline"] }
 parley = "=0.12.0"
+# MIT or Apache-2.0, pure Rust: the glyph outlines and their hinting the
+# drawing back end fills, from the fonts Parley chose (DEC-7168, under the
+# standing approval of pure-Rust libraries, DEC-6579). The version Parley
+# itself reads fonts with, so it adds no crate.
+skrifa = { version = "=0.44.0", default-features = false, features = ["std", "autohint_shaping"] }
 # Parley's font finder, named only to load fontconfig at run time on Linux,
 # so the interface starts on a machine without it and draws with its own
 # fonts (installation-and-updates.md section 4.3). The same version as

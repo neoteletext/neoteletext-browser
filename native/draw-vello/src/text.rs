@@ -5,10 +5,12 @@ use interface_core::canvas::Style;
 use interface_core::geometry::Rect;
 use interface_core::theme::Colour;
 use parley::{FontFamilyName, FontWeight, GenericFamily, Layout, PositionedLayoutItem, StyleProperty};
-use vello_cpu::Glyph;
-use vello_cpu::kurbo::{Shape, Vec2};
+use skrifa::instance::NormalizedCoord;
 
-use crate::{Painter, TOLERANCE, colour, rect};
+use crate::Painter;
+use crate::raster::coverage::{self, Line};
+use crate::raster::paint::opaque;
+use crate::raster::surface::Source;
 
 /// Letters written in lower case are drawn as capitals this much smaller
 /// than the true capitals.
@@ -84,32 +86,50 @@ impl Painter {
         layout
     }
 
+    /// Draws `text` from `area`'s top-left corner, cut at its edges: each
+    /// glyph's outline filled, its origin where Parley placed it and, when
+    /// hinted, its baseline on a whole device pixel.
     pub(crate) fn draw_text(&mut self, area: Rect, text: &str, style: Style, paint: Colour) {
         if self.layout(text, style).is_none() {
             return;
         }
-        // The layout is borrowed from the cache while the context draws it:
+        let (scale, clip) = (self.scale, self.device(area));
+        // The layout is borrowed from the cache while the glyphs are drawn:
         // the fields are borrowed apart.
-        let base = self.base();
-        let Self { context, resources, layouts_made, .. } = self;
+        let Self { surface, scratch, layouts_made, glyphs, .. } = self;
         let Some(layout) = layouts_made.get(&style_key(style)).and_then(|texts| texts.get(text)) else { return };
-        context.set_transform(base);
-        context.push_clip_layer(&rect(area).to_path(TOLERANCE));
-        let transform = base.pre_translate(Vec2::new(area.x0, area.y0));
-        context.set_paint(colour(paint));
-        let mut coordinates: Vec<i16> = Vec::new();
+        surface.push_clip(clip.0, clip.1, clip.2, clip.3);
+        let colour = Source::Solid(opaque(paint));
+        let mut coordinates: Vec<NormalizedCoord> = Vec::new();
         for line in layout.lines() {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(run) = item else { continue };
-                let glyphs = run.positioned_glyphs().map(|glyph| Glyph { id: glyph.id, x: glyph.x, y: glyph.y });
-                context.set_transform(transform);
-                // The run's variation settings carry its weight: the shipped fonts
-                // are variable fonts, with weight as an axis.
+                // The run's variation settings carry its weight: the shipped
+                // fonts are variable fonts, with weight as an axis.
                 coordinates.clear();
-                coordinates.extend(run.run().normalized_coords().iter().map(|coordinate| coordinate.to_bits()));
-                let _ = context.glyph_run(resources, run.run().font()).font_size(run.run().font_size()).normalized_coords(&coordinates).fill_glyphs(glyphs);
+                coordinates.extend(run.run().normalized_coords().iter().map(|coordinate| NormalizedCoord::from_bits(coordinate.to_bits())));
+                let Some(mut face) = glyphs.face(run.run().font(), run.run().font_size() * scale_f32(scale), &coordinates) else { continue };
+                let hinted = face.hinted();
+                for glyph in run.positioned_glyphs() {
+                    let x = (area.x0 + f64::from(glyph.x)) * scale;
+                    let y = (area.y0 + f64::from(glyph.y)) * scale;
+                    let y = if hinted { y.round() } else { y };
+                    #[expect(clippy::cast_possible_truncation, reason = "a device coordinate, far inside f32's range")]
+                    let (x, y) = (x as f32, y as f32);
+                    scratch.lines.clear();
+                    scratch.lines.extend(face.glyph(glyph.id).iter().map(|edge| Line { x0: edge.x0 + x, y0: edge.y0 + y, x1: edge.x1 + x, y1: edge.y1 + y }));
+                    let reach = coverage::bounds(&scratch.lines, surface.scissor());
+                    scratch.coverage.fill(&scratch.lines, reach, |row, column, length, mask| surface.span(row, column, length, colour, mask));
+                }
             }
         }
-        context.pop_layer();
+        surface.pop_clip();
     }
+}
+
+/// A scale as the font size's type.
+fn scale_f32(scale: f64) -> f32 {
+    #[expect(clippy::cast_possible_truncation, reason = "a display scale, a small number")]
+    let scale = scale as f32;
+    scale
 }
