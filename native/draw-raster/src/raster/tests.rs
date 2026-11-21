@@ -4,7 +4,7 @@
 #![allow(clippy::arithmetic_side_effects, clippy::indexing_slicing, clippy::unwrap_used, reason = "a test's own small sizes and known values")]
 
 use super::coverage::{Coverage, Line, alpha};
-use super::paint::{Axis, ImagePaint, Pixels, Sampling};
+use super::paint::{Axis, ImagePaint, Pixels, Sampling, mix};
 use super::path;
 use super::surface::{Source, Surface};
 use super::{Paint, Scratch, fill_lines, fill_rect};
@@ -163,7 +163,7 @@ fn a_rectangle_and_the_same_path_cover_alike() {
 #[test]
 fn nearest_sampling_takes_the_pixel_under_each_centre_and_smooth_mixes_two() {
     // Two pixels, black then white, drawn four pixels wide.
-    let pixels = Pixels::new(2, 1, vec![[0, 0, 0, 255], WHITE]).unwrap();
+    let pixels = Pixels::new(2, 1, vec![0, 0x00FF_FFFF]).unwrap();
     let across = Axis { scale: 0.5, offset: 0.0 };
     let down = Axis { scale: 1.0, offset: 0.0 };
     let mut row = Vec::new();
@@ -175,7 +175,7 @@ fn nearest_sampling_takes_the_pixel_under_each_centre_and_smooth_mixes_two() {
     // edges carried on outward, a quarter and three quarters between, in
     // 255ths: 255 × 191 / 255, rounded up, is 191.
     assert_eq!(red(&row), vec![0, 64, 191, 255]);
-    assert!(Pixels::new(2, 2, vec![WHITE]).is_none(), "the pixels must be the size's");
+    assert!(Pixels::new(2, 2, vec![0]).is_none(), "the pixels must be the size's");
 }
 
 /// Every point of a flattened curve lies on the curve, and every chord
@@ -203,5 +203,24 @@ fn a_flattened_cubic_keeps_within_the_tolerance() {
         let middle = (f64::midpoint(f64::from(line.x0), f64::from(line.x1)), f64::midpoint(f64::from(line.y0), f64::from(line.y1)));
         assert!(nearest(middle) <= path::FLATNESS + 0.01, "a chord's middle {middle:?} lies {} from the curve", nearest(middle));
         assert!(nearest((f64::from(line.x1), f64::from(line.y1))) < 0.01, "a chord ends on the curve");
+    }
+}
+
+/// Mixing two words a channel to each sixteen-bit lane gives what mixing
+/// each channel alone gives, `(a × (255 − w) + b × w + 255) >> 8`, at every
+/// weight and for channels at both ends of their range.
+#[test]
+fn mixing_words_lane_by_lane_is_mixing_each_channel() {
+    let words = [0x0000_0000_u32, 0x00FF_FFFF, 0x0012_3456, 0x00FE_01A9, 0x0080_7F81];
+    for &first in &words {
+        for &second in &words {
+            for weight in 0..=255_u16 {
+                let channel = |shift: u32| {
+                    let (a, b) = ((first >> shift) & 0xFF, (second >> shift) & 0xFF);
+                    ((a * (255 - u32::from(weight)) + b * u32::from(weight) + 255) >> 8) << shift
+                };
+                assert_eq!(mix(first, second, weight), channel(16) | channel(8) | channel(0), "{first:06x} and {second:06x} at {weight}");
+            }
+        }
     }
 }

@@ -3,7 +3,7 @@
 
 use interface_core::theme::Colour;
 
-use crate::raster::surface::{Rgba, word};
+use crate::raster::surface::Rgba;
 
 const FULL: u8 = u8::MAX;
 const FULL_WIDE: u16 = 255;
@@ -17,18 +17,19 @@ pub(crate) const fn opaque(colour: Colour) -> Rgba {
     [colour.red, colour.green, colour.blue, FULL]
 }
 
-/// An image's pixels, row by row, each opaque.
+/// An image's pixels, row by row, each opaque, as 0RGB words: the
+/// window's own form, so a pixel sampled nearest is copied as it is.
 #[derive(Clone)]
 pub(crate) struct Pixels {
     width: u16,
     height: u16,
-    data: Vec<Rgba>,
+    data: Vec<u32>,
 }
 
 impl Pixels {
     /// `data` as an image `width` by `height`; `None` when it is not that
     /// many pixels.
-    pub(crate) fn new(width: u16, height: u16, data: Vec<Rgba>) -> Option<Self> {
+    pub(crate) fn new(width: u16, height: u16, data: Vec<u32>) -> Option<Self> {
         (data.len() == usize::from(width).saturating_mul(usize::from(height))).then_some(Self { width, height, data })
     }
 
@@ -40,15 +41,15 @@ impl Pixels {
         self.height
     }
 
-    pub(crate) fn data(&self) -> &[Rgba] {
+    pub(crate) fn data(&self) -> &[u32] {
         &self.data
     }
 
-    pub(crate) fn data_mut(&mut self) -> &mut [Rgba] {
+    pub(crate) fn data_mut(&mut self) -> &mut [u32] {
         &mut self.data
     }
 
-    fn row(&self, row: usize) -> &[Rgba] {
+    fn row(&self, row: usize) -> &[u32] {
         let width = usize::from(self.width);
         let start = row.saturating_mul(width);
         self.data.get(start..start.saturating_add(width)).unwrap_or_default()
@@ -110,14 +111,25 @@ fn tap(axis: Axis, pixel: u16, size: u16, sampling: Sampling) -> Tap {
     }
 }
 
-/// Two pixels mixed, `weight` 255ths of the second, each channel's product
-/// divided by 255 rounding up.
-#[expect(clippy::arithmetic_side_effects, reason = "channels and weights of at most 255: each sum is at most 255 × 255 + 255")]
-#[expect(clippy::cast_possible_truncation, reason = "a weighted mean of bytes is at most 255")]
-fn mix(first: Rgba, second: Rgba, weight: u16) -> Rgba {
-    let rest = FULL_WIDE - weight;
-    let channel = |a: u8, b: u8| ((u32::from(a) * u32::from(rest) + u32::from(b) * u32::from(weight) + u32::from(FULL_WIDE)) >> 8) as u8;
-    [channel(first[0], second[0]), channel(first[1], second[1]), channel(first[2], second[2]), channel(first[3], second[3])]
+/// The red and blue channels of a 0RGB word, each in a lane of sixteen
+/// bits; the green in the other.
+const RED_BLUE: u32 = 0x00FF_00FF;
+const GREEN: u32 = 0x0000_FF00;
+/// Each lane's rounding term, 255, added before the shift by eight.
+const ROUND_RED_BLUE: u32 = 0x00FF_00FF;
+const ROUND_GREEN: u32 = 0x0000_00FF;
+const LANE_SHIFT: u32 = 8;
+
+/// Two opaque 0RGB words mixed, `weight` 255ths of the second, each
+/// channel `(first × (255 − weight) + second × weight + 255) >> 8`; red
+/// and blue together, a channel to each sixteen-bit lane, which the sum
+/// fits (at most 255 × 255 + 255).
+#[expect(clippy::arithmetic_side_effects, reason = "each lane holds at most 255 × 255 + 255, inside its sixteen bits; weight is at most 255")]
+pub(crate) const fn mix(first: u32, second: u32, weight: u16) -> u32 {
+    let (weight, rest) = (weight as u32, FULL_WIDE as u32 - weight as u32);
+    let red_blue = (((first & RED_BLUE) * rest + (second & RED_BLUE) * weight + ROUND_RED_BLUE) >> LANE_SHIFT) & RED_BLUE;
+    let green = ((((first & GREEN) >> LANE_SHIFT) * rest + ((second & GREEN) >> LANE_SHIFT) * weight + ROUND_GREEN) >> LANE_SHIFT) & (GREEN >> LANE_SHIFT);
+    red_blue | (green << LANE_SHIFT)
 }
 
 /// An image laid over device pixels, with the place in it of each column
@@ -132,6 +144,9 @@ pub(crate) struct ImagePaint<'a> {
     /// The taps down, first column and length of the last row made: a row
     /// that samples the same is not made again.
     last: Option<(Tap, u16, usize)>,
+    /// For smooth sampling, the image's two rows mixed down, over the
+    /// columns the taps reach.
+    mixed: Vec<u32>,
 }
 
 impl<'a> ImagePaint<'a> {
@@ -139,7 +154,7 @@ impl<'a> ImagePaint<'a> {
     /// columns `from..to`.
     pub(crate) fn new(pixels: &'a Pixels, sampling: Sampling, across: Axis, down: Axis, from: u16, to: u16) -> Self {
         let columns = (from..to).map(|column| tap(across, column, pixels.width, sampling)).collect();
-        Self { pixels, sampling, down, from, columns, last: None }
+        Self { pixels, sampling, down, from, columns, last: None, mixed: Vec::new() }
     }
 
     /// The colours of `length` pixels of row `y` from column `x`, as 0RGB
@@ -156,13 +171,26 @@ impl<'a> ImagePaint<'a> {
         let columns = self.columns.get(skip..skip.saturating_add(length)).unwrap_or_default();
         let (upper, lower) = (self.pixels.row(row.first), self.pixels.row(row.second));
         match self.sampling {
-            Sampling::Nearest => out.extend(columns.iter().map(|column| word(upper.get(column.first).copied().unwrap_or_default()))),
-            Sampling::Smooth => out.extend(columns.iter().map(|column| {
-                let at = |line: &[Rgba], index: usize| line.get(index).copied().unwrap_or_default();
-                let above = mix(at(upper, column.first), at(upper, column.second), column.weight);
-                let below = mix(at(lower, column.first), at(lower, column.second), column.weight);
-                word(mix(above, below, row.weight))
-            })),
+            Sampling::Nearest => out.extend(columns.iter().map(|column| upper.get(column.first).copied().unwrap_or_default())),
+            Sampling::Smooth => {
+                // Down first, once for each column of the image the taps
+                // reach, then across for each pixel: a weight of none
+                // leaves the first exactly as it is.
+                let low = columns.iter().map(|column| column.first).min().unwrap_or(0);
+                let high = columns.iter().map(|column| column.second).max().unwrap_or(0);
+                self.mixed.clear();
+                let (upper, lower) = (upper.get(low..=high).unwrap_or_default(), lower.get(low..=high).unwrap_or_default());
+                if row.weight == 0 {
+                    self.mixed.extend_from_slice(upper);
+                } else {
+                    self.mixed.extend(upper.iter().zip(lower).map(|(&above, &below)| mix(above, below, row.weight)));
+                }
+                let mixed = &self.mixed;
+                let at = |index: usize| mixed.get(index.saturating_sub(low)).copied().unwrap_or_default();
+                out.extend(
+                    columns.iter().map(|column| if column.weight == 0 { at(column.first) } else { mix(at(column.first), at(column.second), column.weight) }),
+                );
+            }
         }
     }
 }

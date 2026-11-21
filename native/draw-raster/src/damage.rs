@@ -5,7 +5,6 @@
 
 use crate::Painter;
 use crate::raster::paint::Pixels;
-use crate::raster::surface::Rgba;
 use crate::record::{Command, Frame, Recorded};
 use interface_core::canvas::{PAGE_HEIGHT, PAGE_WIDTH};
 use interface_core::geometry::Rect;
@@ -258,17 +257,17 @@ const SAMPLING_REACH: f64 = 1.0;
 
 /// The box of dots whose colour differs between a held page image and a
 /// new one's pixels.
-pub(crate) fn changed_dots(held: &Pixels, rgba: &[Rgba]) -> DeviceBox {
+pub(crate) fn changed_dots(held: &Pixels, rgba: &[u32]) -> DeviceBox {
     changed_pixels(held, rgba)
 }
 
 /// The box of pixels whose colour differs between a held image and a new
 /// one's pixels, of the same size.
-pub(crate) fn changed_pixels(held: &Pixels, rgba: &[Rgba]) -> DeviceBox {
+pub(crate) fn changed_pixels(held: &Pixels, rgba: &[u32]) -> DeviceBox {
     let mut found = DeviceBox::default();
     let width = usize::from(held.width());
-    for (index, (&[red, green, blue, _], &[new_red, new_green, new_blue, _])) in held.data().iter().zip(rgba).enumerate() {
-        if [red, green, blue] != [new_red, new_green, new_blue] {
+    for (index, (&was, &now)) in held.data().iter().zip(rgba).enumerate() {
+        if was != now {
             let (Some(column), Some(row)) = (index.checked_rem(width), index.checked_div(width)) else { continue };
             let (Ok(x), Ok(y)) = (u16::try_from(column), u16::try_from(row)) else { continue };
             found = found.union(DeviceBox { x0: x, y0: y, x1: x.saturating_add(1), y1: y.saturating_add(1) });

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::damage::changed_dots;
 use crate::raster::paint::{Pixels, Sampling};
-use crate::raster::surface::{Rgba, Surface};
+use crate::raster::surface::{Surface, word};
 use crate::{DeviceBox, OPAQUE, PAGE_DOTS, PageError, Painter};
 
 /// A page's image as the painter holds it.
@@ -102,13 +102,13 @@ impl RegisPart {
 const INDEX_MASK: u8 = 0x0F;
 const _: () = assert!(INDEX_MASK as usize + 1 == REGIS_COLOURS, "a pixel's index reaches every colour and no further");
 
-/// Each of the sixteen colours as an opaque pixel, looked up by index.
-fn colour_table(palette: &[[u8; 3]; REGIS_COLOURS]) -> [Rgba; REGIS_COLOURS] {
-    palette.map(|[red, green, blue]| [red, green, blue, OPAQUE])
+/// Each of the sixteen colours as an opaque 0RGB word, looked up by index.
+fn colour_table(palette: &[[u8; 3]; REGIS_COLOURS]) -> [u32; REGIS_COLOURS] {
+    palette.map(|[red, green, blue]| word([red, green, blue, OPAQUE]))
 }
 
 /// A picture's pixels in colour: each index's colour of `palette`, opaque.
-fn coloured(indices: &[u8], palette: &[[u8; 3]; REGIS_COLOURS]) -> Vec<Rgba> {
+fn coloured(indices: &[u8], palette: &[[u8; 3]; REGIS_COLOURS]) -> Vec<u32> {
     let table = colour_table(palette);
     indices.iter().map(|&index| table.get(usize::from(index & INDEX_MASK)).copied().unwrap_or_default()).collect()
 }
@@ -132,7 +132,7 @@ fn whole_multiple(shown: f64, actual: f64) -> bool {
 }
 
 /// `rgba` as a picture of `language`'s size; refused when it is not.
-fn picture(rgba: Vec<Rgba>, language: PictureLanguage) -> Result<Arc<Pixels>, PageError> {
+fn picture(rgba: Vec<u32>, language: PictureLanguage) -> Result<Arc<Pixels>, PageError> {
     Pixels::new(language.width(), language.height(), rgba).map(Arc::new).ok_or(PageError::RegisSize)
 }
 
@@ -150,7 +150,7 @@ impl Painter {
         let mut rgba = Vec::with_capacity(PAGE_DOTS);
         for &index in indices {
             let [red, green, blue] = *palette.get(usize::from(index)).ok_or(PageError::Index)?;
-            rgba.push([red, green, blue, OPAQUE]);
+            rgba.push(word([red, green, blue, OPAQUE]));
         }
         let held = self.pages.get(&key);
         if held.is_some_and(|held| held.screen != screen) {
@@ -289,11 +289,7 @@ impl Painter {
         self.surface.end();
         let words = core::mem::replace(&mut self.surface, frame.0).words;
         self.scale = frame.1;
-        let rgba = words.iter().map(|word| {
-            let [_, red, green, blue] = word.to_be_bytes();
-            [red, green, blue, OPAQUE]
-        });
-        let Some(pixels) = Pixels::new(STILL_WIDTH, STILL_HEIGHT, rgba.collect()) else { return false };
+        let Some(pixels) = Pixels::new(STILL_WIDTH, STILL_HEIGHT, words) else { return false };
         if self.stills.len() >= MAX_STILLS
             && !self.stills.contains_key(&still)
             && let Some(oldest) = self.stills.iter().min_by_key(|(_, kept)| kept.number).map(|(&number, _)| number)
