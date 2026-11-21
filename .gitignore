@@ -17,3 +17,7 @@ tmp/
 native/tuf/fuzz/corpus
 native/tuf/fuzz/artifacts
 native/tuf/fuzz/coverage
+# The development builds' count (REQ-7047), raised by every compile, and
+# the file it is written to before it replaces the old one.
+native/build-number
+native/build-number.*.writing

@@ -5,7 +5,8 @@
 //! strip shows. It never parses teletext data and never draws; the
 //! interface never reaches a decoder.
 //!
-//! Usage: `neoteletext [--allow-local <ip>]... [address]...`, each address
+//! Usage: `neoteletext --version`, which prints the version and ends, or
+//! `neoteletext [--allow-local <ip>]... [address]...`, each address
 //! a web channel's folder (`http://host/folder/`), a `file://` address, or
 //! an absolute path to a recording, a page file or a folder of page files.
 //! A channel on this computer or the local network is fetched only from
@@ -44,6 +45,13 @@ use confine::Role;
 use confine::broker::Broker;
 use neoteletext::settings as stored;
 
+/// The version this program was built as: a release's, or a development
+/// build's with its count (the build script, REQ-7047). The one place the
+/// program reads it; the broker's mark is made of it and checked against it.
+const VERSION: &str = env!("NEOTELETEXT_VERSION");
+/// Alone on the command line, it prints the version and nothing starts.
+const VERSION_FLAG: &str = "--version";
+
 /// The trusted core: confined first (decision 56), then the browser.
 fn core() -> Result<(), String> {
     let report = confine::apply(Role::Core, stored::folder().as_deref())?;
@@ -56,7 +64,15 @@ fn core() -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    let step = if std::env::args().nth(1).as_deref() == Some(broker::CORE_FLAG) { core() } else { broker::broker() };
+    let mut arguments = std::env::args_os().skip(1);
+    let version_asked = arguments.next().is_some_and(|argument| argument == VERSION_FLAG) && arguments.next().is_none();
+    let step = if version_asked {
+        broker::print_version()
+    } else if std::env::args().nth(1).as_deref() == Some(broker::CORE_FLAG) {
+        core()
+    } else {
+        broker::broker()
+    };
     match step {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

@@ -78,7 +78,7 @@ impl Core {
             self.note(Level::Warning, None, "The tab is not recorded: the browser has no folder to keep recordings in");
             return;
         };
-        match Recording::start(&folder, channel, &host, &address, env!("CARGO_PKG_VERSION"), self.now(), neoteletext::calendar::utc_now()) {
+        match Recording::start(&folder, channel, &host, &address, crate::VERSION, self.now(), neoteletext::calendar::utc_now()) {
             Ok(recording) => {
                 let path = recording.path().display().to_string();
                 self.recording = Slot::On(recording);

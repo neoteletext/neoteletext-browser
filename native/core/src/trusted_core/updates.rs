@@ -346,7 +346,7 @@ impl Core {
         let view = interface_core::settings::UpdateView {
             // A browser not installed by the launcher runs the version it
             // was built as.
-            version: self.updates.running().map_or_else(|| String::from(env!("NEOTELETEXT_VERSION")), |version| version.to_string()),
+            version: self.updates.running().map_or_else(|| String::from(crate::VERSION), |version| version.to_string()),
             status: clean(&status, protocol::settings::MAX_UPDATE_STATUS),
             offer: self.updates.offer().map(|version| version.to_string()),
             checking: self.settings.check_updates,

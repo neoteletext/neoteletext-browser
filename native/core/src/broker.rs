@@ -43,6 +43,22 @@ pub(crate) const CORE_FLAG: &str = "--core";
 /// reads it from the signed file (`installation-and-updates.md` section 5).
 static VERSION_MARK: &str = update::version_mark!(env!("NEOTELETEXT_VERSION"));
 
+/// This program's version, read from its mark as the launcher reads it,
+/// and the same as the one the trusted core reports to the interface.
+fn version() -> Result<update::version::Version, String> {
+    let marked = update::mark::own(VERSION_MARK).map_err(|refused| format!("this program's version: {refused}"))?;
+    if update::version::Version::parse(crate::VERSION) != Some(marked) {
+        return Err(format!("this program's mark says version {marked} and its report {}", crate::VERSION));
+    }
+    Ok(marked)
+}
+
+/// `--version`: the version on standard output, and nothing started.
+pub(crate) fn print_version() -> Result<(), String> {
+    let version = version()?;
+    writeln!(std::io::stdout(), "neoteletext {version}").map_err(|error| format!("cannot write the version: {error}"))
+}
+
 /// The single-instance socket's name in the broker's folder.
 const INSTANCE: &str = "instance";
 /// The longest path a local-domain socket takes on macOS: `sun_path`'s 104
@@ -122,7 +138,7 @@ pub(crate) fn broker() -> Result<(), String> {
     arguments.extend(given);
     let environment = confine::environment(Role::Core);
     let core = confine::broker::start_core(&program, &arguments, &settings, &environment).map_err(|error| format!("cannot start the trusted core: {error}"))?;
-    let version = update::mark::own(VERSION_MARK).map_err(|refused| format!("this program's version: {refused}"))?;
+    let version = version()?;
     eprintln!("neoteletext: version {version}; the trusted core started confined: {}", core.report);
     #[cfg(feature = "links")]
     let last_opened = std::cell::Cell::new(None);
@@ -698,8 +714,9 @@ mod tests {
     /// its version, which the launcher finds there.
     #[test]
     fn the_broker_carries_its_version() {
-        let version = update::mark::own(VERSION_MARK).unwrap();
-        assert_eq!(Some(version), update::version::Version::parse(env!("NEOTELETEXT_VERSION")));
+        let marked = update::mark::own(VERSION_MARK).unwrap();
+        assert_eq!(Some(marked), update::version::Version::parse(crate::VERSION));
+        assert_eq!(version(), Ok(marked));
     }
 
     #[test]
