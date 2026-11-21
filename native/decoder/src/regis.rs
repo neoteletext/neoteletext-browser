@@ -24,9 +24,9 @@ use neoteletext_rules::animate::{AnimationStore, Applied, Operation};
 use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::table::{Target, TargetKind};
 use neoteletext_web::records::regis::RegisRecord;
-use protocol::regis::{PictureLanguage, RegisPick, RegisPicture, RegisViewer};
+use protocol::regis::{PictureLanguage, REGIS_COLOURS, RegisPick, RegisPicture, RegisViewer};
 use regis::limits::{MAX_ANIMATED_DRAWINGS, MAX_CYCLING_OBJECTS, MAX_WATCHED_PAINTINGS};
-use regis::{Event, Font, ForcedLook, Pace, Picture, RepaintBudget, Replay, Screen, Terminal, ViewerState};
+use regis::{Event, Font, ForcedLook, Pace, Picture, RepaintBudget, Replay, Rgb, Screen, Terminal, ViewerState};
 
 use crate::animation::frames::Paint;
 use crate::animation::{Counters, WholePicture, next_cycle_tick};
@@ -59,6 +59,11 @@ struct Page {
     picture: Picture,
     /// What it shows changed since its picture was last taken.
     changed: bool,
+    /// The colour map as it stood when bytes were last fed: a map changed
+    /// outside a batch changes no pixel and makes no commit, and is seen
+    /// only here (the renderer's `docs/regis-v2.md`, "Rules for contents",
+    /// rule 4).
+    colours: [Rgb; REGIS_COLOURS],
     /// When it was last fed, by the count of records read.
     fed: u64,
     /// What the viewer's pointer is doing to it, as the trusted core said.
@@ -167,6 +172,7 @@ impl Page {
         for (number, set) in (0_u8..).zip(crate::provided::regis_sets()) {
             let _ = terminal.set_provided_set(number, set.clone());
         }
+        let colours = terminal.palette().colours();
         Self {
             generation,
             next: 0,
@@ -175,6 +181,7 @@ impl Page {
             screen: Screen::new(),
             picture: Picture::new(),
             changed: true,
+            colours,
             fed: 0,
             viewer,
             cursor: 0,
@@ -195,11 +202,14 @@ impl Page {
     }
 
     /// Takes what the terminal did with bytes it was fed, by the stream's
-    /// record or by the replay as the clock plays it. A commit, or drawing
-    /// outside numbered drawings, changes what the sub-page shows. The
-    /// other events ask for things a page does not do: a v1 pause or a
-    /// reply to the host. With `at_once`, a drawing given a paint rate is
-    /// whole at once.
+    /// record or by the replay as the clock plays it. A commit, drawing
+    /// outside numbered drawings, or a colour map that took effect changes
+    /// what the sub-page shows: the map is one for the whole screen, and
+    /// outside an open batch a change of it is immediate (the renderer's
+    /// `docs/regis-v2.md`, "Rules for contents", rule 4), with no commit
+    /// and no pixel written to say so. The other events ask for things a
+    /// page does not do: a v1 pause or a reply to the host. With
+    /// `at_once`, a drawing given a paint rate is whole at once.
     fn after_feed(&mut self, events: &[Event], at_once: bool) {
         let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
         if committed {
@@ -210,7 +220,10 @@ impl Page {
             // the viewer's setting off it is whole at once.
             self.motion.painting = self.terminal.advance_ticks(if at_once { u32::MAX } else { 0 });
         }
-        self.changed |= committed | self.screen.take_changed();
+        let colours = self.terminal.palette().colours();
+        let recoloured = colours != self.colours;
+        self.colours = colours;
+        self.changed |= committed | recoloured | self.screen.take_changed();
         // The channel moves the cursor by a commit after each key: it is
         // shown again at once, never hidden where the viewer looks for it.
         self.blink_again |= committed;
