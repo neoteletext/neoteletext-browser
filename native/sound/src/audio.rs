@@ -1,7 +1,8 @@
 //! The interface's sound (the engine's area AUD, decisions 37, 38 and 40): the
 //! voice operations the trusted core passes on are applied to one engine
 //! mixer for each channel, so every tab is heard and each can be muted, and
-//! the operating system's output device plays their sum, through `cpal`.
+//! the operating system's output device plays their sum, through the
+//! helper's own output stream (`sound-output`).
 //! The sum goes out through a look-ahead limiter (`limiter.rs`, REQ-6933),
 //! which keeps it under -1 dBFS without cutting the wave and delays it by
 //! 1.5 milliseconds.
@@ -66,7 +67,7 @@ mod names;
 #[cfg(test)]
 mod tests;
 
-pub use device::{OutputSample, Speaker, render};
+pub use device::{Speaker, render};
 pub use local::{LOCAL_MIDI_QUEUE, LOCAL_OVERRUN_BUFFERS};
 
 /// The reports of the audio thread that wait for the helper's loop: a few

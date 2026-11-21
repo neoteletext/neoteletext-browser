@@ -35,11 +35,12 @@ neoteletext-audio.workspace = true
 neoteletext-audio-instruments = { workspace = true, features = ["synth7", "synth106", "synthd", "synth53", "synth8", "synth80"] }
 # The rule table's codes for a watch list's slots (RULE-33), by name.
 neoteletext-rules.workspace = true
-# The operating system's audio output: Core Audio on macOS, WASAPI on
-# Windows, and on Linux the system's ALSA library, libasound, linked
-# dynamically; the owner accepted its LGPL licence (decision 40). Only
-# this helper links it, so a Linux without it runs silent (decision 55).
-cpal.workspace = true
+# The operating system's audio output, our own stream (DEC-7168): an
+# output audio unit on macOS, WASAPI on Windows, and on Linux the system's
+# ALSA library, libasound, linked dynamically; the owner accepted its LGPL
+# licence (decision 40). Only this helper links it, so a Linux without it
+# runs silent (decision 55).
+sound-output.workspace = true
 
 [lints]
 workspace = true

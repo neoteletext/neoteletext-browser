@@ -1,0 +1,41 @@
+[package]
+name = "sound-output"
+description = "The sound helper's one output stream: signed 16-bit stereo to the system's default output device, through ALSA on Linux, an output audio unit on macOS and WASAPI in shared mode on Windows (DEC-7168)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Windows's audio interfaces are COM objects: the `windows` crate, already
+# in the build for Parley's font finder (fontique), generates their
+# interfaces from Microsoft's metadata, so no virtual table is written by
+# hand. These features only enable WASAPI, COM and the multimedia class
+# scheduler.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
+
+# As `confine` and `os-install` (requirement 10.12, REQ-745): unsafe code is
+# denied, not forbidden, and allowed only in each platform's module, every
+# block with its reason. The operating systems offer their sound output only
+# through foreign functions.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+undocumented_unsafe_blocks = "warn"

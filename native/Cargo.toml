@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser"]
+members = ["interface-core", "draw-vello", "draw-embedded", "protocol", "interface", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "sound-output", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 
@@ -109,9 +109,9 @@ regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-reg
 # channel's NAPLPS pages with, and its font (DEC-6407).
 naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
 naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
-# Apache-2.0: the operating systems' audio output (Core Audio on macOS),
-# without unsafe code of ours (decision 37).
-cpal = "=0.18.2"
+# The sound helper's own output stream to the system's device (DEC-7168,
+# replacing cpal).
+sound-output = { path = "sound-output" }
 # MIT or Apache-2.0: sine, cosine and rounding without the standard library.
 libm = "=0.2.16"
 # Single-threaded: with its "multithreading" feature, vello_cpu 0.3.0's
