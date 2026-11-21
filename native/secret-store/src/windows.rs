@@ -57,7 +57,7 @@ pub(crate) fn read(service: &str, account: &str) -> Result<Option<Secret>, Error
     let mut found: *mut CREDENTIALW = std::ptr::null_mut();
     // SAFETY: `target` is a zero-ended UTF-16 string alive for the call, and
     // `found` a place for one pointer, written only on success with a
-    // buffer the caller frees with `CredFree`, which is done below.
+    // buffer the caller frees with `CredFree`, which `Credential` does.
     if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &raw mut found) } == 0 {
         // SAFETY: as in `last_error`.
         if unsafe { GetLastError() } == ERROR_NOT_FOUND {
@@ -65,24 +65,44 @@ pub(crate) fn read(service: &str, account: &str) -> Result<Option<Secret>, Error
         }
         return Err(last_error());
     }
+    let found = Credential(found);
     // SAFETY: on success `found` points to one CREDENTIALW the system
     // allocated, whose blob is `CredentialBlobSize` bytes at
-    // `CredentialBlob` (or none); the bytes are copied, then set to zero in
-    // the system's buffer, which is the caller's to write until it is
-    // freed, and the buffer is freed once.
-    unsafe {
-        let credential = &mut *found;
-        let length = usize::try_from(credential.CredentialBlobSize).map_err(|_| Error::TooLong)?;
-        let secret = if credential.CredentialBlob.is_null() || length == 0 {
-            Secret::copied(&[])
-        } else {
-            let blob = std::slice::from_raw_parts_mut(credential.CredentialBlob, length);
-            let copied = Secret::copied(blob);
-            wipe(blob);
-            copied
-        };
-        CredFree(found.cast());
-        secret.map(Some)
+    // `CredentialBlob` (or none), alive until `found` is dropped; the bytes
+    // are only read here.
+    let secret = unsafe {
+        let credential = &*found.0;
+        match usize::try_from(credential.CredentialBlobSize) {
+            Err(_) => Err(Error::TooLong),
+            Ok(length) if length == 0 || credential.CredentialBlob.is_null() => Secret::copied(&[]),
+            Ok(length) => Secret::copied(std::slice::from_raw_parts(credential.CredentialBlob, length)),
+        }
+    };
+    drop(found);
+    secret.map(Some)
+}
+
+/// The credential `CredReadW` returned, held so that every path, an early
+/// return among them, wipes its blob and frees it with `CredFree` once
+/// (TODO-7173 finding A5).
+struct Credential(*mut CREDENTIALW);
+
+impl Drop for Credential {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is the one CREDENTIALW a successful `CredReadW`
+        // returned, not yet freed, whose blob is `CredentialBlobSize`
+        // bytes at `CredentialBlob` (or none); the system's buffer is the
+        // caller's to write until it is freed, so the blob is set to zero
+        // and the buffer then freed, once, as `CredReadW` requires.
+        unsafe {
+            let credential = &mut *self.0;
+            if let Ok(length) = usize::try_from(credential.CredentialBlobSize)
+                && !credential.CredentialBlob.is_null()
+            {
+                wipe(std::slice::from_raw_parts_mut(credential.CredentialBlob, length));
+            }
+            CredFree(self.0.cast());
+        }
     }
 }
 
