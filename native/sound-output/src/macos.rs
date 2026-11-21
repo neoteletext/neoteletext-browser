@@ -20,6 +20,7 @@
 #![allow(unsafe_code, reason = "Core Audio's interface is C functions: each call is a foreign function, with its reason at each block")]
 
 use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::sync::{Mutex, PoisonError};
 
 use crate::{CHANNELS, Described, Error, Fill, Granted, Size, Trouble};
@@ -341,8 +342,8 @@ pub fn describe() -> Result<Described, Error> {
     Ok(Described { rate_hz: rate_of(rate)?, granted })
 }
 
-/// What the callbacks hold, boxed so that its address stays put while
-/// the unit and the listener may call them.
+/// What the callbacks hold, on the heap (`Owned`) so that its address
+/// stays put while the unit and the listener may call them.
 struct Callbacks {
     fill: Mutex<Fill>,
     trouble: Mutex<Trouble>,
@@ -353,8 +354,8 @@ unsafe extern "C" fn render(ref_con: *mut c_void, _: *mut u32, _: *const c_void,
     if ref_con.is_null() || data.is_null() {
         return NO_ERROR;
     }
-    // SAFETY: `ref_con` is the `Callbacks` the stream boxed and gave with
-    // the callback, which outlives the unit; `data` is the unit's buffer
+    // SAFETY: `ref_con` is the stream's `Owned` callbacks, given with the
+    // callback, which are freed only after the unit is disposed of; `data` is the unit's buffer
     // list, whose first buffer holds the input format given to the unit:
     // `frames` interleaved frames of two 16-bit samples, aligned for them.
     unsafe {
@@ -379,8 +380,8 @@ unsafe extern "C" fn listen(device: AudioObjectId, _: u32, _: *const AudioObject
     if client_data.is_null() {
         return NO_ERROR;
     }
-    // SAFETY: `client_data` is the stream's boxed `Callbacks`, which
-    // outlives the listener's registration.
+    // SAFETY: `client_data` is the stream's `Owned` callbacks, which are
+    // freed only after the listener is removed.
     let callbacks = unsafe { &*client_data.cast::<Callbacks>() };
     let mut alive: u32 = 1;
     if device_get(device, DEVICE_IS_ALIVE, &mut alive, "whether the device is alive").is_ok() && alive == 0 {
@@ -390,18 +391,58 @@ unsafe extern "C" fn listen(device: AudioObjectId, _: u32, _: *const AudioObject
     NO_ERROR
 }
 
+/// The callbacks, owned through the pointer the unit and the listener are
+/// given, freed when this drops. The pointer comes from `Box::into_raw`,
+/// and no `Box` or unique reference to them exists while the platform
+/// holds it, so its calls read them through a pointer nothing else
+/// asserts sole ownership of.
+struct Owned(NonNull<Callbacks>);
+
+// SAFETY: it owns a `Callbacks`, whose fill and trouble are `Send` and
+// each behind its own mutex, as a `Box<Callbacks>` would be.
+unsafe impl Send for Owned {}
+
+impl Owned {
+    fn new(callbacks: Callbacks) -> Self {
+        // `Box::leak` is `Box::into_raw` without the unsafe step to a
+        // `NonNull`; `Box::from_raw` takes its pointer back.
+        Self(NonNull::from(Box::leak(Box::new(callbacks))))
+    }
+
+    /// The context the unit and the listener are given.
+    fn context(&self) -> *mut c_void {
+        self.0.as_ptr().cast()
+    }
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from a `Box` in `new` and is freed once,
+        // here. It is dropped after the unit that calls it is disposed of
+        // and the listener removed: in `Stream` it is declared after
+        // `unit`, and in `Stream::open` it is made before the unit, so it
+        // drops after it on every early return.
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
+
 /// The stream: the unit, its device's listener and the callbacks both
-/// call.
+/// call. The fields drop in this order: the unit is stopped and disposed
+/// of before the callbacks it calls are freed.
 pub struct Stream {
     unit: Unit,
     device: AudioObjectId,
-    callbacks: Box<Callbacks>,
+    callbacks: Owned,
 }
 
 impl Stream {
     /// Opens the default output unit with the stream's format at the rate
     /// described and the buffer size asked, stopped.
     pub fn open(described: &Described, size: Size, fill: Fill, trouble: Trouble) -> Result<Self, Error> {
+        // Made before the unit, so that on every early return below the
+        // unit is disposed of before the callbacks it may call are freed.
+        let callbacks = Owned::new(Callbacks { fill: Mutex::new(fill), trouble: Mutex::new(trouble) });
+        let context = callbacks.context();
         let unit = Unit::new()?;
         let device = unit.device()?;
         let channels = u32::try_from(CHANNELS).map_err(|_| Error::new("channels"))?;
@@ -426,15 +467,13 @@ impl Stream {
                 "the output's buffer size",
             )?;
         }
-        let callbacks = Box::new(Callbacks { fill: Mutex::new(fill), trouble: Mutex::new(trouble) });
-        let context = std::ptr::from_ref::<Callbacks>(&callbacks).cast_mut().cast::<c_void>();
         let callback = AuRenderCallbackStruct { input_proc: Some(render), input_proc_ref_con: context };
         unit.set(PROPERTY_SET_RENDER_CALLBACK, SCOPE_INPUT, &callback, "the output's callback")?;
         // SAFETY: the unit is live and configured.
         checked(unsafe { AudioUnitInitialize(unit.0) }, "cannot open the audio output")?;
         let address = device_property(DEVICE_IS_ALIVE);
         // SAFETY: the address lives until the call returns; `context` is
-        // the boxed callbacks, which the stream removes the listener from
+        // the `Owned` callbacks, which the stream removes the listener from
         // before it frees them.
         checked(unsafe { AudioObjectAddPropertyListener(device, &raw const address, listen, context) }, "watching the output device")?;
         Ok(Self { unit, device, callbacks })
@@ -456,11 +495,10 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         let address = device_property(DEVICE_IS_ALIVE);
-        let context = std::ptr::from_ref::<Callbacks>(&self.callbacks).cast_mut().cast::<c_void>();
         // SAFETY: the listener was added with this address, function and
         // context; it is removed before the callbacks it reads are freed.
         // The unit stops and is disposed of when `unit` drops, before
         // `callbacks`, as the fields are declared.
-        unsafe { AudioObjectRemovePropertyListener(self.device, &raw const address, listen, context) };
+        unsafe { AudioObjectRemovePropertyListener(self.device, &raw const address, listen, self.callbacks.context()) };
     }
 }
