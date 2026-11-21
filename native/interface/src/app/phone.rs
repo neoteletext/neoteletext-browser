@@ -29,7 +29,7 @@ impl App {
     pub(super) fn phone_key(&mut self, key: protocol::keyboard::PhoneKey) -> bool {
         use protocol::keyboard::PhoneKey;
         let now = self.now();
-        let typing = self.view.browser.typing_target().is_some();
+        let typing = self.view.browser.keyboard_target().is_some();
         match key {
             PhoneKey::Text(text) if typing => {
                 self.view.browser.terminal_text(&text);

@@ -29,8 +29,8 @@ use neoteletext_input::event::{self, Action, Event, Item, KeyCode, MouseAction, 
 use neoteletext_input::rules::{FaultCode, PageStateEvent, RuleBody, RuleEvent, RulesFault};
 use neoteletext_rules::table::{Target, TargetKind, Value};
 use protocol::rules::{
-    INPUT_RING, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, KeyAction, PageSub, PointerAction, Report, Reported, RuleInput, RulesOpen, SEND_BUDGET,
-    SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
+    INPUT_RING, INTEREST_KEYS, INTEREST_MOVES, INTEREST_POINTER_BUTTONS, INTEREST_TEXT, KeyAction, PageSub, PointerAction, Report, Reported, RuleInput,
+    RulesOpen, SEND_BUDGET, SEND_WINDOW_TICKS, TIMED_SEND_BUDGET, WheelRect,
 };
 
 use super::{Channel, Send, clock};
@@ -167,6 +167,18 @@ impl Gate {
     /// (DEC-6633 item 2, REQ-6632).
     pub(super) fn asks_input(&self) -> bool {
         self.asked.as_ref().is_some_and(|asked| asked.closing_us.is_none() && asked.interest != 0)
+    }
+
+    /// Whether the open page's table, still open, asks for the keyboard:
+    /// its interest mask has the keys' class or the text's, the two a key,
+    /// typed text, a paste and a composition are given under (RULE-52
+    /// item 1). Without either nothing typed would be given or leave
+    /// (REQ-6523), so the interface keeps the keyboard for the browser's
+    /// own viewer instead of sending keys here to be dropped (REQ-756,
+    /// REQ-890). It reads the mask `asks_input` reads, so the two cannot
+    /// disagree.
+    pub(super) fn asks_keyboard(&self) -> bool {
+        self.asked.as_ref().is_some_and(|asked| asked.closing_us.is_none() && asked.interest & (INTEREST_KEYS | INTEREST_TEXT) != 0)
     }
 
     /// The pointer is at `at`, a point of a pointer intent.

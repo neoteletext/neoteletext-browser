@@ -160,6 +160,7 @@ fn the_remotes_keys_go_to_the_channel_as_the_keyboards() {
             round_trip_us: None,
             wheel: false,
             asks: false,
+            keys: true,
         },
         10_000,
     );

@@ -259,7 +259,7 @@ impl Browser {
     fn remote_key_to_channel(&mut self, button: Button) -> bool {
         use neoteletext_input::event::Action;
         let Some((key, text)) = keyboard_key(button) else { return false };
-        if self.typing_target().is_none() {
+        if self.keyboard_target().is_none() {
             return false;
         }
         let mut typed = [0_u8; 4];

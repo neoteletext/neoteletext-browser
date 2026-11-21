@@ -371,6 +371,9 @@ impl Typing {
             // requested by the server then that behaviour is true when also
             // over the window" (DEC-6633 item 2).
             asks: on && state.is_some_and(|state| state.gate.asks_input()),
+            // A page whose table asks for no key and no text is sent none
+            // (REQ-6523): its keyboard stays the browser's own viewer's.
+            keys: on && state.is_some_and(|state| state.gate.asks_keyboard()),
         })
     }
 
@@ -657,6 +660,7 @@ impl Typing {
                 round_trip_us: None,
                 wheel: false,
                 asks: false,
+                keys: false,
             }));
         }
         self.tell_interface(&mut sends);

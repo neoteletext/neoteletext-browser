@@ -14,7 +14,10 @@ const FLAG_ROUND_TRIP: u8 = 8;
 const FLAG_REFUSED: u8 = 16;
 const FLAG_WHEEL: u8 = 32;
 const FLAG_ASKS: u8 = 64;
-const ALL_FLAGS: u8 = FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_REFUSED | FLAG_WHEEL | FLAG_ASKS;
+const FLAG_KEYS: u8 = 128;
+// Every bit of the flags byte now has a meaning, so no value of it is
+// refused: a ninth fact needs a second byte.
+const _: () = assert!(FLAG_ON | FLAG_SECURE | FLAG_CURSOR | FLAG_ROUND_TRIP | FLAG_REFUSED | FLAG_WHEEL | FLAG_ASKS | FLAG_KEYS == u8::MAX);
 
 pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), ProtocolError> {
     let flag = |set: bool, bit: u8| if set { bit } else { 0 };
@@ -27,7 +30,8 @@ pub(crate) fn push_typing(payload: &mut Vec<u8>, typing: &Typing) -> Result<(), 
             | flag(typing.round_trip_us.is_some(), FLAG_ROUND_TRIP)
             | flag(typing.refused, FLAG_REFUSED)
             | flag(typing.wheel, FLAG_WHEEL)
-            | flag(typing.asks, FLAG_ASKS),
+            | flag(typing.asks, FLAG_ASKS)
+            | flag(typing.keys, FLAG_KEYS),
     );
     let place = typing.cursor.unwrap_or(CursorState { row: cursor::NO_CURSOR, column: 0, flags: 0 });
     check_cursor(typing.page, typing.cursor)?;
@@ -55,9 +59,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
     let channel = fields.u32()?;
     let page = fields.channel_page()?;
     let flags = fields.u8()?;
-    if flags & !ALL_FLAGS != 0 {
-        return Err(ProtocolError::BadValue("typing flags"));
-    }
     let place = CursorState { row: fields.u8()?, column: fields.u8()?, flags: fields.u8()? };
     let cursor = (flags & FLAG_CURSOR != 0).then_some(place);
     check_cursor(page, cursor)?;
@@ -72,5 +73,6 @@ pub(crate) fn read_typing(fields: &mut Fields<'_>) -> Result<Typing, ProtocolErr
         round_trip_us: (flags & FLAG_ROUND_TRIP != 0).then_some(round_trip),
         wheel: flags & FLAG_WHEEL != 0,
         asks: flags & FLAG_ASKS != 0,
+        keys: flags & FLAG_KEYS != 0,
     })
 }

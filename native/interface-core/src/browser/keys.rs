@@ -321,6 +321,7 @@ mod tests {
                 round_trip_us: None,
                 wheel: false,
                 asks: false,
+                keys: true,
             },
             0,
         );

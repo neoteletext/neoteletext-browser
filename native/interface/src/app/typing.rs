@@ -12,7 +12,7 @@ impl App {
     /// modifier and V, while keys go to a channel.
     pub(super) fn is_paste(&self, event: &winit::event::KeyEvent) -> bool {
         use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-        self.view.browser.typing_target().is_some()
+        self.view.browser.keyboard_target().is_some()
             && self.browser_modifier()
             && matches!(event.key_without_modifiers(), Key::Character(ref key) if key.eq_ignore_ascii_case("v"))
     }
@@ -36,7 +36,7 @@ impl App {
     pub(super) fn terminal_key(&mut self, event: &winit::event::KeyEvent) {
         use neoteletext_input::event::Action;
         use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
-        if self.view.browser.typing_target().is_none() || self.browser_modifier() {
+        if self.view.browser.keyboard_target().is_none() || self.browser_modifier() {
             return;
         }
         let action = match (event.state, event.repeat) {
@@ -70,6 +70,7 @@ impl App {
             round_trip_us: typing.round_trip_us,
             wheel: typing.wheel,
             asks: typing.asks,
+            keys: typing.keys,
         };
         self.view.browser.set_typing(view, now);
         self.sync_ime();

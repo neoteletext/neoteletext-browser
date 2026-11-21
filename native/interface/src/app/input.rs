@@ -198,7 +198,7 @@ impl App {
                 self.view.browser.toggle_full_screen(now)
             }
             #[cfg(feature = "interaction")]
-            WindowEvent::KeyboardInput { ref event, .. } if self.view.browser.typing_target().is_some() && !self.browser_modifier() => {
+            WindowEvent::KeyboardInput { ref event, .. } if self.view.browser.keyboard_target().is_some() && !self.browser_modifier() => {
                 // RULE-66: when the interface read the key.
                 #[cfg(feature = "timed-test")]
                 if event.state == ElementState::Pressed && !event.repeat {
@@ -214,7 +214,7 @@ impl App {
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && self.is_paste(event) => self.pasted(event_loop),
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => self.key_pressed(event_loop, &event),
             #[cfg(feature = "interaction")]
-            WindowEvent::Ime(Ime::Commit(text)) if self.view.browser.typing_target().is_some() => self.channel_text(event_loop, &text),
+            WindowEvent::Ime(Ime::Commit(text)) if self.view.browser.keyboard_target().is_some() => self.channel_text(event_loop, &text),
             // The input method's preedit goes to the channel in the COMPOSE
             // mode (`interaction.md` section 7.3).
             #[cfg(feature = "interaction")]

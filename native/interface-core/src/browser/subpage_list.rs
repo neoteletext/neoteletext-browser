@@ -963,7 +963,18 @@ mod tests {
     fn takes_input(browser: &mut crate::browser::Browser) {
         use crate::browser::typing::TypingView;
         browser.set_typing(
-            TypingView { channel: 7, page: 0x100, on: true, secure: false, refused: false, cursor: None, round_trip_us: None, wheel: false, asks: false },
+            TypingView {
+                channel: 7,
+                page: 0x100,
+                on: true,
+                secure: false,
+                refused: false,
+                cursor: None,
+                round_trip_us: None,
+                wheel: false,
+                asks: false,
+                keys: true,
+            },
             0,
         );
     }

@@ -357,6 +357,7 @@ fn a_control_lights_and_shows_the_hand_while_keys_go() {
         round_trip_us: None,
         wheel: false,
         asks: false,
+        keys: true,
     };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
@@ -402,6 +403,7 @@ fn a_contact_on_a_control_gives_it_the_pressed_look() {
         round_trip_us: None,
         wheel: false,
         asks: false,
+        keys: true,
     };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
@@ -443,6 +445,7 @@ fn the_channel_is_told_as_the_pointer_enters_and_leaves_controls() {
         round_trip_us: None,
         wheel: false,
         asks: false,
+        keys: true,
     };
     browser.set_typing(typing, OPEN);
     browser.take_outputs();
@@ -738,6 +741,7 @@ fn space_on_a_plain_drawing_presses_its_centre_for_the_rule_table() {
             round_trip_us: None,
             wheel: false,
             asks: false,
+            keys: true,
         },
         0,
     );

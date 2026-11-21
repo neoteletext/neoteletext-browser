@@ -323,6 +323,7 @@ fn the_keys_badge_is_drawn_whole_beside_the_page_at_full_screen_sizes() {
                 round_trip_us: Some(3_250),
                 wheel: false,
                 asks: false,
+                keys: true,
             };
             browser.set_typing(typing, 0);
             // After the notice, and after the label of a page that came to

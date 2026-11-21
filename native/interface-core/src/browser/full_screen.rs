@@ -373,7 +373,7 @@ impl Browser {
         };
         if notice {
             #[cfg(feature = "interaction")]
-            let typing = self.typing_target().is_some();
+            let typing = self.keyboard_target().is_some();
             #[cfg(not(feature = "interaction"))]
             let typing = false;
             draw_notice(canvas, area, page, typing);

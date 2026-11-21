@@ -61,7 +61,7 @@ pub struct CursorView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(
     clippy::struct_excessive_bools,
-    reason = "on, secure, refused, wheel and asks are independent facts the trusted core reports (protocol::interaction::Typing), not states of one thing"
+    reason = "on, secure, refused, wheel, asks and keys are independent facts the trusted core reports (protocol::interaction::Typing), not states of one thing"
 )]
 pub struct TypingView {
     /// The channel.
@@ -86,6 +86,11 @@ pub struct TypingView {
     /// The open page's rule table asks for input of some class: the wheel
     /// over its picture is then the page's (DEC-6633 item 2, REQ-6632).
     pub asks: bool,
+    /// The open page's rule table asks for the keyboard, keys or text
+    /// (RULE-52 item 1): the keyboard is then the page's. Otherwise
+    /// nothing typed would leave for the page (REQ-6523), and the keyboard
+    /// is the browser's own viewer's (REQ-756, REQ-890).
+    pub keys: bool,
 }
 
 /// The browser's typing state.
@@ -157,6 +162,19 @@ impl Browser {
         self.mouse_target()
     }
 
+    /// The page the keyboard goes to now, if any: the page keys would go
+    /// to, while its rule table asks for the keyboard. A page with no
+    /// table, or one whose table asks for no key and no text, is sent
+    /// nothing typed (REQ-6523, RULE-50); were its keys still given to its
+    /// channel they would be dropped there, so they stay the browser's own
+    /// viewer's, as on a channel that takes no input: page numbers, the
+    /// Fastext keys, Index, reveal, hold and mix (REQ-756, REQ-890). A
+    /// list or the strip that has the keys keeps them from both (REQ-2944).
+    #[must_use]
+    pub fn keyboard_target(&self) -> Option<PageKey> {
+        self.typing_target().filter(|_| self.typing.typing.is_some_and(|typing| typing.keys))
+    }
+
     /// Whether the open page's channel takes input, by the trusted core's
     /// word: the keys are then the page's and never a list's. It goes by
     /// the channel, not the page, so that no list takes the keys in the
@@ -200,10 +218,10 @@ impl Browser {
     }
 
     /// Whether the input method's preedit goes to the channel (`interaction.md` section 7.3):
-    /// whenever keys go to it.
+    /// whenever the keyboard goes to it.
     #[must_use]
     pub fn composes_for_channel(&self) -> bool {
-        self.typing_target().is_some()
+        self.keyboard_target().is_some()
     }
 
     /// The browser's own modifier is held or released.
@@ -276,7 +294,7 @@ impl Browser {
     /// physical key. Nothing is drawn for it: the channel draws what it
     /// makes of the key.
     pub fn terminal_key(&mut self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) {
-        let Some(target) = self.typing_target() else { return };
+        let Some(target) = self.keyboard_target() else { return };
         let text = text.map(|text| cut(text, neoteletext_input::MAX_KEY_TEXT)).filter(|text| !text.is_empty()).map(String::from);
         self.send(target, Intent::Key { action, key, mods, text, base });
     }
@@ -285,7 +303,7 @@ impl Browser {
     /// a channel: one intent, without control characters. Nothing is
     /// drawn for it: the channel draws what it makes of the text.
     pub fn terminal_text(&mut self, text: &str) {
-        let Some(target) = self.typing_target() else { return };
+        let Some(target) = self.keyboard_target() else { return };
         let printable: String = cut(text, MAX_PASTE).chars().filter(|&character| printable(character)).collect();
         if !printable.is_empty() {
             self.send(target, Intent::Text(printable));
@@ -295,7 +313,7 @@ impl Browser {
     /// The browser's paste shortcut while keys go to a channel: the text as
     /// one PASTE (REQ-INT-136), data the channel never takes as keys.
     pub fn terminal_paste(&mut self, text: &str) -> bool {
-        let Some(target) = self.typing_target() else { return false };
+        let Some(target) = self.keyboard_target() else { return false };
         let text = cut(text, MAX_PASTE);
         if text.is_empty() {
             return false;
@@ -307,7 +325,7 @@ impl Browser {
     /// The input method's preedit, `cursor` a code-point offset into it; an
     /// empty preedit ends composition.
     pub fn terminal_compose(&mut self, cursor: u32, text: &str) -> bool {
-        let Some(target) = self.typing_target().filter(|_| self.composes_for_channel()) else { return false };
+        let Some(target) = self.keyboard_target() else { return false };
         let text = cut(text, MAX_COMPOSE);
         let length = u32::try_from(text.chars().count()).unwrap_or(u32::MAX);
         self.send(target, Intent::Compose { cursor: cursor.min(length), text: String::from(text) });
