@@ -408,6 +408,16 @@ linux_steps() {
         (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
 }
 
+# libFuzzer's options for a target whose inputs must reach past its
+# default length limit of 4,096 bytes: dbus_message reads messages up to
+# neoteletext-dbus's MAX_MESSAGE_BYTES, 128 KiB (131,072 bytes), where the
+# security review of 22 November 2026 found its fault (TODO-7173 A1).
+fuzz_options() {
+    case "$1" in
+        dbus_message) echo "-max_len=131072" ;;
+    esac
+}
+
 check_fuzz() {
     # The browser's fuzz targets, and the updater workspace's (The Update
     # Framework's metadata through `tough`, the update host's responses).
@@ -423,7 +433,7 @@ check_fuzz() {
                 log="target/fuzz-$target.log"
                 mkdir -p target
                 cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" -- \
-                    -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 >"$log" 2>&1 ||
+                    -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 $(fuzz_options "$target") >"$log" 2>&1 ||
                     { tail -40 "$log"; fail "fuzz target $target found a fault; its input is in $folder/artifacts/$target/"; }
                 printf '%s: %s\n' "$target" "$(grep '^Done' "$log")"
             done
