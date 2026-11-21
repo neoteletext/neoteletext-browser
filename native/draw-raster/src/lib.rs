@@ -204,6 +204,7 @@ impl Painter {
     /// the window, and says where: empty when nothing did.
     pub fn render(&mut self) -> Damage {
         let frame = std::mem::take(&mut self.frame);
+        self.glyphs.next_frame();
         let damage = if self.whole {
             let mut whole = Damage::default();
             whole.add(self.surface());

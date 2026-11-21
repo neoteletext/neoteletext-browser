@@ -32,7 +32,7 @@ const HINTING: HintingOptions = HintingOptions {
 /// store never holds more, however long one face goes on being used.
 pub(crate) const GLYPH_CACHE_LIMIT: usize = 8192;
 /// More faces (a font at a size and weight) than the interface draws in;
-/// past this the store is emptied and refills with what is drawn.
+/// past this one face is dropped to make room ([`Glyphs::face`]).
 pub(crate) const FACE_CACHE_LIMIT: usize = 64;
 
 /// A font at one size and one setting of its variation axes, by the
@@ -46,6 +46,10 @@ struct Face {
     hinting: Option<HintingInstance>,
     /// Each glyph's edges, in device pixels from its origin, y down.
     glyphs: HashMap<u32, Vec<Line>>,
+    /// The frame it was last used in, and when, by the count of faces
+    /// asked for.
+    frame: u64,
+    used: u64,
 }
 
 /// The faces and glyphs drawn so far.
@@ -55,6 +59,13 @@ pub(crate) struct Glyphs {
     faces: Vec<Face>,
     /// Glyphs held in every face, at most [`GLYPH_CACHE_LIMIT`].
     kept: usize,
+    /// The frame being drawn, counted by [`Glyphs::next_frame`].
+    frame: u64,
+    /// Faces asked for so far, to order their uses.
+    asked: u64,
+    /// Faces made so far, so a test can count rebuilds.
+    #[cfg(test)]
+    made: usize,
 }
 
 /// A glyph's outline as edges, y turned downward.
@@ -95,23 +106,52 @@ pub(crate) struct RunFace<'a> {
 }
 
 impl Glyphs {
+    /// A new frame begins: faces used in it and the frame before are the
+    /// ones its text is drawn in.
+    pub(crate) fn next_frame(&mut self) {
+        self.frame = self.frame.wrapping_add(1);
+    }
+
     /// `font` at `size` device pixels to the em, its axes at `coordinates`;
     /// `None` when its data is not a font skrifa reads.
     pub(crate) fn face<'a>(&'a mut self, font: &'a FontData, size: f32, coordinates: &'a [NormalizedCoord]) -> Option<RunFace<'a>> {
         let reference = FontRef::from_index(font.data.data(), font.index).ok()?;
         let key: FaceKey = (font.data.id(), font.index, size.to_bits(), coordinates.iter().map(|coordinate| coordinate.to_bits()).collect());
+        self.asked = self.asked.wrapping_add(1);
         let index = if let Some(index) = self.faces.iter().position(|face| face.key == key) {
             index
         } else {
-            if self.faces.len() >= FACE_CACHE_LIMIT {
-                self.faces.clear();
-                self.kept = 0;
+            if self.faces.len() >= FACE_CACHE_LIMIT
+                && let Some(evicted) = self.evictable()
+            {
+                let face = self.faces.swap_remove(evicted);
+                self.kept = self.kept.saturating_sub(face.glyphs.len());
             }
             let hinting = HintingInstance::new(&reference.outline_glyphs(), Size::new(size), LocationRef::new(coordinates), HINTING).ok();
-            self.faces.push(Face { key, hinting, glyphs: HashMap::new() });
+            self.faces.push(Face { key, hinting, glyphs: HashMap::new(), frame: self.frame, used: self.asked });
+            #[cfg(test)]
+            {
+                self.made = self.made.saturating_add(1);
+            }
             self.faces.len().saturating_sub(1)
         };
+        let face = self.faces.get_mut(index)?;
+        face.frame = self.frame;
+        face.used = self.asked;
         Some(RunFace { faces: &mut self.faces, index, font: reference, size, coordinates, kept: &mut self.kept })
+    }
+
+    /// The face to drop for a new one: the least recently used of those
+    /// not used in this frame or the one before; when every face was, the
+    /// most recently used. Dropping the least recently used then would
+    /// drop, on each draw of text that needs more faces than the limit,
+    /// the very face asked for next, so every face would be made again on
+    /// every frame; dropping the latest makes again only the faces past
+    /// the limit.
+    fn evictable(&self) -> Option<usize> {
+        let current = |face: &Face| self.frame.wrapping_sub(face.frame) <= 1;
+        let stale = self.faces.iter().enumerate().filter(|(_, face)| !current(face)).min_by_key(|(_, face)| face.used);
+        stale.or_else(|| self.faces.iter().enumerate().max_by_key(|(_, face)| face.used)).map(|(index, _)| index)
     }
 
     /// The glyphs and faces held.
