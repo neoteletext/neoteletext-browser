@@ -39,6 +39,7 @@ mod session;
 mod source;
 mod trusted_core;
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use confine::Role;
@@ -63,10 +64,18 @@ fn core() -> Result<(), String> {
     trusted_core::run(&broker, std::env::args().skip(2), &report.to_string())
 }
 
+/// Whether the command line, the program's own name left out, asks for the
+/// version: [`VERSION_FLAG`] and nothing else (REQ-7047 item 4). With any
+/// other argument before or after it the program starts as it would
+/// without it, so a page address or a file named `--version` is not
+/// taken for the flag.
+fn version_asked(arguments: impl IntoIterator<Item = OsString>) -> bool {
+    let mut arguments = arguments.into_iter();
+    arguments.next().is_some_and(|argument| argument == VERSION_FLAG) && arguments.next().is_none()
+}
+
 fn main() -> ExitCode {
-    let mut arguments = std::env::args_os().skip(1);
-    let version_asked = arguments.next().is_some_and(|argument| argument == VERSION_FLAG) && arguments.next().is_none();
-    let step = if version_asked {
+    let step = if version_asked(std::env::args_os().skip(1)) {
         broker::print_version()
     } else if std::env::args().nth(1).as_deref() == Some(broker::CORE_FLAG) {
         core()
