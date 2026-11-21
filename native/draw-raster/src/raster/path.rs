@@ -87,10 +87,13 @@ impl<'a> Edges<'a> {
             let rest = 1.0 - along;
             // The Bernstein weights of the three points.
             let (weight_start, weight_middle, weight_end) = (rest * rest, 2.0 * rest * along, along * along);
-            self.line_to((
-                weight_start * from.0 + weight_middle * control.0 + weight_end * to.0,
-                weight_start * from.1 + weight_middle * control.1 + weight_end * to.1,
-            ));
+            let point =
+                (weight_start * from.0 + weight_middle * control.0 + weight_end * to.0, weight_start * from.1 + weight_middle * control.1 + weight_end * to.1);
+            // As for a cubic: a point that is not finite would open the
+            // contour; the chord to the next point stands for it.
+            if point.0.is_finite() && point.1.is_finite() {
+                self.line_to(point);
+            }
         }
         self.line_to(to);
     }
