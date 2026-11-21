@@ -57,8 +57,20 @@ pub(super) fn sent_to_interface(core: &mut Core, written: &mpsc::Receiver<Vec<u8
 
 #[cfg(unix)]
 fn core_writing_to<W: Write + Send + 'static>(address: &str, interface: W) -> (Core, confine::broker::stand_in::StandIn) {
-    let (broker, stand_in) =
-        confine::broker::stand_in::StandIn::start(Box::new(|_| Ok(b"PN,10000\r\nOL,1,A\r\n".to_vec())), Box::new(|_| Some(Vec::new()))).unwrap();
+    core_with_helpers(address, interface, Box::new(|_| Some(Vec::new())))
+}
+
+/// [`core_on`], writing to `interface`, with a stand-in broker that asks
+/// `first_words` as it starts each helper. It asks on the one thread that
+/// answers the core, so a test that waits there is a broker slow to start
+/// the next helper the core asks for.
+#[cfg(unix)]
+pub(super) fn core_with_helpers<W: Write + Send + 'static>(
+    address: &str,
+    interface: W,
+    first_words: confine::broker::stand_in::FirstWords,
+) -> (Core, confine::broker::stand_in::StandIn) {
+    let (broker, stand_in) = confine::broker::stand_in::StandIn::start(Box::new(|_| Ok(b"PN,10000\r\nOL,1,A\r\n".to_vec())), first_words).unwrap();
     let reader = std::sync::Arc::clone(&broker);
     let session =
         Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)));

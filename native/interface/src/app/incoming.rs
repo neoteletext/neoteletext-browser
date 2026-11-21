@@ -33,7 +33,7 @@ impl App {
                 self.menu_chosen(event_loop, item);
                 self.act(event_loop);
             }
-            Incoming::Strip(strip) => self.view.browser.set_strip(strip),
+            Incoming::Strip(strip) => self.strip_changed(strip),
             Incoming::Settings(view) => {
                 dock_menu::set_aspect(view.aspect);
                 self.view.painter.set_regis_contain(view.regis_contain);
@@ -124,6 +124,20 @@ impl App {
         // Drawn with the next paced frame: pages load and flash many times
         // a second, and one frame shows all that arrived since the last.
         self.view.pace.changed(now);
+    }
+
+    /// What the trusted strip shows. REQ-7164 item 1: the strip that clears
+    /// the page area of the channel left is drawn as it arrives. A paced
+    /// frame would leave that channel's page drawn for up to
+    /// `CHANGE_FRAME_MILLISECONDS` after the frame the key or click that
+    /// left it has just drawn (TODO-7206).
+    fn strip_changed(&mut self, strip: interface_core::browser::StripState) {
+        let clears = self.view.browser.clears_page_area(&strip);
+        self.view.browser.set_strip(strip);
+        if clears {
+            self.view.pace.awaited();
+            self.request_redraw();
+        }
     }
 
     /// The window's tabs, and which is active.

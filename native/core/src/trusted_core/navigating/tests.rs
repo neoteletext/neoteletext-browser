@@ -12,7 +12,7 @@ use protocol::fetcher::{FromFetcher, RefusedFile};
 use protocol::{ToCore, ToInterface};
 
 use super::super::Core;
-use super::super::test_support::{core_watched, sent_to_interface};
+use super::super::test_support::{HELPER_LIMIT, Sink, core_watched, core_with_helpers, sent_to_interface};
 use crate::session::Navigating;
 
 const BEFORE: &str = "https://before.invalid/teletext/";
@@ -67,6 +67,57 @@ fn the_strip_says_navigating_only_after_a_change_of_channel() {
     assert!(!core.strip().navigating, "a reload");
     core.intent(ToCore::Navigate(OTHER.into())).unwrap();
     assert!(core.strip().navigating, "another channel");
+}
+
+/// Whether `chunk`, one flush of what the core sends the interface, holds a
+/// strip that says the tab is going to another channel.
+fn says_navigating(chunk: &[u8]) -> bool {
+    let mut input = chunk;
+    let mut says = false;
+    while let Some(message) = protocol::read_from_core(&mut input).unwrap() {
+        says |= matches!(message, ToInterface::Strip(strip) if strip.navigating);
+    }
+    says
+}
+
+// REQ-7164 item 1 (TODO-7206): the page area clears at once. The strip
+// that says so has reached the interface while the broker is still starting
+// the new channel's helpers: the stand-in broker here answers nothing more,
+// once the first helper of the navigation has started, until the interface
+// has been written that strip. A core that sends the strip only after its
+// helpers have started waits on the next helper, the interface is written
+// nothing, and the stand-in gives up at `HELPER_LIMIT`.
+#[test]
+fn the_strip_that_clears_the_page_reaches_the_interface_before_the_helpers_have_started() {
+    let (interface, written) = std::sync::mpsc::channel::<Vec<u8>>();
+    let (outcome, cleared) = std::sync::mpsc::channel();
+    let navigated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let waiting = std::sync::Arc::clone(&navigated);
+    let (mut core, stand_in) = core_with_helpers(
+        BEFORE,
+        Sink(interface),
+        Box::new(move |_| {
+            // Only the first helper started after the navigation waits.
+            if waiting.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let until = Instant::now() + HELPER_LIMIT;
+                let mut says = false;
+                while !says && let Ok(chunk) = written.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    says = says_navigating(&chunk);
+                }
+                let _ = outcome.send(says);
+            }
+            Some(Vec::new())
+        }),
+    );
+    // The channel left has its helpers, as a tab on show does.
+    core.send_all().unwrap();
+    core.flush().unwrap();
+    let before = stand_in.started().len();
+    assert!(before > 0, "the channel left had helpers");
+    navigated.store(true, std::sync::atomic::Ordering::SeqCst);
+    core.intent(ToCore::Navigate(OTHER.into())).unwrap();
+    assert!(stand_in.started().len() > before, "the new channel's helpers were started");
+    assert_eq!(cleared.recv_timeout(HELPER_LIMIT), Ok(true), "the interface was told to clear the page area while the helpers were starting");
 }
 
 // REQ-7164 item 3: the deadline is the notice's second after the

@@ -2,6 +2,8 @@
 //! the trusted core's own rules, and what the interface is sent afresh
 //! after a change of tab or channel.
 
+use std::io::Write as _;
+
 use interface_core::canvas::PageKey;
 use neoteletext::frames;
 #[cfg(not(feature = "links"))]
@@ -15,10 +17,14 @@ use super::startup::open_home;
 use super::{Core, WINDOW_STILL};
 use crate::session::Went;
 
+/// The tabs, the active tab and the strip, as the interface is sent them.
+type Shown = (Vec<interface_core::browser::TabInfo>, usize, interface_core::browser::StripState);
+
 impl Core {
     /// Sends everything the interface shows: tabs, strip and channel. The
     /// interface then reports what is visible afresh.
     pub(super) fn send_all(&mut self) -> Result<(), String> {
+        let cleared = self.clear_before_helpers()?;
         self.match_decoders()?;
         // Another tab or channel: the keys leave the page they were going
         // to; the interface reports what it opens next.
@@ -33,10 +39,14 @@ impl Core {
         if let Some(previous) = self.showing.take() {
             self.tell(previous, ToDecoder::Showing(Vec::new()));
         }
-        let tabs = self.tab_infos();
-        let active = self.session.active;
-        self.send(&ToInterface::Tabs { tabs, active })?;
-        self.send(&ToInterface::Strip(self.strip()))?;
+        // Sent before the helpers, they are sent again only if matching the
+        // helpers or the keys leaving their page changed what they say.
+        let shown = (self.tab_infos(), self.session.active, self.strip());
+        if cleared.as_ref() != Some(&shown) {
+            let (tabs, active, strip) = shown;
+            self.send(&ToInterface::Tabs { tabs, active })?;
+            self.send(&ToInterface::Strip(strip))?;
+        }
         if let Some(tab) = self.session.active_tab() {
             let channel = tab.channel.view();
             self.send(&ToInterface::Channel(channel))?;
@@ -52,6 +62,29 @@ impl Core {
         }
         self.arm_refreshes();
         self.show_address()
+    }
+
+    /// REQ-7164 item 1: a tab going to another channel clears its page area
+    /// at once. The tabs and the strip that says so are sent, and put on
+    /// their way to the interface, before anything that can be slow:
+    /// ending the helpers of the channel left and starting the new
+    /// channel's, each asked of the broker and waited for, and, once the
+    /// intent is carried out, writing the session file, which waits for
+    /// the disk. What an event produces otherwise leaves only when the
+    /// event has been handled whole (TODO-7206). Only a strip that says so
+    /// goes early: the page area then shows nothing of any channel, where
+    /// any other strip would name the new address over the page left until
+    /// the channel followed it. Returns what was sent.
+    fn clear_before_helpers(&mut self) -> Result<Option<Shown>, String> {
+        let strip = self.strip();
+        if !strip.navigating {
+            return Ok(None);
+        }
+        let (tabs, active) = (self.tab_infos(), self.session.active);
+        self.send(&ToInterface::Tabs { tabs: tabs.clone(), active })?;
+        self.send(&ToInterface::Strip(strip.clone()))?;
+        self.to_interface.flush().map_err(|error| format!("cannot write to the interface: {error}"))?;
+        Ok(Some((tabs, active, strip)))
     }
 
     /// The page area follows the active tab's address: its wall, its

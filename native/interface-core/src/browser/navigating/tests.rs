@@ -38,6 +38,22 @@ fn words_drawn(canvas: &Recorder) -> Vec<Rect> {
     canvas.texts.iter().filter(|(_, text)| text == WORDS).map(|&(rect, _)| rect).collect()
 }
 
+// REQ-7164 item 1 (TODO-7206): only the strip that starts the words clears
+// a page area showing a channel, and so is drawn as it arrives: not a strip
+// that says nothing of it, nor one that says so again or stops saying so.
+#[test]
+fn only_the_strip_that_starts_the_words_clears_the_page_area() {
+    let (mut browser, _) = browser();
+    let says = |on: bool| StripState { address: NEW_ADDRESS.into(), navigating: on, ..StripState::default() };
+    assert!(!browser.clears_page_area(&says(false)), "a strip that says nothing of it");
+    assert!(browser.clears_page_area(&says(true)), "the strip that starts the words");
+    navigating(&mut browser, true);
+    assert!(!browser.clears_page_area(&says(true)), "the page area is cleared already");
+    assert!(!browser.clears_page_area(&says(false)), "the strip that ends the words");
+    navigating(&mut browser, false);
+    assert!(browser.clears_page_area(&says(true)), "the next change of channel");
+}
+
 // REQ-7164 items 1 and 2: the pages go, the page area is filled, and the
 // words are drawn once, centred both ways in it.
 #[test]
