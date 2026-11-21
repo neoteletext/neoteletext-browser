@@ -7,7 +7,7 @@ use std::io;
 use std::rc::Rc;
 use std::time::Instant;
 
-use draw_vello::{Family, Painter};
+use draw_raster::{Family, Painter};
 use interface_core::browser::{Browser, Cursor, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::library::WindowGeometry;

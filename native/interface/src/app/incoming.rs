@@ -177,7 +177,7 @@ impl App {
         // RULE-66's hops: when the window's thread took the repaint.
         #[cfg(feature = "timed-test")]
         protocol::timed_test::mark("interface", "regis-taken", std::time::Instant::now(), format_args!("{},{},{},{}", area.x, area.y, area.width, area.height));
-        let part = draw_vello::RegisPart {
+        let part = draw_raster::RegisPart {
             language: picture.language,
             number: picture.number,
             base: picture.base,
@@ -217,7 +217,7 @@ impl App {
                 protocol::frame::decode(bytes, None).is_ok_and(|frame| painter.set_page(THUMBNAIL_PAGE, &frame.palette, frame.screen, &frame.indices).is_ok())
             }
             protocol::ThumbnailImage::Regis(picture) => {
-                let part = draw_vello::RegisPart {
+                let part = draw_raster::RegisPart {
                     language: picture.language,
                     number: picture.number,
                     base: picture.base,

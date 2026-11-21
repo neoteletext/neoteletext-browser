@@ -7,7 +7,7 @@ use std::io::Write;
 use std::time::Instant;
 
 use decoder::Engine;
-use draw_vello::{Family, Painter};
+use draw_raster::{Family, Painter};
 use interface_core::browser::{Browser, Frame, StripState, TabInfo};
 use interface_core::canvas::PageKey;
 use interface_core::channel::{Channel, PageInfo, Status, page_index};

@@ -15,7 +15,7 @@ cargo-fuzz = true
 libfuzzer-sys = "=0.4.13"
 protocol = { path = "../protocol" }
 interface-core = { path = "../interface-core" }
-draw-vello = { path = "../draw-vello" }
+draw-raster = { path = "../draw-raster" }
 decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }

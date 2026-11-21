@@ -622,7 +622,7 @@ neoteletext-browser/
                             bookmarks bar beside them
       src/wall/             the page area: the grid, the page under the pointer, the zoom, update marks,
                             the page-size control, and its drawing
-    draw-vello/             the drawing back end for desktops and phones: our own anti-aliased rasteriser
+    draw-raster/            the drawing back end for desktops and phones: our own anti-aliased rasteriser
                             (exact-area coverage, clips as layers, image sampling) and Parley, with skrifa
                             for glyph outlines, and the fonts; a frame's recorded calls, its damage, text
                             and page images

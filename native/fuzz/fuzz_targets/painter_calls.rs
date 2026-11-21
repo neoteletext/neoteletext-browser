@@ -5,7 +5,7 @@
 //! and leaves the window its size.
 #![no_main]
 
-use draw_vello::{Family, Painter};
+use draw_raster::{Family, Painter};
 use interface_core::canvas::{Canvas, Style};
 use interface_core::geometry::{Point, Rect};
 use interface_core::theme::Colour;

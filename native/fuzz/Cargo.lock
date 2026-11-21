@@ -579,7 +579,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "draw-vello"
+name = "draw-raster"
 version = "0.1.0"
 dependencies = [
  "fontique",
@@ -1409,7 +1409,7 @@ name = "neoteletext-fuzz"
 version = "0.0.0"
 dependencies = [
  "confine",
- "draw-vello",
+ "draw-raster",
  "interface-core",
  "libfuzzer-sys",
  "neoteletext",
