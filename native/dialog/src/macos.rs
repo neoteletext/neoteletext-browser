@@ -1,8 +1,12 @@
 //! `AppKit`'s panels (`NSOpenPanel` and `NSSavePanel`), run modally on the
 //! chooser's main thread. The chooser is an agent with no window of its
-//! own (its bundle's `LSUIElement`), so the panel is put at the shielding
-//! window level, above other applications' windows, and the application is
-//! given an activation policy that may show it when it has none.
+//! own (its bundle's `LSUIElement`), so the application is given an
+//! activation policy that may show a panel when it has none, and is
+//! activated so that the panel, at the usual modal panel level, comes in
+//! front of the browser's window. The panel is not put at the shielding
+//! window level, which `rfd` used: that is above every window on the
+//! screen, the system's own alerts and other applications' security
+//! prompts among them (DEC-7192, TODO-7173 finding A6).
 //!
 //! `AppKit`'s methods are reached through the Objective-C runtime, which
 //! Rust cannot check, so this module is allowed unsafe code; every block
@@ -12,17 +16,10 @@
 use std::path::PathBuf;
 
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSModalResponseOK, NSOpenPanel, NSSavePanel, NSWindowLevel};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSModalPanelWindowLevel, NSModalResponseOK, NSOpenPanel, NSSavePanel};
 use objc2_foundation::{MainThreadMarker, NSArray, NSString, NSURL};
 
 use crate::{Dialog, Kind};
-
-#[link(name = "CoreGraphics", kind = "framework")]
-unsafe extern "C" {
-    /// `CGWindowLevel.h`: the level of the shielding window, above every
-    /// application's windows.
-    fn CGShieldingWindowLevel() -> i32;
-}
 
 pub(crate) fn choose(dialog: &Dialog<'_>) -> Result<Option<PathBuf>, String> {
     let main = MainThreadMarker::new().ok_or("AppKit's panels run on the main thread")?;
@@ -74,9 +71,9 @@ pub(crate) fn choose(dialog: &Dialog<'_>) -> Result<Option<PathBuf>, String> {
         if let Kind::Save(name) = dialog.kind {
             panel.setNameFieldStringValue(&NSString::from_str(name));
         }
-        if let Ok(level) = NSWindowLevel::try_from(CGShieldingWindowLevel()) {
-            panel.setLevel(level);
-        }
+        panel.setLevel(NSModalPanelWindowLevel);
+        #[expect(deprecated, reason = "NSApplication's activate, its replacement, needs macOS 14; the browser supports macOS 11")]
+        application.activateIgnoringOtherApps(true);
         if panel.runModal() != NSModalResponseOK {
             return Ok(None);
         }
