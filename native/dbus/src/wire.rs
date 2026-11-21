@@ -3,7 +3,7 @@
 //! the message.
 
 use crate::Error;
-use crate::value::{MAX_DEPTH, MAX_SIGNATURE_BYTES, Type, Value, parse_signature, parse_single, signature_of, valid_object_path, wipe_bytes};
+use crate::value::{MAX_DEPTH, MAX_SIGNATURE_BYTES, Type, Value, parse_signature, parse_single, signature_of, valid_object_path, wipe, wipe_bytes};
 
 /// "Marshaling (Wire Format)", arrays: an array's length is at most 2^26
 /// bytes (64 MiB). Every message here is far shorter
@@ -17,9 +17,18 @@ fn too_long() -> Error {
 }
 
 /// Bytes being written, little-endian (the `l` of the message header).
+/// What was written is wiped when the writer is dropped, so that a secret
+/// in a message whose encoding fails part way stays in no freed buffer
+/// (TODO-7173 finding A4); [`Writer::into_bytes`] hands the bytes on.
 #[derive(Default)]
 pub(crate) struct Writer {
     pub(crate) bytes: Vec<u8>,
+}
+
+impl Drop for Writer {
+    fn drop(&mut self) {
+        self.wipe();
+    }
 }
 
 impl Writer {
@@ -160,6 +169,11 @@ impl Writer {
     /// Clears what was written, as [`crate::wipe`] clears values.
     pub(crate) fn wipe(&mut self) {
         wipe_bytes(&mut self.bytes);
+    }
+
+    /// What was written, for the caller to send and wipe.
+    pub(crate) fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.bytes)
     }
 }
 
@@ -306,8 +320,12 @@ impl<'a> Reader<'a> {
                 self.charge(element.nodes())?;
                 let end = self.array_end(element)?;
                 let mut elements = Vec::new();
-                while !self.array_done(end)? {
-                    elements.push(self.value(element, inner)?);
+                loop {
+                    match self.array_done(end).and_then(|done| if done { Ok(None) } else { self.value(element, inner).map(Some) }) {
+                        Ok(Some(item)) => elements.push(item),
+                        Ok(None) => break,
+                        Err(error) => return Err(wiped(elements, error)),
+                    }
                 }
                 Value::Array((**element).clone(), elements)
             }
@@ -316,16 +334,33 @@ impl<'a> Reader<'a> {
                 let entry = Type::Struct(Vec::new());
                 let end = self.array_end(&entry)?;
                 let mut entries = Vec::new();
-                while !self.array_done(end)? {
-                    self.pad(entry.alignment())?;
-                    let read_key = self.value(key, inner)?;
-                    entries.push((read_key, self.value(value, inner)?));
+                loop {
+                    match self.array_done(end) {
+                        Ok(true) => break,
+                        Ok(false) => {}
+                        Err(error) => return Err(wiped_entries(entries, error)),
+                    }
+                    let read = self.pad(entry.alignment()).and_then(|()| self.value(key, inner));
+                    match read.and_then(|read_key| match self.value(value, inner) {
+                        Ok(read_value) => Ok((read_key, read_value)),
+                        Err(error) => Err(wiped(vec![read_key], error)),
+                    }) {
+                        Ok(pair) => entries.push(pair),
+                        Err(error) => return Err(wiped_entries(entries, error)),
+                    }
                 }
                 Value::Dict((**key).clone(), (**value).clone(), entries)
             }
             Type::Struct(fields) => {
                 self.pad(kind.alignment())?;
-                Value::Struct(fields.iter().map(|field| self.value(field, inner)).collect::<Result<_, _>>()?)
+                let mut read = Vec::with_capacity(fields.len());
+                for field in fields {
+                    match self.value(field, inner) {
+                        Ok(value) => read.push(value),
+                        Err(error) => return Err(wiped(read, error)),
+                    }
+                }
+                Value::Struct(read)
             }
             Type::Variant => {
                 let held = parse_single(&self.signature()?)?;
@@ -333,6 +368,23 @@ impl<'a> Reader<'a> {
             }
         })
     }
+}
+
+/// `error`, once the values read before it are wiped: a secret read part
+/// way into a value that turns out malformed stays in no freed buffer
+/// (TODO-7173 finding A4).
+fn wiped(mut values: Vec<Value>, error: Error) -> Error {
+    wipe(&mut values);
+    error
+}
+
+/// [`wiped`], for a dictionary's entries.
+fn wiped_entries(mut entries: Vec<(Value, Value)>, error: Error) -> Error {
+    for (key, value) in &mut entries {
+        wipe(std::slice::from_mut(key));
+        wipe(std::slice::from_mut(value));
+    }
+    error
 }
 
 #[cfg(test)]
@@ -343,7 +395,7 @@ mod tests {
     fn written(value: &Value) -> Vec<u8> {
         let mut writer = Writer::default();
         writer.value(value, 0).unwrap();
-        writer.bytes
+        writer.into_bytes()
     }
 
     fn read(bytes: &[u8], kind: &Type) -> Result<Value, Error> {

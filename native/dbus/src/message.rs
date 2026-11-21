@@ -166,12 +166,11 @@ impl Message {
         message.value(&Value::Array(header_field_type(), fields), 0)?;
         message.pad(HEADER_ALIGNMENT)?;
         message.bytes.extend_from_slice(&body.bytes);
-        body.wipe();
+        // Both writers wipe what they hold when dropped, on every path.
         if message.bytes.len() > MAX_MESSAGE_BYTES {
-            message.wipe();
             return Err(Error::TooLong);
         }
-        Ok(message.bytes)
+        Ok(message.into_bytes())
     }
 
     /// The message in `bytes`, all of them, checked as "Message Format",
@@ -257,13 +256,21 @@ impl Message {
         if reader.bytes.len().checked_sub(reader.position) != Some(body_length) {
             return Err(Error::Malformed("a body of another length than its header says"));
         }
-        for kind in parse_signature(&signature)? {
-            message.body.push(reader.value(&kind, 0)?);
+        let body = parse_signature(&signature).and_then(|kinds| {
+            for kind in kinds {
+                message.body.push(reader.value(&kind, 0)?);
+            }
+            if reader.position == bytes.len() { Ok(()) } else { Err(Error::Malformed("a body longer than its signature")) }
+        });
+        match body {
+            Ok(()) => Ok(message),
+            // What was read of a body refused part way is wiped, a secret's
+            // bytes among it (TODO-7173 finding A4).
+            Err(error) => {
+                message.wipe();
+                Err(error)
+            }
         }
-        if reader.position != bytes.len() {
-            return Err(Error::Malformed("a body longer than its signature"));
-        }
-        Ok(message)
     }
 
     /// Clears the body's byte arrays (a secret's among them), as
