@@ -91,3 +91,7 @@ pub(super) const KIND_CHANNEL_NAME: u8 = 200;
 // other work in flight on 20 November 2026 may take next.
 pub(super) const KIND_TAB_OPENS: u8 = 230;
 pub(super) const KIND_TAB_LEAVES: u8 = 231;
+// The push protocol version of a channel's connection, which the
+// WebSocket subprotocol the channel answered names (the engine's DEC-6953
+// item 1, DEC-7074), in the next number.
+pub(super) const KIND_PUSH_VERSION: u8 = 232;

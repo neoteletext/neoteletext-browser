@@ -158,8 +158,19 @@ fn play_local(engine: &mut Engine) {
     // The setup: program change to program 0 at tick 0 (MIDI-23).
     let mut local = Writer::local(1, 1, neoteletext_audio::Codec::Synth106, &[0, 0xC0, 0]).unwrap();
     local.banks = vec![BANK];
-    let play =
-        SoundCommand { channel: CHANNEL, sequence: 1, operation: 1, handle: 1, generation: 1, gain: 100, fade_ms: 5, flags: 0, duck: 0, page: Some(PAGE) };
+    let play = SoundCommand {
+        channel: CHANNEL,
+        sequence: 1,
+        operation: 1,
+        handle: 1,
+        generation: 1,
+        gain: 100,
+        fade_ms: 5,
+        flags: 0,
+        duck: 0,
+        page: Some(PAGE),
+        music: None,
+    };
     let mut records = vec![bank.object_record().unwrap()];
     records.extend(bank.data_records());
     records.push(local.object_record().unwrap());

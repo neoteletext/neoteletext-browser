@@ -102,6 +102,10 @@ impl Core {
             }
             // A state query for a page of the channel (RULE-47).
             FromFetcher::RulesQuery { page, identifier } => self.rules_query(channel, page, identifier),
+            // Before the connection is said open: HELLO is written in this
+            // version, and a proof signed under it (the engine's DEC-6953
+            // item 2).
+            FromFetcher::PushVersion(version) => self.push_version(channel, version),
             #[cfg(feature = "interaction")]
             FromFetcher::Input { open, secure } => {
                 if open && self.typing.selection(channel).is_none() {

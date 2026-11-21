@@ -42,7 +42,7 @@ fn a_fetcher_is_answered_for_its_own_tabs_channel_after_a_gesture() {
     assert_eq!((algorithm, lifetime), (Algorithm::Ed25519, Lifetime::Visit));
     let identity = identity_of("https://news.example/teletext/").unwrap();
     let mut bytes = [0_u8; MAX_SIGNED_BYTES];
-    let length = signed_bytes(Algorithm::Ed25519, Lifetime::Visit, &CHALLENGE, &identity, &mut bytes).unwrap();
+    let length = signed_bytes(neoteletext_input::VERSION, Algorithm::Ed25519, Lifetime::Visit, &CHALLENGE, &identity, &mut bytes).unwrap();
     ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key).verify(&bytes[..length], &signature).unwrap();
     assert_eq!(challenge(&mut test, 999, CHALLENGE, true), StateReply::None(NoneReason::NoKey), "no such tab");
     let file = test.tab("file:///tmp/pages/", false);

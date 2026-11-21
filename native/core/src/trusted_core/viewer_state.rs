@@ -62,6 +62,12 @@ pub(crate) struct ViewerState {
     proofs: BTreeMap<u32, (Instant, u32)>,
     /// The challenges each fetcher was given signatures for.
     signed: BTreeMap<u32, VecDeque<[u8; CHALLENGE_BYTES]>>,
+    /// The push protocol version of each fetcher's connection, as it said
+    /// (`FromFetcher::PushVersion`): a proof is signed under it, so that
+    /// one made under one version is no proof under another (VS-203 item
+    /// 2, the engine's DEC-6953 item 2). A fetcher that has not said
+    /// speaks the engine's newest.
+    versions: BTreeMap<u32, u32>,
     /// The fetchers whose channels offered to remember the viewer, not yet
     /// answered (VS-208).
     offers: BTreeSet<u32>,
@@ -162,6 +168,16 @@ impl Core {
         Ok(None)
     }
 
+    /// The fetcher of `channel` said its connection's push protocol
+    /// version, which the pipe's reader held to those the engine speaks:
+    /// a proof is signed under it, and the tab's session writes HELLO in
+    /// it.
+    pub(crate) fn push_version(&mut self, channel: u32, version: u32) {
+        self.viewer_state.versions.insert(channel, version);
+        #[cfg(feature = "interaction")]
+        self.typing.push_version(channel, version);
+    }
+
     /// The answer to one challenge on the fetcher of `channel`: refused
     /// when its channel has no identity, beyond the fetcher's signatures a
     /// minute, or for a challenge already signed on it (VS-119).
@@ -176,7 +192,8 @@ impl Core {
         }
         let gesture = state.gestures.get(&channel).is_some_and(|at| now.saturating_duration_since(*at) < STATE_GESTURE);
         let before = state.store.known(*private, identity.as_str());
-        let asked = Asked { private: *private, identity, challenge, create, gesture };
+        let version = state.versions.get(&channel).copied().unwrap_or(neoteletext_input::VERSION);
+        let asked = Asked { version, private: *private, identity, challenge, create, gesture };
         match state.store.answer(&asked, now_unix()) {
             Answer::Proof { lifetime, public_key, signature } => {
                 state.proofs.insert(channel, (began, count.saturating_add(1)));

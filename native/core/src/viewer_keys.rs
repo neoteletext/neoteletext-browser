@@ -112,6 +112,9 @@ pub enum Answer {
 /// from the tab (VS-103).
 #[derive(Clone, Copy)]
 pub struct Asked<'a> {
+    /// The push protocol version of the tab's connection, which the
+    /// signed bytes name (VS-203 item 2).
+    pub version: u32,
     /// The tab is private: the private jar.
     pub private: bool,
     /// The channel, from the tab's address.
@@ -205,7 +208,7 @@ impl Store {
         key.used = now;
         let lifetime = key.lifetime();
         let mut bytes = [0_u8; MAX_SIGNED_BYTES];
-        let Ok(length) = signed_bytes(Algorithm::Ed25519, lifetime, asked.challenge, asked.identity, &mut bytes) else {
+        let Ok(length) = signed_bytes(asked.version, Algorithm::Ed25519, lifetime, asked.challenge, asked.identity, &mut bytes) else {
             return Answer::None(NoneReason::NoKey);
         };
         let Some(signed) = bytes.get(..length) else { return Answer::None(NoneReason::NoKey) };

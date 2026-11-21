@@ -646,7 +646,8 @@ fn sound_stream(page: u16) -> Vec<u8> {
     let sound = Sound::opus(5, 1, OPUS_PACKET, &opus_frames(10), 9_000).unwrap();
     let mut records = vec![sound.object_record().unwrap()];
     records.extend(sound.data_records());
-    let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: Some(page) };
+    let play =
+        Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: Some(page), music: None };
     records.push(play.record());
     packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect()
 }
@@ -673,7 +674,7 @@ fn a_page_sound_is_sent_when_its_page_is_opened() {
 fn a_live_sound_streams_and_fades_two_seconds_after_its_last_block() {
     use neoteletext_audio::encode::{Command, Sound as Writer, packets};
     let live = Writer::live(6, 1, neoteletext_audio::Codec::Opus, 48_000, OPUS_PACKET).unwrap();
-    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 6, generation: 1, gain: 50, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 6, generation: 1, gain: 50, fade_ms: 0, flags: 0, duck: 0, page: None, music: None };
     let mut records = vec![live.object_record().unwrap(), play.record()];
     let frames = opus_frames(4);
     for (index, frame) in (0_u16..).zip(frames.chunks(usize::from(OPUS_PACKET))) {
@@ -709,7 +710,7 @@ fn a_pcm16_sound_is_not_decoded_in_a_desktop_build() {
     let sound = Writer::new(5, 1, neoteletext_audio::Codec::Pcm16, 8_000, 1000, &pcm).unwrap();
     let mut records = vec![sound.object_record().unwrap()];
     records.extend(sound.data_records());
-    let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: None };
+    let play = Command { channel: 1, sequence: 1, operation: 1, handle: 5, generation: 1, gain: 70, fade_ms: 20, flags: 0, duck: 0, page: None, music: None };
     records.push(play.record());
     let mut engine = Engine::new();
     engine.feed(&packets(0, 0, &records).0.iter().flat_map(|packet| packet.bytes).collect::<Vec<u8>>());
@@ -747,7 +748,7 @@ fn a_stored_synth6581_sound_streams_in_order_and_ends() {
     first.extend_from_slice(&packed[1..]);
     let blocks = vec![first, Vec::new(), Vec::new()];
     let stored = Writer::events(9, 1, neoteletext_audio::Codec::Synth6581, &blocks).unwrap();
-    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 9, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 9, generation: 1, gain: 100, fade_ms: 0, flags: 0, duck: 0, page: None, music: None };
     let mut records = vec![stored.object_record().unwrap()];
     records.extend(stored.data_records());
     records.push(play.record());
@@ -787,7 +788,7 @@ fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
     const PACKET: u16 = OPUS_PACKET;
     let made = opus_frames(10);
     let stored = Writer::opus(7, 1, PACKET, &made, 9_000).unwrap();
-    let play = Command { channel: 2, sequence: 1, operation: 1, handle: 7, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let play = Command { channel: 2, sequence: 1, operation: 1, handle: 7, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None, music: None };
     let mut records = vec![stored.object_record().unwrap()];
     records.extend(stored.data_records());
     records.push(play.record());
@@ -802,7 +803,7 @@ fn opus_sounds_are_decoded_into_samples_for_the_sound_helper() {
     assert!(sounds.iter().any(|audio| matches!(audio, Audio::Samples { pcm, .. } if pcm.iter().any(|&sample| sample != 0))), "decoded, not silence");
 
     let live = Writer::live(8, 1, neoteletext_audio::Codec::Opus, 48_000, PACKET).unwrap();
-    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 8, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None };
+    let play = Command { channel: 0, sequence: 1, operation: 1, handle: 8, generation: 1, gain: 90, fade_ms: 0, flags: 0, duck: 0, page: None, music: None };
     let mut records = vec![live.object_record().unwrap(), play.record()];
     for index in 0..4_u16 {
         let at = usize::from(index) * usize::from(PACKET);

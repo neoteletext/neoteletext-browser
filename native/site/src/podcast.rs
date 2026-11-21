@@ -104,6 +104,7 @@ impl Player {
             flags: 0,
             duck: 0,
             page: None,
+            music: None,
         }
         .record()
     }

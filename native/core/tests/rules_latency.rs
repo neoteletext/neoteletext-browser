@@ -156,7 +156,19 @@ fn pushed() -> (Vec<u8>, Vec<u8>) {
     let bank = Writer::bank(2, 1, neoteletext_audio::Codec::Synth7, &neoteletext_audio_instruments::synth7::sysex::bank_dump(&voices)).unwrap();
     let mut local = Writer::local(1, 1, neoteletext_audio::Codec::Synth7, &[]).unwrap();
     local.banks = vec![2];
-    let play = Command { channel: VOICE, sequence: 1, operation: 1, handle: 1, generation: 1, gain: 100, fade_ms: 5, flags: 0, duck: 0, page: Some(PAGE.page) };
+    let play = Command {
+        channel: VOICE,
+        sequence: 1,
+        operation: 1,
+        handle: 1,
+        generation: 1,
+        gain: 100,
+        fade_ms: 5,
+        flags: 0,
+        duck: 0,
+        page: Some(PAGE.page),
+        music: None,
+    };
     let mut records = vec![bank.object_record().unwrap()];
     records.extend(bank.data_records());
     records.push(local.object_record().unwrap());

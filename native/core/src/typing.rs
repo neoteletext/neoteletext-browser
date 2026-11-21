@@ -667,6 +667,15 @@ impl Typing {
         together(sends)
     }
 
+    /// The push protocol version of the connection a channel is about to
+    /// open, the one its WebSocket subprotocol named: the session's next
+    /// HELLO names it and offers only what that version defines (the
+    /// engine's DEC-6953 items 1 to 3). A version the engine does not
+    /// speak changes nothing.
+    pub fn push_version(&mut self, channel: u32, version: u32) {
+        self.channels.entry(channel).or_insert_with(Channel::new).session.set_version(version);
+    }
+
     /// A channel's input socket opened or closed. A connection begins with
     /// HELLO, and RESUME after it when the channel set RESUME and the
     /// session may be resumed (DOC-1923, REQ-RCH-013); a lost

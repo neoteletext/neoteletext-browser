@@ -50,15 +50,15 @@ decoder = { path = "decoder", package = "neoteletext-decoder", default-features 
 # With no features, the core is the standard's numbers (`limits`) and the
 # packet types alone, which the interface core and the protocol take
 # (decision 112); the decoder names the profile it renders with.
-neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false }
-neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false, features = ["tti", "alloc"] }
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false }
+neoteletext-formats = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false, features = ["tti", "alloc"] }
 # The engine's web module: HTTP, channels, contents files and push, with no
 # network input or output of its own.
-neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false, features = ["push"] }
+neoteletext-web = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false, features = ["push"] }
 # The engine's network port is these traits (its decision E.38); the
 # version the engine uses.
 embedded-io = { version = "=0.7.1", default-features = false }
-neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", features = ["std"] }
+neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", features = ["std"] }
 # The engine's audio profile (its area AUD): the receiver, and the mixer the
 # interface plays through. Opus alone of its codecs (the engine's decision
 # E.131): PCM16 (`pcm16`) and IMA ADPCM (`ima`) are compiled out of the
@@ -72,31 +72,31 @@ neoteletext-image = { git = "file:///Users/andrewstuart/devel/neoteletext-render
 # `decoder/Cargo.toml` names):
 # the trusted core links only the engine crates DEC-2355 permits, and the
 # instruments' crate is not one of them (REQ-6415; the engine's DEC-6410).
-neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false, features = ["idl", "opus"] }
+neoteletext-audio = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false, features = ["idl", "opus"] }
 # The engine's qrkeyboard client (its decision E.93): the phone keyboard
 # process's pairing and encryption, and the terminal channel's phone page.
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046" }
 # The engine's client sockets, shared with its own programs: the reader
 # thread, the TLS pump and the handshake (its DEC-1905).
-neoteletext-transport = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0" }
+neoteletext-transport = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046" }
 # The engine's input profile (its area INT): key records and the cursor
 # record (`interaction.md`).
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false }
 # The page rule table (neoteletext-common's page-rules.md, the engine's
 # RULE-56): decoded and evaluated by the decoder alone (RULE-58); the
 # protocol crate takes its limits by name.
-neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0" }
+neoteletext-rules = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046" }
 # The instruments' own interfaces (the engine's DEC-6453), for the decoder's
 # tests alone, which write a synthesizer's patch as a channel's server does;
 # the receiver brings the crate itself, with only the families the decoder
 # names.
-neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0", default-features = false }
-neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0" }
+neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046", default-features = false }
+neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046" }
 # The engine's picture converter (its DEC-2325): a picture file's bytes to a
 # teletext page, run only in a decoder started to convert one picture
 # (the Tools menu, docs/picture-tools.md). It brings the image crate's five
 # decoders, approved by the engine's DEC-2142.
-neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "930ddad105d69796a09a57ea531762088024c6f0" }
+neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "038f9c1155b93f84d28aba5e45d5568e4a679046" }
 # The ReGIS renderer, maintained in its own repository and pinned to one
 # commit as the engine is (its DEC-6270; DEC-6335): DEC's vector graphics
 # language with the numbered drawings of ReGIS v2, drawn by the decoder for
@@ -107,8 +107,8 @@ regis = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", r
 regis-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-regis", rev = "72ae60b9af9a2e20d811ea2bdf651c3c272fc626" }
 # MIT (the owner's own): the NAPLPS renderer, which the decoder draws a
 # channel's NAPLPS pages with, and its font (DEC-6407).
-naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "9d5fdecef6496ce66b9d107340c563f4b4c7f17e" }
-naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "9d5fdecef6496ce66b9d107340c563f4b4c7f17e" }
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
+naplps-fonts = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
 # Apache-2.0: the operating systems' audio output (Core Audio on macOS),
 # without unsafe code of ours (decision 37).
 cpal = "=0.18.2"

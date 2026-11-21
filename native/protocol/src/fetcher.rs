@@ -19,9 +19,9 @@ use kinds::KIND_LINKS;
 use kinds::{
     KIND_BUNDLE_SETTLED, KIND_CERTIFICATE_REFUSED, KIND_CHANNEL_LOG, KIND_CHANNEL_NAME, KIND_CONFINED, KIND_CONNECTING, KIND_CONTENTS, KIND_DENIED,
     KIND_EXCHANGE, KIND_FETCH_CONTENTS, KIND_FETCH_PAGE, KIND_FETCH_SUBPAGE, KIND_FETCH_SUBPAGES, KIND_INITIAL_PAGE, KIND_INVALID_PACKETS, KIND_NO_CONTENTS,
-    KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH, KIND_REFUSED,
-    KIND_REGION, KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE, KIND_STATE_SEND_OFFER,
-    KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TAB_LEAVES, KIND_TAB_OPENS, KIND_TIMED_OUT,
+    KIND_NOTICE, KIND_PAGE, KIND_PAGE_REDIRECT, KIND_PROGRAM_REDIRECT, KIND_PROXY_FAILED, KIND_PUSH_VERSION, KIND_PUSHING, KIND_REDIRECTED, KIND_REFRESH,
+    KIND_REFUSED, KIND_REGION, KIND_STATE_ANSWER, KIND_STATE_CHALLENGED, KIND_STATE_END_RECEIVED, KIND_STATE_KEEP_OFFERED, KIND_STATE_SEND_NONE,
+    KIND_STATE_SEND_OFFER, KIND_SUBPAGES, KIND_SUBPAGES_FAILED, KIND_SUBPAGES_MISSING, KIND_TAB_LEAVES, KIND_TAB_OPENS, KIND_TIMED_OUT,
 };
 #[cfg(feature = "interaction")]
 use kinds::{KIND_INPUT, KIND_MEASURE_ROUND_TRIP, KIND_ROUND_TRIP, KIND_SEND};
@@ -29,6 +29,12 @@ use neoteletext_core::limits::{MAX_SUBPAGES, is_sub_code};
 
 mod kinds;
 mod state;
+/// `version`, when it is a push protocol version the engine speaks; the
+/// pipe carries no other, in either direction.
+fn spoken(version: u32) -> Result<u32, ProtocolError> {
+    if neoteletext_input::speaks(version) { Ok(version) } else { Err(ProtocolError::BadValue("push version")) }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -215,6 +221,12 @@ pub enum FromFetcher {
     /// A REDIRECT record of the channel's program naming another channel's
     /// address, not yet checked (REQ-1688).
     ProgramRedirect(String),
+    /// The push protocol version of the channel's connection that is about
+    /// to be said open: the one the WebSocket subprotocol the channel
+    /// answered names (the engine's DEC-6953 item 1, DEC-7074 item 1). The
+    /// trusted core writes HELLO in it and signs a viewer-state proof
+    /// under it. A version the engine does not speak is refused.
+    PushVersion(u32),
     /// The channel's push connection opened (true) or was lost: a sleeping
     /// tab keeps its fetcher while it holds one (decision 47).
     Pushing(bool),
@@ -887,6 +899,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             KIND_INPUT
         }
         FromFetcher::RulesQuery { page, identifier } => crate::rules::push_query(&mut payload, *page, *identifier).map(|()| kinds::KIND_RULES_QUERY)?,
+        FromFetcher::PushVersion(version) => spoken(*version).map(|version| payload.extend_from_slice(&version.to_be_bytes())).map(|()| KIND_PUSH_VERSION)?,
         FromFetcher::Pushing(open) => {
             payload.push(u8::from(*open));
             KIND_PUSHING
@@ -990,6 +1003,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
             FromFetcher::Input { open: flags & 1 != 0, secure: flags & 2 != 0 }
         }
         kinds::KIND_RULES_QUERY => FromFetcher::RulesQuery { page: crate::rules::read_page_sub(&mut fields)?, identifier: fields.u32()? },
+        KIND_PUSH_VERSION => FromFetcher::PushVersion(spoken(fields.u32()?)?),
         KIND_PUSHING => FromFetcher::Pushing(fields.flag("pushing")?),
         KIND_EXCHANGE => {
             let method = raw_text(&mut fields, MAX_METHOD, "text too long")?;

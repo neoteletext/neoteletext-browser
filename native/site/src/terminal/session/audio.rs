@@ -43,6 +43,7 @@ impl Session {
             flags: 0,
             duck: 0,
             page: None,
+            music: None,
         };
         let (packets, next) = packets(AUDIO_SERVICE, self.record_id, &[command.record()]);
         self.record_id = next;

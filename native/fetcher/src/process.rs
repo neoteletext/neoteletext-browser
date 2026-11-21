@@ -376,6 +376,10 @@ fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
         // A page current, or a sub-page's file not there or failed, changes
         // nothing the trusted core holds.
         Output::Event(Event::PageCurrent { .. } | Event::PageNotInService { .. } | Event::FetchFailed { .. }) => return,
+        // Told before the connection is said open, so that the trusted
+        // core writes HELLO in the connection's version (the engine's
+        // DEC-6953 item 2).
+        Output::Event(Event::PushVersion(version)) => Action::Tell(FromFetcher::PushVersion(version)),
         Output::Event(Event::PushConnected) => Action::Push(true),
         Output::Event(Event::Denied(denied)) => Action::Tell(FromFetcher::Denied { status: denied.status, place: denied.place.to_owned() }),
         // A lost connection waits before the next; a bad message that

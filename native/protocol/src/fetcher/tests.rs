@@ -23,6 +23,8 @@ fn every_kind_round_trips() {
         FromFetcher::PageRedirect { page: 0x302, sub: 2, query: Some("a=1".into()) },
         FromFetcher::PageRedirect { page: 0x302, sub: neoteletext_core::limits::SUBCODE_ANY, query: None },
         FromFetcher::ProgramRedirect("https://b.example/teletext/302".into()),
+        FromFetcher::PushVersion(neoteletext_input::OLDEST_VERSION),
+        FromFetcher::PushVersion(neoteletext_input::VERSION),
         FromFetcher::Pushing(true),
         FromFetcher::Exchange { method: "GET".into(), url: "https://a.example/100.tti".into(), status: 200, bytes: 512, elapsed_us: 1_234 },
         FromFetcher::Confined,

@@ -11,7 +11,7 @@ fn identity(address: &str) -> ChannelIdentity {
 }
 
 fn asked(identity: &ChannelIdentity, create: bool, gesture: bool) -> Asked<'_> {
-    Asked { private: false, identity, challenge: &CHALLENGE, create, gesture }
+    Asked { version: neoteletext_input::VERSION, private: false, identity, challenge: &CHALLENGE, create, gesture }
 }
 
 /// The proof's public key, or a panic naming the answer.
@@ -40,7 +40,7 @@ fn a_made_key_signs_the_bytes_of_vs_203() {
     let Answer::Proof { lifetime, public_key, signature } = answer else { panic!("a proof") };
     assert_eq!(lifetime, Lifetime::Visit, "VS-105: made as a visit key");
     let mut bytes = [0_u8; MAX_SIGNED_BYTES];
-    let length = signed_bytes(Algorithm::Ed25519, Lifetime::Visit, &CHALLENGE, &channel, &mut bytes).unwrap();
+    let length = signed_bytes(neoteletext_input::VERSION, Algorithm::Ed25519, Lifetime::Visit, &CHALLENGE, &channel, &mut bytes).unwrap();
     let verifier = ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, public_key);
     verifier.verify(&bytes[..length], &signature).unwrap();
     assert!(verifier.verify(&bytes[..length - 1], &signature).is_err(), "only those bytes");
