@@ -1120,6 +1120,13 @@ version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
 
 [[package]]
+name = "neoteletext-dbus"
+version = "0.1.0"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "neoteletext-decoder"
 version = "0.1.0"
 dependencies = [
@@ -1157,6 +1164,7 @@ dependencies = [
  "interface-core",
  "libfuzzer-sys",
  "neoteletext",
+ "neoteletext-dbus",
  "neoteletext-decoder",
  "neoteletext-icon",
  "neoteletext-input",

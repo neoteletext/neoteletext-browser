@@ -42,6 +42,9 @@ use std::process::ExitCode;
 
 use confine::broker::ChooseKind;
 
+#[cfg(target_os = "linux")]
+mod portal;
+
 /// A window handle's base, on the command line.
 #[cfg(windows)]
 const HEXADECIMAL: u32 = 16;
@@ -110,41 +113,19 @@ fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Optio
 /// window's number in hexadecimal, or nothing.
 #[cfg(target_os = "linux")]
 fn choose(kind: ChooseKind, parent: &str, folder: Option<&Path>) -> Result<Option<PathBuf>, String> {
-    use ashpd::desktop::file_chooser::{FileFilter, OpenFileRequest, SaveFileRequest};
-    use ashpd::{Error, WindowIdentifier};
-
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| error.to_string())?;
-    let identifier =
-        parent.strip_prefix("x11:").and_then(|number| u32::from_str_radix(number, 16).ok()).map(|window| WindowIdentifier::from_xid(u64::from(window)));
-    if kind.is_save() {
-        return runtime.block_on(async {
-            let mut request = SaveFileRequest::default().title(title(kind)).current_name(save_name(kind)).identifier(identifier);
-            if let Some(folder) = folder {
-                request = request.current_folder(folder).map_err(|error| error.to_string())?;
-            }
-            match request.send().await.map_err(|error| error.to_string())?.response() {
-                Ok(files) => Ok(files.uris().first().and_then(|uri| path_of_uri(uri.as_str()))),
-                Err(Error::Response(ashpd::desktop::ResponseError::Cancelled)) => Ok(None),
-                Err(error) => Err(error.to_string()),
-            }
-        });
-    }
-    runtime.block_on(async {
-        let mut request = OpenFileRequest::default().title(title(kind)).directory(kind == ChooseKind::Folder).multiple(false).identifier(identifier);
-        if kind == ChooseKind::Picture {
-            let types = PICTURE_TYPES.iter().fold(FileFilter::new("Pictures"), |filter, kind| filter.mimetype(kind));
-            request = request.filter(PICTURE_ENDINGS.iter().fold(types, |filter, ending| filter.glob(&format!("*.{ending}"))));
-        }
-        if let Some(folder) = folder {
-            request = request.current_folder(folder).map_err(|error| error.to_string())?;
-        }
-        let response = request.send().await.map_err(|error| error.to_string())?.response();
-        match response {
-            Ok(files) => Ok(files.uris().first().and_then(|uri| path_of_uri(uri.as_str()))),
-            Err(Error::Response(ashpd::desktop::ResponseError::Cancelled)) => Ok(None),
-            Err(error) => Err(error.to_string()),
-        }
-    })
+    /// A window's number, on the command line and to the portal
+    /// (`FileChooser`'s "Window Identifiers": `x11:` and hexadecimal).
+    const HEXADECIMAL: u32 = 16;
+    let parent = parent.strip_prefix("x11:").and_then(|number| u32::from_str_radix(number, HEXADECIMAL).ok()).map(|window| format!("x11:{window:x}"));
+    let dialog = portal::Dialog {
+        parent: parent.unwrap_or_default(),
+        title: title(kind),
+        save_name: kind.is_save().then(|| save_name(kind)),
+        directory: kind == ChooseKind::Folder,
+        folder,
+        filter: (kind == ChooseKind::Picture).then_some(("Pictures", PICTURE_TYPES.as_slice(), PICTURE_ENDINGS.as_slice())),
+    };
+    Ok(portal::choose(&dialog)?.as_deref().and_then(path_of_uri))
 }
 
 /// GNOME's own setting of animations, which the portal's Settings serves
@@ -174,20 +155,22 @@ fn reduced(appearance: Option<u32>, animations: Option<bool>) -> bool {
     }
 }
 
+/// The `org.freedesktop.appearance` namespace and its `reduced-motion` key
+/// (the portal's Settings documentation).
+#[cfg(target_os = "linux")]
+const APPEARANCE_NAMESPACE: &str = "org.freedesktop.appearance";
+#[cfg(target_os = "linux")]
+const REDUCED_MOTION_KEY: &str = "reduced-motion";
+
 /// Asks the desktop portal's Settings for the reduced-motion preference.
 #[cfg(target_os = "linux")]
 fn ask_reduced_motion() -> Result<bool, String> {
-    use ashpd::desktop::settings::{APPEARANCE_NAMESPACE, REDUCED_MOTION_KEY, Settings};
-
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|error| error.to_string())?;
-    runtime.block_on(async {
-        let settings = Settings::new().await.map_err(|error| error.to_string())?;
-        // A key the portal does not know is an error of its; either read
-        // failing is that key unanswered.
-        let appearance = settings.read::<u32>(APPEARANCE_NAMESPACE, REDUCED_MOTION_KEY).await.ok();
-        let animations = if appearance.is_none() { settings.read::<bool>(GNOME_INTERFACE, GNOME_ENABLE_ANIMATIONS).await.ok() } else { None };
-        Ok(reduced(appearance, animations))
-    })
+    let mut settings = portal::Settings::new()?;
+    // A key the portal does not know is an error of its; either read
+    // failing, or answering another type, is that key unanswered.
+    let appearance = settings.read(APPEARANCE_NAMESPACE, REDUCED_MOTION_KEY).and_then(|value| value.as_u32());
+    let animations = if appearance.is_none() { settings.read(GNOME_INTERFACE, GNOME_ENABLE_ANIMATIONS).and_then(|value| value.as_bool()) } else { None };
+    Ok(reduced(appearance, animations))
 }
 
 /// The path a portal's `file://` URI names ("All URIs have the `file://`

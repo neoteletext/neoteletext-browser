@@ -18,6 +18,7 @@ interface-core = { path = "../interface-core" }
 decoder = { path = "../decoder", package = "neoteletext-decoder" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
+dbus = { path = "../dbus", package = "neoteletext-dbus" }
 confine = { path = "../confine" }
 update = { path = "../update" }
 icon = { path = "../icon", package = "neoteletext-icon" }
@@ -319,6 +320,13 @@ bench = false
 [[bin]]
 name = "snapshot_file"
 path = "fuzz_targets/snapshot_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dbus_message"
+path = "fuzz_targets/dbus_message.rs"
 test = false
 doc = false
 bench = false
