@@ -1404,6 +1404,55 @@ mod tests {
         }
     }
 
+    /// TODO-7118 (the renderer's `docs/regis-v2.md`, "Rules for contents",
+    /// rule 4): a colour map sent alone, with no batch of D operations
+    /// open, takes effect at once. It writes no pixel and makes no commit,
+    /// yet the sub-page owes a picture: a part of no pixels that carries
+    /// the new colours.
+    #[test]
+    fn a_colour_map_sent_alone_is_shown_at_once() {
+        let mut pages = RegisPages::default();
+        let scene = b"P[10,10]V[30,10]D(B1)W(I1)V[0,0][19,0]D(E)D(S1(X100,Y50),C)";
+        pages.read(&record(0x100, 1, 0, scene));
+        let first = pages.take(0x100, Some(0), 0).unwrap();
+        assert!(first.picture.whole());
+        let before = first.picture.palette[1];
+        assert!(pages.take(0x100, Some(0), 0).is_none(), "nothing changed since");
+        let map = b"S(M1(R))";
+        pages.read(&record(0x100, 1, u32::try_from(scene.len()).unwrap(), map));
+        let recoloured = pages.take(0x100, Some(0), 0).expect("a map sent alone owes the sub-page a picture");
+        let [red, green, blue] = recoloured.picture.palette[1];
+        assert!(red > 0 && green == 0 && blue == 0, "location 1 is red: {:?}", recoloured.picture.palette[1]);
+        assert_ne!(recoloured.picture.palette[1], before, "the map changed");
+        assert!(
+            !recoloured.picture.whole() && recoloured.picture.area == RegisArea::default() && recoloured.more.is_empty(),
+            "no pixel changed: a part of no pixels"
+        );
+        assert_eq!(recoloured.picture.commits, first.picture.commits, "no commit was made");
+        assert!(pages.take(0x100, Some(0), 0).is_none(), "nothing changed since the map");
+    }
+
+    /// TODO-7118: a colour map sent inside an open batch is held with the
+    /// batch, and shows with its commit, not before.
+    #[test]
+    fn a_colour_map_inside_an_open_batch_shows_with_its_commit() {
+        let mut pages = RegisPages::default();
+        let scene = b"P[10,10]V[30,10]D(B1)W(I1)V[0,0][19,0]D(E)D(S1(X100,Y50),C)";
+        pages.read(&record(0x100, 1, 0, scene));
+        let before = pages.take(0x100, Some(0), 0).unwrap().picture.palette[1];
+        let mut offset = u32::try_from(scene.len()).unwrap();
+        for bytes in [&b"D(S1(X200))"[..], b"S(M1(R))"] {
+            pages.read(&record(0x100, 1, offset, bytes));
+            offset += u32::try_from(bytes.len()).unwrap();
+            let held = pages.take(0x100, Some(0), 0);
+            assert!(held.is_none_or(|drawn| drawn.picture.palette[1] == before), "the batch is open: the old colour stands");
+        }
+        pages.read(&record(0x100, 1, offset, b"D(C)"));
+        let committed = pages.take(0x100, Some(0), 0).expect("the commit shows the batch");
+        let [red, green, blue] = committed.picture.palette[1];
+        assert!(red > 0 && green == 0 && blue == 0, "location 1 is red with the commit: {:?}", committed.picture.palette[1]);
+    }
+
     /// REQ-6399 items 1, 4 and 5: after the first whole picture, each
     /// change is sent as the rectangle that changed, far smaller than the
     /// picture; laid over one another in turn the parts give exactly the
