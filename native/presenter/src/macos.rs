@@ -32,6 +32,10 @@ use crate::{BYTES_PER_PIXEL, Error, pixel_count};
 const BITS_PER_COMPONENT: usize = 8;
 const BITS_PER_PIXEL: usize = 32;
 
+// The release callback divides the provider's size in bytes by the bytes
+// of a pixel to rebuild the boxed `u32` copy.
+const _: () = assert!(BYTES_PER_PIXEL == size_of::<u32>());
+
 /// Presenting to one window's view.
 pub struct Surface {
     layer: Retained<CALayer>,
@@ -97,6 +101,11 @@ impl Surface {
         /// Frees the copy of the pixels the image held, when Core Graphics
         /// is done with it.
         unsafe extern "C-unwind" fn release(_: *mut c_void, data: NonNull<c_void>, size: usize) {
+            // `size` is the copy's length in pixels times
+            // `BYTES_PER_PIXEL`, exactly (made with a checked multiplication
+            // below), so the division gives back the length it was boxed
+            // with.
+            debug_assert_eq!(size % BYTES_PER_PIXEL, 0, "the provider's size is whole pixels");
             let pixels = std::ptr::slice_from_raw_parts_mut(data.cast::<u32>().as_ptr(), size / BYTES_PER_PIXEL);
             // SAFETY: `data` and `size` are the boxed slice handed to the
             // provider below, given back once.
@@ -104,8 +113,11 @@ impl Surface {
         }
         let (width, height) =
             (usize::try_from(self.width).map_err(|_| Error::new("the window"))?, usize::try_from(self.height).map_err(|_| Error::new("the window"))?);
+        // The release callback rebuilds the copy from its size in bytes, so
+        // the size must be its length times the bytes of a pixel exactly,
+        // never saturated (the window's bound makes it at most 1 GiB).
+        let bytes = self.pixels.len().checked_mul(BYTES_PER_PIXEL).ok_or_else(|| Error::new("an image of the frame"))?;
         let copy: Box<[u32]> = self.pixels.clone().into_boxed_slice();
-        let bytes = copy.len().saturating_mul(BYTES_PER_PIXEL);
         let data = Box::into_raw(copy);
         // SAFETY: the provider owns the boxed copy from here and frees it
         // through `release` once, with the length given.
