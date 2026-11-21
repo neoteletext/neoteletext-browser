@@ -45,3 +45,6 @@ impl Core {
         self.in_window_of(channel, |core| if core.active_channel() == Some(channel) { core.send(&ToInterface::Strip(core.strip())) } else { Ok(()) })
     }
 }
+
+#[cfg(test)]
+mod tests;

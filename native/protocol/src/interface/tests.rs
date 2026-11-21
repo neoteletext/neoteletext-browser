@@ -677,3 +677,27 @@ fn thumbnails_and_thumbnail_round_trip_within_their_bounds() {
     write_to_core(&mut bytes, &ToCore::Thumbnails(vec![1])).unwrap();
     assert!(read_from_core(&mut bytes.as_slice()).is_err());
 }
+
+/// REQ-7164: the strip carries whether its tab is going to another channel,
+/// both ways, and a byte other than the two it may be is a broken message.
+#[test]
+fn the_strip_carries_navigating_and_refuses_any_other_byte() {
+    for navigating in [false, true] {
+        let sent = StripState { navigating, ..strip() };
+        let mut bytes = Vec::new();
+        write_to_interface(&mut bytes, &ToInterface::Strip(sent.clone())).unwrap();
+        let Some(ToInterface::Strip(read)) = read_from_core(&mut bytes.as_slice()).unwrap() else { panic!("not a strip") };
+        assert_eq!(read, sent, "navigating {navigating}");
+    }
+    let (mut off, mut on) = (Vec::new(), Vec::new());
+    write_to_interface(&mut off, &ToInterface::Strip(strip())).unwrap();
+    write_to_interface(&mut on, &ToInterface::Strip(StripState { navigating: true, ..strip() })).unwrap();
+    let differ: Vec<usize> = (0..off.len()).filter(|&at| off[at] != on[at]).collect();
+    assert_eq!(differ.len(), 1, "one byte says it: {differ:?}");
+    let at = differ[0];
+    assert_eq!((off[at], on[at]), (0, 1));
+    for bad in [2, 0x80, 0xFF] {
+        off[at] = bad;
+        assert!(matches!(read_from_core(&mut off.as_slice()), Err(ProtocolError::BadValue("strip navigating"))), "{bad:#x}");
+    }
+}

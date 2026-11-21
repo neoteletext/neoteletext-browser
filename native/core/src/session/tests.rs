@@ -784,3 +784,196 @@ fn deceptive_and_internationalised_addresses_are_refused_or_shown_by_their_real_
         assert_ne!(refused, NOT_ASCII_HOST, "{typed}: refused for what it is");
     }
 }
+
+/// REQ-7164: the notice of a tab going to another channel, started where
+/// the session gives a tab another channel and nowhere else.
+mod navigating {
+    #![allow(clippy::arithmetic_side_effects, reason = "a test's times")]
+
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    use crate::session::channel::NAVIGATING_NOTICE;
+
+    /// A session with one tab on a channel, shown and its notice, if any,
+    /// cleared, as after a page drew.
+    fn on_news() -> Session {
+        let mut session = Session::new(Bookmarks::default());
+        session.open("https://news.invalid/teletext/").unwrap();
+        assert_eq!(session.tabs[0].channel.navigating, None, "a tab newly opened says nothing");
+        session
+    }
+
+    fn notice(session: &Session) -> Option<Navigating> {
+        session.active_tab().and_then(|tab| tab.channel.navigating)
+    }
+
+    /// Asserts a notice started between `before` and now, lasting
+    /// `NAVIGATING_NOTICE` from its start.
+    fn started_since(session: &Session, before: Instant) {
+        let after = Instant::now();
+        let Some(Navigating { until: Some(until), ready: false }) = notice(session) else { panic!("{:?}", notice(session)) };
+        assert!(until >= before + NAVIGATING_NOTICE && until <= after + NAVIGATING_NOTICE, "{until:?} is the notice's length after its start");
+        assert!(session.strip().navigating, "the strip says so");
+    }
+
+    // REQ-7164 items 1 to 3: another channel's address, typed or opened.
+    #[test]
+    fn another_channels_address_starts_a_notice_of_one_second() {
+        let mut session = on_news();
+        let before = Instant::now();
+        session.navigate("https://sport.invalid/", true).unwrap();
+        started_since(&session, before);
+        let mut session = on_news();
+        let before = Instant::now();
+        session.navigate("https://news.invalid/other/", false).unwrap();
+        started_since(&session, before);
+    }
+
+    // REQ-7164 item 4: another page of the channel shown, the address shown
+    // again, a reload, a page or sub-page chosen, a link within the channel
+    // and the channel's own redirect to a page start nothing.
+    #[test]
+    fn nothing_within_the_channel_starts_a_notice() {
+        let mut session = on_news();
+        session.navigate("https://news.invalid/teletext/200", true).unwrap();
+        assert_eq!(notice(&session), None, "another page of the channel, typed");
+        session.navigate("https://news.invalid/teletext/200", true).unwrap();
+        assert_eq!(notice(&session), None, "the address shown, entered again");
+        assert!(session.reload());
+        assert_eq!(notice(&session), None, "a reload");
+        assert!(session.page_chosen(0x300));
+        assert_eq!(notice(&session), None, "a page chosen");
+        assert!(session.subpage_chosen(0x300, Some(2)));
+        assert_eq!(notice(&session), None, "a sub-page chosen");
+        #[cfg(feature = "links")]
+        {
+            assert!(session.show_page(0x400).is_some());
+            assert_eq!(notice(&session), None, "a link within the channel");
+        }
+        let channel = session.tabs[0].channel.id;
+        session.redirect_page(channel, 0x500, None, None);
+        assert!(session.active_tab().and_then(Tab::address).is_some_and(|shown| shown.page == Some(0x500)), "redirected");
+        assert_eq!(notice(&session), None, "the channel's own redirect to a page");
+        assert!(!session.strip().navigating);
+    }
+
+    // REQ-7164 item 1: Back and Forward to another channel's entry start a
+    // notice; within the channel they do not.
+    #[test]
+    fn back_and_forward_start_a_notice_only_across_channels() {
+        let mut session = on_news();
+        session.page_chosen(0x200);
+        session.navigate("https://sport.invalid/", true).unwrap();
+        session.tabs[0].channel.navigating = None;
+        let before = Instant::now();
+        assert_eq!(session.go(false), Went::Channel);
+        started_since(&session, before);
+        session.tabs[0].channel.navigating = None;
+        assert!(matches!(session.go(false), Went::Page(_)), "back within the channel");
+        assert_eq!(notice(&session), None, "within the channel");
+        let before = Instant::now();
+        assert_eq!(session.go_to(true, 2), Went::Channel);
+        started_since(&session, before);
+    }
+
+    // REQ-7164 item 1: a link to another channel, and a bookmark chosen on
+    // the start page.
+    #[test]
+    fn a_followed_link_and_a_start_page_bookmark_start_a_notice() {
+        #[cfg(feature = "links")]
+        {
+            let mut session = on_news();
+            let before = Instant::now();
+            session.follow(parse("https://sport.invalid/401").unwrap()).unwrap();
+            started_since(&session, before);
+        }
+        let mut session = Session::new(Bookmarks::default());
+        session.open(START_PAGE).unwrap();
+        let before = Instant::now();
+        session.open_from_start_page("https://news.invalid/").unwrap();
+        started_since(&session, before);
+    }
+
+    // REQ-7164 item 1: a tab newly made shows its channel from the start,
+    // with nothing to leave: a new tab, a reopened one and a restored
+    // session start no notice.
+    #[test]
+    fn a_tab_newly_made_has_no_notice() {
+        let mut session = on_news();
+        session.navigate("https://sport.invalid/", true).unwrap();
+        session.open("https://weather.invalid/").unwrap();
+        assert_eq!(notice(&session), None, "opened");
+        session.close(0);
+        session.reopen(None).unwrap();
+        assert_eq!(notice(&session), None, "reopened");
+        let saved = session.saved();
+        let mut restored = Session::new(Bookmarks::default());
+        assert!(restored.restore(&saved) > 0);
+        assert!(restored.tabs.iter().all(|tab| tab.channel.navigating.is_none()), "restored");
+    }
+
+    // DEC-7166 item 1: after a redirect out of the channel the redirect's
+    // second was the least time, so the notice that follows waits only on
+    // the page.
+    #[test]
+    fn a_finished_redirect_leaves_a_notice_without_a_deadline() {
+        let mut session = on_news();
+        let channel = session.tabs[0].channel.id;
+        session.redirect_tab(channel, parse("https://elsewhere.invalid/").unwrap(), Instant::now(), RedirectBy::Server).unwrap();
+        session.finish_redirect(channel);
+        assert_ne!(session.tabs[0].channel.id, channel, "the destination's channel");
+        assert_eq!(notice(&session), Some(Navigating { until: None, ready: false }));
+        assert!(session.strip().navigating);
+    }
+
+    // REQ-7164 item 3: a channel with nothing to read has no page to wait
+    // for; the strip does not say it is on its way.
+    #[test]
+    fn a_channel_with_a_problem_does_not_say_it_is_on_its_way() {
+        let mut session = on_news();
+        session.navigate("https://sport.invalid/", true).unwrap();
+        assert!(session.strip().navigating);
+        session.tabs[0].channel.problem = Some("nothing to read".into());
+        assert!(!session.strip().navigating);
+    }
+
+    fn state_with(notice: Navigating) -> ChannelState {
+        let mut session = on_news();
+        session.tabs[0].channel.navigating = Some(notice);
+        session.tabs.remove(0).channel
+    }
+
+    // REQ-7164 item 3: the notice ends when both its second has passed and
+    // a page is ready, whichever comes later, and not before.
+    #[test]
+    fn the_notice_ends_at_the_later_of_its_second_and_its_page() {
+        let start = Instant::now();
+        let deadline = start + NAVIGATING_NOTICE;
+        let just_before = deadline.checked_sub(Duration::from_millis(1)).unwrap();
+
+        // The second first, then the page.
+        let mut channel = state_with(Navigating::starting(start));
+        assert!(!channel.navigating_at(just_before), "a millisecond early");
+        assert!(channel.navigating.is_some_and(|notice| notice.until.is_some()));
+        assert!(!channel.navigating_at(deadline), "no page yet");
+        assert_eq!(channel.navigating, Some(Navigating { until: None, ready: false }), "the deadline is gone, so nothing waits on time");
+        assert!(channel.navigating_ready(), "the page ends it");
+        assert_eq!(channel.navigating, None);
+        assert!(!channel.navigating_ready() && !channel.navigating_at(deadline), "nothing left to end");
+
+        // The page first, then the second: the page arriving sooner does not
+        // shorten it.
+        let mut channel = state_with(Navigating::starting(start));
+        assert!(!channel.navigating_ready(), "the second is not over");
+        assert!(!channel.navigating_at(just_before));
+        assert!(channel.navigating.is_some());
+        assert!(channel.navigating_at(deadline), "ends at the deadline");
+        assert_eq!(channel.navigating, None);
+
+        // After a redirect: no second, the page alone ends it.
+        let mut channel = state_with(Navigating::after_redirect());
+        assert!(!channel.navigating_at(deadline));
+        assert!(channel.navigating_ready());
+    }
+}

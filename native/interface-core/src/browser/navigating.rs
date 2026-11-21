@@ -24,3 +24,6 @@ impl Browser {
         centred(canvas, area, WORDS, WORDS_STYLE, WHITE);
     }
 }
+
+#[cfg(test)]
+mod tests;
