@@ -141,6 +141,8 @@ impl Engine {
             }
             #[cfg(not(feature = "links"))]
             let _ = links;
+            // A picture drawn again at once is painted again (REQ-7026).
+            self.raise_painted();
         }
         (self.regis.take(page, sub, now_us), self.naplps.take(page, sub))
     }

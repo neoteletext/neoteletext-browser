@@ -9,6 +9,14 @@
 //! picture is repainted only while its repaint budget has something in
 //! hand, and a repaint held back is made once, of the latest scene, when
 //! the budget allows.
+//!
+//! A sub-page's stream may be painted as a show (DEC-7031 item 5): a PAINT
+//! record, read before the generation of the stream it names, gives a
+//! default paint rate to that generation's numbered drawings that set
+//! none (REQ-7025) and a line speed its bytes are fed to the renderer at
+//! (REQ-7024), by the renderer's `Replay`, on the presentation clock. The
+//! numbered drawings the open page's rule table names in its `painted`
+//! triggers are watched, and each is told when it is whole (REQ-7026).
 
 use std::collections::BTreeMap;
 
@@ -17,10 +25,11 @@ use neoteletext_rules::evaluator::{Bounds, TargetState};
 use neoteletext_rules::table::{Target, TargetKind};
 use neoteletext_web::records::regis::RegisRecord;
 use protocol::regis::{PictureLanguage, RegisPick, RegisPicture, RegisViewer};
-use regis::limits::{MAX_ANIMATED_DRAWINGS, MAX_CYCLING_OBJECTS};
-use regis::{Event, Font, ForcedLook, Picture, RepaintBudget, Screen, Terminal, ViewerState};
+use regis::limits::{MAX_ANIMATED_DRAWINGS, MAX_CYCLING_OBJECTS, MAX_WATCHED_PAINTINGS};
+use regis::{Event, Font, ForcedLook, Pace, Picture, RepaintBudget, Replay, Screen, Terminal, ViewerState};
 
-use crate::animation::{Counters, next_cycle_tick};
+use crate::animation::frames::Paint;
+use crate::animation::{Counters, WholePicture, next_cycle_tick};
 
 use crate::parts::{Changed, Figures, Sent, parts_to_send};
 
@@ -85,6 +94,14 @@ struct Page {
     told: Option<u32>,
     /// What its animation has cost, not yet reported (ANIM-16).
     counters: Counters,
+    /// Feeds the stream's bytes to the terminal: at once, or at the pace
+    /// of the line speed its PAINT record stated (DEC-7031 item 5).
+    replay: Replay,
+    /// The watched drawings that became whole and were not yet told to the
+    /// rule table, in ascending order, each once (REQ-7026).
+    painted: Vec<u16>,
+    /// Whether the whole picture's "painted" event is owed.
+    whole: WholePicture,
 }
 
 /// What a sub-page's animation is doing.
@@ -167,7 +184,77 @@ impl Page {
             motion: Motion::default(),
             told: None,
             counters: Counters::default(),
+            replay: Replay::new(),
+            painted: Vec::new(),
+            whole: WholePicture::default(),
         }
+    }
+
+    /// Takes what the terminal did with bytes it was fed, by the stream's
+    /// record or by the replay as the clock plays it. A commit, or drawing
+    /// outside numbered drawings, changes what the sub-page shows. The
+    /// other events ask for things a page does not do: a v1 pause or a
+    /// reply to the host. With `at_once`, a drawing given a paint rate is
+    /// whole at once.
+    fn after_feed(&mut self, events: &[Event], at_once: bool) {
+        let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
+        if committed {
+            // The last writer wins (ANIM-6): what the commit wrote over is
+            // forgotten here as the renderer forgot it.
+            self.resynchronise();
+            // A drawing given a paint rate starts painting (ANIM-15); with
+            // the viewer's setting off it is whole at once.
+            self.motion.painting = self.terminal.advance_ticks(if at_once { u32::MAX } else { 0 });
+        }
+        self.changed |= committed | self.screen.take_changed();
+        // The channel moves the cursor by a commit after each key: it is
+        // shown again at once, never hidden where the viewer looks for it.
+        self.blink_again |= committed;
+        self.note_painted();
+    }
+
+    /// Keeps the watched drawings the renderer says became whole since it
+    /// was last asked (DEC-7031 item 2), for the rule table: asked after
+    /// bytes are fed and after each call that can make a drawing whole.
+    fn note_painted(&mut self) {
+        for number in self.terminal.take_painted() {
+            if !self.painted.contains(&number) && self.painted.len() < MAX_WATCHED_PAINTINGS {
+                self.painted.push(number);
+            }
+        }
+        self.painted.sort_unstable();
+    }
+
+    /// Watches the numbered drawings `drawings` for their painting
+    /// finishing, in place of any watched before, and the whole picture
+    /// when `whole` (DEC-7031 item 5): the open page's rule table was
+    /// loaded, or dropped. Each drawing is watched anew, so that one whole
+    /// already is told to the table just loaded.
+    fn watch(&mut self, drawings: &[u16], whole: bool, at_once: bool) {
+        self.painted.clear();
+        let _ = self.terminal.take_painted();
+        // Watching none first: a drawing named again would keep an episode
+        // already told to the table before this one.
+        let _ = self.terminal.watch_painted(&[]);
+        let _ = self.terminal.watch_painted(drawings);
+        // One of the calls that close an episode, so that the drawings
+        // whole already are reported.
+        self.motion.painting = self.terminal.advance_ticks(if at_once { u32::MAX } else { 0 });
+        self.note_painted();
+        self.whole.watch(whole, self.next != 0);
+    }
+
+    /// The viewer's setting "Paint drawings gradually" was turned off, or
+    /// the platform asks for reduced motion (DEC-7031 item 5): the stream
+    /// is paced no longer, what the replay held is drawn at once, and so
+    /// is every drawing being painted.
+    fn whole_at_once(&mut self) {
+        self.replay.set_pace(None);
+        let events = self.replay.advance(&mut self.terminal, &mut self.screen, 0);
+        self.after_feed(&events, true);
+        self.motion.painting = self.terminal.advance_ticks(u32::MAX);
+        self.note_painted();
+        self.changed = true;
     }
 }
 
@@ -326,6 +413,12 @@ impl Page {
         }
         let passed = self.told.map_or(0, |told| tick.saturating_sub(told));
         self.told = Some(tick);
+        // The bytes the line has delivered by this tick (REQ-7024), and
+        // what their commits changed.
+        if !self.replay.idle() {
+            let events = self.replay.advance(&mut self.terminal, &mut self.screen, passed);
+            self.after_feed(&events, at_once);
+        }
         let was = self.motion.painting;
         self.motion.painting = self.terminal.advance_ticks(if at_once { u32::MAX } else { passed });
         // What the ticks bought is painted by the next repaint.
@@ -333,20 +426,21 @@ impl Page {
             self.changed = true;
             self.motion.animated = true;
         }
+        self.note_painted();
     }
 
     /// The next presentation tick after `tick` this sub-page needs the
     /// decoder's loop at: the next while a drawing is painting, else the
-    /// tick a cycle's frame next changes at (ANIM-1).
+    /// earlier of the tick the replay next has a byte to feed (DEC-7031
+    /// item 5) and the tick a cycle's frame next changes at (ANIM-1).
     fn next_tick(&self, tick: u32) -> Option<u32> {
         if self.motion.painting {
             return Some(tick.saturating_add(1));
         }
+        let replay = self.replay.ticks_to_next().map(|ticks| tick.saturating_add(ticks.max(1)));
         // Under reduced motion no cycle advances (PAR-33).
-        if self.motion.steady {
-            return None;
-        }
-        next_cycle_tick(self.animation.entries(), tick)
+        let cycle = if self.motion.steady { None } else { next_cycle_tick(self.animation.entries(), tick) };
+        [replay, cycle].into_iter().flatten().min()
     }
 
     /// The state of a numbered drawing for a rule table's conditions
@@ -444,6 +538,34 @@ pub struct RegisPages {
     /// The font the viewer chose for alphabet 0 of every new terminal, or
     /// none for the one compiled in (renderer parity PAR-35).
     font: Option<Font>,
+    /// The PAINT record waiting for each sub-page's stream: the generation
+    /// it names and its values, at most one a sub-page (DEC-7031 item 1).
+    /// It is applied when that generation starts and dropped when any
+    /// other does.
+    pending: BTreeMap<(u16, u16), (u16, Paint)>,
+    /// What the open page's rule table watches the painting of (DEC-7031
+    /// item 5), which a terminal made for its sub-page is told.
+    watch: Option<Watch>,
+}
+
+/// The sub-page whose rule table has `painted` triggers, and what they
+/// name (DEC-7031 item 4).
+struct Watch {
+    key: (u16, u16),
+    /// The numbered drawings named, at most `MAX_WATCHED_PAINTINGS`.
+    drawings: Vec<u16>,
+    /// Whether the page's whole picture is named.
+    whole: bool,
+}
+
+/// The most PAINT records kept waiting for their streams: one for each
+/// sub-page kept. One more drops the lowest sub-page's.
+const MAX_PENDING_PAINTS: usize = MAX_REGIS_PAGES;
+
+/// The pace of a line of `speed` bits a second (REQ-7024): as many bytes
+/// as its speed is bits a second, in the ticks the engine names.
+const fn line_pace(speed: u32) -> Pace {
+    Pace { bytes: speed, ticks: neoteletext_web::consts::LINE_PACE_TICKS }
 }
 
 /// A page's ReGIS sheet as received (ANIM-17).
@@ -489,10 +611,30 @@ impl RegisPages {
             let mut page = Page::new(record.generation, viewer, self.font.as_ref());
             page.cursor = cursor;
             page.motion.steady = self.reduced;
+            // The PAINT record waiting is this generation's or no stream's
+            // (DEC-7031 item 1): one that names another generation is
+            // dropped, and this stream is painted as one with none.
+            let paint = self.pending.remove(&key).filter(|(generation, _)| *generation == record.generation).map(|(_, paint)| paint);
+            // The default paint rate is in force from the first commit,
+            // the sheet's among them (REQ-7025).
+            if let Some(rate) = paint.and_then(|paint| paint.default_rate) {
+                page.terminal.set_default_paint_rate(rate);
+            }
+            // The open page's table watches this sub-page's drawings.
+            if let Some(watch) = self.watch.as_ref().filter(|watch| watch.key == key) {
+                let _ = page.terminal.watch_painted(&watch.drawings);
+                page.whole.watch(watch.whole, false);
+            }
             // The page's sheet goes first (ANIM-17): the stream names its
-            // hidden drawings as sources, looks and frames.
+            // hidden drawings as sources, looks and frames. It is fed at
+            // once whatever the line speed: it draws nothing.
             if let Some(sheet) = self.sheets.get(&key).filter(|sheet| !sheet.bytes.is_empty()) {
                 let _ = page.terminal.feed_regis(&mut page.screen, &sheet.bytes);
+            }
+            // The stream's bytes are fed at the line's speed (REQ-7024),
+            // unless the viewer's setting is off or motion is reduced.
+            if let Some(speed) = paint.and_then(|paint| paint.line_speed).filter(|_| !self.at_once && !self.reduced) {
+                page.replay.set_pace(Some(line_pace(speed)));
             }
             self.pages.insert(key, page);
         }
@@ -503,23 +645,60 @@ impl RegisPages {
             return;
         }
         page.next = page.next.saturating_add(u32::try_from(record.data.len()).unwrap_or(u32::MAX));
-        let events = page.terminal.feed_regis(&mut page.screen, record.data);
-        // A commit, or drawing outside numbered drawings, changes what the
-        // sub-page shows. The other events ask for things a page does not
-        // do: a v1 pause or a reply to the host.
-        let committed = events.iter().any(|event| matches!(event, Event::Committed(_)));
-        if committed {
-            // The last writer wins (ANIM-6): what the commit wrote over is
-            // forgotten here as the renderer forgot it.
-            page.resynchronise();
-            // A drawing given a paint rate starts painting (ANIM-15); with
-            // the viewer's setting off it is whole at once.
-            page.motion.painting = page.terminal.advance_ticks(if self.at_once || self.reduced { u32::MAX } else { 0 });
+        // Fed at once, or held by the replay for the clock to play.
+        let events = page.replay.push(&mut page.terminal, &mut page.screen, record.data);
+        page.after_feed(&events, self.at_once || self.reduced);
+        page.whole.drew();
+    }
+
+    /// Takes a PAINT record for a sub-page's ReGIS stream (DEC-7031 item
+    /// 1): kept, in place of any kept for the sub-page before, until the
+    /// generation it names starts. The engine's reader has checked its
+    /// values.
+    pub fn read_paint(&mut self, page: u16, sub: u16, generation: u16, paint: Paint) {
+        let key = (page, sub);
+        if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING_PAINTS {
+            self.pending.pop_first();
         }
-        page.changed |= committed | page.screen.take_changed();
-        // The channel moves the cursor by a commit after each key: it is
-        // shown again at once, never hidden where the viewer looks for it.
-        page.blink_again |= committed;
+        self.pending.insert(key, (generation, paint));
+    }
+
+    /// The open page's rule table names these numbered drawings of the
+    /// sub-page `key`, and with `whole` its whole picture, in its
+    /// `painted` triggers (DEC-7031 items 4 and 5); `None` when no table
+    /// names any. The sub-page watched before is watched no longer.
+    pub fn set_watch(&mut self, watch: Option<((u16, u16), Vec<u16>, bool)>) {
+        let at_once = self.at_once || self.reduced;
+        if let Some(held) = self.watch.take().and_then(|before| self.pages.get_mut(&before.key)) {
+            held.watch(&[], false, at_once);
+        }
+        self.watch = watch.map(|(key, drawings, whole)| Watch { key, drawings, whole });
+        if let Some(watch) = &self.watch
+            && let Some(held) = self.pages.get_mut(&watch.key)
+        {
+            held.watch(&watch.drawings, watch.whole, at_once);
+        }
+    }
+
+    /// The watched drawings of the sub-page `sub` of `page` that became
+    /// whole since the last call, in ascending order (REQ-7026).
+    pub fn take_painted(&mut self, page: u16, sub: u16) -> Vec<u16> {
+        self.pages.get_mut(&(page, sub)).map(|held| core::mem::take(&mut held.painted)).unwrap_or_default()
+    }
+
+    /// Takes the "painted" event of the whole picture of the sub-page
+    /// `sub` of `page` at presentation tick `tick`, if it is owed: its
+    /// table names the page, bytes were drawn and the replay holds none
+    /// (DEC-7031 item 5). At most once a tick.
+    pub fn take_whole(&mut self, page: u16, sub: u16, tick: u32) -> bool {
+        self.pages.get_mut(&(page, sub)).is_some_and(|held| held.whole.take(held.replay.idle(), tick))
+    }
+
+    /// Whether the sub-page `sub` of `page` has a "painted" event to give
+    /// its rule table: a drawing's, or the whole picture's.
+    #[must_use]
+    pub fn painted_due(&self, page: u16, sub: u16) -> bool {
+        self.pages.get(&(page, sub)).is_some_and(|held| !held.painted.is_empty() || held.whole.due(held.replay.idle()))
     }
 
     /// The trusted core said what the viewer's pointer is doing to a
@@ -740,7 +919,7 @@ impl RegisPages {
         for held in self.pages.values_mut() {
             held.motion.steady = reduced;
             if reduced {
-                held.motion.painting = held.terminal.advance_ticks(u32::MAX);
+                held.whole_at_once();
             }
             held.changed = true;
         }
@@ -748,13 +927,13 @@ impl RegisPages {
 
     /// The viewer's setting "Paint drawings gradually" (ANIM-15): off,
     /// every drawing of every sub-page is whole at once, now and at each
-    /// commit.
+    /// commit, and no stream is fed at a line's speed: what a replay held
+    /// is drawn at once (DEC-7031 item 5).
     pub fn set_gradual(&mut self, gradual: bool) {
         self.at_once = !gradual;
         if self.at_once {
             for held in self.pages.values_mut() {
-                held.motion.painting = held.terminal.advance_ticks(u32::MAX);
-                held.changed = true;
+                held.whole_at_once();
             }
         }
     }
@@ -802,6 +981,7 @@ impl RegisPages {
     pub fn forget(&mut self, page: u16, sub: u16) {
         self.pages.remove(&(page, sub));
         self.sheets.remove(&(page, sub));
+        self.pending.remove(&(page, sub));
         if self.sent_sub.get(&page) == Some(&sub) {
             self.sent_sub.remove(&page);
         }

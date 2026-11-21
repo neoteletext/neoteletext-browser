@@ -2,6 +2,7 @@
 //! RULE-58): the calls the decoder's loop makes for it.
 
 use neoteletext_rules::command::{TYPE_ANIMATE, TYPE_DRAWING_LINKS, TYPE_NAPLPS_OBJECTS, TYPE_REGIS_CURSOR, TYPE_SPRITES};
+use neoteletext_rules::table::Target;
 use neoteletext_web::records::{ChannelRecord, Read};
 use protocol::decoder::{FromDecoder, ToDecoder};
 use protocol::rules::{PageSub, RuleInput};
@@ -133,6 +134,68 @@ impl Engine {
         with_parts!(self, page, |rules, parts| rules.record(record, now_us, &mut parts));
         let produced = self.after_rules();
         self.rule_out.extend(produced);
+        // A table just loaded is told of the drawings painted already, and
+        // of the picture, which its channel sent before it (DEC-7031).
+        self.raise_painted();
+    }
+
+    /// Tells the renderers what the held table's `painted` triggers name
+    /// (DEC-7031 item 5), when the table held is not the one they were
+    /// last told of: a table was loaded, replaced or dropped. The numbered
+    /// drawings are watched by the ReGIS renderer of the table's sub-page,
+    /// and the whole picture by either language's.
+    fn watch_painted(&mut self) {
+        let watch = self.rules.painted_watch();
+        let now = watch.as_ref().map(|(page, generation, _, _)| (*page, *generation));
+        if now == self.animation.watched {
+            return;
+        }
+        self.animation.watched = now;
+        self.naplps.set_watch(watch.as_ref().filter(|(_, _, _, whole)| *whole).map(|(page, _, _, _)| (page.page, page.sub)));
+        self.regis.set_watch(watch.map(|(page, _, drawings, whole)| ((page.page, page.sub), drawings, whole)));
+    }
+
+    /// Whether a "painted" event waits to be given to the open page's
+    /// rule table: the decoder's loop then wakes at the next tick. The
+    /// whole picture's waits while its page's frame is open, and an open
+    /// frame wakes the loop each tick itself.
+    pub(super) fn painted_due(&self) -> bool {
+        let Some((page, true)) = self.rules.held_page() else { return false };
+        self.regis.painted_due(page.page, page.sub) || self.naplps.painted_due(page.page, page.sub)
+    }
+
+    /// Gives the open page's rule table the paintings that finished
+    /// (DEC-7031 items 4 and 5, REQ-7026): each watched ReGIS drawing that
+    /// became whole, in ascending order of number, then the page's whole
+    /// picture when its replay or player has drawn every byte it was given
+    /// and no frame of the page is open, at most once a tick. Each is an
+    /// event handled at once, like a cue; what it produced leaves with the
+    /// rule table's other messages at the loop's next turn, which follows
+    /// at once. Nothing is taken while the table's page is not the open
+    /// page: it is given when the page is open again.
+    ///
+    /// It is called when a whole message has been applied, at each
+    /// animation step, when a table is loaded, when a kept picture is
+    /// drawn again and when the viewer's setting or reduced motion makes
+    /// everything whole; what a group of the table then finishes waits
+    /// for the next tick, which [`Engine::animation_due_us`] wakes for.
+    pub(super) fn raise_painted(&mut self) {
+        self.watch_painted();
+        if let Some((page, true)) = self.rules.held_page() {
+            let tick = crate::animation::tick_at(self.now_us());
+            let drawings = self.regis.take_painted(page.page, page.sub);
+            let whole = !self.animation.frames.is_open(page.page, page.sub)
+                && (self.regis.take_whole(page.page, page.sub, tick) || self.naplps.take_whole(page.page, page.sub, tick));
+            let targets = drawings.into_iter().map(Target::object).chain(whole.then_some(Target::PAGE));
+            let mut produced = Vec::new();
+            for target in targets {
+                produced.extend(with_parts!(self, page, |rules, parts| rules.painted(page, target, &mut parts)));
+                // What the event's groups did to the picture is applied
+                // before the next event is decided, as a tick's is.
+                produced.extend(self.after_rules());
+            }
+            self.rule_out.extend(produced);
+        }
     }
 
     /// The interface's frames (RULE-98 item 2), read now on the engine's

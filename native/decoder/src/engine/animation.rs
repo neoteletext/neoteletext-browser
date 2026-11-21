@@ -28,6 +28,9 @@ pub(super) struct Animated {
     released: Vec<(Packet, PacketMeta)>,
     /// The presentation tick the shown pages were last brought to.
     stepped: Option<u32>,
+    /// The page and generation of the rule table whose `painted` triggers
+    /// the renderers were last told to watch for (DEC-7031 item 5).
+    pub(super) watched: Option<(protocol::rules::PageSub, u16)>,
 }
 
 /// What [`Engine::picture_facts`] reads of the engine for a page's
@@ -178,6 +181,11 @@ impl Engine {
                 }
                 Held::Sheet { language: Language::Regis, page, sub, generation, offset, data } => self.regis.read_sheet(page, sub, generation, offset, &data),
                 Held::Sheet { language: Language::Naplps, page, sub, generation, offset, data } => self.naplps.read_sheet(page, sub, generation, offset, &data),
+                // How the generation it names is to be painted (DEC-7031
+                // item 1): kept by its language's pages until that
+                // generation starts.
+                Held::Paint { language: Language::Regis, page, sub, generation, paint } => self.regis.read_paint(page, sub, generation, paint),
+                Held::Paint { language: Language::Naplps, page, sub, generation, paint } => self.naplps.read_paint(page, sub, generation, paint),
             }
         }
     }
@@ -232,10 +240,13 @@ impl Engine {
     /// tick due at `now_us` (ANIM-1): frames open too long end (ANIM-2),
     /// cycles reach their frame (ANIM-14), ReGIS drawings with a paint
     /// rate earn their work (ANIM-15), and NAPLPS WAIT and BLINK play
-    /// (ANIM-20). Called at every wake of the decoder's loop, after the
-    /// open page's rules have run, so that what a rule changed is painted
-    /// in the tick that ran it (RULE-65). The pages that arrived from
-    /// frames that ended, as [`Engine::feed`] gives them.
+    /// (ANIM-20), and a stream paced at a line's speed is fed the bytes
+    /// the line has delivered (DEC-7031 item 5). Called at every wake of
+    /// the decoder's loop, after the open page's rules have run, so that
+    /// what a rule changed is painted in the tick that ran it (RULE-65).
+    /// The paintings that finished are then told to the open page's rule
+    /// table (REQ-7026). The pages that arrived from frames that ended, as
+    /// [`Engine::feed`] gives them.
     pub fn animation_step(&mut self, showing: &[u16], now_us: u64) -> Vec<(u16, String)> {
         let tick = tick_at(now_us);
         let late = self.animation.frames.age(tick);
@@ -255,6 +266,7 @@ impl Engine {
                 }
             }
         }
+        self.raise_painted();
         self.finish_released()
     }
 
@@ -274,12 +286,14 @@ impl Engine {
     /// [`Engine::now_us`]'s clock (ANIM-1): the next tick while a frame is
     /// open or packets wait to be applied, else the earliest tick at which
     /// a shown sub-page's cycle changes its frame, a drawing paints more,
-    /// a WAIT ends or a blink changes; `None` when nothing is due, and the
-    /// decoder sleeps until it is written to.
+    /// a paced stream's next byte is due, a WAIT ends or a blink changes;
+    /// the next tick too while a "painted" event waits to be given to the
+    /// open page's rule table (DEC-7031 item 5). `None` when nothing is
+    /// due, and the decoder sleeps until it is written to.
     #[must_use]
     pub fn animation_due_us(&self, showing: &[u16], now_us: u64) -> Option<u64> {
         let tick = tick_at(now_us);
-        let soon = (self.animation.frames.any_open() || !self.animation.released.is_empty()).then(|| tick.saturating_add(1));
+        let soon = (self.animation.frames.any_open() || !self.animation.released.is_empty() || self.painted_due()).then(|| tick.saturating_add(1));
         let pages = showing.iter().filter_map(|&page| {
             let sub = self.shown_subcode(page);
             let teletext = sub.and_then(|sub| self.animation.teletext.next_tick(page, sub, tick));
@@ -300,10 +314,13 @@ impl Engine {
 
     /// The viewer's setting "Paint drawings gradually" (ANIM-15): off,
     /// every ReGIS drawing appears at once and no NAPLPS WAIT delays
-    /// anything (DEC-6525 item 27).
+    /// anything (DEC-6525 item 27). Nor is a stream fed at a line's speed
+    /// (DEC-7031 item 5): what was held is drawn at once, and the
+    /// paintings that finish are told to the rule table in this tick.
     pub fn set_paint_gradually(&mut self, gradual: bool) {
         self.regis.set_gradual(gradual);
         self.naplps.set_gradual(gradual);
+        self.raise_painted();
     }
 
     /// The platform's preference for reduced motion (REQ-754, renderer
@@ -318,6 +335,9 @@ impl Engine {
         self.regis.set_reduced(reduced);
         self.naplps.set_reduced(reduced);
         self.animation.teletext.set_reduced(reduced);
+        // What a pace or a paint rate held is whole at once, and told in
+        // this tick (DEC-7031 item 5).
+        self.raise_painted();
     }
 
     /// What the animation of the sub-page of `page` on screen has cost

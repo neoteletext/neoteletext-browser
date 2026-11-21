@@ -215,6 +215,10 @@ impl Engine {
         }
         self.push_all(&items);
         self.complete();
+        // What the message's records drew may have finished a painting: a
+        // commit of a drawing with no rate, or a stream fed at once
+        // (DEC-7031 item 5, REQ-7026).
+        self.raise_painted();
         self.arrivals()
     }
 

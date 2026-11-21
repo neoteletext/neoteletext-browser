@@ -794,6 +794,31 @@ impl Rules {
         }
     }
 
+    /// What the held table's `painted` triggers name (DEC-7031 item 4): its
+    /// page, its generation, the numbered drawings and whether the page's
+    /// whole picture is named. `None` with no table held, or one that
+    /// names nothing.
+    pub(crate) fn painted_watch(&self) -> Option<(PageSub, u16, Vec<u16>, bool)> {
+        let held = self.held.as_ref()?;
+        let index = held.evaluator.index();
+        let drawings: Vec<u16> = index.painted.iter().copied().collect();
+        (!drawings.is_empty() || index.painted_page).then_some((held.page, held.generation, drawings, index.painted_page))
+    }
+
+    /// The painting of `target` finished on the page `page` (DEC-7031
+    /// items 4 and 5, REQ-7026): the page's whole picture, or one numbered
+    /// drawing. An event of the open page, handled at once in arrival
+    /// order like a cue; for a page that is not the open page it is
+    /// dropped and counted.
+    pub(crate) fn painted<const OBJECTS: usize, const RECORDS: usize>(
+        &mut self,
+        page: PageSub,
+        target: Target,
+        parts: &mut Parts<'_, OBJECTS, RECORDS>,
+    ) -> Vec<FromDecoder> {
+        self.handle(Some(page), Event::Painted { target }, parts)
+    }
+
     /// A cue the sound helper heard (RULE-109): an event of the open page,
     /// handled at once.
     pub(crate) fn cue<const OBJECTS: usize, const RECORDS: usize>(
