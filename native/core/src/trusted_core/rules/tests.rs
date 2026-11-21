@@ -13,6 +13,7 @@ use protocol::decoder::{FromDecoder, ToDecoder};
 use protocol::fetcher::{Entry, FromFetcher, ToFetcher};
 use protocol::interaction::{InputIntent, Intent};
 use protocol::rules::{INTEREST_KEYS, PageSub, Report, Reported, RuleInput, RulesOpen};
+use protocol::settings::SettingChange;
 use protocol::sound::ToSound;
 use protocol::subpages::SubPageStep;
 
@@ -216,4 +217,148 @@ fn a_state_query_is_passed_for_the_open_page_and_answered_once() {
     assert_eq!(states(&sent_to_fetcher(&mut test.core, channel, &fetcher)), 1);
     test.core.decoded(channel, answer).unwrap();
     assert_eq!(states(&sent_to_fetcher(&mut test.core, channel, &fetcher)), 0, "once");
+}
+
+/// The `SoundHeard` messages among `messages`, in order.
+fn heard(messages: &[ToDecoder]) -> Vec<bool> {
+    messages.iter().filter_map(|message| if let ToDecoder::SoundHeard(heard) = message { Some(*heard) } else { None }).collect()
+}
+
+/// Gives the core a sound helper that runs and reads nothing, as one with
+/// an output device does between its messages.
+fn run_sound_helper(test: &mut Test) {
+    let (sender, _sound) = mpsc::channel();
+    let (helper, _output) = sleeping_helper(confine::Role::Sound);
+    test.core.sound = Some((helper, Outbox::new(Sink(sender))));
+}
+
+fn change(test: &mut Test, change: SettingChange) {
+    test.core.intent(ToCore::ChangeSetting(change)).unwrap();
+}
+
+/// RULE-27 (DEC-7143 items 2 and 3; TODO-7141 item 3): with the sound
+/// helper running and Sound on at full volume, a channel's decoder is told
+/// `SoundHeard(false)` when Sound is turned off, the volume set to 0, its
+/// tab muted or the sound helper ends, and `SoundHeard(true)` at each
+/// opposite; a change of volume between two values above 0 tells it
+/// nothing, nor does Sound turned on again while the volume is 0.
+#[test]
+fn a_decoder_is_told_whenever_its_sound_stops_or_starts_reaching_the_viewer() {
+    let (mut test, channel, decoder, _fetcher) = open_page("sound heard");
+    run_sound_helper(&mut test);
+    sent_to_decoder(&mut test, channel, &decoder);
+
+    change(&mut test, SettingChange::Sound(false));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [false], "Sound off");
+    change(&mut test, SettingChange::Sound(true));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [true], "Sound on");
+
+    change(&mut test, SettingChange::Volume(0));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [false], "volume 0");
+    change(&mut test, SettingChange::Sound(false));
+    change(&mut test, SettingChange::Sound(true));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [] as [bool; 0], "Sound off and on at volume 0: nothing heard either way");
+    change(&mut test, SettingChange::Volume(40));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [true], "volume above 0");
+    change(&mut test, SettingChange::Volume(70));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [] as [bool; 0], "from one volume above 0 to another");
+
+    test.core.intent(ToCore::MuteTab(0)).unwrap();
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [false], "the tab muted");
+    test.core.intent(ToCore::MuteTab(0)).unwrap();
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [true], "the tab unmuted");
+
+    super::super::run::handle(&mut test.core, super::super::Event::SoundEnded(None)).unwrap();
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [false], "the sound helper ended");
+    assert!(test.core.sound.is_none());
+    change(&mut test, SettingChange::Sound(false));
+    change(&mut test, SettingChange::Sound(true));
+    assert_eq!(heard(&sent_to_decoder(&mut test, channel, &decoder)), [] as [bool; 0], "with no sound helper nothing is heard, whatever the setting");
+}
+
+/// What the stand-in broker reads as the tab's file channel.
+const FILE: &str = "/tmp/news.tti";
+/// Ceiling on the stand-in's account once the core has gone.
+const FINISH_WITHIN: Duration = Duration::from_secs(10);
+
+/// The messages the core wrote to each decoder the stand-in broker
+/// started for it, once the core has gone.
+fn decoders_told(stand_in: confine::broker::stand_in::StandIn) -> Vec<Vec<ToDecoder>> {
+    let written = stand_in.finish(FINISH_WITHIN).unwrap();
+    written
+        .iter()
+        .filter(|written| written.helper.program == confine::broker::Program::Decoder)
+        .map(|written| {
+            let mut input = written.bytes.as_slice();
+            let mut messages = Vec::new();
+            while let Some(message) = protocol::decoder::read_from_core(&mut input).unwrap() {
+                messages.push(message);
+            }
+            messages
+        })
+        .collect()
+}
+
+/// RULE-27 (DEC-7143 item 3): a decoder started while no sound helper
+/// runs, as on a machine with no output device, is told
+/// `SoundHeard(false)` first of all, before anything of its channel; one
+/// started while the helper runs with Sound on is told nothing of it, a
+/// decoder beginning with its sound heard.
+#[test]
+fn a_new_decoder_is_told_first_when_its_sound_is_not_heard() {
+    let (mut core, stand_in) = super::super::test_support::core_on(FILE);
+    core.match_decoders().unwrap();
+    core.flush().unwrap();
+    drop(core);
+    let told = decoders_told(stand_in);
+    assert_eq!(told.len(), 1, "one decoder: {told:?}");
+    assert_eq!(told[0].first(), Some(&ToDecoder::SoundHeard(false)), "first of all: {:?}", told[0]);
+    assert!(
+        told[0][1..].iter().any(|message| matches!(message, ToDecoder::Data(_) | ToDecoder::Whole { .. })),
+        "and the channel's data after it: {:?}",
+        told[0]
+    );
+    assert_eq!(heard(&told[0]), [false], "once");
+
+    let (mut core, stand_in) = super::super::test_support::core_on(FILE);
+    let (sender, _sound) = mpsc::channel();
+    let (helper, _output) = sleeping_helper(confine::Role::Sound);
+    core.sound = Some((helper, Outbox::new(Sink(sender))));
+    core.match_decoders().unwrap();
+    core.flush().unwrap();
+    core.sound = None;
+    drop(core);
+    let told = decoders_told(stand_in);
+    assert_eq!(told.len(), 1, "one decoder: {told:?}");
+    assert_eq!(heard(&told[0]), [] as [bool; 0], "the sound helper runs: nothing to tell: {:?}", told[0]);
+}
+
+/// RULE-27 (DEC-7143 item 3): the sound helper started tells every
+/// decoder its sound is heard, and its end that it is not.
+#[test]
+fn the_sound_helper_starting_and_ending_is_told_to_every_decoder() {
+    let (mut core, stand_in) = super::super::test_support::core_on(FILE);
+    let channel = core.active_channel().unwrap();
+    let decoder = decoder_watched(&mut core, channel);
+    let told = |core: &mut super::super::Core| {
+        core.decoders.get_mut(&channel).unwrap().flush().unwrap();
+        let mut bytes = Vec::new();
+        while let Ok(chunk) = decoder.recv_timeout(Duration::from_millis(200)) {
+            bytes.extend(chunk);
+        }
+        let mut input = bytes.as_slice();
+        let mut messages = Vec::new();
+        while let Some(message) = protocol::decoder::read_from_core(&mut input).unwrap() {
+            messages.push(message);
+        }
+        heard(&messages)
+    };
+    told(&mut core);
+    core.start_sound();
+    assert!(core.sound.is_some(), "the stand-in broker started a sound helper");
+    assert_eq!(told(&mut core), [true], "the sound helper started");
+    super::super::run::handle(&mut core, super::super::Event::SoundEnded(None)).unwrap();
+    assert_eq!(told(&mut core), [false], "the sound helper ended");
+    drop(core);
+    drop(stand_in);
 }
