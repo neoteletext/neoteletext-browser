@@ -235,17 +235,22 @@ impl<const OBJECTS: usize, const RECORDS: usize> World for PageWorld<'_, '_, OBJ
 
     fn objects_at(&self, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize {
         let mut count = self.parts.picture.objects_at(x, y, objects).min(MAX_POINTER_OBJECTS);
-        // The drawing of a ReGIS picture the pointer is on (RULE-12): the
-        // one its pick record names at the pixel of a press, a release or
-        // the wheel, and for a move the one the trusted core's
-        // `DRAWING_HOVER` named (RULE-46).
-        let listed = objects.get(..count).is_some_and(|listed| listed.contains(&self.drawing));
-        if self.drawing != 0
-            && !listed
-            && let Some(slot) = objects.get_mut(count)
-        {
-            *slot = self.drawing;
+        // The drawing of a ReGIS picture the pointer is on, then each
+        // drawing it is inside: its parent, and so up to a top-level one
+        // (RULE-12: a drawing is under the pointer when the pick record
+        // names it or a drawing that has it as an ancestor). No more are
+        // followed than the evaluator keeps, which is the most ancestors
+        // a drawing can have.
+        let mut drawing = self.drawing;
+        for _ in 0..MAX_POINTER_OBJECTS {
+            let listed = objects.get(..count).is_some_and(|listed| listed.contains(&drawing));
+            if drawing == 0 || listed {
+                break;
+            }
+            let Some(slot) = objects.get_mut(count) else { break };
+            *slot = drawing;
             count = count.saturating_add(1);
+            drawing = self.parts.picture.parent(drawing);
         }
         count
     }

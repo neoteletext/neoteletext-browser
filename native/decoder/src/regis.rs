@@ -917,6 +917,15 @@ impl RegisPages {
         self.shown(page, sub).and_then(|key| self.pages.get(&key)).map_or(0, |held| held.picture.pick(u32::from(x), u32::from(y)).drawing)
     }
 
+    /// The numbered drawing that drawing `number` of the sub-page of
+    /// `page` on screen is a child of, as the stream committed it; 0 for
+    /// a top-level drawing and for one that does not exist (RULE-12: a
+    /// pointer on a drawing is inside each of its ancestors).
+    #[must_use]
+    pub fn parent(&self, page: u16, sub: Option<u16>, number: u16) -> u16 {
+        self.shown(page, sub).and_then(|key| self.pages.get(&key)).and_then(|held| held.terminal.parent(number)).unwrap_or(0)
+    }
+
     /// What the animation of the sub-page of `page` on screen has cost
     /// since it was last asked, for the rule table's host to report
     /// (ANIM-16, RULE-48).

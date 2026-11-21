@@ -31,7 +31,8 @@ pub trait Picture {
     /// the front of `objects`; the count written. A ReGIS picture answers
     /// none: the host adds the drawing the pointer is on, which a move
     /// takes from the trusted core (`DRAWING_HOVER`, RULE-46) and a press,
-    /// a release and the wheel from [`Self::drawing_at`].
+    /// a release and the wheel from [`Self::drawing_at`], and each drawing
+    /// that one is inside ([`Self::parent`]).
     fn objects_at(&self, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize;
 
     /// The numbered drawing a ReGIS picture's pick record names at a pixel
@@ -39,6 +40,14 @@ pub trait Picture {
     /// none. A picture of another kind answers 0: its objects are those
     /// [`Self::objects_at`] gives.
     fn drawing_at(&self, _x: u16, _y: u16) -> u16 {
+        0
+    }
+
+    /// The numbered drawing that drawing `drawing` of a ReGIS picture is a
+    /// child of, 0 for a top-level drawing and for one that does not
+    /// exist: a pointer on a drawing is inside each of its ancestors too
+    /// (RULE-12). A picture of another kind answers 0.
+    fn parent(&self, _drawing: u16) -> u16 {
         0
     }
 

@@ -114,8 +114,8 @@ impl Picture for PagePicture<'_> {
 
     fn objects_at(&self, x: u16, y: u16, objects: &mut [u16; MAX_POINTER_OBJECTS]) -> usize {
         match &self.kind {
-            // The host adds the drawing the pointer is on (RULE-12,
-            // RULE-46).
+            // The host adds the drawing the pointer is on and each
+            // drawing that one is inside (RULE-12, RULE-46).
             Kind::Regis(_) => 0,
             Kind::Naplps(pages) => pages.objects_at(self.page, self.sub, x, y, objects),
             Kind::Teletext(state, _) => {
@@ -134,6 +134,13 @@ impl Picture for PagePicture<'_> {
     fn drawing_at(&self, x: u16, y: u16) -> u16 {
         match &self.kind {
             Kind::Regis(pages) => pages.drawing_at(self.page, self.sub, x, y),
+            Kind::Naplps(_) | Kind::Teletext(..) => 0,
+        }
+    }
+
+    fn parent(&self, drawing: u16) -> u16 {
+        match &self.kind {
+            Kind::Regis(pages) => pages.parent(self.page, self.sub, drawing),
             Kind::Naplps(_) | Kind::Teletext(..) => 0,
         }
     }
