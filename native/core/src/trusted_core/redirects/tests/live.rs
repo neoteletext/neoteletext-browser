@@ -366,7 +366,11 @@ fn a_redirect_after_the_page_drew_marks_the_page_left() {
 fn input_clears_the_mark_and_counts_only_on_its_page() {
     let (mut test, channel) = on_page_100("input clears");
     redirected(&mut test, channel, 0x200, SUBCODE_ANY);
-    assert_eq!(test.core.session.go_to(false, 1), Went::Page(Some(0x100)), "from the list");
+    let went = test.core.session.go_to(false, 1);
+    assert_eq!(went, Went::Page(Some(0x100)), "from the list");
+    // The trusted core shows the page gone back to, which selects it again:
+    // the redirect had made page 200 the tab's selection (TODO-7214).
+    test.core.went(went).unwrap();
     test.core.intent(ToCore::Opened(Some(PageKey { channel, page: 0x100 }))).unwrap();
     assert!(test.core.session.active_tab().unwrap().history[test.core.session.active_tab().unwrap().position].passed_over, "coming back does not clear it");
     draw(&mut test, channel, 0x100);

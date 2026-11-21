@@ -285,6 +285,53 @@ fn reports_go_only_for_the_open_page() {
     assert_eq!(went(&typing.report(PAGE.channel, &from_other, 3 * MS)), (0, 0));
 }
 
+/// RULE-58 (REQ-6534), TODO-7214: a page the tab's selection leaves, by a
+/// redirect of its channel or by a page the trusted core opens itself, is
+/// no longer the open page from that moment, before the interface reports
+/// the new page as opened. The channel answers the selection at once, and
+/// a decoder still told that the page left is the open page drops the new
+/// page's table as another page's, so the new page was shown with no table
+/// and no key reached it (seen live on 22 November 2026).
+#[test]
+fn a_page_the_selection_leaves_is_closed_for_its_table_at_once() {
+    const NEXT: PageKey = PageKey { channel: PAGE.channel, page: 0x300 };
+    /// How the tab's selection leaves the open page.
+    type Leave = fn(&mut Typing) -> Vec<Send>;
+    let next_open = protocol::rules::PageSub::new(NEXT.page, 0);
+    let closed = Send::RulesPage { channel: PAGE.channel, page: None };
+    let leavings: [(&str, Leave); 2] = [
+        ("a redirect", |typing| typing.redirected(PAGE.channel, NEXT.page, SUBCODE_ANY, "", 2 * MS)),
+        ("a selection", |typing| typing.select(PAGE.channel, NEXT.page, SUBCODE_ANY, "", 2 * MS)),
+    ];
+    for (how, leave) in leavings {
+        let mut typing = ready(SELECT_CAP);
+        let left = leave(&mut typing);
+        assert_eq!(left.iter().filter(|send| **send == closed).count(), 1, "{how}: the decoder is told no page is the open page: {left:?}");
+        assert_eq!(typing.rules_open(PAGE.channel), None, "{how}");
+        assert_eq!(told_input(&left), Some((false, false)), "{how}: the interface hears that the page left asks for nothing: {left:?}");
+        assert_eq!(went(&typing.input_intent(&key('a'), 3 * MS)), (0, 0), "{how}: nothing more is given for the page left");
+        let closing = typing.report(PAGE.channel, &report(Reported::Fired), 3 * MS);
+        assert_eq!(rule_events(&closing), [(0, 0, "fired".to_owned())], "{how}: its close rule's report still goes, in the final tick");
+
+        // The interface reports the new page as opened, and its first frame
+        // is drawn: only then is it the open page, told once.
+        let opened = typing.opened(Some(PAGE.channel), Some(NEXT), 4 * MS);
+        assert!(!opened.iter().any(|send| matches!(send, Send::RulesPage { .. })), "{how}: nothing new for the decoder until the page is drawn: {opened:?}");
+        let drawn = typing.drawn(NEXT, 0);
+        assert!(drawn.contains(&Send::RulesPage { channel: PAGE.channel, page: Some(next_open) }), "{how}: {drawn:?}");
+        let (taken, open) = typing.rules_told(PAGE.channel, &RulesOpen { page: next_open, ..send_all() }, 5 * MS);
+        assert!(open, "{how}: the new page's table is taken");
+        assert_eq!(told_input(&taken), Some((true, true)), "{how}: {taken:?}");
+    }
+
+    // Another sub-page of the page open is the same page: nothing closes.
+    let mut typing = ready(SELECT_CAP);
+    for sends in [typing.redirected(PAGE.channel, PAGE.page, 2, "", 2 * MS), typing.select(PAGE.channel, PAGE.page, 3, "", 3 * MS)] {
+        assert!(!sends.iter().any(|send| matches!(send, Send::RulesPage { .. })), "{sends:?}");
+    }
+    assert_eq!(typing.rules_open(PAGE.channel), Some(OPEN));
+}
+
 /// RULE-52 item 6, RULE-47 (REQ-6534): a `PAGE_STATE` is passed only in
 /// answer to a query the channel's fetcher received for that page, once,
 /// and only when it begins with that query's identifier.

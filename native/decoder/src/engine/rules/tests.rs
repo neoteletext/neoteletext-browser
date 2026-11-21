@@ -438,6 +438,40 @@ fn a_paused_page_keeps_its_state_and_does_nothing() {
     );
 }
 
+/// RULE-58, RULE-111 (REQ-6534), TODO-7214: the table of the page a tab
+/// goes to is taken only once the page left is closed or paused. Sent
+/// while the page left is still the open page it is another page's and is
+/// dropped, and the page then opens with no table; so the trusted core
+/// says the page left is no longer open before its channel's answer to a
+/// selection or a redirect can arrive. Told so first, the table is held
+/// and starts when its page is the open page, with its `open` rule.
+#[test]
+fn the_table_of_the_page_gone_to_is_taken_once_the_page_left_is_not_open() {
+    let next = Builder::new(OTHER);
+    let opening = next.report(None);
+    let next = next.rule(Trigger::Open, &[], &[opening]);
+
+    // The page left still the open page: the table sent is dropped.
+    let (mut engine, _) = opened(&send_all(OPEN, false));
+    run(&mut engine, after(1));
+    send_table(&mut engine, OTHER, 1, Some(&next.table));
+    let mut said = set_open(&mut engine, None, after(2));
+    said.extend(set_open(&mut engine, Some(OTHER), after(3)));
+    said.extend(run(&mut engine, after(5)));
+    assert!(told(&said).iter().all(|open| open.generation == 0), "no table for the page gone to: {said:?}");
+    assert_eq!(reports(&said), [], "{said:?}");
+
+    // The page left paused first: the table is held, and opens.
+    let (mut engine, _) = opened(&send_all(OPEN, false));
+    run(&mut engine, after(1));
+    set_open(&mut engine, None, after(2));
+    send_table(&mut engine, OTHER, 1, Some(&next.table));
+    let mut said = set_open(&mut engine, Some(OTHER), after(3));
+    said.extend(run(&mut engine, after(5)));
+    assert!(told(&said).iter().any(|open| open.page == OTHER && open.generation == 1), "{said:?}");
+    assert!(matches!(reports(&said).as_slice(), [Report { page: OTHER, rule: 0, tick: 0, .. }]), "its open rule fires: {said:?}");
+}
+
 /// RULE-111 case 2 (REQ-6615): when the view's connection ends everything
 /// of the page is dropped at once: no `close` tick runs and nothing is
 /// reported, its local sound stops, and nothing more is evaluated until a

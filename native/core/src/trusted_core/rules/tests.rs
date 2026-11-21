@@ -130,6 +130,52 @@ fn a_key_leaves_only_as_the_report_its_pages_table_asks_for() {
     assert_eq!(input_sent(&sent_to_fetcher(&mut test.core, channel, &fetcher)), [], "past the window");
 }
 
+/// RULE-58 (REQ-6534), TODO-7214: when a channel redirects its tab to
+/// another page, the decoder is told that the page left is no longer the
+/// open page before anything the channel then sends is passed to it, and
+/// not only once the interface reports the new page as opened. The
+/// channel answers the redirect at once; a decoder that still held the
+/// page left as the open page dropped the new page's table as another
+/// page's, and the page was shown with no table, so no key reached it
+/// (seen live on 22 November 2026, after typed page numbers).
+#[test]
+fn a_redirect_closes_the_page_left_before_the_new_pages_records_are_passed_on() {
+    const NEXT: u16 = 0x200;
+    let (mut test, channel, decoder, _fetcher) = open_page("redirect closes");
+    let listing = [PAGE, NEXT].map(|page| Entry::Page { page, title: format!("Page {page:03X}"), subpages: 0 }).to_vec();
+    test.core.fetched(channel, FromFetcher::Contents(listing)).unwrap();
+    test.core.decoded(channel, FromDecoder::RulesOpen(asks_keys())).unwrap();
+    sent_to_decoder(&mut test, channel, &decoder);
+
+    // The redirect, then the new page's records, as its channel sends them
+    // one after the other; the interface has not answered yet.
+    let records = vec![0x55_u8; 4];
+    test.core.fetched(channel, FromFetcher::PageRedirect { page: NEXT, sub: neoteletext_core::limits::SUBCODE_ANY, query: None }).unwrap();
+    test.core.fetched(channel, FromFetcher::Page { origin: protocol::fetcher::Origin::PushedPackets, bytes: records.clone() }).unwrap();
+    let told = sent_to_decoder(&mut test, channel, &decoder);
+    let closed = told.iter().position(|message| *message == ToDecoder::RulesPage(None));
+    let passed = told.iter().position(|message| matches!(message, ToDecoder::Whole { bytes, .. } if *bytes == records));
+    assert!(passed.is_some(), "the records are passed on: {told:?}");
+    assert!(closed.is_some_and(|closed| Some(closed) < passed), "the page left is closed first: {told:?}");
+
+    // The interface opens the new page and its first frame is drawn: it
+    // is the open page, and its table is taken when its decoder tells it.
+    test.core.intent(ToCore::Opened(Some(PageKey { channel, page: NEXT }))).unwrap();
+    let step = SubPageStep { count: 1, shown: 0, place: Some(0), previous: None, next: None };
+    test.core.decoded(channel, FromDecoder::SubPages { page: NEXT, step }).unwrap();
+    let next = PageSub::new(NEXT, 0);
+    let told = sent_to_decoder(&mut test, channel, &decoder);
+    assert!(told.contains(&ToDecoder::RulesPage(Some(next))), "{told:?}");
+    assert!(!told.contains(&ToDecoder::RulesPage(None)), "closed once, at the redirect: {told:?}");
+    test.core.decoded(channel, FromDecoder::RulesOpen(RulesOpen { page: next, ..asks_keys() })).unwrap();
+    assert_eq!(test.core.typing.rules_asked(channel), Some((next, 1)), "the new page's table is the one asked for");
+}
+
+/// A table that asks for keys, generation 1, for [`OPEN`].
+fn asks_keys() -> RulesOpen {
+    RulesOpen { page: OPEN, generation: 1, interest: INTEREST_KEYS, watch: Vec::new(), wheel: Vec::new(), keys: Vec::new() }
+}
+
 /// What the trusted core wrote to the sound helper since the last look.
 fn sent_to_sound(test: &mut Test, written: &mpsc::Receiver<Vec<u8>>) -> Vec<ToSound> {
     if let Some((_, input)) = test.core.sound.as_mut() {

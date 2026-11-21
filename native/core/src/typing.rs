@@ -455,6 +455,7 @@ impl Typing {
     /// told to the channel with SELECT at once, or when its session starts.
     pub fn select(&mut self, channel: u32, page: u16, sub: u16, parameters: &str, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
+        let told = self.state();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         state.selected = Some((page, sub));
         state.parameters.clear();
@@ -463,7 +464,24 @@ impl Typing {
             state.on_screen = None;
         }
         state.tell_select(channel, now_us, &mut sends);
+        self.settle_selection(told.as_ref(), now_us, &mut sends);
         sends
+    }
+
+    /// The selection of a tab changed by something other than the viewer
+    /// opening a page (`opened`): a page the trusted core opens itself, or
+    /// a channel's redirect. The open page is left from this moment, not
+    /// from when the interface reports the new page as opened: the channel
+    /// answers the selection at once, and a decoder still told that the
+    /// page left is the open page drops the new page's rule table as
+    /// another page's (RULE-58), after which the new page has no table and
+    /// no key reaches it (TODO-7214). `told` is the typing state before the
+    /// change, which the interface hears of when it differs.
+    fn settle_selection(&mut self, told: Option<&TypingState>, now_us: u64, sends: &mut Vec<Send>) {
+        self.settle_rules_page(now_us, sends);
+        if self.state().as_ref() != told {
+            self.tell_interface(sends);
+        }
     }
 
     /// The channel's program redirected the tab to `page` and `sub`, with
@@ -475,6 +493,7 @@ impl Typing {
     /// the page left goes up, lost, as for any selection (REQ-207).
     pub fn redirected(&mut self, channel: u32, page: u16, sub: u16, parameters: &str, now_us: u64) -> Vec<Send> {
         let mut sends = Vec::new();
+        let told = self.state();
         let state = self.channels.entry(channel).or_insert_with(Channel::new);
         state.selected = Some((page, sub));
         state.parameters.clear();
@@ -484,6 +503,7 @@ impl Typing {
             state.select_told = state.selected;
             state.parameters_told.clone_from(&state.parameters);
         }
+        self.settle_selection(told.as_ref(), now_us, &mut sends);
         together(sends)
     }
 
@@ -579,7 +599,14 @@ impl Typing {
     /// to evaluate: the open page, as its sub-page is on screen.
     fn rules_wanted(&self) -> Option<(u32, protocol::rules::PageSub)> {
         let opened = self.opened.filter(|opened| self.active == Some(opened.channel))?;
-        let stamp = self.channels.get(&opened.channel)?.on_screen.filter(|stamp| stamp.page == opened.page)?;
+        let state = self.channels.get(&opened.channel)?;
+        // A page the tab no longer selects is not the open page, though the
+        // interface still shows it until it reports the page now selected
+        // as opened: its channel sends for the page selected (TODO-7214).
+        if state.selected.is_some_and(|(page, _)| page != opened.page) {
+            return None;
+        }
+        let stamp = state.on_screen.filter(|stamp| stamp.page == opened.page)?;
         Some((opened.channel, protocol::rules::PageSub::new(stamp.page, stamp.sub)))
     }
 
