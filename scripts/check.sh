@@ -325,6 +325,10 @@ check_shapes_and_tests() {
     (cd native && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
     step "native/tuf: tests"
     (cd native/tuf && cargo nextest run --workspace --hide-progress-bar --status-level fail --final-status-level fail)
+    # REQ-7047's tests that run Cargo: in a worktree of their own, so that
+    # neither this checkout's count nor its build lock is touched (TODO-7049).
+    step "native: the development build's count and --version (REQ-7047)"
+    scripts/test-build-number.sh HEAD
     # DEVELOPMENT.md section 9.2: a pass says nothing of a test that is
     # ignored, so the gate says
     # which ones, each with what would make it run.
