@@ -179,13 +179,37 @@ impl Drop for Stream {
     }
 }
 
+/// The event the client signals when it has room, closed when dropped.
+struct Event(HANDLE);
+
+impl Event {
+    fn new() -> Result<Self, Error> {
+        // SAFETY: no security attributes or name; an auto-reset event, not
+        // signalled, owned by the value returned.
+        unsafe { CreateEventW(None, false, false, None) }.map(Self).map_err(|error| failed("the output's event", &error))
+    }
+}
+
+impl Drop for Event {
+    fn drop(&mut self) {
+        // SAFETY: the handle was made by `CreateEventW` and is closed once,
+        // here. Whoever holds an `Event` drops the client that signals it
+        // first: `Opened` declares it last, and `Opened::new` drops the
+        // client before it on every error.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
 /// An initialised client, its render service and its event, used by the
-/// stream's thread alone.
+/// stream's thread alone. The fields drop in this order, so the event is
+/// closed only after the client that signals it is released: a closed
+/// handle's value may be reused by another kernel object, which a late
+/// signal would then set.
 struct Opened {
     client: IAudioClient,
     render: IAudioRenderClient,
-    event: HANDLE,
     buffer_frames: u32,
+    event: Event,
 }
 
 impl Opened {
@@ -210,8 +234,7 @@ impl Opened {
             Size::Frames(frames) => duration(frames, rate),
         };
         // SAFETY: the client is this thread's; the format lives until the
-        // call returns; the event is closed when this is dropped, after the
-        // client that signals it.
+        // call returns.
         unsafe {
             client
                 .Initialize(
@@ -223,23 +246,31 @@ impl Opened {
                     None,
                 )
                 .map_err(|error| failed("cannot open the audio output", &error))?;
-            let event = CreateEventW(None, false, false, None).map_err(|error| failed("the output's event", &error))?;
-            let opened = (|| {
-                client.SetEventHandle(event).map_err(|error| failed("the output's event", &error))?;
+        }
+        let event = Event::new()?;
+        // SAFETY: the client is this thread's and initialised; the event is
+        // open while the client lives (see the drops below).
+        let opened = unsafe {
+            (|| {
+                client.SetEventHandle(event.0).map_err(|error| failed("the output's event", &error))?;
                 let buffer_frames = client.GetBufferSize().map_err(|error| failed("the output's buffer", &error))?;
                 let render: IAudioRenderClient = client.GetService().map_err(|error| failed("the render client", &error))?;
                 Ok((buffer_frames, render))
-            })();
-            match opened {
-                Ok((buffer_frames, render)) if buffer_frames <= crate::MAX_BUFFER_FRAMES => Ok(Self { client, render, event, buffer_frames }),
-                Ok((buffer_frames, _)) => {
-                    let _ = CloseHandle(event);
-                    Err(Error::new(format!("the output's buffer of {buffer_frames} frames")))
-                }
-                Err(error) => {
-                    let _ = CloseHandle(event);
-                    Err(error)
-                }
+            })()
+        };
+        match opened {
+            Ok((buffer_frames, render)) if buffer_frames <= crate::MAX_BUFFER_FRAMES => Ok(Self { client, render, buffer_frames, event }),
+            Ok((buffer_frames, render)) => {
+                // The client before its event, as in `Opened`.
+                drop(render);
+                drop(client);
+                drop(event);
+                Err(Error::new(format!("the output's buffer of {buffer_frames} frames")))
+            }
+            Err(error) => {
+                drop(client);
+                drop(event);
+                Err(error)
             }
         }
     }
@@ -299,7 +330,7 @@ impl Opened {
                         running = true;
                     }
                     // SAFETY: the event is open until this is dropped.
-                    let woken = unsafe { WaitForSingleObject(self.event, STUCK_MS) };
+                    let woken = unsafe { WaitForSingleObject(self.event.0, STUCK_MS) };
                     let result =
                         if woken == WAIT_OBJECT_0 { self.fill_room(&mut fill) } else { Err(Error::new("the output signalled nothing for two seconds")) };
                     if let Err(error) = result {
@@ -316,13 +347,5 @@ impl Opened {
             // SAFETY: the client is this thread's.
             let _ = unsafe { self.client.Stop() };
         }
-    }
-}
-
-impl Drop for Opened {
-    fn drop(&mut self) {
-        // SAFETY: the event was made by `CreateEventW` and is closed once;
-        // the client that signals it is stopped.
-        let _ = unsafe { CloseHandle(self.event) };
     }
 }
