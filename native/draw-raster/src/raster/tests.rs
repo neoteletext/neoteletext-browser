@@ -177,3 +177,31 @@ fn nearest_sampling_takes_the_pixel_under_each_centre_and_smooth_mixes_two() {
     assert_eq!(red(&row), vec![0, 64, 191, 255]);
     assert!(Pixels::new(2, 2, vec![WHITE]).is_none(), "the pixels must be the size's");
 }
+
+/// Every point of a flattened curve lies on the curve, and every chord
+/// within the tolerance of it: checked at the middle of each chord against
+/// the curve near it.
+#[test]
+fn a_flattened_cubic_keeps_within_the_tolerance() {
+    let (from, first, second, to) = ((0.0, 0.0), (0.0, 40.0), (60.0, 40.0), (60.0, 0.0));
+    let mut lines = Vec::new();
+    let mut edges = path::Edges::new(&mut lines);
+    edges.move_to(from);
+    edges.cubic_to(first, second, to);
+    let curve = |along: f64| {
+        let rest = 1.0 - along;
+        let weights = [rest * rest * rest, 3.0 * rest * rest * along, 3.0 * rest * along * along, along * along * along];
+        (
+            weights[0] * from.0 + weights[1] * first.0 + weights[2] * second.0 + weights[3] * to.0,
+            weights[0] * from.1 + weights[1] * first.1 + weights[2] * second.1 + weights[3] * to.1,
+        )
+    };
+    let samples: Vec<(f64, f64)> = (0..=10_000).map(|step| curve(f64::from(step) / 10_000.0)).collect();
+    let nearest = |point: (f64, f64)| samples.iter().map(|sample| (sample.0 - point.0).hypot(sample.1 - point.1)).fold(f64::INFINITY, f64::min);
+    assert!(lines.len() > 4, "a curve this bent is more than a few chords: {}", lines.len());
+    for line in &lines {
+        let middle = (f64::midpoint(f64::from(line.x0), f64::from(line.x1)), f64::midpoint(f64::from(line.y0), f64::from(line.y1)));
+        assert!(nearest(middle) <= path::FLATNESS + 0.01, "a chord's middle {middle:?} lies {} from the curve", nearest(middle));
+        assert!(nearest((f64::from(line.x1), f64::from(line.y1))) < 0.01, "a chord ends on the curve");
+    }
+}

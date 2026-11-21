@@ -13,15 +13,6 @@ pub(crate) const FLATNESS: f64 = 0.25;
 /// radius of the largest window needs fewer at [`FLATNESS`], and a curve
 /// past it is drawn coarser rather than without bound.
 pub(crate) const MAX_CHORDS: u32 = 256;
-const QUARTER_TURN: f64 = core::f64::consts::FRAC_PI_2;
-
-/// How many chords keep a curve whose second difference is `bend` within
-/// [`FLATNESS`]: a chord of a parameter step `h` lies at most `bend × h² /
-/// 8` from the curve (the remainder of linear interpolation), so `h ≤ √(8
-/// × FLATNESS / bend)`.
-fn chords(bend: f64) -> u32 {
-    chord_count((bend / (8.0 * FLATNESS)).sqrt())
-}
 
 /// A path made into edges as it is drawn: moves, lines, curves and closes.
 pub(crate) struct Edges<'a> {
@@ -104,24 +95,81 @@ impl<'a> Edges<'a> {
         self.line_to(to);
     }
 
-    /// A cubic Bézier curve to `to` by `first` and `second`, flattened.
+    /// A cubic Bézier curve to `to` by `first` and `second`, flattened: as
+    /// one chord where the curve keeps within [`FLATNESS`] of it, else by
+    /// R. Levien's method ("Flattening cubic Béziers", the method of his
+    /// 2019 article on quadratics carried over): the cubic approximated by
+    /// quadratics within a tenth of the tolerance, and the chords spread
+    /// over all of them evenly by the same parabola measure, within the
+    /// rest of the tolerance. The tolerance and the spacing are those the
+    /// interface's rounded corners were drawn with before.
     pub(crate) fn cubic_to(&mut self, first: (f64, f64), second: (f64, f64), to: (f64, f64)) {
         let from = self.at;
-        // Its second derivative is linear along it, so greatest at an end:
-        // six times the second difference there.
-        let at_start = (from.0 - 2.0 * first.0 + second.0).hypot(from.1 - 2.0 * first.1 + second.1);
-        let at_end = (first.0 - 2.0 * second.0 + to.0).hypot(first.1 - 2.0 * second.1 + to.1);
-        let count = chords(6.0 * at_start.max(at_end));
-        for step in 1..=count {
-            let along = f64::from(step) / f64::from(count);
+        // The curve lies within three quarters of its control points'
+        // greater distance from its chord: their Bernstein weights sum to
+        // 3t(1 − t), at most three quarters.
+        let reach = distance_to_segment(first, from, to).max(distance_to_segment(second, from, to));
+        if reach <= FLATNESS * 4.0 / 3.0 {
+            self.line_to(to);
+            return;
+        }
+        let count = quadratic_count(from, first, second, to);
+        let cubic = |along: f64| {
             let rest = 1.0 - along;
-            // The Bernstein weights of the four points.
             let weights = (rest * rest * rest, 3.0 * rest * rest * along, 3.0 * rest * along * along, along * along * along);
-            self.line_to((
+            (
                 weights.0 * from.0 + weights.1 * first.0 + weights.2 * second.0 + weights.3 * to.0,
                 weights.0 * from.1 + weights.1 * first.1 + weights.2 * second.1 + weights.3 * to.1,
-            ));
+            )
+        };
+        // Each quadratic through the cubic's points at its two ends and its
+        // middle, its control point set so that it passes the middle one.
+        let tolerance = FLATNESS * (1.0 - CUBIC_TO_QUADRATIC_SHARE);
+        let root_tolerance = tolerance.sqrt();
+        let mut pieces = [Parabola::default(); MAX_QUADRATICS];
+        let mut total = 0.0;
+        for (index, piece) in (0..count).zip(pieces.iter_mut()) {
+            let start = cubic(f64::from(index) / f64::from(count));
+            let end = cubic(f64::from(index.saturating_add(1)) / f64::from(count));
+            let middle = cubic((2.0 * f64::from(index) + 1.0) / (2.0 * f64::from(count)));
+            let control = (2.0 * middle.0 - f64::midpoint(start.0, end.0), 2.0 * middle.1 - f64::midpoint(start.1, end.1));
+            *piece = Parabola::new(start, control, end, root_tolerance);
+            total += piece.measure;
         }
+        let chords = chord_count(0.5 * total / root_tolerance);
+        let step = total / f64::from(chords);
+        // The chords' ends are spaced `step` apart along the summed measure,
+        // each found in the quadratic it falls in.
+        let mut emitted = 0_u32;
+        let mut summed = 0.0;
+        let mut carried = 0.0;
+        for piece in pieces.iter().take(usize::try_from(count).unwrap_or(0)) {
+            summed += piece.measure;
+            let reached = summed / step;
+            let next = 1.0 + reached.floor();
+            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "a count of chords, whole and at most MAX_CHORDS")]
+            let next_index = next.clamp(0.0, f64::from(MAX_CHORDS)) as u32;
+            let new = next_index.saturating_sub(emitted);
+            if new > 0 && piece.measure > 0.0 {
+                let spacing = step / piece.measure;
+                let offset = carried * spacing;
+                for index in 0..new {
+                    let place = emitted.saturating_add(index);
+                    // The first point is the curve's start, already drawn,
+                    // and the last its end, drawn below.
+                    if place == 0 || place >= chords {
+                        continue;
+                    }
+                    let point = piece.point(offset + f64::from(index) * spacing);
+                    if point.0.is_finite() && point.1.is_finite() {
+                        self.line_to(point);
+                    }
+                }
+            }
+            carried = next - reached;
+            emitted = next_index;
+        }
+        self.line_to(to);
     }
 
     /// Closes the contour back to its start.
@@ -146,31 +194,110 @@ pub(crate) fn polygon(lines: &mut Vec<Line>, points: impl IntoIterator<Item = (f
 }
 
 /// The rectangle `x0..x1` by `y0..y1` with corners of `radius`, no more
-/// than half its shorter side, as chords of each corner's quarter circle
-/// lying within [`FLATNESS`] of it.
+/// than half its shorter side, each corner a quarter circle drawn as one
+/// cubic Bézier curve (its control arms 4/3 × tan(π / 8) of the radius,
+/// the usual approximation, within 0.03 % of the radius) and flattened as
+/// every cubic is, as the interface's corners were drawn before.
 pub(crate) fn rounded_rect(lines: &mut Vec<Line>, (x0, y0, x1, y1): (f64, f64, f64, f64), radius: f64) {
+    /// A quarter circle's cubic control arm, as a share of the radius.
+    const ARM: f64 = 4.0 / 3.0 * 0.414_213_562_373_095_03;
     let (x0, x1) = (x0.min(x1), x0.max(x1));
     let (y0, y1) = (y0.min(y1), y0.max(y1));
     let radius = radius.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0).max(0.0);
-    // A chord of angle θ lies r × (1 − cos(θ / 2)) inside its arc.
-    let step = if radius > FLATNESS { 2.0 * (1.0 - FLATNESS / radius).acos() } else { QUARTER_TURN };
-    let count = chords_for_angle(step);
-    // Each corner's centre and the angle its arc starts at, clockwise on
-    // the screen (y down) from the top-left.
-    let corners = [
-        (x0 + radius, y0 + radius, 2.0 * QUARTER_TURN),
-        (x1 - radius, y0 + radius, 3.0 * QUARTER_TURN),
-        (x1 - radius, y1 - radius, 0.0),
-        (x0 + radius, y1 - radius, QUARTER_TURN),
-    ];
-    let mut points = Vec::with_capacity(corners.len().saturating_mul(usize::try_from(count).unwrap_or(0).saturating_add(1)));
-    for (centre_x, centre_y, start) in corners {
-        for step in 0..=count {
-            let angle = start + QUARTER_TURN * f64::from(step) / f64::from(count);
-            points.push((centre_x + radius * angle.cos(), centre_y + radius * angle.sin()));
+    let arm = radius * ARM;
+    let mut edges = Edges::new(lines);
+    // Clockwise on the screen (y down) from the top-left corner's start.
+    edges.move_to((x0, y0 + radius));
+    edges.cubic_to((x0, y0 + radius - arm), (x0 + radius - arm, y0), (x0 + radius, y0));
+    edges.line_to((x1 - radius, y0));
+    edges.cubic_to((x1 - radius + arm, y0), (x1, y0 + radius - arm), (x1, y0 + radius));
+    edges.line_to((x1, y1 - radius));
+    edges.cubic_to((x1, y1 - radius + arm), (x1 - radius + arm, y1), (x1 - radius, y1));
+    edges.line_to((x0 + radius, y1));
+    edges.cubic_to((x0 + radius - arm, y1), (x0, y1 - radius + arm), (x0, y1 - radius));
+    edges.close();
+}
+
+/// The share of the tolerance a cubic's approximation by quadratics may
+/// take; the chords take the rest.
+const CUBIC_TO_QUADRATIC_SHARE: f64 = 0.1;
+/// The most quadratics one cubic is approximated by: past this a cubic is
+/// drawn coarser rather than without bound.
+const MAX_QUADRATICS: usize = 16;
+
+/// How many quadratics approximate the cubic within its share of the
+/// tolerance: the error of n quadratics falls as the sixth power of n, so
+/// n is the sixth root of the error measure, rounded up (Levien, "Fitting
+/// cubic Béziers with quadratics": the error of one is √3 / 36 of the
+/// distance between 3 × the second control point − the end and 3 × the
+/// first − the start).
+fn quadratic_count(from: (f64, f64), first: (f64, f64), second: (f64, f64), to: (f64, f64)) -> u32 {
+    let accuracy = FLATNESS * CUBIC_TO_QUADRATIC_SHARE;
+    let (across, down) = ((3.0 * second.0 - to.0) - (3.0 * first.0 - from.0), (3.0 * second.1 - to.1) - (3.0 * first.1 - from.1));
+    let ratio = (across * across + down * down) / (432.0 * accuracy * accuracy);
+    let mut count = 1_u32;
+    while count < u32::try_from(MAX_QUADRATICS).unwrap_or(1) && ratio > f64::from(count).powi(6) {
+        count = count.saturating_add(1);
+    }
+    count
+}
+
+/// A quadratic mapped onto the parabola y = x², with the measure of its
+/// chords at a tolerance (Levien, 2019): what spreads chords along it.
+#[derive(Clone, Copy, Default)]
+struct Parabola {
+    start: (f64, f64),
+    control: (f64, f64),
+    end: (f64, f64),
+    integral_start: f64,
+    integral_span: f64,
+    parameter_start: f64,
+    parameter_scale: f64,
+    /// Twice the root of the tolerance times the chords it needs.
+    measure: f64,
+}
+
+impl Parabola {
+    fn new(start: (f64, f64), control: (f64, f64), end: (f64, f64), root_tolerance: f64) -> Self {
+        let first = (control.0 - start.0, control.1 - start.1);
+        let second = (end.0 - control.0, end.1 - control.1);
+        let bend = (first.0 - second.0, first.1 - second.1);
+        let cross = (end.0 - start.0) * bend.1 - (end.1 - start.1) * bend.0;
+        let low = (first.0 * bend.0 + first.1 * bend.1) / cross;
+        let high = (second.0 * bend.0 + second.1 * bend.1) / cross;
+        let scale = (cross / (bend.0.hypot(bend.1) * (high - low))).abs();
+        let (integral_start, integral_end) = (parabola_integral(low), parabola_integral(high));
+        let measure = if scale.is_finite() {
+            let span = (integral_end - integral_start).abs();
+            if (low >= 0.0) == (high >= 0.0) { span * scale.sqrt() } else { span * root_tolerance / parabola_integral(root_tolerance / scale.sqrt()) }
+        } else {
+            0.0
+        };
+        let measure = if measure.is_finite() { measure } else { 0.0 };
+        let (parameter_start, parameter_end) = (parabola_inverse_integral(integral_start), parabola_inverse_integral(integral_end));
+        Self {
+            start,
+            control,
+            end,
+            integral_start,
+            integral_span: integral_end - integral_start,
+            parameter_start,
+            parameter_scale: 1.0 / (parameter_end - parameter_start),
+            measure,
         }
     }
-    polygon(lines, points);
+
+    /// The point a share `along` of the way along the parabola measure.
+    fn point(&self, along: f64) -> (f64, f64) {
+        let integral = self.integral_start + self.integral_span * along;
+        let parameter = (parabola_inverse_integral(integral) - self.parameter_start) * self.parameter_scale;
+        let rest = 1.0 - parameter;
+        let (weight_start, weight_middle, weight_end) = (rest * rest, 2.0 * rest * parameter, parameter * parameter);
+        (
+            weight_start * self.start.0 + weight_middle * self.control.0 + weight_end * self.end.0,
+            weight_start * self.start.1 + weight_middle * self.control.1 + weight_end * self.end.1,
+        )
+    }
 }
 
 /// The distance from `point` to the segment from `start` to `end`.
@@ -210,9 +337,4 @@ fn chord_count(needed: f64) -> u32 {
         let count = needed as u32;
         count
     }
-}
-
-/// How many equal chords of a quarter turn are each at most `step`.
-fn chords_for_angle(step: f64) -> u32 {
-    chord_count(QUARTER_TURN / step)
 }
