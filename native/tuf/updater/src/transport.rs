@@ -270,25 +270,67 @@ fn transport_error(kind: TransportErrorKind, url: &Url, why: String) -> Transpor
     TransportError::new_with_cause(kind, url, why)
 }
 
+/// The repository's folder an address is in, which says the bound its
+/// file is read to: metadata to `tough`'s own bound, a release file to
+/// the bound the updater gave for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Folder {
+    /// `/metadata/`.
+    Metadata,
+    /// `/targets/`.
+    Targets,
+}
+
+impl Folder {
+    /// The folder's name on the update host.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Metadata => "metadata",
+            Self::Targets => "targets",
+        }
+    }
+}
+
+/// What the update host `host`, at `port`, is asked for `url`: the
+/// request's path with its query, and the repository's folder it is in.
+/// The transport asks nothing else, of no other host: whatever address
+/// the update library makes of a file's name, this is all that leaves.
+///
+/// # Errors
+/// Why the address is refused: it is not the update host's over HTTPS,
+/// or it is in neither of the repository's two folders.
+pub fn asked_of(host: &str, port: u16, url: &Url) -> Result<(String, Folder), &'static str> {
+    if url.scheme() != "https" || url.host_str() != Some(host) || url.port_or_known_default() != Some(port) {
+        return Err("not the update host");
+    }
+    let mut path = url.path().to_owned();
+    if let Some(query) = url.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    let folder = if url.path().starts_with(METADATA_FOLDER) {
+        Folder::Metadata
+    } else if url.path().starts_with(TARGETS_FOLDER) {
+        Folder::Targets
+    } else {
+        return Err("not the update repository's layout");
+    };
+    Ok((path, folder))
+}
+
+/// The repository's folder of metadata on the update host, as a path.
+const METADATA_FOLDER: &str = "/metadata/";
+/// Its folder of release files.
+const TARGETS_FOLDER: &str = "/targets/";
+
 #[async_trait]
 impl Transport for Https {
     async fn fetch(&self, url: Url) -> Result<TransportStream, TransportError> {
-        if url.scheme() != "https" || url.host_str() != Some(self.host.as_str()) || url.port_or_known_default() != Some(self.port) {
-            return Err(transport_error(TransportErrorKind::UnsupportedUrlScheme, &url, String::from("not the update host")));
-        }
-        let mut path = url.path().to_owned();
-        if let Some(query) = url.query() {
-            path.push('?');
-            path.push_str(query);
-        }
-        // Metadata to `tough`'s own bound; a release file to the bound the
-        // updater gave for it.
-        let limit = if url.path().starts_with("/metadata/") {
-            MAX_METADATA
-        } else if url.path().starts_with("/targets/") {
-            self.target_limit.load(Ordering::Relaxed)
-        } else {
-            return Err(transport_error(TransportErrorKind::UnsupportedUrlScheme, &url, String::from("not the update repository's layout")));
+        let (path, limit) = match asked_of(&self.host, self.port, &url) {
+            Ok((path, Folder::Metadata)) => (path, MAX_METADATA),
+            Ok((path, Folder::Targets)) => (path, self.target_limit.load(Ordering::Relaxed)),
+            Err(why) => return Err(transport_error(TransportErrorKind::UnsupportedUrlScheme, &url, String::from(why))),
         };
         // Blocking: the updater runs one request at a time, on the one
         // thread its runtime has.
@@ -304,6 +346,25 @@ impl Transport for Https {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::arithmetic_side_effects, reason = "a test")]
 mod tests {
     use super::*;
+
+    /// rdm TODO-7439: whatever address is made of a file's name, the
+    /// transport asks only the update host, over HTTPS, in one of the
+    /// repository's two folders; the folders' names and their paths agree.
+    #[test]
+    fn only_the_update_host_is_asked_and_only_in_the_repositorys_folders() {
+        let asked = |url: &str| asked_of("updates.example", 443, &Url::parse(url).unwrap());
+        assert_eq!(asked("https://updates.example/targets/1.2.3/linux/a.gz?x=1"), Ok((String::from("/targets/1.2.3/linux/a.gz?x=1"), Folder::Targets)));
+        assert_eq!(asked("https://updates.example/metadata/2.root.json"), Ok((String::from("/metadata/2.root.json"), Folder::Metadata)));
+        assert_eq!(asked("https://updates.example/targets/../elsewhere"), Err("not the update repository's layout"));
+        for other in ["http://updates.example/targets/a", "https://elsewhere.example/targets/a", "https://updates.example:8443/targets/a", "file:///targets/a"]
+        {
+            assert_eq!(asked(other), Err("not the update host"), "{other}");
+        }
+        assert_eq!(
+            (format!("/{}/", Folder::Metadata.name()), format!("/{}/", Folder::Targets.name())),
+            (METADATA_FOLDER.to_owned(), TARGETS_FOLDER.to_owned())
+        );
+    }
 
     /// A deadline no test reaches.
     fn far() -> Instant {

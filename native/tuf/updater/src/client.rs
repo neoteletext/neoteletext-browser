@@ -9,6 +9,7 @@ use update::manifest::MAX_MANIFEST;
 use update::platform::{MANIFEST, Platform};
 use update::version::Version;
 
+use crate::transport::{Folder, asked_of};
 use crate::{COMPRESSED, Https};
 
 /// The updater's own folder in the staging folder, kept between runs: The
@@ -63,6 +64,36 @@ pub struct Config {
     pub platform: Platform,
 }
 
+/// The address of one of the repository's two folders on the update
+/// host, which the update library joins each file's name to.
+///
+/// # Errors
+/// When the host and port make no address.
+pub fn folder_address(host: &str, port: u16, folder: Folder) -> Result<url::Url, String> {
+    url::Url::parse(&format!("https://{host}:{port}/{}/", folder.name())).map_err(|error| error.to_string())
+}
+
+/// What the update host is asked for a file named `name` in `folder`,
+/// for a fuzz target and a test (rdm TODO-7439; TODO-7390 step 5 item 4):
+/// the name is held to what the update library takes as a release file's
+/// name when the folder is the release files', joined to the folder's
+/// address, and given to the transport's own check of an address
+/// ([`asked_of`]). The update library escapes a name before it joins it,
+/// by a function it keeps to itself; here the name is joined as it
+/// stands, which is the harder case for the transport's check: whatever
+/// the name, the answer is a refusal or a path of the update host.
+///
+/// # Errors
+/// Why nothing is asked: the name is no release file's name, it makes no
+/// address, or the transport refuses the address made.
+pub fn asked_for(host: &str, port: u16, folder: Folder, name: &str) -> Result<(String, Folder), String> {
+    if folder == Folder::Targets {
+        TargetName::new(name).map_err(|error| error.to_string())?;
+    }
+    let address = folder_address(host, port, folder)?.join(name).map_err(|error| error.to_string())?;
+    asked_of(host, port, &address).map_err(String::from)
+}
+
 /// The target name of a release file.
 #[must_use]
 pub fn target_name(version: Version, platform: Platform, path: &str) -> String {
@@ -103,10 +134,10 @@ impl Config {
     /// keys a rotation retired (decision 91).
     pub(super) async fn load(&self) -> Result<Repository, String> {
         std::fs::create_dir_all(self.metadata()).map_err(|error| format!("{}: {error}", self.metadata().display()))?;
-        let base = |folder: &str| url::Url::parse(&format!("https://{}:{}/{folder}/", self.host, self.port)).map_err(|error| error.to_string());
+        let base = |folder: Folder| folder_address(&self.host, self.port, folder);
         let loader = || {
             Ok::<_, String>(
-                RepositoryLoader::new(&self.root, base("metadata")?, base("targets")?)
+                RepositoryLoader::new(&self.root, base(Folder::Metadata)?, base(Folder::Targets)?)
                     .transport(self.https.clone())
                     .datastore(self.metadata())
                     .limits(limits()),
@@ -201,5 +232,26 @@ mod tests {
         let limits = limits();
         assert_eq!(Some(crate::transport::MAX_METADATA), usize::try_from(limits.max_targets_size).ok());
         assert!(limits.max_root_size <= limits.max_targets_size && limits.max_timestamp_size <= limits.max_targets_size);
+    }
+
+    /// rdm TODO-7439: a file's name joined to the repository's folders is
+    /// refused or asks only the update host, in the folder it was joined
+    /// to or not at all: a name that climbs out, names another host or
+    /// is an address of its own asks nothing elsewhere.
+    #[test]
+    fn a_files_name_joined_to_a_folder_asks_only_the_update_host() {
+        let asked = |folder, name: &str| asked_for("updates.example", 443, folder, name);
+        assert_eq!(asked(Folder::Targets, "1.2.3/linux/neoteletext.gz"), Ok((String::from("/targets/1.2.3/linux/neoteletext.gz"), Folder::Targets)));
+        assert_eq!(asked(Folder::Metadata, "3.root.json"), Ok((String::from("/metadata/3.root.json"), Folder::Metadata)));
+        for name in ["../metadata/1.root.json", "/etc/passwd", "//elsewhere.example/targets/a", "https://elsewhere.example/targets/a", "..", ""] {
+            for folder in [Folder::Targets, Folder::Metadata] {
+                match asked(folder, name) {
+                    Err(_) => {}
+                    Ok((path, _)) => assert!(path.starts_with("/targets/") || path.starts_with("/metadata/"), "{name:?} asked {path:?}"),
+                }
+            }
+        }
+        assert!(asked(Folder::Targets, "//elsewhere.example/targets/a").is_err());
+        assert!(asked(Folder::Metadata, "https://elsewhere.example/metadata/a").is_err());
     }
 }
