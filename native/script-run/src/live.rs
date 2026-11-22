@@ -16,7 +16,7 @@
 
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{Receiver, channel};
 
@@ -157,9 +157,16 @@ fn media_type(path: &Path) -> &'static str {
 /// else. The request is the web client's, but the server reads it as it
 /// would a stranger's: its head is bounded, and a path with any part
 /// that is not a plain name is not found.
-fn answer(mut connection: TcpStream, folder: &Path) -> std::io::Result<()> {
+///
+/// It takes any connection, so that the reader of the request's first
+/// line can be given bytes with no port (rdm TODO-7439): the server gives
+/// it each connection it accepts.
+///
+/// # Errors
+/// The connection's own, reading the request or writing the answer.
+pub fn answer<Connection: Read + Write>(mut connection: Connection, folder: &Path) -> std::io::Result<()> {
     let mut line = String::new();
-    BufReader::new((&connection).take(u64::try_from(MAX_REQUEST_HEAD_BYTES).unwrap_or(u64::MAX))).read_line(&mut line)?;
+    BufReader::new((&mut connection).take(u64::try_from(MAX_REQUEST_HEAD_BYTES).unwrap_or(u64::MAX))).read_line(&mut line)?;
     let mut words = line.split_ascii_whitespace();
     let (method, target) = (words.next().unwrap_or_default(), words.next().unwrap_or_default());
     let path = target.split(['?', '#']).next().unwrap_or_default().trim_start_matches('/');
