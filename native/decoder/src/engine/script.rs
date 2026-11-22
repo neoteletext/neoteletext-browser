@@ -340,6 +340,20 @@ impl Engine {
         }
     }
 
+    /// The page context of a JavaScript page opens (section 12.3: the
+    /// page opens blank, however it was reached). Its ReGIS stream is its
+    /// script's alone, and the script host begins it again from an empty
+    /// scene and its first drawing number: what an earlier visit's script
+    /// drew ends here, so that the script's first bytes begin a stream of
+    /// their own and nothing of the earlier visit shows under them
+    /// (TODO-7424). A NAPLPS stream's new generation is the script
+    /// host's own to ask for, with its first bytes.
+    pub fn script_begins_again(&mut self, at: ScriptPage) {
+        if at.renderer == Renderer::Regis {
+            self.regis.forget(at.page, at.sub);
+        }
+    }
+
     /// A JavaScript page opens blank (section 12.3): a teletext page of
     /// no rows, so that there is a page to show and to draw on. A page
     /// the decoder already holds is left as it is.

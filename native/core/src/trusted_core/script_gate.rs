@@ -199,6 +199,12 @@ impl Core {
         Some(Held { claims, asks: keys::asks_of(claims).0 })
     }
 
+    /// Whether `key` is the open page and its scripts are given any of
+    /// the viewer's input.
+    pub(super) fn script_holds_input(&self, key: PageKey) -> bool {
+        self.script_held(key).is_some_and(|held| held.holds())
+    }
+
     /// The typing state the interface is told, with what the open page's
     /// scripts hold put in when the page is a script's (section 4.6): the
     /// keys their manifests name are then the page's, as a table's are

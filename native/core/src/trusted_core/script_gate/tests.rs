@@ -843,3 +843,42 @@ mod navigation {
         assert_eq!(viewer.address(), home, "stopped scripts ask nothing");
     }
 }
+
+/// REQ-6374 on a script's page (rdm TODO-7425): the receiver draws a
+/// detectable drawing's hover look while the pointer is over it and its
+/// pressed look while it is pressed, so the decoder of a page whose
+/// scripts hold the viewer's input is told which drawing that is, as the
+/// decoder of a page keys go to is. A page whose scripts hold nothing is
+/// told of none.
+#[test]
+fn the_decoder_of_a_script_page_is_told_the_drawing_hovered_and_pressed() {
+    use protocol::regis::{PictureLanguage, RegisPick, RegisPointer, RegisViewer};
+    /// The drawing that fills the picture's first hundred lines.
+    const BUTTON: u16 = 7;
+    let mut viewer = Viewer::new();
+    let key = viewer.key;
+    let language = PictureLanguage::Regis;
+    let lines = 100 * usize::from(language.width());
+    let record: Vec<u16> = (0..language.pixels()).map(|pixel| if pixel < lines { BUTTON } else { 0 }).collect();
+    viewer.core.regis.hold(key, 0, 1, language, Some(RegisPick::of(&record, [(BUTTON, 0, 0)].into_iter(), language)));
+    let pointer = |at: (u16, u16), pressed: bool| ToCore::RegisPointer(RegisPointer { key, at: Some(at), pressed, finger: false, span: 1 });
+    let told = |viewer: &mut Viewer| -> Vec<RegisViewer> {
+        viewer.decoder().into_iter().filter_map(|message| if let ToDecoder::RegisViewer { viewer, .. } = message { Some(viewer) } else { None }).collect()
+    };
+    // No script holds any input: the pointer over the drawing says nothing.
+    viewer.core.intent(pointer((50, 50), false)).unwrap();
+    assert_eq!(told(&mut viewer), []);
+    viewer.core.intent(pointer((50, 300), false)).unwrap();
+    // The page's script claims the pointer's presses.
+    viewer.claims(&[], false, PointerClaim::Press, false);
+    viewer.decoder();
+    viewer.core.intent(pointer((50, 50), false)).unwrap();
+    assert_eq!(told(&mut viewer), [RegisViewer { hovered: BUTTON, pressed: 0, typing: true }]);
+    viewer.core.intent(pointer((50, 50), true)).unwrap();
+    assert_eq!(told(&mut viewer), [RegisViewer { hovered: BUTTON, pressed: BUTTON, typing: true }]);
+    // Pressed until the release, wherever the pointer goes meanwhile.
+    viewer.core.intent(pointer((50, 300), true)).unwrap();
+    assert_eq!(told(&mut viewer), [RegisViewer { hovered: 0, pressed: BUTTON, typing: true }]);
+    viewer.core.intent(pointer((50, 300), false)).unwrap();
+    assert_eq!(told(&mut viewer), [RegisViewer { hovered: 0, pressed: 0, typing: true }]);
+}

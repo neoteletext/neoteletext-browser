@@ -561,6 +561,89 @@ fn the_decoders_bounds_and_event_packing_are_the_script_librarys() {
     );
 }
 
+/// The numbered drawing the decoder's ReGIS renderer picks at `x`, `y` of
+/// `page` as it now paints it; 0 for none.
+fn regis_drawing_at(browser: &mut Browser, page: u16, x: u16, y: u16) -> u16 {
+    let now = browser.engine.now_us();
+    // The pick is of the picture as last composed.
+    let _ = browser.engine.take_pictures(page, Some(0), now);
+    browser.engine.regis().drawing_at(page, Some(0), x, y)
+}
+
+/// A ReGIS JavaScript page that draws one detectable square at 100, 100
+/// and hides it when the key 1 is pressed.
+const REGIS_SQUARE_PAGE: &[u8] = br#"/*! nt {"api":1,"renderer":"regis","keys":["1"]} */
+    const square = nt.regis.drawing({ x: 100, y: 100, detectable: true });
+    square.draw((p) => p.ink(2).fill((q) => q.rect(0, 0, 50, 50)));
+    nt.addEventListener("keydown", () => { square.visible = false; console.log("hidden"); });
+    console.log("square drawn");"#;
+
+/// A channel-level script that draws a detectable mark in the corner of
+/// every ReGIS page shown, as a channel's clock is drawn.
+const REGIS_CHANNEL_MARK: &[u8] = br#"/*! nt {"api":1} */
+    nt.addEventListener("pageshow", (e) => {
+      if (e.page.renderer !== "regis") return;
+      nt.regis.drawing({ x: 700, y: 0, detectable: true }).draw((p) => p.ink(3).fill((q) => q.rect(0, 0, 40, 20)));
+      console.log("mark on " + e.page.number);
+    });"#;
+
+/// Section 12.3 and section 3.1 (rdm TODO-7424): a ReGIS JavaScript page
+/// reached from another page draws as it does opened by its address. The
+/// page's one ReGIS stream begins when its page context opens, and what
+/// the channel context drew on the page before goes with that page: the
+/// news that the page before was left, which the channel context hears
+/// after the new page's context has opened, takes nothing of the new
+/// page's drawing with it. And a page come back to begins its stream
+/// again, so that nothing of its earlier visit shows: here a square the
+/// first visit hid.
+#[test]
+fn a_regis_script_page_reached_from_another_page_draws_and_a_page_come_back_to_begins_again() {
+    let (first, second) = (PageSub::new(0x200, 0), PageSub::new(0x210, 0));
+    let source = |level: ContextId, page: PageSub, name: &str, bytes: &[u8]| {
+        ScriptOrder::Source(SourcePiece { level, page, name: name.into(), total: u32::try_from(bytes.len()).unwrap(), offset: 0, bytes: bytes.to_vec() })
+    };
+    let said = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| *logged == line).count();
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.order(source(ContextId::Channel, first, "channel.js", REGIS_CHANNEL_MARK));
+        browser.order(source(ContextId::Page, second, "210.js", REGIS_SQUARE_PAGE));
+        browser.open(first, "200.js", REGIS_SQUARE_PAGE);
+        browser.run_until(|browser| (said(browser, "square drawn") == 1 && said(browser, "mark on 200") == 1) || browser.scripts.stopped().is_some());
+        browser
+    });
+    // Opened by its address: the page's square and the channel's mark.
+    assert!(
+        browser.run_until(|browser| regis_drawing_at(browser, 0x200, 120, 120) != 0 && regis_drawing_at(browser, 0x200, 710, 10) != 0),
+        "{:?}",
+        browser.reports
+    );
+    let (square, mark) = (regis_drawing_at(&mut browser, 0x200, 120, 120), regis_drawing_at(&mut browser, 0x200, 710, 10));
+    // The first visit hides its square.
+    browser.key(first, 7, '1');
+    assert!(browser.run_until(|browser| said(browser, "hidden") == 1 && regis_drawing_at(browser, 0x200, 120, 120) == 0), "{:?}", browser.reports);
+
+    // The second page is reached from the first.
+    browser.page(None);
+    browser.page(Some(second));
+    browser.run_until(|browser| (said(browser, "square drawn") == 2 && said(browser, "mark on 210") == 1) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
+    let drew = browser.run_until(|browser| regis_drawing_at(browser, 0x210, 120, 120) != 0 && regis_drawing_at(browser, 0x210, 710, 10) != 0);
+    let found = (regis_drawing_at(&mut browser, 0x210, 120, 120), regis_drawing_at(&mut browser, 0x210, 710, 10));
+    assert!(drew, "the page reached from another shows drawings {found:?} at its square and at the channel's mark: {:?}", browser.logged());
+    assert_eq!(found, (square, mark), "the page's drawings and the channel's are numbered as on a page opened by its address");
+
+    // Back to the first page: its stream begins again, and the square
+    // its first visit hid is drawn.
+    browser.page(None);
+    browser.page(Some(first));
+    browser.run_until(|browser| (said(browser, "square drawn") == 3 && said(browser, "mark on 200") == 2) || browser.scripts.stopped().is_some());
+    let drew = browser.run_until(|browser| regis_drawing_at(browser, 0x200, 120, 120) != 0 && regis_drawing_at(browser, 0x200, 710, 10) != 0);
+    assert!(drew, "the page come back to shows what its earlier visit left: {:?}", browser.logged());
+    let faults: Vec<String> = browser.logged().into_iter().filter(|line| line.contains("Error") || line.contains("commit")).collect();
+    assert_eq!(faults, Vec::<String>::new());
+    assert!(browser.scripts.stopped().is_none());
+}
+
 /// TODO-7425, the NAPLPS part, and section 4.4: on a NAPLPS page of
 /// components the decoder picks the region under the pointer from the
 /// page's cast and names it in the pointer event by the script host's
