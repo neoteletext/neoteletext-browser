@@ -112,14 +112,18 @@ fn the_forbidden_request_headers_are_exactly_the_standards() {
 
 /// The Fetch standard section 2.2.2, "get, decode, and split": a
 /// method-override value is split as the standard splits a header value,
-/// so a method in double quotes is that method, and a comma inside the
-/// quotes splits nothing.
+/// so a comma inside double quotes splits nothing, and a quoted string is
+/// a value with its quotes.
 #[test]
-#[ignore = "fault TODO-7345 item 1: a quoted method in X-HTTP-Method-Override is not unquoted, so \"TRACE\" passes"]
 fn a_quoted_method_override_is_read_as_the_standard_splits_it() {
-    assert!(is_forbidden_request_header("x-http-method-override", b"\"TRACE\""), "a quoted forbidden method");
-    assert!(is_forbidden_request_header("x-method-override", b"PUT, \"connect\""), "the second value, quoted");
     assert!(!is_forbidden_request_header("x-http-method", b"\"PUT,TRACE\""), "one quoted value that is no method");
+    assert!(is_forbidden_request_header("x-method-override", b"\"a,b\", connect"), "a comma inside quotes splits nothing, and the value after it is read");
+    assert!(is_forbidden_request_header("x-http-method-override", b"PUT,\tTRACE "), "tabs and spaces at a value's ends are not part of it");
+    // The standard keeps a quoted string's quotes (its example: `"1,2", 3`
+    // is `"1,2"` and `3`), so a method in quotes is not that method, and a
+    // server that reads the header reads no method in it either.
+    assert!(!is_forbidden_request_header("x-http-method-override", b"\"TRACE\""));
+    assert!(!is_forbidden_request_header("x-method-override", b"PUT, \"connect\""));
 }
 
 /// The Fetch standard section 2.2.2, "CORS-safelisted request-header",
