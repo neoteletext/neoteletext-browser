@@ -17,10 +17,26 @@ use crate::unix as platform;
 use crate::windows as platform;
 use crate::{Process, Report, Role, Spawn};
 
+/// Reads the script of a name from the folder of a page file that was
+/// given: the file's path, the script's name, and its bytes or why not.
+pub type ReadScript<'a> = dyn Fn(&Path, &str) -> Result<Vec<u8>, String> + 'a;
+
+/// The reply to a request for a file's script.
+fn script_reply(read: Result<Vec<u8>, String>) -> Reply {
+    match read {
+        Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
+        Ok(_) => Reply::Failed(String::from("the script is too large")),
+        Err(reason) => Reply::Failed(reason),
+    }
+}
+
 /// What the broker does for the core that is not starting helpers.
 pub struct Handlers<'a> {
     /// Reads a file channel, by its rules and bounds.
     pub read_source: &'a dyn Fn(&Path) -> Result<Vec<u8>, String>,
+    /// Reads the script of this name from the folder of a page file that
+    /// was given, and from nowhere else.
+    pub read_script: &'a ReadScript<'a>,
     /// Hands a web address to the system's browser.
     pub open_web: &'a dyn Fn(&str) -> Result<(), String>,
     /// The environment a helper of a role is given.
@@ -187,6 +203,7 @@ fn answer(core: &mut Core, helpers: &mut Helpers, programs: &Path, handlers: &Ha
             Ok(_) => Reply::Failed(String::from("the picture is too large")),
             Err(reason) => Reply::Failed(reason),
         },
+        Request::ReadScript { file, name } => script_reply((handlers.read_script)(Path::new(&file), &name)),
         Request::ReadFont(path) => match (handlers.read_font)(Path::new(&path)) {
             Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
             Ok(_) => Reply::Failed(String::from("the font is too large")),

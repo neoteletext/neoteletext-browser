@@ -1,0 +1,421 @@
+# The web-platform-tests' fetch-api suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 97 files run, 37 not run here; cases: 1122 pass, 58 fail as a listed departure, 222 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	fetch/api/headers/header-setcookie.any.js	OK	24	0
+FILE	fetch/api/headers/header-values-last-event-id.any.js	OK	0	1
+FILE	fetch/api/headers/header-values-normalize.any.js	OK	31	0
+FILE	fetch/api/headers/header-values.any.js	OK	3	1
+FILE	fetch/api/headers/headers-basic.any.js	OK	23	0
+FILE	fetch/api/headers/headers-casing.any.js	OK	4	0
+FILE	fetch/api/headers/headers-combine.any.js	OK	6	0
+FILE	fetch/api/headers/headers-errors.any.js	OK	18	0
+FILE	fetch/api/headers/headers-forbidden-override.any.js	OK	90	0
+FILE	fetch/api/headers/headers-no-cors.any.js	OK	1	26
+FILE	fetch/api/headers/headers-normalize.any.js	OK	3	0
+FILE	fetch/api/headers/headers-record.any.js	OK	10	3
+FILE	fetch/api/headers/headers-structure.any.js	OK	8	0
+FILE	fetch/api/request/forbidden-method.any.js	OK	6	0
+FILE	fetch/api/request/request-bad-port.any.js	OK	83	1
+FILE	fetch/api/request/request-cache-default-conditional.any.js	OK	0	40
+FILE	fetch/api/request/request-cache-default.any.js	OK	0	8
+FILE	fetch/api/request/request-cache-force-cache.any.js	OK	0	16
+FILE	fetch/api/request/request-cache-no-cache.any.js	OK	0	4
+FILE	fetch/api/request/request-cache-no-store.any.js	OK	0	8
+FILE	fetch/api/request/request-cache-only-if-cached.any.js	OK	0	14
+FILE	fetch/api/request/request-cache-reload.any.js	OK	0	12
+FILE	fetch/api/request/request-clone-readable-stream-body.any.js	OK	1	0
+FILE	fetch/api/request/request-constructor-init-body-override.any.js	OK	2	0
+FILE	fetch/api/request/request-consume-empty.any.js	OK	13	1
+FILE	fetch/api/request/request-consume.any.js	OK	45	0
+FILE	fetch/api/request/request-disturbed.any.js	OK	9	0
+FILE	fetch/api/request/request-error.any.js	OK	22	0
+FILE	fetch/api/request/request-headers.any.js	OK	43	18
+FILE	fetch/api/request/request-init-002.any.js	OK	8	0
+FILE	fetch/api/request/request-init-contenttype.any.js	OK	18	0
+FILE	fetch/api/request/request-init-priority.any.js	OK	8	0
+FILE	fetch/api/request/request-init-stream.any.js	OK	23	0
+FILE	fetch/api/request/request-keepalive.any.js	OK	2	0
+FILE	fetch/api/request/request-structure.any.js	OK	24	0
+FILE	fetch/api/response/json.any.js	OK	2	0
+FILE	fetch/api/response/response-cancel-stream.any.js	OK	7	0
+FILE	fetch/api/response/response-clone.any.js	OK	7	14
+FILE	fetch/api/response/response-consume-empty.any.js	OK	13	1
+FILE	fetch/api/response/response-consume-stream.any.js	OK	15	0
+FILE	fetch/api/response/response-error-from-stream.any.js	OK	14	0
+FILE	fetch/api/response/response-error.any.js	OK	10	0
+FILE	fetch/api/response/response-from-stream.any.js	OK	3	0
+FILE	fetch/api/response/response-headers-guard.any.js	OK	1	0
+FILE	fetch/api/response/response-init-001.any.js	OK	9	0
+FILE	fetch/api/response/response-init-002.any.js	OK	8	0
+FILE	fetch/api/response/response-init-contenttype.any.js	OK	18	0
+FILE	fetch/api/response/response-static-error.any.js	OK	2	0
+FILE	fetch/api/response/response-static-json.any.js	OK	16	0
+FILE	fetch/api/response/response-static-redirect.any.js	OK	11	0
+FILE	fetch/api/response/response-stream-bad-chunk.any.js	OK	6	0
+FILE	fetch/api/response/response-stream-disturbed-1.any.js	OK	12	0
+FILE	fetch/api/response/response-stream-disturbed-2.any.js	OK	12	0
+FILE	fetch/api/response/response-stream-disturbed-3.any.js	OK	12	0
+FILE	fetch/api/response/response-stream-disturbed-4.any.js	OK	12	0
+FILE	fetch/api/response/response-stream-disturbed-5.any.js	OK	12	0
+FILE	fetch/api/response/response-stream-disturbed-6.any.js	OK	5	0
+FILE	fetch/api/response/response-stream-disturbed-by-pipe.any.js	OK	2	0
+FILE	fetch/api/response/response-stream-with-broken-then.any.js	OK	1	5
+FILE	fetch/api/body/formdata.any.js	OK	3	0
+FILE	fetch/api/body/mime-type.any.js	OK	20	0
+FILE	fetch/api/body/textstream.any.js	OK	14	0
+FILE	fetch/api/abort/cache.https.any.js	OK	0	2
+FILE	fetch/api/abort/general.any.js	OK	39	22
+FILE	fetch/api/abort/request.any.js	OK	18	0
+FILE	fetch/api/basic/accept-header.any.js	OK	2	2
+FILE	fetch/api/basic/conditional-get.any.js	OK	0	1
+FILE	fetch/api/basic/error-after-response.any.js	OK	0	2
+FILE	fetch/api/basic/gc.any.js	OK	6	0
+FILE	fetch/api/basic/header-value-combining.any.js	OK	0	6
+FILE	fetch/api/basic/header-value-null-byte.any.js	OK	0	1
+FILE	fetch/api/basic/historical.any.js	OK	3	0
+FILE	fetch/api/basic/http-response-code.any.js	OK	0	1
+FILE	fetch/api/basic/integrity.sub.any.js	OK	13	5
+FILE	fetch/api/basic/mode-no-cors.sub.any.js	ERROR	0	4
+FILE	fetch/api/basic/mode-same-origin.any.js	OK	2	6
+FILE	fetch/api/basic/referrer.any.js	OK	0	6
+FILE	fetch/api/basic/request-forbidden-headers.any.js	OK	96	0
+FILE	fetch/api/basic/request-head.any.js	OK	1	0
+FILE	fetch/api/basic/request-headers-case.any.js	OK	0	2
+FILE	fetch/api/basic/request-headers-nonascii.any.js	OK	1	0
+FILE	fetch/api/basic/request-headers.any.js	OK	1	24
+FILE	fetch/api/basic/request-referrer.any.js	OK	0	2
+FILE	fetch/api/basic/request-upload-421.any.js	OK	0	1
+FILE	fetch/api/basic/request-upload.any.js	OK	18	0
+FILE	fetch/api/basic/request-upload.h2.any.js	OK	6	6
+FILE	fetch/api/basic/response-null-body.any.js	OK	11	0
+FILE	fetch/api/basic/response-url.sub.any.js	OK	4	0
+FILE	fetch/api/basic/scheme-about.any.js	OK	7	0
+FILE	fetch/api/basic/scheme-blob.sub.any.js	NO-REPORT	0	0
+FILE	fetch/api/basic/scheme-data.any.js	OK	8	0
+FILE	fetch/api/basic/scheme-others.sub.any.js	OK	16	0
+FILE	fetch/api/basic/split-byte-order-mark.any.js	OK	0	5
+FILE	fetch/api/basic/status.h2.any.js	OK	0	7
+FILE	fetch/api/basic/stream-response.any.js	OK	2	0
+FILE	fetch/api/basic/stream-safe-creation.any.js	OK	63	0
+FILE	fetch/api/basic/text-utf8.any.js	OK	30	0
+FAIL	TODO-7388/5	fetch/api/headers/header-values-last-event-id.any.js	fetch() sends the bytes of a non-ASCII Last-Event-ID header value unchanged
+FAIL	D8	fetch/api/headers/header-values.any.js	fetch() with all valid values
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept set to sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss, , ssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept-language set to sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss, , sssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-language set to sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss, , ssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept set to , sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept-language set to , sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-language set to , sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-type set to text/plain;ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss, text/plain
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept/" as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept/012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept-language/\u{1} as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have accept-language/@ as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have authorization/basics as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-language/\u{1} as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-language/@ as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-type/text/html as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have content-type/text/plain; long=0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have range/bytes 0- as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have test/hi as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have dpr/2 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have rtt/1.0 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have downlink/-1.0 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have ect/6g as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have save-data/on as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have viewport-width/100 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have width/100 as header
+FAIL	D5	fetch/api/headers/headers-no-cors.any.js	"no-cors" Headers object cannot have unknown/doesitmatter as header
+FAIL	TODO-7388/3	fetch/api/headers/headers-record.any.js	Correct operation ordering with two properties one of which has an invalid name
+FAIL	TODO-7388/3	fetch/api/headers/headers-record.any.js	Basic operation with Symbol keys
+FAIL	TODO-7388/3	fetch/api/headers/headers-record.any.js	Operation with non-enumerable Symbol keys
+FAIL	D5	fetch/api/request/request-bad-port.any.js	Request on a port that is not bad should succeed through the proxy.
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Modified-Since header is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-None-Match header is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Unmodified-Since header is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Match header is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header (following a request without additional headers) is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default-conditional.any.js	RequestCache "default" mode with an If-Range header is treated similarly to "no-store" with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	RequestCache "default" mode checks the cache for previously cached content and goes to the network for stale responses with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	RequestCache "default" mode checks the cache for previously cached content and goes to the network for stale responses with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	RequestCache "default" mode checks the cache for previously cached content and avoids going to the network if a fresh response exists with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	RequestCache "default" mode checks the cache for previously cached content and avoids going to the network if a fresh response exists with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	Responses with the "Cache-Control: no-store" header are not stored in the cache with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	Responses with the "Cache-Control: no-store" header are not stored in the cache with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	Responses with the "Cache-Control: no-store" header are not stored in the cache with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-default.any.js	Responses with the "Cache-Control: no-store" header are not stored in the cache with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and avoid revalidation for stale responses with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and avoid revalidation for stale responses with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and avoid revalidation for fresh responses with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and avoid revalidation for fresh responses with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response is not found with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response is not found with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response is not found with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response is not found with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response would vary with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response would vary with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response would vary with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" mode checks the cache for previously cached content and goes to the network if a cached response would vary with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" stores the response in the cache if it goes to the network with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" stores the response in the cache if it goes to the network with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" stores the response in the cache if it goes to the network with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-force-cache.any.js	RequestCache "force-cache" stores the response in the cache if it goes to the network with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-cache.any.js	RequestCache "no-cache" mode revalidates stale responses found in the cache with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-cache.any.js	RequestCache "no-cache" mode revalidates stale responses found in the cache with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-cache.any.js	RequestCache "no-cache" mode revalidates fresh responses found in the cache with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-cache.any.js	RequestCache "no-cache" mode revalidates fresh responses found in the cache with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not check the cache for previously cached content and goes to the network regardless with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not check the cache for previously cached content and goes to the network regardless with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not check the cache for previously cached content and goes to the network regardless with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not check the cache for previously cached content and goes to the network regardless with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not store the response in the cache with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not store the response in the cache with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not store the response in the cache with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-no-store.any.js	RequestCache "no-store" mode does not store the response in the cache with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and avoids revalidation for stale responses with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and avoids revalidation for stale responses with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and avoids revalidation for fresh responses with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and avoids revalidation for fresh responses with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and does not go to the network if a cached response is not found with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" mode checks the cache for previously cached content and does not go to the network if a cached response is not found with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") uses cached same-origin redirects to same-origin content with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") uses cached same-origin redirects to same-origin content with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") uses cached same-origin redirects to same-origin content with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") uses cached same-origin redirects to same-origin content with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") does not follow redirects across origins and rejects with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") does not follow redirects across origins and rejects with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") does not follow redirects across origins and rejects with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-only-if-cached.any.js	RequestCache "only-if-cached" (with "same-origin") does not follow redirects across origins and rejects with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does not check the cache for previously cached content and goes to the network regardless with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does not check the cache for previously cached content and goes to the network regardless with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does not check the cache for previously cached content and goes to the network regardless with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does not check the cache for previously cached content and goes to the network regardless with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache with Last-Modified and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache even if a previous response is already stored with Etag and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache even if a previous response is already stored with Last-Modified and stale response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache even if a previous response is already stored with Etag and fresh response
+FAIL	TODO-7388/5	fetch/api/request/request-cache-reload.any.js	RequestCache "reload" mode does store the response in the cache even if a previous response is already stored with Last-Modified and fresh response
+FAIL	TODO-7388/3	fetch/api/request/request-consume-empty.any.js	Consume empty FormData request body as text
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "Accept: OK"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "Accept-Language: OK"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-language: OK"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-type: application/x-www-form-urlencoded"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-type: application/x-www-form-urlencoded;charset=UTF-8"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-type: multipart/form-data"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-type: multipart/form-data;charset=UTF-8"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "content-TYPE: text/plain"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding valid no-cors request header "CONTENT-type: text/plain;charset=UTF-8"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "Content-Type: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "Potato: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "proxy: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "proxya: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "sec: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "secb: KO"
+FAIL	D5	fetch/api/request/request-headers.any.js	Adding invalid no-cors request header "Empty-Value: "
+FAIL	D5	fetch/api/request/request-headers.any.js	Check that no-cors request constructor is filtering headers provided as init parameter
+FAIL	D5	fetch/api/request/request-headers.any.js	Check that no-cors request constructor is filtering headers provided as part of request parameter
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Int8Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Int16Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Int32Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (ArrayBufferchunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Uint8Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Uint8ClampedArraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Uint16Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Uint32Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (BigInt64Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (BigUint64Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Float16Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Float32Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (Float64Arraychunk)
+FAIL	TODO-7388/3	fetch/api/response/response-clone.any.js	Check response clone use structureClone for teed ReadableStreams (DataViewchunk)
+FAIL	TODO-7388/3	fetch/api/response/response-consume-empty.any.js	Consume empty FormData response body as text
+FAIL	TODO-7388/3	fetch/api/response/response-stream-with-broken-then.any.js	Attempt to inject {done: false, value: bye} via Object.prototype.then.
+FAIL	TODO-7388/3	fetch/api/response/response-stream-with-broken-then.any.js	Attempt to inject value: undefined via Object.prototype.then.
+FAIL	TODO-7388/3	fetch/api/response/response-stream-with-broken-then.any.js	Attempt to inject undefined via Object.prototype.then.
+FAIL	TODO-7388/3	fetch/api/response/response-stream-with-broken-then.any.js	Attempt to inject 8.2 via Object.prototype.then.
+FAIL	TODO-7388/3	fetch/api/response/response-stream-with-broken-then.any.js	intercepting arraybuffer to text conversion via Object.prototype.then should not be possible
+FAIL	D-9.1	fetch/api/abort/cache.https.any.js	Signals are not stored in the cache API
+FAIL	D-9.1	fetch/api/abort/cache.https.any.js	Signals are not stored in the cache API, even if they're already aborted
+FAIL	D5	fetch/api/abort/general.any.js	Aborting rejects with AbortError - no-cors
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.arrayBuffer() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.blob() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.bytes() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.formData() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.json() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	response.text() rejects if already aborted
+FAIL	TODO-7388/3	fetch/api/abort/general.any.js	Call text() twice on aborted response
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Already aborted signal does not make request
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Underlying connection is closed when aborting after receiving response
+FAIL	D5	fetch/api/abort/general.any.js	Underlying connection is closed when aborting after receiving response - no-cors
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.arrayBuffer()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.blob()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.bytes()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.formData()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.json()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Fetch aborted & connection closed when aborted after calling response.text()
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Stream errors once aborted. Underlying connection closed.
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Stream errors once aborted with abort reason. Underlying connection closed.
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Stream errors once aborted, after reading. Underlying connection closed.
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Readable stream synchronously cancels with AbortError if aborted before reading
+FAIL	TODO-7388/5	fetch/api/abort/general.any.js	Clone aborts with original controller
+FAIL	TODO-7388/5	fetch/api/basic/accept-header.any.js	Request through fetch should have 'accept' header with value '*/*'
+FAIL	TODO-7388/5	fetch/api/basic/accept-header.any.js	Request through fetch should have a 'accept-language' header
+FAIL	TODO-7388/5	fetch/api/basic/conditional-get.any.js	Testing conditional GET with ETags
+FAIL	TODO-7388/5	fetch/api/basic/error-after-response.any.js	Response reader read() promise should reject after a network error happening after resolving fetch promise
+FAIL	TODO-7388/5	fetch/api/basic/error-after-response.any.js	Response reader closed promise should reject after a network error happening after resolving fetch promise
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('content-length') expects 0
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('content-length') expects 0, 0
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('double-trouble') expects ,
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('foo-test') expects 1, 2, 3
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('heya') expects , \u{b}\u{c}, 1, , , 2
+FAIL	TODO-7388/5	fetch/api/basic/header-value-combining.any.js	response.headers.get('www-authenticate') expects 1, 2, 3, 4
+FAIL	TODO-7388/5	fetch/api/basic/header-value-null-byte.any.js	Ensure fetch() rejects null bytes in headers
+FAIL	TODO-7388/5	fetch/api/basic/http-response-code.any.js	Fetch on 425 response should not be retried for non TLS early data.
+FAIL	TODO-7388/5	fetch/api/basic/integrity.sub.any.js	Invalid integrity
+FAIL	TODO-7388/5	fetch/api/basic/integrity.sub.any.js	Multiple integrities: invalid stronger than valid
+FAIL	TODO-7388/5	fetch/api/basic/integrity.sub.any.js	Multiple integrities: both are invalid
+FAIL	TODO-7388/5	fetch/api/basic/integrity.sub.any.js	CORS invalid integrity
+FAIL	D5	fetch/api/basic/integrity.sub.any.js	Empty string integrity for opaque response
+HARNESS	D5	fetch/api/basic/mode-no-cors.sub.any.js	ERROR	1 duplicate test name: "Fetch http://web-platform.test:8000/fetch/api/resources/top.txt with no-cors mode"
+FAIL	D5	fetch/api/basic/mode-no-cors.sub.any.js	Fetch ../resources/top.txt with no-cors mode
+FAIL	D5	fetch/api/basic/mode-no-cors.sub.any.js	Fetch http://web-platform.test:8000/fetch/api/resources/top.txt with no-cors mode
+FAIL	D5	fetch/api/basic/mode-no-cors.sub.any.js	Fetch https://web-platform.test:8443/fetch/api/resources/top.txt with no-cors mode
+FAIL	D5	fetch/api/basic/mode-no-cors.sub.any.js	Fetch http://web-platform.test:8000/fetch/api/resources/top.txt with no-cors mode (2)
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch https://web-platform.test:8443/fetch/api/resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch http://www1.web-platform.test:8000/fetch/api/resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch /fetch/api/basic/../resources/redirect.py?location=../resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch /fetch/api/basic/../resources/redirect.py?location=http://web-platform.test:8000/fetch/api/resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch /fetch/api/basic/../resources/redirect.py?location=https://web-platform.test:8443/fetch/api/resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/mode-same-origin.any.js	Fetch /fetch/api/basic/../resources/redirect.py?location=http://www1.web-platform.test:8000/fetch/api/resources/top.txt with same-origin mode
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	origin-when-cross-origin policy on a same-origin URL
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	origin-when-cross-origin policy on a cross-origin URL
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	origin-when-cross-origin policy on a cross-origin URL after same-origin redirection
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	origin-when-cross-origin policy on a same-origin URL after cross-origin redirection
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	Referrer with credentials should be stripped
+FAIL	TODO-7388/5	fetch/api/basic/referrer.any.js	Referrer with fragment ID should be stripped
+FAIL	TODO-7388/5	fetch/api/basic/request-headers-case.any.js	Multiple headers with the same name, different case (THIS-is-A-test first)
+FAIL	TODO-7388/5	fetch/api/basic/request-headers-case.any.js	Multiple headers with the same name, different case (THIS-IS-A-TEST first)
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with GET
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with HEAD
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with PUT without body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with PUT with body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST without body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with text body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with FormData body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with URLSearchParams body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Blob body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with ArrayBuffer body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Uint8Array body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Int8Array body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Float16Array body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Float32Array body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Float64Array body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with DataView body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST with Blob body with mime type
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with Chicken
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with Chicken with body
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with POST and mode "same-origin" needs an Origin header
+FAIL	D5	fetch/api/basic/request-headers.any.js	Fetch with POST and mode "no-cors" needs an Origin header
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with PUT and mode "same-origin" needs an Origin header
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with TacO and mode "same-origin" needs an Origin header
+FAIL	TODO-7388/5	fetch/api/basic/request-headers.any.js	Fetch with TacO and mode "cors" needs an Origin header
+FAIL	TODO-7388/5	fetch/api/basic/request-referrer.any.js	about:client referrer
+FAIL	TODO-7388/5	fetch/api/basic/request-referrer.any.js	url referrer
+FAIL	TODO-7388/5	fetch/api/basic/request-upload-421.any.js	Fetch with POST with text body on 421 response should be retried once on new connection.
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	Fetch with POST with empty ReadableStream
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	Fetch with POST with ReadableStream
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	Fetch with POST with ReadableStream on 421 response should return the response and not retry.
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	Synchronous feature detect fails if feature unsupported
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	Streaming upload should fail on a 401 response
+FAIL	TODO-7388/5	fetch/api/basic/request-upload.h2.any.js	ReadbleStream should be closed on signal.abort
+HARNESS	D11	fetch/api/basic/scheme-blob.sub.any.js	NO-REPORT	uncaught: TypeError: not a function     at <eval> (<input>:5370:40)     at eval (native)     at <eval> (http://web-platform.test:8000/fetch/api/basic/scheme-blo
+FAIL	TODO-7388/5	fetch/api/basic/split-byte-order-mark.any.js	text() strips a UTF-8 byte order mark split across chunks
+FAIL	TODO-7388/5	fetch/api/basic/split-byte-order-mark.any.js	text() does not strip a UTF-8 byte order mark in a later chunk
+FAIL	TODO-7388/5	fetch/api/basic/split-byte-order-mark.any.js	text() decodes a UTF-8 sequence split across chunks
+FAIL	TODO-7388/5	fetch/api/basic/split-byte-order-mark.any.js	text() does not use a UTF-16LE byte order mark split across chunks
+FAIL	TODO-7388/5	fetch/api/basic/split-byte-order-mark.any.js	json() strips a UTF-8 byte order mark split across chunks
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 200 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 210 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 400 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 404 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 410 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 500 should be the empty string
+FAIL	TODO-7388/5	fetch/api/basic/status.h2.any.js	statusText over H2 for status 502 should be the empty string
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination-frame.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination-iframe.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination-no-load-event.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination-prefetch.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination-worker.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/destination/fetch-destination.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/multi-globals/construct-in-detached-frame.window.js
+SKIP	PAGE	D-9.1	fetch/api/request/multi-globals/current/current.html
+SKIP	PAGE	D-9.1	fetch/api/request/multi-globals/incumbent/incumbent.html
+SKIP	PAGE	D-9.1	fetch/api/request/multi-globals/url-parsing.html
+SKIP	PAGE	D-9.1	fetch/api/request/request-clone.sub.html
+SKIP	PAGE	D-9.1	fetch/api/request/request-init-001.sub.html
+SKIP	PAGE	D-9.1	fetch/api/request/request-init-003.sub.html
+SKIP	PAGE	D-9.1	fetch/api/request/request-keepalive-quota.html
+SKIP	PAGE	D-9.1	fetch/api/request/request-reset-attributes.https.html
+SKIP	PAGE	D-9.1	fetch/api/request/url-encoding.html
+SKIP	PAGE	D-9.1	fetch/api/response/many-empty-chunks-crash.html
+SKIP	PAGE	D-9.1	fetch/api/response/multi-globals/current/current.html
+SKIP	PAGE	D-9.1	fetch/api/response/multi-globals/incumbent/incumbent.html
+SKIP	PAGE	D-9.1	fetch/api/response/multi-globals/relevant/relevant.html
+SKIP	PAGE	D-9.1	fetch/api/response/multi-globals/url-parsing.html
+SKIP	PAGE	D-9.1	fetch/api/response/response-arraybuffer-realm.window.js
+SKIP	PAGE	D-9.1	fetch/api/response/response-blob-realm.any.js
+SKIP	PAGE	D-9.1	fetch/api/response/response-body-read-task-handling.html
+SKIP	PAGE	D-9.1	fetch/api/response/response-body-stashed-chunk.html
+SKIP	PAGE	D-9.1	fetch/api/response/response-clone-iframe.window.js
+SKIP	PAGE	D-9.1	fetch/api/response/response-consume.html
+SKIP	PAGE	D-9.1	fetch/api/response/response-form-data.html
+SKIP	PAGE	D-9.1	fetch/api/abort/destroyed-context.html
+SKIP	PAGE	D-9.1	fetch/api/abort/keepalive.html
+SKIP	PAGE	D-9.1	fetch/api/abort/serviceworker-intercepted.https.html
+SKIP	PAGE	D-9.1	fetch/api/basic/block-mime-as-script.html
+SKIP	PAGE	D-9.1	fetch/api/basic/fetch-in-popup-from-iframe.html
+SKIP	PAGE	D-9.1	fetch/api/basic/keepalive.any.js
+SKIP	PAGE	D-9.1	fetch/api/basic/mediasource.window.js
+SKIP	PAGE	D-9.1	fetch/api/basic/request-referrer-redirected-worker.html
+SKIP	PAGE	D-9.1	fetch/api/basic/url-parsing.sub.html

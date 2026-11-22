@@ -10,6 +10,10 @@
     "failures": {"used": 0, "limit": 16, "most": 0},
     "triplets": {"used": 7, "limit": 208, "most": 7},
     "colours": {"used": 1, "limit": 16, "most": 1},
-    "controls": {"used": 1, "limit": 32, "most": 1}
+    "controls": {"used": 1, "limit": 32, "most": 1},
+    "sprites": {"used": 0, "limit": 32, "most": 0},
+    "spriteFrames": {"used": 0, "limit": 512, "most": 0},
+    "objectPageTriplets": {"used": 0, "limit": 8112, "most": 0},
+    "bitmapCellsLossy": {"used": 0, "limit": 920, "most": 0}
   }
 }

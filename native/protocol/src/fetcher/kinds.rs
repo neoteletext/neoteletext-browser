@@ -95,3 +95,10 @@ pub(super) const KIND_TAB_LEAVES: u8 = 231;
 // WebSocket subprotocol the channel answered names (the engine's DEC-6953
 // item 1, DEC-7074), in the next number.
 pub(super) const KIND_PUSH_VERSION: u8 = 232;
+// A channel's scripts (the script API's specification section 12.5;
+// TODO-7304), in three numbers no pipe used on 22 November 2026: a piece
+// of a script the fetcher's agent fetched, a script it could not fetch,
+// and the trusted core's request for a script a page file names.
+pub(super) const KIND_SCRIPT: u8 = 196;
+pub(super) const KIND_SCRIPT_FAILED: u8 = 197;
+pub(super) const KIND_FETCH_SCRIPT: u8 = 198;
