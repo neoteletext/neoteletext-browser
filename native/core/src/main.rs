@@ -36,7 +36,6 @@
 
 mod broker;
 mod session;
-mod source;
 mod trusted_core;
 
 use std::ffi::OsString;
@@ -45,6 +44,7 @@ use std::process::ExitCode;
 use confine::Role;
 use confine::broker::Broker;
 use neoteletext::settings as stored;
+use neoteletext::source;
 
 /// The version this program was built as: a release's, or a development
 /// build's with its count (the build script, REQ-7047). The one place the
