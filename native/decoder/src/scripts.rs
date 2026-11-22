@@ -159,6 +159,10 @@ pub struct Scripts {
     named: BTreeMap<PageSub, String>,
     /// The scripts asked of the trusted core and not yet given.
     wanted: BTreeMap<PageSub, String>,
+    /// The JavaScript pages (section 12.3): pages with a script and no
+    /// page file, which this decoder opened blank. Such a page's renderer
+    /// is the one its script's manifest names.
+    blank: std::collections::BTreeSet<PageSub>,
     arriving: Option<Arriving>,
     link: HostLink,
     /// The highest API version the script host has, once it said so.
@@ -233,6 +237,7 @@ impl Scripts {
             arrived: VecDeque::new(),
             named: BTreeMap::new(),
             wanted: BTreeMap::new(),
+            blank: std::collections::BTreeSet::new(),
             arriving: None,
             link: HostLink::new(),
             api_max: None,
@@ -300,6 +305,24 @@ impl Scripts {
                         report(out, ScriptReport::Log { level: 1, context: ContextId::Page, text: log_line(&text) })?;
                     } else {
                         self.keep(level, page, script);
+                        // Section 12.3: a page that has a script and no page
+                        // file is a JavaScript page, and opens blank. The
+                        // decoder holds nothing of it, so it makes the page
+                        // here, as soon as its script is whole: the page can
+                        // then be shown and opened, which is what starts its
+                        // context. A page of any renderer is carried by a
+                        // teletext page of its number, as a channel's is.
+                        if level == ContextId::Page && self.pages.contains_key(&page) && engine.script_renderer(page.page, page.sub).is_none() {
+                            let carrier = ScriptPage { page: page.page, sub: page.sub, renderer: Renderer::Teletext, designation: None };
+                            let arrived = engine.script_blank_page(carrier);
+                            while self.blank.len() >= MAX_NAMED_PAGES {
+                                self.blank.pop_first();
+                            }
+                            self.blank.insert(page);
+                            let mut outcome = self.settle(engine, out)?;
+                            outcome.arrived.extend(arrived);
+                            return Ok(outcome);
+                        }
                     }
                 }
             }
@@ -619,7 +642,9 @@ impl Scripts {
         if self.api_max.is_some_and(|highest| manifest.api > highest) {
             return refuse(out, "its manifest names a later version of the API than this browser has");
         }
-        let held = engine.script_renderer(page.page, page.sub);
+        // A JavaScript page was made blank by this decoder: it has no
+        // renderer of its own until its script draws.
+        let held = if self.blank.contains(&page) { None } else { engine.script_renderer(page.page, page.sub) };
         // Section 3.1: for a script attached to a page file the manifest's
         // renderer equals the page file's or is absent; a JavaScript page
         // draws on the renderer its manifest names.

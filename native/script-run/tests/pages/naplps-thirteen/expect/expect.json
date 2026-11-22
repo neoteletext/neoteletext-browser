@@ -1,0 +1,12 @@
+{
+  "form": 1,
+  "version": 2,
+  "files": {
+    "budget.json": "821774bc87d21a3418e4b85c6612d02d7258563ce836a2d8bcc5d1df04553472",
+    "log.txt": "1ef19d18e17f1694ec80a964799ee5b1bdc8c2ae3ad9d1c85d1b41fd668a5a06",
+    "sound.wav": "c3c7b9c0a9528c4c9459755ae8db873d027730cffd385a6971b7ae3763952540",
+    "tick-000000.png": "d1da48d5a7272fbd76bd2003ab157aefef5e1bd3c6d1dec76d91a5a9d359cc57",
+    "tick-000045.png": "d24d69807beccd5457dcd5b88cf80f7fc0f309a74dc8041d71070d89a4410aca",
+    "tick-000069.png": "b49ae6bf9aa7ecddd7f96af25ecb3038961cfce5162869dd763be4d15a170204"
+  }
+}
