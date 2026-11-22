@@ -127,9 +127,28 @@ fn serve(stream: TcpStream, asked: &Mutex<Vec<String>>) {
     }
 }
 
-/// The folder of the fetcher, the decoder and the script host, built
-/// beside this test in its own profile.
-fn programs() -> std::path::PathBuf {
+/// The decoder's and the fetcher's features for this build's shape, as
+/// the gates build every package of a shape (`scripts/check.sh`): each
+/// side refuses the other's messages of an area compiled out of it, so a
+/// decoder built with hyperlinks is stopped at once by a core built
+/// without (TODO-7440). `None`, their defaults, when hyperlinks and
+/// typing are both in.
+fn helper_features() -> Option<String> {
+    let areas = [("links", cfg!(feature = "links")), ("interaction", cfg!(feature = "interaction"))];
+    if areas.iter().all(|(_, on)| *on) {
+        return None;
+    }
+    let features: Vec<String> = areas
+        .iter()
+        .filter(|(_, on)| *on)
+        .flat_map(|(area, _)| ["neoteletext-decoder", "neoteletext-fetcher"].map(|package| format!("{package}/{area}")))
+        .collect();
+    Some(features.join(","))
+}
+
+/// Builds `packages`' programs beside this test, in its profile: with
+/// their default features, or with `features` alone when given.
+fn build(packages: &[&str], features: Option<&str>) {
     let mut build = std::process::Command::new(env!("CARGO"));
     for (name, _) in std::env::vars_os() {
         let runners = name.to_str().is_some_and(|name| name == "OUT_DIR" || (name.starts_with("CARGO_") && !matches!(name, "CARGO_HOME" | "CARGO_TARGET_DIR")));
@@ -138,13 +157,28 @@ fn programs() -> std::path::PathBuf {
         }
     }
     build.args(["build", "--quiet"]);
-    for package in ["neoteletext-script-host", "neoteletext-fetcher", "neoteletext-decoder"] {
+    for package in packages {
         build.args(["--package", package]);
+    }
+    if let Some(features) = features {
+        build.arg("--no-default-features");
+        if !features.is_empty() {
+            build.args(["--features", features]);
+        }
     }
     if !cfg!(debug_assertions) {
         build.arg("--release");
     }
-    assert!(build.status().unwrap().success(), "the helpers did not build");
+    assert!(build.status().unwrap().success(), "{packages:?} did not build");
+}
+
+/// The folder of the fetcher, the decoder and the script host, built
+/// beside this test in its own profile and its own feature shape: the
+/// script host has no optional area, and the decoder and the fetcher are
+/// built with the areas this test binary has.
+pub(super) fn programs() -> std::path::PathBuf {
+    build(&["neoteletext-script-host"], None);
+    build(&["neoteletext-fetcher", "neoteletext-decoder"], helper_features().as_deref());
     // The test runs from target/<profile>/deps; the programs are beside it.
     let deps = std::env::current_exe().unwrap();
     deps.parent().and_then(|deps| deps.parent()).unwrap().to_path_buf()
