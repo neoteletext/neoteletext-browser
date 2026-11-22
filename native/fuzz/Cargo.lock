@@ -1147,6 +1147,7 @@ dependencies = [
  "libfuzzer-sys",
  "naplps",
  "neoteletext",
+ "neoteletext-core",
  "neoteletext-dbus",
  "neoteletext-decoder",
  "neoteletext-fetcher",

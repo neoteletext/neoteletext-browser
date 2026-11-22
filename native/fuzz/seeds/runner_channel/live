@@ -1,0 +1,1 @@
+{"name":"Live","initial_page":"100","push":"wss://example.test/push","scripts":{"channel":"c.js","pages":{"100":"a.js","100/0002":"b.js"}}}
