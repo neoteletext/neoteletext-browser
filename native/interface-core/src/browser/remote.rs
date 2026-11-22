@@ -182,7 +182,7 @@ impl Browser {
             }
             Button::Digit(digit) => {
                 self.stop_editing();
-                self.type_digit(digit);
+                self.type_digit(digit, now);
             }
             Button::PageUp => self.step_page(false, now),
             Button::PageDown => self.step_page(true, now),

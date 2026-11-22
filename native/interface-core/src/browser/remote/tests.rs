@@ -122,6 +122,44 @@ fn only_a_page_that_rotates_offers_the_return_to_the_latest() {
     assert!(!offered(Rotation::Never), "a live channel's page");
 }
 
+/// When the stray digit of the test below is pressed.
+const DIGITS_START: u64 = 10_000;
+
+/// DEC-7225 items 3 and 4 (TODO-7219): the remote's digit is forgotten
+/// after the time, its readout stops showing it then, and the host is told
+/// when to wake for that. Before, the digit stayed on the readout for ever
+/// and 5 then 401 read as 540.
+#[test]
+fn the_remotes_stray_digit_leaves_its_readout_after_the_time() {
+    let (mut browser, _) = crate::browser::fixture::browser();
+    browser.set_remote(RemotePlace { mode: RemoteMode::Docked, x: 0, y: 0 });
+    browser.draw(&mut Recorder::new(), WIDTH, HEIGHT, DIGITS_START);
+    let press = |browser: &mut Browser, digit: char, now: u64| {
+        let key = rect_of(browser, Button::Digit(digit));
+        assert!(browser.remote_press(middle(key), now));
+    };
+    let readout = |browser: &mut Browser, now: u64| {
+        let mut canvas = Recorder::new();
+        browser.draw(&mut canvas, WIDTH, HEIGHT, now);
+        canvas.texts.iter().any(|(_, text)| text == "P5--")
+    };
+    press(&mut browser, '5', DIGITS_START);
+    assert!(readout(&mut browser, DIGITS_START + 1), "the readout shows the entry");
+    assert_eq!(
+        browser.digits_deadline(DIGITS_START + 1),
+        Some(crate::browser::page_digits::DIGITS_TIMEOUT_MILLISECONDS - 1),
+        "the host wakes when the digit is forgotten"
+    );
+    let after = DIGITS_START + crate::browser::page_digits::DIGITS_TIMEOUT_MILLISECONDS;
+    assert!(browser.settle(after), "the window is drawn again without the digit");
+    assert_eq!(browser.digits_deadline(after), None, "nothing waits");
+    assert!(!readout(&mut browser, after), "the readout no longer shows it");
+    for (digit, at) in [('4', 0), ('0', 1), ('1', 2)] {
+        press(&mut browser, digit, after + at);
+    }
+    assert_eq!(browser.selected, crate::channel::page_index(0x401), "the three digits typed afterwards select page 401");
+}
+
 /// REQ-1373: while keys go to a channel, each of the remote's digits,
 /// Fastext colours, arrows, OK and page keys goes to the channel as KEY, a
 /// press then a release, with the keyboard's same key: a digit its

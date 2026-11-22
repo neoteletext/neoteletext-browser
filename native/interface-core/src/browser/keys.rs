@@ -121,7 +121,7 @@ impl Browser {
             Key::PageUp | Key::PageDown => self.page_through_list(key == Key::PageDown),
             Key::Text(text) => {
                 for digit in text.chars().filter(char::is_ascii_digit) {
-                    self.type_digit(digit);
+                    self.type_digit(digit, now);
                 }
             }
             _ => return false,

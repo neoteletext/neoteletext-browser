@@ -65,11 +65,11 @@ impl Browser {
         canvas.fill(panel, RADIUS, PANEL);
         outline(canvas, panel, RULE);
         canvas.push_clip(panel);
-        self.draw_remote_keys(canvas, panel);
+        self.draw_remote_keys(canvas, panel, now);
         canvas.pop_clip();
     }
 
-    fn draw_remote_keys<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect) {
+    fn draw_remote_keys<C: Canvas + ?Sized>(&mut self, canvas: &mut C, panel: Rect, now: u64) {
         let controls = self.page_controls();
         let open = self.wall.zoomed().is_some_and(|key| controls.channel == key.channel && controls.page == Some(key.page));
         let (left, right) = (panel.x0 + PADDING, panel.x1 - PADDING);
@@ -78,7 +78,7 @@ impl Browser {
         let line = |y: f64| Rect::new(left, y, right, y);
 
         y = self.draw_title_row(canvas, &mut buttons, panel, line(y));
-        y = self.draw_readout(canvas, &controls, open, line(y));
+        y = self.draw_readout(canvas, &controls, open, line(y), now);
         y = draw_pad(canvas, &mut buttons, line(y));
         y = draw_page_keys(canvas, &mut buttons, line(y));
         y = draw_arrow_keys(canvas, &mut buttons, line(y));
@@ -107,15 +107,16 @@ impl Browser {
 
     /// The page number: the digits being entered, or the open page.
     /// Returns where the next row starts.
-    fn draw_readout<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &PageControls, open: bool, line: Rect) -> f64 {
+    fn draw_readout<C: Canvas + ?Sized>(&self, canvas: &mut C, controls: &PageControls, open: bool, line: Rect, now: u64) -> f64 {
         let (left, right, y) = (line.x0, line.x1, line.y0);
         let readout = Rect::new(left, y, right, y + READOUT_HEIGHT);
         canvas.fill(readout, RADIUS, BUTTON);
         border(canvas, readout, 1.0, RULE);
-        let number = if self.digits.is_empty() {
+        let digits = self.pending_digits(now);
+        let number = if digits.is_empty() {
             controls.page.filter(|_| open).map_or_else(|| String::from("P---"), |page| format!("P{page:03X}"))
         } else {
-            format!("P{:-<3}", self.digits)
+            format!("P{digits:-<3}")
         };
         centred(canvas, readout, &number, READOUT, WHITE);
         y + READOUT_HEIGHT + GAP

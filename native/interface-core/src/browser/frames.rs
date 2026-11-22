@@ -49,6 +49,7 @@ impl Browser {
             .chain(self.wheel_blink_deadline(now))
             .chain(self.subpages_deadline(now))
             .chain(self.held_label_deadline(now))
+            .chain(self.digits_deadline(now))
             .min();
         // A move still under way when the last frame was drawn wants one
         // more frame, drawn at its end: the host asks after drawing, and
@@ -89,7 +90,8 @@ impl Browser {
         let paneled = self.filmstrip_settle(now);
         let full_screen = self.full_screen_settle(now);
         let blinked = self.wheel_blink_settle(now);
-        self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen || blinked
+        let forgotten = self.digits_settle(now);
+        self.pulses.len() != before || self.updates.len() != updates || held || tipped || paneled || full_screen || blinked || forgotten
     }
 }
 

@@ -73,7 +73,7 @@ impl Browser {
         }
         let Some(key) = phone_page_key(name) else { return false };
         match key {
-            PhonePageKey::Digit(digit) => self.type_digit(digit),
+            PhonePageKey::Digit(digit) => self.type_digit(digit, now),
             PhonePageKey::Fastext(colour) => return self.fastext_key(colour),
             PhonePageKey::Left | PhonePageKey::Right => {
                 let right = key == PhonePageKey::Right;
@@ -91,13 +91,13 @@ impl Browser {
 
     /// Text the paired phone typed while no page is open for typing: its
     /// digits choose a page, as typed on its keys; the rest is dropped.
-    pub fn phone_text(&mut self, text: &str, _now: u64) -> bool {
+    pub fn phone_text(&mut self, text: &str, now: u64) -> bool {
         if self.keys_are_the_strips() {
             return false;
         }
         let mut typed = false;
         for digit in text.chars().filter(char::is_ascii_digit) {
-            self.type_digit(digit);
+            self.type_digit(digit, now);
             typed = true;
         }
         typed

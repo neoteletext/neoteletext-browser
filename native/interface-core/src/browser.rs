@@ -51,6 +51,7 @@ mod navigating;
 mod output;
 mod overview;
 mod page_controls;
+mod page_digits;
 mod page_list;
 mod pages;
 #[cfg(feature = "phone-keyboard")]
@@ -148,7 +149,10 @@ pub struct Browser {
     field_scroll: f64,
     /// The main button in whichever text field it was pressed.
     field_mouse: field_mouse::FieldMouse,
+    /// The digits of a page number typed so far, fewer than three.
     digits: String,
+    /// When and where the last of them was typed.
+    digits_typed: page_digits::DigitsTyped,
     pulses: Vec<(usize, u64)>,
     /// When each recently updated page had its new version.
     updates: Vec<(usize, u64)>,
@@ -292,6 +296,7 @@ impl Browser {
             field_scroll: 0.0,
             field_mouse: field_mouse::FieldMouse::default(),
             digits: String::new(),
+            digits_typed: page_digits::DigitsTyped::default(),
             pulses: Vec::new(),
             updates: Vec::new(),
             rings: Vec::new(),

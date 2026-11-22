@@ -13,8 +13,6 @@ use crate::channel::{Channel, PAGES_PER_BANK, PageInfo, Status, bank_indices, is
 
 use crate::browser::page_list::{ROW_HEIGHT, rows_per_key};
 
-const DECIMAL_DIGITS: usize = 3;
-
 impl Browser {
     /// A channel's banks and pages. A different channel starts at its
     /// first bank; the same channel again keeps the choice.
@@ -233,28 +231,6 @@ impl Browser {
     #[must_use]
     pub fn wall_without_page(&self) -> bool {
         !self.wall.single() && self.wall.zoomed().is_none()
-    }
-
-    /// A digit, from the keyboard or the remote: three choose a page, as on
-    /// a television.
-    pub(super) fn type_digit(&mut self, digit: char) {
-        self.digits.push(digit);
-        if self.digits.len() < DECIMAL_DIGITS {
-            return;
-        }
-        let page = u16::from_str_radix(&self.digits, 16).ok();
-        self.digits.clear();
-        // A number the open page or the channel links elsewhere goes to the
-        // trusted core.
-        #[cfg(feature = "links")]
-        if page.is_some_and(|page| self.link_typed(page)) {
-            return;
-        }
-        if let Some(index) = page.and_then(page_index)
-            && matches!(self.channel.pages.get(index), Some(Some(_)))
-        {
-            self.select_page(index, true);
-        }
     }
 
     /// The list and the overview follow the zoomed page.
