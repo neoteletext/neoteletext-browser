@@ -1203,6 +1203,11 @@ version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
 
 [[package]]
+name = "neoteletext-audio-mix"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
+
+[[package]]
 name = "neoteletext-core"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
@@ -1291,6 +1296,7 @@ dependencies = [
  "neoteletext-qrkeyboard",
  "neoteletext-script",
  "neoteletext-script-host",
+ "neoteletext-script-run",
  "protocol",
  "update",
  "web-opener",
@@ -1396,11 +1402,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-script-run"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-script",
+ "neoteletext-sound",
+ "neoteletext-web",
+ "protocol",
+ "ring",
+]
+
+[[package]]
 name = "neoteletext-secret-store"
 version = "0.1.0"
 dependencies = [
  "neoteletext-dbus",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "neoteletext-sound"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-audio",
+ "neoteletext-audio-instruments",
+ "neoteletext-audio-mix",
+ "neoteletext-rules",
+ "protocol",
+ "sound-output",
 ]
 
 [[package]]
@@ -2005,6 +2039,13 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sound-output"
+version = "0.1.0"
+dependencies = [
+ "windows",
 ]
 
 [[package]]

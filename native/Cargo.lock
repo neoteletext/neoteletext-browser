@@ -1912,6 +1912,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-script-run"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-script",
+ "neoteletext-sound",
+ "neoteletext-web",
+ "protocol",
+ "ring",
+]
+
+[[package]]
 name = "neoteletext-secret-store"
 version = "0.1.0"
 dependencies = [

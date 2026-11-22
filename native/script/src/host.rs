@@ -1531,7 +1531,8 @@ impl Host {
     }
 
     /// The budget report (section 3.7), as JSON text.
-    fn budget(&self, context: ContextId) -> String {
+    #[must_use]
+    pub fn budget(&self, context: ContextId) -> String {
         let held = self.context(context);
         let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
         let mut second = RateWindow { counts: self.sound_second.counts.clone() };

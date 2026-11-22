@@ -294,6 +294,14 @@ impl Container {
         self.machine.host_ref().state_bytes()
     }
 
+    /// The budget report of `context` (section 3.7), as the JSON text
+    /// `nt.budget()` is given: for the standalone runner's report
+    /// (section 16).
+    #[must_use]
+    pub fn budget(&self, context: ContextId) -> String {
+        self.machine.host_ref().budget(context)
+    }
+
     /// The error a stopped container answers every call with.
     fn stopped_error(&self) -> Option<LinkError> {
         self.machine.stopped().map(|stop| LinkError::Stopped(stop.reason(), stop.to_string()))

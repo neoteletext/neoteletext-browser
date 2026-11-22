@@ -30,6 +30,11 @@ page-cache = []
 # "the tick left unlocked" (page-rules.md RULE-66), only in the build
 # `scripts/timed-test.sh` makes.
 timed-test = ["protocol/timed-test", "confine/timed-test"]
+# The engine's clock held where its caller sets it and never read
+# (`Engine::set_now_us`): only in the standalone runner's build
+# (script-api.md section 16), whose runs must be the same on every
+# machine. No shipped program turns it on.
+stepped-clock = []
 
 [dependencies]
 confine.workspace = true
