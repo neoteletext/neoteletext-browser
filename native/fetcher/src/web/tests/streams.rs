@@ -237,3 +237,52 @@ fn an_event_stream_that_cannot_connect_is_tried_again() {
     assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
     client.finish().unwrap();
 }
+
+/// The Fetch standard's keepalive flag (the script API's departure D9,
+/// TODO-7371 step 4): a request a page starts as it closes goes on when
+/// its context closes, its answer told to no one; a request without the
+/// flag ends with its context. The bodies of the keepalive requests under
+/// way are held to the standard's 64 kibibytes together.
+#[test]
+fn a_keepalive_request_outlives_its_context() {
+    let server = serve(|asked| match asked.target.as_str() {
+        // Each answers late, so the context has closed by then.
+        "/a/beacon" | "/a/plain" => {
+            std::thread::sleep(Duration::from_millis(250));
+            Reply::to(302, &format!("{}-landed", asked.target))
+        }
+        "/a/slow" => {
+            std::thread::sleep(Duration::from_millis(600));
+            Reply::ok("slow")
+        }
+        _ => Reply::ok("landed"),
+    });
+    let mut client = Client::new(&server.url("/a/"));
+    client.start(&server.url("/a/beacon"), |start| start.keepalive = true);
+    client.start(&server.url("/a/plain"), |_| {});
+    client.send(&ToWebClient::ContextCloses(protocol::script::ContextId::Page));
+    assert_eq!(client.next_within(Duration::from_millis(1200)), None, "neither says anything more");
+    assert_eq!((server.count("GET", "/a/beacon-landed"), server.count("GET", "/a/plain-landed")), (1, 0), "the keepalive request went on, the other ended");
+    // The quota: 60 kibibytes under way, and 8 more are too many; once
+    // the first has ended there is room again.
+    let post = |bytes: u32| {
+        move |start: &mut protocol::web::Start| (start.method, start.keepalive, start.body) = ("POST".into(), true, protocol::web::BodySource::Bytes(bytes))
+    };
+    let send = |client: &mut Client, id: u32, bytes: usize| {
+        for piece in vec![0_u8; bytes].chunks(MAX_CHUNK_BYTES) {
+            client.send(&ToWebClient::RequestBody { id, bytes: piece.to_vec() });
+        }
+        client.send(&ToWebClient::RequestBodyEnd(id));
+    };
+    let first = client.start(&server.url("/a/slow"), post(60 * 1024));
+    send(&mut client, first, 60 * 1024);
+    let second = client.start(&server.url("/a/over"), post(8 * 1024));
+    send(&mut client, second, 8 * 1024);
+    assert_eq!(client.next_event(), FromWebClient::Failed { id: second, error: ErrorKind::Network, reason: Reason::TooLarge });
+    assert_eq!(client.outcome(first).text(), "slow");
+    let third = client.start(&server.url("/a/after"), post(8 * 1024));
+    send(&mut client, third, 8 * 1024);
+    assert_eq!(client.outcome(third).text(), "landed");
+    assert_eq!(server.count("POST", "/a/over"), 0);
+    client.finish().unwrap();
+}

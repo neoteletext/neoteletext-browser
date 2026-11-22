@@ -276,6 +276,14 @@ impl<'a> Request<'a> {
         }
     }
 
+    /// The request's current address as an answer shows it: without its
+    /// fragment.
+    fn shown_url(&self) -> String {
+        let mut url = self.url.clone();
+        url.set_fragment(None);
+        url.into()
+    }
+
     /// The channel asking, for the rule on this computer and the local
     /// network: its address space as the trusted core told the process,
     /// and whether it is a secure context, loaded over `https` or from
@@ -498,7 +506,9 @@ impl<'a> Request<'a> {
                 response_type,
                 status: 0,
                 status_text: String::new(),
-                url: String::new(),
+                // The address asked, which the standard keeps in an
+                // opaque-redirect answer's list of addresses.
+                url: self.shown_url(),
                 redirected: false,
                 headers: Vec::new(),
                 body: None,
@@ -532,14 +542,13 @@ impl<'a> Request<'a> {
             }
             Some(reader)
         };
-        let mut url = self.url.clone();
-        url.set_fragment(None);
+        let url = self.shown_url();
         let headers = if response_type == ResponseType::Cors {
             cors::exposed(&headers, self.start.credentials == Credentials::Include)
         } else {
             headers.into_iter().filter(|(name, _)| !is_forbidden_response_header(name)).collect()
         };
-        Ok(Fetched { response_type, status, status_text, url: url.into(), redirected: self.redirects > 0, headers, body: reader, sent: self.sent.get() })
+        Ok(Fetched { response_type, status, status_text, url, redirected: self.redirects > 0, headers, body: reader, sent: self.sent.get() })
     }
 }
 

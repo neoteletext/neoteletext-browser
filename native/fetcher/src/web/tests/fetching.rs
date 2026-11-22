@@ -160,7 +160,11 @@ fn redirects_are_followed_by_the_standards_rules() {
     assert_eq!(client.fetch(&server.url("/a/307"), |start| start.redirect = RedirectMode::Error).reason(), Reason::Redirect);
     let manual = client.fetch(&server.url("/a/307"), |start| start.redirect = RedirectMode::Manual);
     let head = manual.ok();
-    assert_eq!((head.response_type, head.status, head.url.as_str(), head.headers.len()), (ResponseType::OpaqueRedirect, 0, "", 0));
+    assert_eq!(
+        (head.response_type, head.status, head.url.as_str(), head.headers.len()),
+        (ResponseType::OpaqueRedirect, 0, server.url("/a/307").as_str(), 0),
+        "its address is the one asked, which the standard keeps (TODO-7371 step 6)"
+    );
     assert_eq!(manual.body, b"");
     client.finish().unwrap();
 }

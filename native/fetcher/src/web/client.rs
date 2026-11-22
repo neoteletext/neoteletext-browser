@@ -30,7 +30,8 @@ use super::cookies::{Jar, Suffixes};
 use super::cors::PreflightCache;
 use super::fetch::{Engine, Fetched, fetch};
 use super::limits::{
-    BODY_IDLE_TIMEOUT, DEFAULT_RETRY, MAX_REQUESTS_PER_TAB, MAX_RETRY, MAX_WAITING_PER_TAB, MIN_RETRY, QUEUED_MESSAGES, START_BURST, STARTS_PER_SECOND,
+    BODY_IDLE_TIMEOUT, DEFAULT_RETRY, KEEPALIVE_DEADLINE, MAX_KEEPALIVE_BODY_BYTES, MAX_REQUESTS_PER_TAB, MAX_RETRY, MAX_WAITING_PER_TAB, MIN_RETRY,
+    QUEUED_MESSAGES, START_BURST, STARTS_PER_SECOND,
 };
 use super::policy::ChannelPolicy;
 use super::pool::Pool;
@@ -50,6 +51,10 @@ enum FromCore {
 struct Room {
     bytes: Cell<u32>,
     more: Notify,
+    /// Whether the request outlived its page (a keepalive request whose
+    /// context or tab closed): its answer is then told to no one, and
+    /// waits for no room.
+    detached: Cell<bool>,
 }
 
 impl Room {
@@ -58,12 +63,26 @@ impl Room {
         let count = u32::try_from(count).unwrap_or(u32::MAX).clamp(1, FETCH_WINDOW_BYTES);
         loop {
             let notified = self.more.notified();
+            if self.detached.get() {
+                return;
+            }
             if let Some(left) = self.bytes.get().checked_sub(count) {
                 self.bytes.set(left);
                 return;
             }
             notified.await;
         }
+    }
+
+    /// A new request's room.
+    fn new() -> Rc<Self> {
+        Rc::new(Self { bytes: Cell::new(FETCH_WINDOW_BYTES), more: Notify::new(), detached: Cell::new(false) })
+    }
+
+    /// Lets the request go on with no one to tell.
+    fn detach(&self) {
+        self.detached.set(true);
+        self.more.notify_waiters();
     }
 
     fn add(&self, count: u32) {
@@ -140,6 +159,8 @@ struct Live {
     task: Option<JoinHandle<()>>,
     /// Its start and the body so far, while the body is arriving.
     upload: Option<(Box<Start>, Vec<u8>)>,
+    /// Whether it is a keepalive request, which outlives its context.
+    keepalive: bool,
 }
 
 /// What the loop and every request's task share.
@@ -148,6 +169,18 @@ struct Shared {
     live: RefCell<HashMap<Key, Live>>,
     tabs: RefCell<HashMap<u32, Rc<Tab>>>,
     events: mpsc::Sender<(u32, FromWebClient)>,
+    /// The bytes of the bodies of the keepalive requests under way.
+    keepalive_bytes: Cell<usize>,
+}
+
+/// A keepalive request's share of the quota, given back when its task
+/// ends, however it ends.
+struct Quota(Rc<Shared>, usize);
+
+impl Drop for Quota {
+    fn drop(&mut self) {
+        self.0.keepalive_bytes.set(self.0.keepalive_bytes.get().saturating_sub(self.1));
+    }
 }
 
 impl Shared {
@@ -180,17 +213,36 @@ impl Shared {
         self.live.borrow_mut().remove(&key);
     }
 
-    /// Ends, unanswered, every request `which` picks.
+    /// Ends, unanswered, every request `which` picks. A keepalive request
+    /// under way is not ended (the Fetch standard's keepalive flag, the
+    /// script API's departure D9): it goes on for at most
+    /// [`KEEPALIVE_DEADLINE`], and its answer is told to no one.
     fn end_all(&self, which: impl Fn(Key, &Live) -> bool) {
         self.live.borrow_mut().retain(|&key, live| {
             if !which(key, live) {
                 return true;
             }
-            if let Some(task) = live.task.take() {
-                task.abort();
+            match live.task.take() {
+                Some(task) if live.keepalive => {
+                    live.room.detach();
+                    tokio::task::spawn_local(async move {
+                        tokio::time::sleep(KEEPALIVE_DEADLINE).await;
+                        task.abort();
+                    });
+                }
+                Some(task) => task.abort(),
+                None => {}
             }
             false
         });
+    }
+
+    /// Tells the trusted core an event of a request, unless the request
+    /// outlived its page.
+    async fn tell(&self, room: &Room, tab: u32, event: FromWebClient) {
+        if !room.detached.get() {
+            self.send(tab, event).await;
+        }
     }
 }
 
@@ -208,14 +260,14 @@ async fn fetch_one(shared: &Shared, (tab, id): Key, start: &Start, body: Option<
     shared.send_jar().await;
     let Fetched { response_type, status, status_text, url, redirected, headers, body, sent } = fetched?;
     if let Some(bytes) = u32::try_from(sent).ok().filter(|&bytes| bytes > 0) {
-        shared.send(tab, FromWebClient::Sent { id, bytes }).await;
+        shared.tell(room, tab, FromWebClient::Sent { id, bytes }).await;
     }
-    shared.send(tab, FromWebClient::Head(Box::new(Head { id, response_type, status, status_text, url, redirected, headers }))).await;
+    shared.tell(room, tab, FromWebClient::Head(Box::new(Head { id, response_type, status, status_text, url, redirected, headers }))).await;
     let Some(mut reader) = body else { return Ok(()) };
     // The time the trusted core takes to make room is not the server's.
     while let Some(bytes) = tokio::time::timeout(BODY_IDLE_TIMEOUT, reader.piece()).await.map_err(|_| Reason::Timeout)?? {
         room.take(bytes.len()).await;
-        shared.send(tab, FromWebClient::Body { id, bytes }).await;
+        shared.tell(room, tab, FromWebClient::Body { id, bytes }).await;
     }
     Ok(())
 }
@@ -289,6 +341,19 @@ const fn failure(id: u32, reason: Reason) -> FromWebClient {
 /// One request, from its place among its tab's to its last event.
 async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, body: Option<Bytes>, room: Rc<Room>) {
     let outcome = async {
+        // The keepalive requests under way together have a bound on their
+        // bodies, which the script host held first and may not have.
+        let _quota = if start.keepalive && start.kind == RequestKind::Fetch {
+            let bytes = body.as_ref().map_or(0, Bytes::len);
+            let under_way = shared.keepalive_bytes.get().saturating_add(bytes);
+            if under_way > MAX_KEEPALIVE_BODY_BYTES {
+                return Err(Reason::TooLarge);
+            }
+            shared.keepalive_bytes.set(under_way);
+            Some(Quota(Rc::clone(&shared), bytes))
+        } else {
+            None
+        };
         let _place = tab.enter().await?;
         match start.kind {
             RequestKind::EventSource => event_source(&shared, key, &start, &room).await,
@@ -297,6 +362,11 @@ async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, bo
         }
     }
     .await;
+    // A request that outlived its page ends in silence, and its number
+    // may by now be another request's.
+    if room.detached.get() {
+        return;
+    }
     // No longer live before its last event is said, so an abort that
     // crosses it is answered by nothing more.
     shared.ended(key);
@@ -347,8 +417,11 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], tab: u32, message:
                 return Ok(());
             }
             let admitted = tab_of(shared, tab).admits(Instant::now());
-            let room = Rc::new(Room { bytes: Cell::new(FETCH_WINDOW_BYTES), more: Notify::new() });
-            shared.live.borrow_mut().insert(key, Live { context: start.context, room, task: None, upload: None });
+            let room = Room::new();
+            shared
+                .live
+                .borrow_mut()
+                .insert(key, Live { context: start.context, room, task: None, upload: None, keepalive: start.keepalive && start.kind == RequestKind::Fetch });
             if start.kind == RequestKind::WebSocket {
                 refuse(shared, key, failure(start.id, Reason::Unsupported)).await;
             } else if !admitted {
@@ -397,8 +470,7 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], tab: u32, message:
             }
         }
         // A context's end, and a tab's, end their requests and say nothing
-        // more of them. A request marked keepalive ends with them too: it
-        // is not yet kept alive past its page.
+        // more of them; a keepalive request goes on, in silence.
         ToWebClient::ContextCloses(context) => shared.end_all(|key, live| key.0 == tab && live.context == context),
         ToWebClient::TabCloses => {
             shared.end_all(|key, _| key.0 == tab);
@@ -522,6 +594,7 @@ pub(crate) fn run_with(
         live: RefCell::default(),
         tabs: RefCell::default(),
         events,
+        keepalive_bytes: Cell::new(0),
     });
     let local = tokio::task::LocalSet::new();
     let ran = local.block_on(&runtime, serve_core(shared, from_core));
@@ -541,7 +614,7 @@ mod tests {
     /// and a tab's starts are a burst and then a rate.
     #[test]
     fn room_and_starts_are_bounded() {
-        let room = Room { bytes: Cell::new(FETCH_WINDOW_BYTES), more: Notify::new() };
+        let room = Room::new();
         for _ in 0..4 {
             room.add(MAX_NETWORK_BUFFER_BYTES);
         }

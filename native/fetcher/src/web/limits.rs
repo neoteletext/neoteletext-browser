@@ -19,6 +19,16 @@ pub(crate) const HEAD_TIMEOUT: Duration = Duration::from_micros(DEFAULT_RESPONSE
 /// common servers leave between the keep-alive comments of a slow answer.
 /// An event stream has no such limit: silence is its ordinary state.
 pub(crate) const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a keepalive request goes on after its context or tab has
+/// closed: the script API's `KEEPALIVE_SECONDS` (`docs/script-api.md`
+/// section 10.6, departure D9).
+pub(crate) const KEEPALIVE_DEADLINE: Duration = Duration::from_secs(30);
+/// The bytes of the bodies of the keepalive requests under way together:
+/// the Fetch standard's 64 kibibytes (its section 4.5, the "inflight
+/// keep-alive bytes"), which the script host holds too
+/// (`MAX_KEEPALIVE_BODY_BYTES` in its limits) and the web client holds
+/// again, the host's word not being trusted.
+pub(crate) const MAX_KEEPALIVE_BODY_BYTES: usize = 64 * 1024;
 /// The requests of one tab under way at once: every fetch, event stream
 /// and WebSocket its script host may have under way (the script API's
 /// departures D8 and D22, the protocol crate's numbers by name). More
