@@ -38,6 +38,9 @@ script-host = { path = "../script-host", package = "neoteletext-script-host" }
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
+# The engine's page limits, which the targets of a channel's pages hold
+# to (the engine's REQ-329).
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf", default-features = false }
 
 [workspace]
 members = ["."]
@@ -523,6 +526,76 @@ bench = false
 [[bin]]
 name = "runner_expect"
 path = "fuzz_targets/runner_expect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_manifest"
+path = "fuzz_targets/script_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_batch_apply"
+path = "fuzz_targets/script_batch_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_options"
+path = "fuzz_targets/ui_options.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_host_handles"
+path = "fuzz_targets/script_host_handles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_keys"
+path = "fuzz_targets/script_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_navigation"
+path = "fuzz_targets/script_navigation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sprite_cells"
+path = "fuzz_targets/sprite_cells.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regis_painter"
+path = "fuzz_targets/regis_painter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runner_channel"
+path = "fuzz_targets/runner_channel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_url_sequences"
+path = "fuzz_targets/script_url_sequences.rs"
 test = false
 doc = false
 bench = false
