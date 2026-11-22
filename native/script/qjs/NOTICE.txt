@@ -1,0 +1,31 @@
+What nt-quickjs.wasm is made of, and under what licences
+
+nt-quickjs.wasm is built by build.sh in this folder and committed beside
+it. It holds, compiled to WebAssembly and linked into one module:
+
+1. quickjs-ng 0.18.0, the JavaScript engine: its sources quickjs.c,
+   libregexp.c, libunicode.c and dtoa.c, unchanged.
+   https://github.com/quickjs-ng/quickjs, tag v0.18.0.
+   MIT licence: licenses/quickjs-ng-LICENSE.
+
+2. wasi-libc, the C library, at the commit wasi-sdk 34.0 was made with
+   (2e6fb9d8ee0cdf9e431fbcabe8af3115de000a13, tagged wasi-sdk-34), rebuilt
+   by build.sh without WebAssembly's bulk-memory instructions and
+   otherwise unchanged; only the parts the engine uses are linked.
+   https://github.com/WebAssembly/wasi-libc.
+   Apache-2.0 WITH LLVM-exception, Apache-2.0 or MIT, with parts under
+   their own permissive licences (musl's MIT licence, dlmalloc's CC0,
+   cloudlibc's BSD-2-Clause): licenses/wasi-libc-LICENSE and the three
+   files it names.
+
+3. compiler-rt's builtins from wasi-sdk 34.0 (LLVM), the compiler's own
+   arithmetic helpers, as that SDK ships them.
+   https://github.com/WebAssembly/wasi-sdk, release wasi-sdk-34.
+   Apache-2.0 WITH LLVM-exception: licenses/wasi-libc-LICENSE-APACHE-LLVM
+   is that licence's text.
+
+4. shim.c and mem.c of this folder, the browser's own (MIT, the
+   repository's LICENSE).
+
+build.sh records each input's address and SHA-256 and refuses any other
+bytes; nt-quickjs.wasm.sha256 records the module's own.
