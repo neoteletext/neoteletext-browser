@@ -151,10 +151,12 @@ pub fn pointer(action: PointerAction, button: u8, hit: &crate::ScriptHit, which:
 }
 
 /// The pointer came onto a thing or went off it (section 4.2:
-/// `pointerenter`, `pointerleave`), as the trusted core's picking of a
-/// ReGIS drawing says.
+/// `pointerenter`, `pointerleave`, which carry a press's fields), as the
+/// trusted core's picking of a ReGIS drawing says: `at` is the pointer's
+/// place in the renderer's own units and `local` its place within
+/// `thing` (section 4.4).
 #[must_use]
-pub fn hover(leave: bool, thing: i32) -> Event {
+pub fn hover(leave: bool, thing: i32, (x, y): (i32, i32), (local_x, local_y): (i32, i32)) -> Event {
     let what = if leave { POINTER_LEAVE } else { POINTER_ENTER };
-    Event { kind: EventKind::Pointer, numbers: [what | POINTER_PRIMARY, 0, 0, thing], payload: ints([POINTER_ID, 0, 0, 0]) }
+    Event { kind: EventKind::Pointer, numbers: [what | POINTER_PRIMARY, x, y, thing], payload: ints([POINTER_ID, 0, local_x, local_y]) }
 }

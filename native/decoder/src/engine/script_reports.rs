@@ -9,6 +9,7 @@
 use neoteletext_rules::evaluator::TargetState;
 use neoteletext_rules::table::{Target, TargetKind};
 use protocol::script::Renderer;
+use protocol::script::teletext::control_cell;
 
 use super::Engine;
 use super::script::{ScriptPage, cell_at};
@@ -110,10 +111,17 @@ impl Engine {
             Renderer::Teletext => {
                 let (column, row) = cell_at(x, y);
                 let place = (i32::from(column), i32::from(row));
-                // The cell within the sprite hit, from where the sprite
-                // stands now; a control's cells are the page's own.
-                let sprite = first.filter(|handle| (1..=LAST_NUMBER_HANDLE).contains(handle)).and_then(|handle| self.script_thing(at, handle));
-                let local = sprite.map_or(place, |state| (place.0.saturating_sub(i32::from(state.x)), place.1.saturating_sub(i32::from(state.y))));
+                // The cell within the thing hit: from where the sprite
+                // stands now, or from the control's first cell. With
+                // nothing hit the cell is the page's own.
+                let origin = first.and_then(|handle| {
+                    if (1..=LAST_NUMBER_HANDLE).contains(&handle) {
+                        self.script_thing(at, handle).map(|state| (i32::from(state.x), i32::from(state.y)))
+                    } else {
+                        control_cell(handle).map(|(row, column)| (i32::from(column), i32::from(row)))
+                    }
+                });
+                let local = origin.map_or(place, |origin| (place.0.saturating_sub(origin.0), place.1.saturating_sub(origin.1)));
                 ScriptHit { things, at: place, local }
             }
             Renderer::Regis => {

@@ -46,7 +46,33 @@ pub(super) struct Reports {
     sound: Vec<SoundReport>,
     faults: Vec<FaultReport>,
     /// The thing the mouse's pointer is on.
-    pub(super) hovered: Option<i32>,
+    pub(super) hovered: Option<Hovered>,
+}
+
+/// The thing the mouse's pointer is on and where the pointer was when it
+/// was last told: the thing's `pointerleave` is given its place within
+/// the thing from these.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Hovered {
+    /// The thing's handle.
+    pub(super) thing: i32,
+    /// The pointer's place, in the renderer's own units (section 4.4).
+    pub(super) at: (i32, i32),
+    /// The pointer's place within the thing.
+    pub(super) local: (i32, i32),
+}
+
+impl Hovered {
+    /// Where a pointer now at `at` is within the thing: as far from where
+    /// it last was within it as it has moved since. The renderers give
+    /// the place within a thing only for the thing under the pointer,
+    /// and a pointer that has left is not on it; for a ReGIS drawing
+    /// drawn at another scale the step is the screen's, not the
+    /// drawing's own.
+    pub(super) fn local_of(&self, at: (i32, i32)) -> (i32, i32) {
+        let moved = (at.0.saturating_sub(self.at.0), at.1.saturating_sub(self.at.1));
+        (self.local.0.saturating_add(moved.0), self.local.1.saturating_add(moved.1))
+    }
 }
 
 /// What of a step is the reports'.

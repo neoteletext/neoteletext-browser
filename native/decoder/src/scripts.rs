@@ -896,7 +896,13 @@ impl Scripts {
             RuleInput::Pointer { action, button, x, y, .. } => self.pointed(sequence, (action, button), (x, y), events::Which::MOUSE, engine, out)?,
             RuleInput::Drawing { leave, drawing } => {
                 let claimed = self.claimed(|manifest| manifest.pointer >= PointerClaim::Press);
-                self.enqueue(claimed, events::hover(leave, i32::from(drawing)), sequence, false, out)?;
+                // The trusted core's own picking says the drawing and
+                // not the place: the place is the mouse's when it was
+                // last told on this drawing, and none otherwise.
+                let thing = i32::from(drawing);
+                let (place, local) =
+                    self.reports.hovered.filter(|hovered| hovered.thing == thing).map_or_else(Default::default, |hovered| (hovered.at, hovered.local));
+                self.enqueue(claimed, events::hover(leave, thing, place, local), sequence, false, out)?;
             }
             RuleInput::Focus => self.enqueue(true, Event { kind: EventKind::Focus, numbers: [0; 4], payload: Vec::new() }, sequence, false, out)?,
             RuleInput::Blur => {
@@ -935,13 +941,17 @@ impl Scripts {
             self.target(engine).map(|at| engine.script_hit(at, x, y)).unwrap_or_default()
         };
         if which == events::Which::MOUSE {
-            let over = hit.things.first().copied();
+            let over = hit.things.first().map(|&thing| reports::Hovered { thing, at: hit.at, local: hit.local });
             let before = core::mem::replace(&mut self.reports.hovered, over);
-            if before != over && presses {
-                for (leave, thing) in [(true, before), (false, over)] {
-                    if let Some(thing) = thing {
-                        self.enqueue(true, events::hover(leave, thing), None, false, out)?;
-                    }
+            if before.map(|hovered| hovered.thing) != over.map(|hovered| hovered.thing) && presses {
+                if let Some(left) = before {
+                    // A pointer that went off the picture has no place
+                    // now: its leaving is told where it last was.
+                    let (place, local) = if action == PointerAction::Gone { (left.at, left.local) } else { (hit.at, left.local_of(hit.at)) };
+                    self.enqueue(true, events::hover(true, left.thing, place, local), None, false, out)?;
+                }
+                if let Some(entered) = over {
+                    self.enqueue(true, events::hover(false, entered.thing, entered.at, entered.local), None, false, out)?;
                 }
             }
         }

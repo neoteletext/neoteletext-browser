@@ -538,6 +538,92 @@ fn a_touch_and_the_browsers_navigation_reach_a_script_as_the_specification_says(
     assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 5, cancelled: false, handled: true }), "{:?}", browser.reports);
 }
 
+/// The mouse's pointer doing `action` at the pixel `x`, `y` of the page's
+/// picture, as the trusted core tells the decoder.
+fn mouse(sequence: u32, action: protocol::rules::PointerAction, x: u16, y: u16) -> ScriptOrder {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    ScriptOrder::Pointer(ScriptPointer { sequence, action, button: 0, x, y, pointer: 1, kind: PointerKind::Mouse, primary: true })
+}
+
+/// What a pointer test's script logs of each pointer event of `thing`:
+/// the pointer's place, its place within the thing, and the row and
+/// column a teletext page's events name.
+const LOG_POINTER_EVENTS: &str = r#"
+    for (const type of ["pointerenter", "pointerdown", "pointerup", "pointerleave"]) {
+      thing.addEventListener(type, (e) => console.log(type + " at " + e.x + "," + e.y + " local " + e.localX + "," + e.localY + " cell " + e.row + "," + e.column));
+    }
+    console.log("listening");"#;
+
+/// Section 4.2 and section 4.4's table (rdm TODO-7432): a teletext
+/// control's pointer events give the cell within the control as `localX`
+/// and `localY` and the page's cell as `row` and `column`, and its
+/// `pointerenter` and `pointerleave` carry a press's fields. A press at
+/// row 10, column 13 of a control that begins at column 2 gave 13,10 as
+/// its local place, no row or column, and 0,0 on coming and going.
+#[test]
+fn a_teletext_controls_pointer_events_say_the_cell_within_it_and_the_pages_row_and_column() {
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x100, 0);
+    let script = format!("/*! nt {{\"api\":1,\"pointer\":\"move\"}} */\nconst thing = nt.teletext.control(10, 2, 36);{LOG_POINTER_EVENTS}");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,10,  A ROW THAT IS A CONTROL\n");
+        browser.open(page, "100.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    // The engine's cell is 12 pixels by 20: column 13 of row 10, then
+    // column 20 of row 14, which is off the control.
+    browser.order(mouse(1, Told::Move, 162, 210));
+    browser.order(mouse(2, Told::Press, 162, 210));
+    browser.order(mouse(3, Told::Release, 162, 210));
+    browser.order(mouse(4, Told::Move, 246, 290));
+    let left = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("pointerleave")) || browser.scripts.stopped().is_some();
+    assert!(browser.run_until(left), "{:?} {:?}", browser.logged(), browser.reports);
+    let heard: Vec<String> = browser.logged().into_iter().filter(|line| line.starts_with("pointer")).collect();
+    let expected = [
+        "pointerenter at 13,10 local 11,0 cell 10,13",
+        "pointerdown at 13,10 local 11,0 cell 10,13",
+        "pointerup at 13,10 local 11,0 cell 10,13",
+        "pointerleave at 20,14 local 18,4 cell 14,20",
+    ];
+    assert_eq!(heard, expected);
+}
+
+/// Section 4.2 and section 4.4's table (rdm TODO-7432): a ReGIS drawing's
+/// `pointerenter` and `pointerleave` carry the pointer's place and its
+/// place within the drawing as a press does, where they carried 0,0; a
+/// ReGIS page's events name no row or column.
+#[test]
+fn a_regis_drawings_coming_and_going_say_where_the_pointer_is_as_its_presses_do() {
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x200, 0);
+    let script = format!(
+        "/*! nt {{\"api\":1,\"renderer\":\"regis\",\"pointer\":\"move\"}} */\nconst thing = nt.regis.drawing({{ x: 300, y: 200, detectable: true }});\nthing.draw((p) => p.ink(2).fill((q) => q.rect(0, 0, 200, 80)));{LOG_POINTER_EVENTS}"
+    );
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.open(page, "200.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.run_until(|browser| regis_drawing_at(browser, 0x200, 350, 220) != 0), "{:?} {:?}", browser.logged(), browser.reports);
+    browser.order(mouse(1, Told::Move, 350, 220));
+    browser.order(mouse(2, Told::Press, 350, 220));
+    browser.order(mouse(3, Told::Release, 350, 220));
+    browser.order(mouse(4, Told::Move, 600, 400));
+    let left = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("pointerleave")) || browser.scripts.stopped().is_some();
+    assert!(browser.run_until(left), "{:?} {:?}", browser.logged(), browser.reports);
+    let heard: Vec<String> = browser.logged().into_iter().filter(|line| line.starts_with("pointer")).collect();
+    let expected = [
+        "pointerenter at 350,220 local 50,20 cell undefined,undefined",
+        "pointerdown at 350,220 local 50,20 cell undefined,undefined",
+        "pointerup at 350,220 local 50,20 cell undefined,undefined",
+        "pointerleave at 600,400 local 300,200 cell undefined,undefined",
+    ];
+    assert_eq!(heard, expected);
+}
+
 /// Sections 10.3, 10.5 and 10.6: the bounds the decoder holds as the
 /// authority and the packing of the events it makes are the script
 /// library's, which the decoder may not link.
