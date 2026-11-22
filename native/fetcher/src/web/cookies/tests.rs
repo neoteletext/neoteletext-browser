@@ -264,3 +264,113 @@ fn a_jar_written_out_reads_back() {
     assert_eq!(sent(&jar, "https://www.bank.com/"), None);
     assert_eq!(jar.created.len(), 1);
 }
+
+/// RFC 6265bis-22 section 5.7, "remove excess cookies": of a domain past
+/// its bound, the cookies whose secure-only-flag is false go before the
+/// Secure ones, so that a plain answer cannot push out a secure session
+/// by setting many cookies of its own.
+#[test]
+#[ignore = "fault TODO-7346 item 1: the oldest cookie of a full domain goes first even when it is Secure and the newer ones are not"]
+fn a_full_domain_loses_its_plain_cookies_before_its_secure_ones() {
+    let mut jar = jar();
+    assert!(jar.store(&url("https://www.shop.com/"), b"sid=secret; Secure; Path=/", SAME));
+    for index in 0..MAX_COOKIES_PER_DOMAIN {
+        assert!(jar.store(&url("http://www.shop.com/"), format!("junk{index}=1; Path=/").as_bytes(), SAME));
+    }
+    assert_eq!(jar.created.len(), MAX_COOKIES_PER_DOMAIN);
+    let sent = sent(&jar, "https://www.shop.com/").unwrap();
+    assert!(sent.contains("sid=secret"), "the Secure cookie is kept: {sent}");
+    assert!(!sent.contains("junk0=1"), "the oldest plain cookie went in its place");
+}
+
+/// RFC 6265bis-22 section 5.1.1: a cookie date is read by its tokens in
+/// any order and with any delimiters, a two-digit year of 70 to 99 being
+/// 19xx and of 0 to 69 20xx. Each of these names a moment in the past,
+/// so a cookie set with it is removed, as a server removes one; read as
+/// no date, it would stay as a session cookie instead.
+#[test]
+#[ignore = "fault TODO-7346 item 2: the cookie crate reads only its fixed date formats, so four of the standard's (01 Jan 1970 00:00:01 and others) are no date"]
+fn a_cookie_date_in_each_form_the_standard_reads_removes_the_cookie() {
+    let shop = url("https://www.shop.com/");
+    let past = [
+        "Thu, 01 Jan 1970 00:00:01 GMT",
+        "Thursday, 01-Jan-70 00:00:01 GMT",
+        "Thu Jan  1 00:00:01 1970",
+        "01 Jan 1970 00:00:01",
+        "Thu, 01-Jan-1970 00:00:01 GMT",
+        "1 jan 2001 00:00:00",
+        "Jan 1 2001 00:00:00 GMT",
+        "2001 1 Jan 00:00:00",
+        "Mon, 01 Jan 01 00:00:00 GMT",
+    ];
+    let mut kept_as_session = Vec::new();
+    for date in past {
+        let mut jar = jar();
+        assert!(jar.store(&shop, b"a=1; Path=/", SAME));
+        jar.store(&shop, format!("a=2; Path=/; Expires={date}").as_bytes(), SAME);
+        if sent(&jar, "https://www.shop.com/").is_some() {
+            kept_as_session.push(date);
+        }
+    }
+    assert_eq!(kept_as_session, Vec::<&str>::new(), "dates the cookie crate did not read as the standard does");
+}
+
+/// RFC 6265bis-22 section 5.6.2: `Max-Age` is a `-` and digits or digits
+/// alone; anything else, an empty value among them, is ignored and the
+/// cookie is a session cookie; a value past what a number holds is
+/// reduced to the cap; zero or less has already ended.
+#[test]
+#[ignore = "fault TODO-7346 item 3: an empty Max-Age is read as the 400-day cap, where the standard ignores it"]
+fn max_age_is_read_as_the_standard_reads_it() {
+    let jar = jar();
+    let shop = url("https://www.shop.com/");
+    let cap = Duration::seconds(MAX_COOKIE_LIFETIME_SECONDS);
+    let lifetime = |header: &str| {
+        let cookie = jar.read(&shop, header.as_bytes(), SAME).unwrap();
+        cookie.max_age().or_else(|| cookie.expires_datetime().map(lifetime_until))
+    };
+    let ended = |left: Option<Duration>| left.is_some_and(|left| left <= Duration::ZERO);
+    let wrong: Vec<&str> = [
+        ("a=1; Max-Age=60", lifetime("a=1; Max-Age=60") == Some(Duration::seconds(60))),
+        ("a=1; Max-Age=0060", lifetime("a=1; Max-Age=0060") == Some(Duration::seconds(60))),
+        ("a=1; Max-Age=99999999999999999999999", lifetime("a=1; Max-Age=99999999999999999999999") == Some(cap)),
+        ("a=1; Max-Age=+60", lifetime("a=1; Max-Age=+60").is_none()),
+        ("a=1; Max-Age=60s", lifetime("a=1; Max-Age=60s").is_none()),
+        ("a=1; Max-Age= 60", lifetime("a=1; Max-Age= 60") == Some(Duration::seconds(60))),
+        ("a=1; Max-Age=", lifetime("a=1; Max-Age=").is_none()),
+        ("a=1; Max-Age", lifetime("a=1; Max-Age").is_none()),
+        ("a=1; Max-Age=-1", ended(lifetime("a=1; Max-Age=-1"))),
+        ("a=1; Max-Age=0", ended(lifetime("a=1; Max-Age=0"))),
+        ("a=1; Max-Age=-99999999999999999999999", ended(lifetime("a=1; Max-Age=-99999999999999999999999"))),
+    ]
+    .into_iter()
+    .filter(|(_, right)| !right)
+    .map(|(header, _)| header)
+    .collect();
+    assert_eq!(wrong, Vec::<&str>::new(), "Max-Age values not read as the standard reads them");
+}
+
+/// The browser's DEC-7268 item 3 with RFC 6265bis-22 section 5.7's
+/// expiry-time: a jar written out and read back keeps each cookie to the
+/// moment it ends, not to the whole second before it. Found by the fuzz
+/// target `web_cookie_jar` on 22 November 2026 (its input kept in
+/// `native/fuzz/regressions/web_cookie_jar/`), whose read-back check fails
+/// when a second turns between the writing and the reading. The cookie is
+/// set late in a second, so that its end, written as whole seconds and
+/// cut down, falls before the moment it is read back.
+#[test]
+#[ignore = "fault TODO-7346 item 4: a written jar's end is cut to the whole second, so a cookie read back ends up to a second early"]
+fn a_cookie_read_back_ends_when_it_ends() {
+    let shop = url("https://www.shop.com/");
+    let fraction = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_millis();
+    while fraction() < 900 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let mut jar = jar();
+    assert!(jar.store(&shop, b"short=1; Max-Age=1", SAME));
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    assert_eq!(sent(&jar, "https://www.shop.com/").as_deref(), Some("short=1"), "it has most of a second left");
+    let mut read = Jar::new(suffixes());
+    read.read_written(&jar.write(false));
+    assert_eq!(sent(&read, "https://www.shop.com/").as_deref(), Some("short=1"), "and so it has read back");
+}
