@@ -10,9 +10,9 @@
 
 use std::net::IpAddr;
 
-use protocol::web::{AddressSpace, CacheMode, Mode, ReferrerPolicy};
+use protocol::web::{AddressSpace, CacheMode, Mode, Reason, ReferrerPolicy};
 
-use super::support::{Client, Reply, header, serve};
+use super::support::{Client, Reply, header, raw, serve};
 use crate::web::cors::{exposed, is_safelisted_request_header, unsafe_header_names};
 use crate::web::local::space_of;
 use crate::web::referrer::policy_of;
@@ -361,5 +361,42 @@ fn a_referrer_cut_on_one_hop_stays_cut_on_the_next() {
     assert_eq!(server.the("/a/one").header("referer"), Some(server.url("/a/page")));
     assert_eq!(server.the("/a/two").header("referer"), Some(server.url("/")));
     assert_eq!(server.the("/a/three").header("referer"), Some(server.url("/")), "the cut referrer is the one carried on");
+    client.finish().unwrap();
+}
+
+/// The Fetch standard section 2.2.6, "location URL", by "extracting
+/// header list values": `Location` allows one header, so an answer with
+/// two is a failure, and HTTP-redirect fetch (section 4.5) makes a
+/// failure a network error. Neither address is asked.
+#[test]
+fn a_redirect_with_two_locations_is_a_network_error() {
+    let server = serve(|asked| match asked.target.as_str() {
+        "/a/two" => Reply::new(302).header("location", "/a/first").header("location", "/a/second"),
+        "/a/same" => Reply::new(302).header("location", "/a/first").header("location", "/a/first"),
+        _ => Reply::ok("x"),
+    });
+    let mut client = Client::new(&server.url("/a/"));
+    assert_eq!(client.get(&server.url("/a/two")).reason(), Reason::Redirect);
+    assert_eq!(client.get(&server.url("/a/same")).reason(), Reason::Redirect, "twice the same is still two");
+    assert_eq!((server.count("GET", "/a/first"), server.count("GET", "/a/second")), (0, 0));
+    client.finish().unwrap();
+}
+
+/// The Fetch standard section 2.2.6: a `Location` is a header value,
+/// bytes, parsed as an address against the answer's own; a byte above
+/// 0x7F is the code point of its number, which the URL standard's parser
+/// percent-encodes. A `Location` in Latin-1 is followed, as written
+/// `caf%C3%A9`, not refused for not being UTF-8.
+#[test]
+fn a_location_that_is_not_utf8_is_followed_percent_encoded() {
+    let server = serve(|_| Reply::ok("found").header("access-control-allow-origin", "*"));
+    let mut answer = b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nLocation: ".to_vec();
+    answer.extend_from_slice(server.url("/a/caf").as_bytes());
+    answer.extend_from_slice(b"\xE9?q=\xFC\r\n\r\n");
+    let port = raw(Some(answer));
+    let mut client = Client::new(&format!("http://site.test:{port}/a/"));
+    let outcome = client.get(&format!("http://site.test:{port}/a/x"));
+    assert_eq!(outcome.text(), "found");
+    assert_eq!(server.asked().pop().unwrap().target, "/a/caf%C3%A9?q=%C3%BC");
     client.finish().unwrap();
 }

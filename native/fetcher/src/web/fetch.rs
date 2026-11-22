@@ -427,8 +427,18 @@ impl<'a> Request<'a> {
     /// whether `answer` redirects, the request then being the one to
     /// send next.
     fn redirect(&mut self, answer: &Answer, jar: &Jar) -> Result<bool, Reason> {
-        let Some((_, location)) = answer.headers.iter().find(|(name, _)| name == "location") else { return Ok(false) };
-        let mut target = std::str::from_utf8(location).ok().and_then(|location| self.url.join(location).ok()).ok_or(Reason::Redirect)?;
+        // The standard's "location URL" (section 2.2.6): `Location` allows
+        // one header, so two are a failure, a network error. Its value is
+        // bytes, each the code point of its number, which the address
+        // parser percent-encodes above 0x7F: a `Location` that is not
+        // UTF-8 is followed, not refused.
+        let mut locations = answer.headers.iter().filter(|(name, _)| name == "location").map(|(_, value)| value);
+        let Some(location) = locations.next() else { return Ok(false) };
+        if locations.next().is_some() {
+            return Err(Reason::Redirect);
+        }
+        let location: String = location.iter().copied().map(char::from).collect();
+        let mut target = self.url.join(&location).map_err(|_| Reason::Redirect)?;
         if target.fragment().is_none() {
             target.set_fragment(self.url.fragment());
         }
