@@ -236,7 +236,6 @@ fn the_cors_safelisted_response_headers_are_exactly_the_standards() {
 /// written in lower case; a token in other case is no policy and is
 /// passed over.
 #[test]
-#[ignore = "fault TODO-7345 item 3: Referrer-Policy tokens are compared without case (\"No-Referrer\" is taken)"]
 fn a_referrer_policy_token_is_compared_exactly() {
     let headers = |value: &str| vec![header("referrer-policy", value)];
     assert_eq!(policy_of(&headers("No-Referrer")), None);
