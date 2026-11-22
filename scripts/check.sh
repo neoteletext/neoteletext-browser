@@ -411,10 +411,14 @@ linux_steps() {
 # libFuzzer's options for a target whose inputs must reach past its
 # default length limit of 4,096 bytes: dbus_message reads messages up to
 # neoteletext-dbus's MAX_MESSAGE_BYTES, 128 KiB (131,072 bytes), where the
-# security review of 22 November 2026 found its fault (TODO-7173 A1).
+# security review of 22 November 2026 found its fault (TODO-7173 A1). The
+# script link's and the web client's messages are read up to a whole
+# frame, the protocol crate's MAX_PAYLOAD (262,144 bytes) after its five
+# header bytes: a batch's longest lists lie past 4,096 (TODO-7288).
 fuzz_options() {
     case "$1" in
         dbus_message) echo "-max_len=131072" ;;
+        script_link_to_host | script_link_to_decoder | web_to_client | web_from_client) echo "-max_len=262149" ;;
     esac
 }
 
