@@ -249,6 +249,11 @@ impl Browser {
             // its own window buttons is the platform other than macOS, as
             // `keys_named` has it.
             "g" if modifiers.shift || !self.frame.window_buttons => self.toggle_wall(now),
+            // The browser's own key that stops the open page's program
+            // (script-api.md section 4.6; DEC-7282 item 6): Command and
+            // the full stop on macOS, Control and the full stop elsewhere.
+            #[cfg(feature = "interaction")]
+            "." => return self.stop_page_program(),
             _ => return false,
         }
         true

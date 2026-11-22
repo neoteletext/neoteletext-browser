@@ -25,15 +25,20 @@ use protocol::script::{
 
 use crate::args::Options;
 use crate::blobs::{Blob, find};
-use crate::files::{CHANNEL_FILE, CHANNEL_SCRIPT, CHANNEL_SCRIPT_NAME, FROM_DISK, INPUT, PAGE_SCRIPT, PAGE_SCRIPT_NAME, PAGE_T42, PAGE_TTI, channel};
-use crate::input::{InputScript, Item};
+use crate::files::{
+    CHANNEL_FILE, CHANNEL_SCRIPT, Channel, FOLDER_SCRIPT, FROM_DISK, INPUT, PAGE_FILE_STEM, PAGE_SCRIPT, PAGE_SCRIPT_NAME, PAGE_T42, PAGE_TTI, channel,
+};
+use crate::input::{InputScript, Item, POINTER_ACTION_MASK};
 use crate::limits::{DEFAULT_PAGE, FIXED_EPOCH_SECONDS, MAX_RUN_LOG_BYTES};
-use crate::manifest::{self, Manifest, Pointer};
 use crate::network::Network;
 use crate::report::{Budget, Report, Times, budget_file, sha256};
-use crate::screen::{Place, Screen, StandIn};
+use crate::screen::{DEFAULT_LANGUAGE, Place, Screen};
 use crate::sound::Speaker;
 use crate::{Failure, Status};
+use decoder::scripts::manifest::{self, Manifest};
+use neoteletext_script::limits::MAX_POINTER_OBJECTS;
+use neoteletext_script::ops::PointerAction;
+use protocol::decoder::script::PointerClaim;
 
 /// The kept log.
 pub const LOG_FILE: &str = "log.txt";
@@ -93,6 +98,11 @@ const fn context_name(context: ContextId) -> &'static str {
     }
 }
 
+/// The bytes of a pointer event's payload before the things under it:
+/// the pointer's id, the buttons held and its place within the thing,
+/// four whole numbers.
+const POINTER_FIXED_BYTES: usize = 4 * 4;
+
 /// The names of the log's levels, 0 to 4, as `console` names them.
 const LEVEL_NAMES: [&str; 5] = ["debug", "log", "info", "warn", "error"];
 
@@ -110,6 +120,29 @@ fn seed(text: &str, context: ContextId) -> [u8; SEED_BYTES] {
     seed
 }
 
+/// How an error's stack names a place in the script library's prelude,
+/// before the line and column.
+const PRELUDE_PLACE: &str = "(nt:prelude:";
+
+/// A log line with each place in the prelude (`(nt:prelude:LINE:COLUMN)`
+/// in an error's stack) written without its line and column. Those are
+/// the library's own and move with every change to the prelude; a kept
+/// log is to change when its page's behaviour does. A place in the
+/// page's own script is left whole.
+fn without_prelude_places(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once(PRELUDE_PLACE) {
+        out.push_str(before);
+        out.push_str("(nt:prelude");
+        // Past the line and the column, to the closing bracket.
+        let numbers = after.find(|character: char| !(character.is_ascii_digit() || character == ':')).unwrap_or(after.len());
+        rest = after.get(numbers..).unwrap_or_default();
+    }
+    out.push_str(rest);
+    out
+}
+
 /// The run's log: lines kept to a bound, the rest counted.
 #[derive(Default)]
 struct Log {
@@ -120,6 +153,7 @@ struct Log {
 
 impl Log {
     fn line(&mut self, tick: u64, who: &str, level: &str, text: &str) {
+        let text = &without_prelude_places(text);
         if self.text.len().saturating_add(text.len()) > MAX_RUN_LOG_BYTES {
             self.dropped = self.dropped.saturating_add(1);
             return;
@@ -136,8 +170,8 @@ impl Log {
 /// What the files given say the run is of.
 struct Subject {
     place: Place,
-    channel_title: String,
-    page_file: Option<(&'static str, Vec<u8>)>,
+    channel: Option<Channel>,
+    page_file: Option<Vec<u8>>,
     from_disk: bool,
 }
 
@@ -146,20 +180,67 @@ fn subject(options: &Options, blobs: &[Blob]) -> Result<Subject, Failure> {
         Some(bytes) => Some(channel(bytes, &options.channel_url)?),
         None => None,
     };
-    let page = options.page.map(|(page, _)| page).or(read.as_ref().map(|read| read.initial_page)).unwrap_or(DEFAULT_PAGE);
+    // A page file opened by itself is the page its name says.
+    let named = find(blobs, PAGE_FILE_STEM)
+        .and_then(|stem| core::str::from_utf8(stem).ok())
+        .and_then(|stem| u16::from_str_radix(stem, 16).ok())
+        .filter(|page| neoteletext_core::types::PageAddress::from_mpp(*page).is_some());
+    let page = options.page.map(|(page, _)| page).or(named).or(read.as_ref().map(|read| read.initial_page)).unwrap_or(DEFAULT_PAGE);
     let subcode = options.page.and_then(|(_, subcode)| subcode);
-    let page_file = [(PAGE_TTI, "tti"), (PAGE_T42, "t42")].into_iter().find_map(|(name, extension)| find(blobs, name).map(|bytes| (extension, bytes.to_vec())));
+    let page_file = [PAGE_TTI, PAGE_T42].into_iter().find_map(|name| find(blobs, name).map(<[u8]>::to_vec));
     Ok(Subject {
         // With a page file and no sub-page named, the first the file
         // holds; a JavaScript page has the sub-code 0, no sub-pages.
         place: Place { page, subcode: subcode.unwrap_or(if page_file.is_some() { neoteletext_core::limits::SUBCODE_ANY } else { 0 }) },
-        channel_title: read.map(|read| read.title).unwrap_or_default(),
+        channel: read,
         page_file,
         from_disk: find(blobs, FROM_DISK).is_some(),
     })
 }
 
-/// A context's opening, from its manifest and the run.
+/// A script to run: its file name and its bytes.
+type Script<'a> = (String, &'a [u8]);
+
+/// The scripts of the page shown, the page-level one and the
+/// channel-level one, as the engine's readers name them (section 12):
+/// the page file's own reference (`in_page_file`, its `JS` line or
+/// `SCRIPT_REF` record as the decoder read it) before the channel file's
+/// entry for exactly that page and sub-code, by the engine's rule
+/// (`neoteletext_web::scripts::chosen`); and the channel file's
+/// `scripts.channel`. Each is a file of the channel's folder. A run
+/// whose target is one script has that script for its page.
+fn scripts<'a>(subject: &Subject, place: Place, in_page_file: Option<&str>, blobs: &'a [Blob]) -> Result<(Option<Script<'a>>, Option<Script<'a>>), Failure> {
+    use neoteletext_core::types::ScriptName;
+    let direct = |blob: &str, name_blob: &str, fallback: &str| {
+        find(blobs, blob).map(|source| (find(blobs, name_blob).and_then(|name| core::str::from_utf8(name).ok()).unwrap_or(fallback).to_owned(), source))
+    };
+    let named = |name: &str| -> Result<Script<'a>, Failure> {
+        find(blobs, &format!("{FOLDER_SCRIPT}{name}"))
+            .map(|source| (name.to_owned(), source))
+            .ok_or_else(|| Failure::usage(format!("{name}: the channel names this script, and its folder holds no such file")))
+    };
+    let parsed = |name: Option<&str>| name.and_then(|name| ScriptName::parse(name.as_bytes()));
+    let in_channel_file = subject.channel.as_ref().and_then(|channel| channel.page_script(place.page, place.subcode));
+    let chosen = neoteletext_web::scripts::chosen(parsed(in_page_file), parsed(in_channel_file));
+    let page = match direct(PAGE_SCRIPT, PAGE_SCRIPT_NAME, "page.js") {
+        Some(script) => Some(script),
+        None => chosen.map(|name| named(name.as_str())).transpose()?,
+    };
+    let channel = match direct(CHANNEL_SCRIPT, "", "channel.js") {
+        Some(script) => Some(script),
+        None => subject.channel.as_ref().and_then(|channel| channel.channel_script.as_deref()).map(named).transpose()?,
+    };
+    Ok((page, channel))
+}
+
+/// A page's address, as the decoder says it: its channel's with its
+/// number, and its sub-code when it has sub-pages.
+fn page_url(channel_url: &str, place: Place) -> String {
+    if place.subcode == 0 { format!("{channel_url}{:03X}", place.page) } else { format!("{channel_url}{:03X}/{:04X}", place.page, place.subcode) }
+}
+
+/// A context's opening, from its manifest and the run, as the decoder
+/// makes one (`decoder::scripts`).
 #[expect(clippy::too_many_arguments, reason = "the opening's sources, each needed and none another's")]
 fn opening(
     context: ContextId,
@@ -168,42 +249,38 @@ fn opening(
     subject: &Subject,
     place: Place,
     renderer: Renderer,
-    script_name: &str,
-    sounds: &[u8],
-    source: &[u8],
+    level: Level,
+    script: &Script<'_>,
 ) -> ContextOpen {
-    let page_name = subject.page_file.as_ref().map_or_else(|| script_name.to_owned(), |(extension, _)| format!("{:03X}.{extension}", place.page));
+    let (script_name, source) = script;
     ContextOpen {
         context,
         api: manifest.api,
         renderer,
-        // The decoder's profile draws at Level 2.5 with the extensions
-        // the browser turns on; the script library's own tests open
-        // contexts so.
-        level: Level::TwoFive,
+        level,
         page: place.page,
         subcode: place.subcode,
         flags: ContextFlags {
-            pointer_press: manifest.pointer != Pointer::None,
-            pointer_move: manifest.pointer == Pointer::Move,
+            pointer_press: manifest.pointer >= PointerClaim::Press,
+            pointer_move: manifest.pointer >= PointerClaim::Move,
             wheel: manifest.wheel,
             text: manifest.text,
-            // A page opened from disk has no network (section 12.7).
-            network: manifest.network && !subject.from_disk,
+            network: manifest.network,
             from_disk: subject.from_disk,
             sound_allowed: options.sound_allowed,
         },
         tick_divisor: manifest.tick,
-        language: manifest.language.clone().unwrap_or_else(|| "en".to_owned()),
+        language: manifest.language.clone().unwrap_or_else(|| DEFAULT_LANGUAGE.to_owned()),
         channel_url: options.channel_url.clone(),
-        page_url: format!("{}{page_name}", options.channel_url),
+        page_url: page_url(&options.channel_url, place),
         script_url: format!("{}{script_name}", options.channel_url),
-        channel_title: subject.channel_title.clone(),
+        channel_title: subject.channel.as_ref().map(|channel| channel.title.clone()).unwrap_or_default(),
         seed: seed(&options.seed, context),
         epoch_seconds: FIXED_EPOCH_SECONDS,
         zone_minutes: 0,
         keys: manifest.keys.clone(),
-        sounds: sounds.to_vec(),
+        // The decoder names no sounds in an opening.
+        sounds: Vec::new(),
         source_bytes: u32::try_from(source.len()).unwrap_or(u32::MAX),
     }
 }
@@ -256,14 +333,36 @@ struct Running {
 }
 
 impl Running {
-    /// Takes a batch in: the page, the mixer, the log.
-    fn take(&mut self, tick: u64, batch: &Batch) {
-        self.screen.apply(batch);
-        for audio in self.screen.take_sounds() {
-            self.speaker.page(audio);
+    /// An input script's item as the step carries it: a pointer line that
+    /// names no thing is given the things under it by the decoder's own
+    /// picking, topmost first, as the browser's decoder gives them
+    /// (section 4.4).
+    fn picked(&self, item: &Item) -> Item {
+        let Item::Event(event) = item else { return item.clone() };
+        let [first, x, y, thing] = event.numbers;
+        let action = first & POINTER_ACTION_MASK;
+        let placed = [PointerAction::DOWN, PointerAction::UP, PointerAction::MOVE].iter().any(|one| one.number() == action);
+        if event.kind != EventKind::Pointer || thing != 0 || !placed || event.payload.len() > POINTER_FIXED_BYTES {
+            return item.clone();
         }
-        for operation in batch.sound.iter().flatten() {
-            self.speaker.script(*operation);
+        let things = self.screen.pick(x, y);
+        let Some((hit, others)) = things.split_first() else { return item.clone() };
+        let mut event = event.clone();
+        event.numbers = [first, x, y, *hit];
+        event.payload.extend(others.iter().take(MAX_POINTER_OBJECTS).flat_map(|other| other.to_be_bytes()));
+        Item::Event(event)
+    }
+
+    /// Takes a batch in: the page, the mixer, the log.
+    fn take(&mut self, tick: u64, batch: &Batch, draws: bool) {
+        // The decoder's side of the step: a batch it refuses, or a rate
+        // passed, fails the scripts as it does in the browser.
+        if let Err(why) = self.screen.apply(tick, batch, draws) {
+            self.log.runner(tick, &format!("stopped: {why}"));
+            self.stopped.get_or_insert(why);
+        }
+        for audio in self.screen.take_sounds() {
+            self.speaker.voice(audio);
         }
         if let Some(verdicts) = &batch.verdicts {
             // One letter an event: C its default was cancelled, h a
@@ -337,45 +436,62 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
         Some(bytes) => crate::input::parse(bytes).map_err(Failure::usage)?,
         None => InputScript::default(),
     };
-    let page_source = find(blobs, PAGE_SCRIPT);
-    let channel_source = find(blobs, CHANNEL_SCRIPT);
-    let read_manifest = |source: Option<&[u8]>, which: &str| {
-        source.map(|source| manifest::read(source).map_err(|why| Failure::refused(format!("the {which} script: {why}")))).transpose()
-    };
-    let page_manifest = read_manifest(page_source, "page")?;
-    let channel_manifest = read_manifest(channel_source, "channel")?;
-    if channel_manifest.as_ref().is_some_and(|manifest| manifest.renderer.is_some()) {
-        return Err(Failure::refused("the channel script: a channel-level script's manifest has no `renderer` (section 3.1)"));
-    }
-
-    // The page, in the decoder's engine.
-    let mut screen = Screen::new(subject.place, Box::new(StandIn::default()));
-    let renderer = if let Some((_, bytes)) = &subject.page_file {
+    // The page file, in the decoder's engine, read by its readers.
+    let mut screen = Screen::new(subject.place);
+    if let Some(bytes) = &subject.page_file {
         screen.page_file(bytes);
-        screen.settle_subpage();
-        let of_file = screen.renderer();
-        if let Some(asked) = page_manifest.as_ref().and_then(|manifest| manifest.renderer)
-            && asked != of_file
-        {
-            return Err(Failure::refused(format!(
-                "the page script: its manifest's renderer is {}, and its page file is drawn by {} (section 3.1)",
-                renderer_name(asked),
-                renderer_name(of_file)
-            )));
-        }
-        of_file
-    } else {
-        let renderer = page_manifest.as_ref().and_then(|manifest| manifest.renderer).unwrap_or(Renderer::Teletext);
-        screen.blank(renderer);
-        renderer
+    }
+    screen.settle_subpage();
+    let place = screen.place();
+    let in_page_file =
+        screen.script_names().into_iter().rev().find(|(page, subcode, _)| (*page, *subcode) == (place.page, place.subcode)).and_then(|(_, _, name)| name);
+    if subject.channel.as_ref().is_some_and(|channel| channel.scripts_ignored) {
+        return Err(Failure::usage(
+            "nothing to run: the channel is live (its channel.ttx has the member `push`), and a live channel runs no script (section 12.1)",
+        ));
+    }
+    let (page_script, channel_script) = scripts(&subject, place, in_page_file.as_deref(), blobs)?;
+    if page_script.is_none() && channel_script.is_none() {
+        return Err(Failure::usage(format!(
+            "nothing to run: page {:03X} has no script. Give a script (.js), or name the page's in the channel file's `scripts` or in its page file",
+            place.page
+        )));
+    }
+    // A manifest is read by the decoder's own reader, before any code runs.
+    let read_manifest = |script: Option<&Script<'_>>, which: &str| {
+        let read = |(name, source): &Script<'_>| {
+            let manifest = manifest::read(source).map_err(|why| Failure::refused(format!("the {which} script {name} was not run: {why}")))?;
+            if manifest.api > neoteletext_script::API_VERSION {
+                return Err(Failure::refused(format!(
+                    "the {which} script {name} was not run: its manifest names a later version of the API than this runner has"
+                )));
+            }
+            Ok(manifest)
+        };
+        script.map(read).transpose()
     };
-    let place =
-        Place { page: subject.place.page, subcode: if screen.place().subcode == neoteletext_core::limits::SUBCODE_ANY { 0 } else { screen.place().subcode } };
+    let page_manifest = read_manifest(page_script.as_ref(), "page")?;
+    let channel_manifest = read_manifest(channel_script.as_ref(), "channel")?;
+    // Section 3.1, as the decoder decides it: for a script attached to a
+    // page file the manifest's renderer equals the page file's or is
+    // absent; a JavaScript page draws on the renderer its manifest names.
+    let held = screen.held_renderer();
+    let named = page_manifest.as_ref().and_then(|manifest| manifest.renderer);
+    if let (Some(named), Some(held)) = (named, held)
+        && named != held
+    {
+        return Err(Failure::refused(format!(
+            "the page script: its manifest names another renderer ({}) than its page file's ({})",
+            renderer_name(named),
+            renderer_name(held)
+        )));
+    }
+    let renderer = held.or(named).unwrap_or(Renderer::Teletext);
+    let level = screen.level();
     let mut speaker = Speaker::new();
     for audio in screen.take_sounds() {
-        speaker.page(audio);
+        speaker.voice(audio);
     }
-    let sounds = speaker.handles();
 
     // The scripts, through the one link.
     let engine = Engine::new().map_err(|stop| Failure { status: Status::Stopped, message: format!("the script engine could not start: {stop}") })?;
@@ -390,23 +506,26 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
         Settings { time: TimeLimits::unhurried(), watchdog: None }
     };
     let mut running = Running { link: InProcess::new(engine, settings), screen, speaker, log: Log::default(), budgets: Vec::new(), stopped: None };
-    let name_of = |blob: &str, fallback: &str| find(blobs, blob).and_then(|name| core::str::from_utf8(name).ok()).unwrap_or(fallback).to_owned();
-    // The channel context first, then the page's (section 3.1).
-    if let (Some(source), Some(manifest)) = (channel_source, &channel_manifest) {
-        let name = name_of(CHANNEL_SCRIPT_NAME, "channel.js");
-        open(&mut running, opening(ContextId::Channel, manifest, options, &subject, place, renderer, &name, &sounds, source), source)?;
+    // The channel context first, then the page's (section 3.1); the
+    // channel context is told the renderer of the page as the decoder
+    // then holds it.
+    if let (Some(script), Some(manifest)) = (&channel_script, &channel_manifest) {
+        let told = held.unwrap_or(Renderer::Teletext);
+        open(&mut running, opening(ContextId::Channel, manifest, options, &subject, place, told, level, script), script.1)?;
     }
-    if let (Some(source), Some(manifest)) = (page_source, &page_manifest) {
-        let name = name_of(PAGE_SCRIPT_NAME, "page.js");
-        open(&mut running, opening(ContextId::Page, manifest, options, &subject, place, renderer, &name, &sounds, source), source)?;
+    if let (Some(script), Some(manifest)) = (&page_script, &page_manifest) {
+        open(&mut running, opening(ContextId::Page, manifest, options, &subject, place, renderer, level, script), script.1)?;
     }
+    let language = page_manifest.as_ref().and_then(|manifest| manifest.language.clone()).unwrap_or_else(|| DEFAULT_LANGUAGE.to_owned());
+    running.screen.open(renderer, &language);
+    let channel_source = channel_script.as_ref();
     let start_micros = u64::try_from(began.elapsed().as_micros()).unwrap_or(u64::MAX);
 
     // The channel context is told the page is shown, in its first step.
     let mut first_event = channel_source.map(|_| Event {
         kind: EventKind::PageShow,
         numbers: [i32::from(place.page), i32::from(place.subcode), i32::from(renderer.code()), 0],
-        payload: format!("{}{:03X}", options.channel_url, place.page).into_bytes(),
+        payload: page_url(&options.channel_url, place).into_bytes(),
     });
     let snapshot_ticks = options.snapshot_ticks();
     let mut files: Vec<Blob> = Vec::new();
@@ -414,7 +533,7 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
     let (mut sound_allowed, mut hidden, mut page_tick, mut sequence, mut ticks_run) = (options.sound_allowed, false, 0_u64, 0_u32, 0_u64);
     let paced = Instant::now();
     for tick in 0..options.ticks {
-        if options.pace
+        if (options.pace || network.real_time())
             && let Some(due) = paced.checked_add(Duration::from_micros(tick.saturating_mul(crate::limits::MICROSECONDS_PER_TICK)))
         {
             // Waiting for the tick's own moment, and no longer.
@@ -422,7 +541,8 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
         }
         ticks_run = tick.saturating_add(1);
         running.screen.set_tick(tick);
-        let items: Vec<&Item> = input.at(tick).collect();
+        let picked: Vec<Item> = input.at(tick).map(|item| running.picked(item)).collect();
+        let items: Vec<&Item> = picked.iter().collect();
         sound_allowed |= items.iter().any(|item| item.is_press());
         let shown_again = items.iter().any(|item| matches!(item, Item::Show));
         let mut closing = false;
@@ -432,7 +552,14 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
             for answer in network.answers(tick) {
                 running.link.network(answer);
             }
-            let (step, lost, closes) = step_of(sequence, page_tick, &items, first_event.take(), sound_allowed);
+            let (mut step, lost, closes) = step_of(sequence, page_tick, &items, first_event.take(), sound_allowed);
+            // The decoder's report of the watched drawings that became
+            // whole, beside any the input script gives.
+            for handle in running.screen.painted() {
+                if step.painted.len() < MAX_WATCHED_PAINTINGS && !step.painted.contains(&handle) {
+                    step.painted.push(handle);
+                }
+            }
             closing = closes;
             dropped = dropped.saturating_add(lost);
             events = events.saturating_add(u64::try_from(step.events.len()).unwrap_or(u64::MAX));
@@ -443,7 +570,7 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
             sequence = sequence.wrapping_add(1);
             page_tick = page_tick.saturating_add(1);
             match answered {
-                Ok(batch) => running.take(tick, &batch),
+                Ok(batch) => running.take(tick, &batch, true),
                 Err(error) => {
                     running.stopped.get_or_insert_with(|| error.to_string());
                     running.log.runner(tick, &format!("stopped: {error}"));
@@ -455,6 +582,7 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
         } else {
             dropped = dropped.saturating_add(u64::try_from(items.len()).unwrap_or(u64::MAX));
         }
+        running.screen.paint();
         running.speaker.tick();
         if snapshot_ticks.binary_search(&tick).is_ok() {
             match running.screen.snapshot() {
@@ -476,7 +604,8 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
             None => running.link.take_closing(sequence),
         };
         if let Some(batch) = staged {
-            running.take(ticks_run, &batch);
+            // A close's batch draws nothing; its sound stops are carried out.
+            running.take(ticks_run, &batch, false);
         }
     }
 
@@ -497,7 +626,6 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
         times: Times::of(&mut times),
         start_micros,
         output_bytes: running.screen.output_bytes,
-        left_out: running.screen.left_out.clone(),
         network: network.counts(),
         deterministic: network.deterministic(),
         events,

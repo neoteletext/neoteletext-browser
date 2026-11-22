@@ -685,6 +685,67 @@ int32_t nt_eval(int32_t number, const char *source, int32_t length, const char *
     return bits | run_jobs(bits != 0);
 }
 
+/* The prelude compiled once and run in every context (rdm TODO-7386):
+ * compiling the browser's own prelude was most of what a context's start
+ * cost, and it is the same work every time. Only the host's own source is
+ * ever compiled here and only what this module wrote is ever read back:
+ * QuickJS does not check bytecode it reads, so the host gives nt_run
+ * nothing that came from a channel, and no script can reach either
+ * function. */
+static uint8_t *compiled_bytes;
+static size_t compiled_length;
+
+/* Compiles `source` (NUL at `source[length]`) in context `number` as a
+ * classic script named `name`, without running it, and keeps its
+ * bytecode for the host to read at nt_compiled(). The bytecode's length;
+ * 0 when the source does not compile (nt_error says why); a negative
+ * number when there is no such context. */
+NT_EXPORT("nt_compile")
+int32_t nt_compile(int32_t number, const char *source, int32_t length, const char *name) {
+    JSContext *ctx = context_of(number);
+    if (!ctx || length < 0) return -1;
+    JS_UpdateStackTop(runtime);
+    if (compiled_bytes) js_free(ctx, compiled_bytes);
+    compiled_bytes = NULL;
+    compiled_length = 0;
+    JSValue function = JS_Eval(ctx, source, (size_t)length, name, JS_EVAL_TYPE_GLOBAL | JS_EVAL_FLAG_COMPILE_ONLY);
+    if (JS_IsException(function)) {
+        keep_exception(ctx);
+        return 0;
+    }
+    compiled_bytes = JS_WriteObject(ctx, &compiled_length, function, JS_WRITE_OBJ_BYTECODE);
+    JS_FreeValue(ctx, function);
+    if (!compiled_bytes || compiled_length > INT32_MAX) {
+        keep_exception(ctx);
+        return 0;
+    }
+    return (int32_t)compiled_length;
+}
+
+/* Where the bytecode nt_compile last made is. */
+NT_EXPORT("nt_compiled")
+int32_t nt_compiled(void) { return (int32_t)(intptr_t)compiled_bytes; }
+
+/* Runs in context `number` the bytecode nt_compile made of a script, then
+ * the promise jobs it made. The entry's bits, or a negative number when
+ * there is no such context. */
+NT_EXPORT("nt_run")
+int32_t nt_run(int32_t number, const uint8_t *bytecode, int32_t length) {
+    JSContext *ctx = context_of(number);
+    if (!ctx || length < 0) return -1;
+    JS_UpdateStackTop(runtime);
+    int32_t bits = 0;
+    JSValue function = JS_ReadObject(ctx, bytecode, (size_t)length, JS_READ_OBJ_BYTECODE);
+    /* JS_EvalFunction frees the function, and passes an exception on. */
+    JSValue value = JS_IsException(function) ? function : JS_EvalFunction(ctx, function);
+    if (JS_IsException(value)) {
+        keep_exception(ctx);
+        bits |= ENTRY_THREW;
+    }
+    JS_FreeValue(ctx, value);
+    return bits | run_jobs(bits != 0);
+}
+
 /* One event for context `number`: `dispatch(kind, a, b, c, d, payload)`,
  * the payload a string, a Uint8Array, an Int32Array or undefined by
  * `payload_kind`; then the promise jobs it made. The dispatch function's

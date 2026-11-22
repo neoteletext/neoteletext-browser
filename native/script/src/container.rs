@@ -34,7 +34,7 @@ use crate::limits::{
 };
 use crate::link::{Context as _, DISPATCH_ORDER, LinkError, check_open};
 use crate::machine::{Engine, Entry, Given, Machine, Stop};
-use crate::ops::{DispatchBit, EventKind, Handle, KeyBit, NavigateCause, PointerAction};
+use crate::ops::{DispatchBit, EventKind, Handle, KeyBit, NavigateCause, Parts, PointerAction};
 use crate::random::math_seed;
 use crate::watchdog::Watchdog;
 
@@ -52,8 +52,6 @@ const TICK_MASK: u64 = 0x7FFF_FFFF;
 const UNNAMED_SCRIPT: &str = "script.js";
 /// The limit [`TimeLimits::unhurried`] gives everything: an hour.
 const UNHURRIED: Duration = Duration::from_secs(3600);
-/// The name the prelude is run under.
-const PRELUDE_NAME: &str = "nt:prelude";
 
 /// The time a container's scripts are held to (section 3.2 rule 1 and
 /// section 10.6), as one value so that the program that runs the library
@@ -145,9 +143,10 @@ struct Waiting {
 
 /// One container.
 pub struct Container {
+    /// The engine the container was made by, for the prelude's bytecode.
+    engine: Engine,
     machine: Machine,
     time: TimeLimits,
-    prelude: String,
     queue: VecDeque<Waiting>,
     /// The script time used at each of the last second's ticks.
     second: VecDeque<(u64, Duration)>,
@@ -252,9 +251,9 @@ impl Container {
         let machine = Machine::new(engine, Host::new(), zone_minutes, settings.watchdog.clone())?;
         let costs = Costs { container: machine.start_time, ..Costs::default() };
         Ok(Self {
+            engine: engine.clone(),
             machine,
             time: settings.time,
-            prelude: crate::ops::prelude(),
             queue: VecDeque::new(),
             second: VecDeque::new(),
             step_used: Duration::ZERO,
@@ -326,6 +325,20 @@ impl Container {
     /// When a field is past its bound, the context is already open, or
     /// the container is or becomes stopped.
     pub fn open(&mut self, open: ContextOpen, source: &[u8]) -> Result<(), LinkError> {
+        // Every part, whatever the context: with the prelude compiled
+        // once for the engine, leaving out the parts a context cannot use
+        // would save it under 3 ms of the 21 ms its start takes, and cost
+        // the engine a compilation for each choice (rdm TODO-7386).
+        self.open_with_parts(open, source, Parts::ALL)
+    }
+
+    /// As [`Self::open`], with the parts of the prelude named and not
+    /// chosen from the opening: for the measurements of what each part
+    /// costs a context's start (`tests/start.rs`).
+    ///
+    /// # Errors
+    /// As [`Self::open`].
+    pub fn open_with_parts(&mut self, open: ContextOpen, source: &[u8], parts: Parts) -> Result<(), LinkError> {
         check_open(&open, source)?;
         if let Some(error) = self.stopped_error() {
             return Err(error);
@@ -334,6 +347,16 @@ impl Container {
         if self.is_open(context) {
             return Err(LinkError::Context("is already open"));
         }
+        // The prelude's bytecode is the engine's, made once and before
+        // the script's start is timed: compiling the browser's own source
+        // is no work of the script's.
+        let prelude = match self.engine.prelude(parts) {
+            Ok(prelude) => prelude,
+            Err(stop) => {
+                self.note_stop(&stop);
+                return Err(LinkError::Stopped(stop.reason(), stop.to_string()));
+            }
+        };
         let began = Instant::now();
         let deadline = began.checked_add(self.time.start);
         let name = if open.script_url.is_empty() { UNNAMED_SCRIPT.to_owned() } else { open.script_url.clone() };
@@ -342,9 +365,7 @@ impl Container {
             self.machine.open_context(context, seed, deadline)?;
             self.machine.host().open(open, source.len());
             self.machine.host().begin_callback(context, None, 0);
-            let prelude = core::mem::take(&mut self.prelude);
-            let ran = self.machine.eval(context, prelude.as_bytes(), PRELUDE_NAME, false, deadline);
-            self.prelude = prelude;
+            let ran = self.machine.run(context, &prelude, deadline);
             let ran = ran?;
             if ran.threw {
                 return Err(Stop::Container(format!("the prelude failed: {}", ran.error.unwrap_or_default())));
@@ -449,8 +470,10 @@ impl Container {
         }
         let host = self.machine.host_ref();
         // A timer always has its callback, and so has the network's event:
-        // the prelude's own object for the request it answers.
-        if !host.runs(context) || (kind != EventKind::TIMER && !kind.is_network() && !host.listens(context, kind)) {
+        // the prelude's own object for the request it answers. A context's
+        // components hear keys, text and the pointer whether or not the
+        // script listens for them (section 8).
+        if !host.runs(context) || (kind != EventKind::TIMER && !kind.is_network() && !host.listens(context, kind) && !host.ui_hears(context, kind)) {
             return Ok(None);
         }
         self.machine.host().begin_callback(context, Some(kind), numbers[0]);
@@ -577,6 +600,11 @@ impl Container {
                 continue;
             }
             let mut numbers = event.ints;
+            // A key and typed text are heard by the focused component
+            // first (section 8): the context is told which that is.
+            if matches!(event.kind, EventKind::KEY_DOWN | EventKind::TEXT) {
+                numbers[1] = self.machine.host_ref().ui_focused(context);
+            }
             let mut ints_given: Vec<i32> = Vec::new();
             let payload = match &event.payload {
                 InputPayload::None => Given::None,

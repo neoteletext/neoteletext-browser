@@ -57,6 +57,14 @@ const BASIC_PAGE: PageFormat = PageFormat { function: 0, coding: 0 };
 /// least, in milliseconds (EN 300 708 Table 19 has no shorter).
 const SCRIPT_FADE_MS: u16 = 5;
 
+/// The level the other audio channels keep while a script's synthesizer
+/// plays: all of it, the first step of the audio profile's table (EN 300
+/// 708 Table 19). A local sound's start names a step of that table by
+/// its percentage, and 0 is none of them: a start that named it was
+/// refused by this process's own check of what it sends and dropped, so
+/// that no synthesizer a script started was ever heard.
+const NO_DUCKING_PERCENT: u8 = neoteletext_audio::DUCK_PERCENT[0];
+
 /// The page a batch is applied to: the decoder's own knowledge of what
 /// is open, never anything a batch says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -466,7 +474,7 @@ impl Engine {
                         split: 0,
                         gain,
                         fade_ms: SCRIPT_FADE_MS,
-                        duck_percent: 0,
+                        duck_percent: NO_DUCKING_PERCENT,
                         setup: Vec::new(),
                     },
                 },

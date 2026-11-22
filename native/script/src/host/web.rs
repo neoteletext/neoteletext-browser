@@ -27,8 +27,8 @@ use std::collections::VecDeque;
 
 use protocol::script::ContextId;
 use protocol::web::{
-    BodySource, CacheMode, Credentials, ErrorKind, FromWebClient, Head, MAX_CLOSE_REASON_BYTES, Mode, RedirectMode, Referrer, ReferrerPolicy, RequestKind,
-    ResponseType, Start, ToWebClient,
+    AddressSpace, BodySource, CacheMode, Credentials, ErrorKind, FromWebClient, Head, MAX_CLOSE_REASON_BYTES, Mode, RedirectMode, Referrer, ReferrerPolicy,
+    RequestKind, ResponseType, Start, ToWebClient,
 };
 
 use self::encoding::Decoders;
@@ -94,10 +94,14 @@ pub(crate) mod fetch_flag {
     pub const KEEPALIVE: (i32, i32) = (13, 1);
     /// The request has a body, whose length is the call's third number.
     pub const BODY: (i32, i32) = (14, 1);
+    /// The address space the script declares for the address
+    /// (`targetAddressSpace`): 0 for none, else
+    /// `protocol::web::AddressSpace`'s code.
+    pub const TARGET: (i32, i32) = (15, 3);
     /// The bits above every field, which must be clear.
-    pub const BITS: i32 = 15;
+    pub const BITS: i32 = 17;
     /// Each field's shift, by the name the prelude knows it by.
-    pub const NAMES: [(&str, i32); 8] = [
+    pub const NAMES: [(&str, i32); 9] = [
         ("KIND", KIND.0),
         ("MODE", MODE.0),
         ("CREDENTIALS", CREDENTIALS.0),
@@ -106,6 +110,7 @@ pub(crate) mod fetch_flag {
         ("POLICY", POLICY.0),
         ("KEEPALIVE", KEEPALIVE.0),
         ("BODY", BODY.0),
+        ("TARGET", TARGET.0),
     ];
 }
 
@@ -617,6 +622,10 @@ impl Web {
         let redirect = RedirectMode::of(field(fetch_flag::REDIRECT, flags)).map_err(wrong)?;
         let referrer_policy = ReferrerPolicy::of(field(fetch_flag::POLICY, flags)).map_err(wrong)?;
         let has_body = field(fetch_flag::BODY, flags) != 0;
+        let target_space = match field(fetch_flag::TARGET, flags) {
+            0 => None,
+            code => Some(AddressSpace::of(code).ok_or_else(|| type_error("no such address space"))?),
+        };
         // Honoured for requests started in the `close` handling alone
         // (departure D9); elsewhere the request is an ordinary one.
         let keepalive = field(fetch_flag::KEEPALIVE, flags) != 0 && self.closing;
@@ -666,6 +675,7 @@ impl Web {
             body,
             protocols: Vec::new(),
             last_event_id: last_event_id.to_owned(),
+            target_space,
         });
         // Held to the message's own bounds before anything is counted or
         // changed: the web client would refuse what its reader refuses.
@@ -810,6 +820,12 @@ impl Web {
             .ok()
             .and_then(|bytes| payload.split_at_checked(bytes))
             .ok_or_else(|| type_error("a socket is asked for by its address, of the length given, and its subprotocols"))?;
+        // After the subprotocols, on a line of its own, the address space
+        // the script declared, if it declared one.
+        let (protocols, target_space) = match protocols.split_once('\n') {
+            Some((protocols, name)) => (protocols, Some(AddressSpace::named(name).ok_or_else(|| type_error("no such address space"))?)),
+            None => (protocols, None),
+        };
         let protocols: Vec<String> = protocols.split_terminator(',').map(str::to_owned).collect();
         let id =
             self.next_id.checked_add(1).filter(|id| i32::try_from(*id).is_ok()).ok_or_else(|| type_error("the container has made every request it may"))?;
@@ -835,6 +851,7 @@ impl Web {
             body: BodySource::None,
             protocols,
             last_event_id: String::new(),
+            target_space,
         });
         start.check().map_err(|error| Reply::Type(format!("the socket is not one the web client takes: {error}")))?;
         let bytes = start_bytes(&start);

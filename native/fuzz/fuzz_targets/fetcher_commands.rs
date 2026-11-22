@@ -34,6 +34,13 @@ fn check(message: ToFetcher) {
             // A part of a page's list of sub-pages, `NNN/P.sub`, that a list
             // can have (REQ-1888).
             ToFetcher::FetchSubPages { part, .. } => assert!(usize::from(part) < MAX_LIST_PARTS),
+            // A script is asked for by its name, never by an address (the
+            // script API's specification section 12.5): the reader takes
+            // only a name's characters, so none can leave the channel's
+            // folder.
+            ToFetcher::FetchScript { name, .. } => {
+                assert!(!name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')), "{name:?}");
+            }
             ToFetcher::StateAnswer { .. }
             | ToFetcher::StateSendOffer
             | ToFetcher::StateSendNone(_)

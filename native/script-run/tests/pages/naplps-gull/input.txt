@@ -1,0 +1,3 @@
+# the NAPLPS game of section 7.6: the gull climbs for half a second
+100 keydown ArrowUp
+130 keyup ArrowUp

@@ -79,6 +79,22 @@ impl App {
         }
     }
 
+    /// The trusted core's word on the open page's program: what the
+    /// trusted indications say of it, and the default action of a key it
+    /// let through (script-api.md sections 4.1 and 4.6).
+    pub(super) fn page_program(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, program: &crate::incoming::Program, now: u64) {
+        use crate::incoming::Program;
+        match program {
+            Program::View(view) => {
+                self.view.browser.set_script_view(*view, now);
+            }
+            Program::KeyDefault(default) => {
+                self.view.browser.script_key_default(default.key, default.code, default.typed, now);
+            }
+        }
+        self.act(event_loop);
+    }
+
     /// Whether keys go to the open page's channel, as the trusted core says.
     pub(super) fn show_typing(&mut self, typing: &protocol::interaction::Typing, now: u64) {
         let cursor = typing.cursor.map(|cursor| interface_core::browser::CursorView { row: cursor.row, column: cursor.column, flags: cursor.flags });

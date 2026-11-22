@@ -35,6 +35,7 @@ fn start() -> Start {
         body: BodySource::Bytes(12),
         protocols: Vec::new(),
         last_event_id: String::new(),
+        target_space: None,
     }
 }
 
@@ -206,6 +207,37 @@ fn every_kind_round_trips_in_the_host_form() {
         assert_eq!(read_answer(&mut input).unwrap(), Some(message));
     }
     assert_eq!(read_answer(&mut input).unwrap(), None);
+}
+
+/// DEC-7315 (TODO-7316 item 10): a start's declared target address
+/// space crosses as one byte after everything else, 0 for none; a number
+/// that is no space's is refused.
+#[test]
+fn a_starts_target_address_space_crosses_and_a_number_that_is_none_is_refused() {
+    let written = |start: Start| {
+        let mut pipe = Vec::new();
+        write_request(&mut pipe, &ToWebClient::Start(Box::new(start))).unwrap();
+        pipe
+    };
+    let mut codes = Vec::new();
+    for target_space in [None, Some(AddressSpace::Public), Some(AddressSpace::Local), Some(AddressSpace::Loopback)] {
+        for start in [Start { target_space, ..start() }, Start { target_space, ..socket() }, Start { target_space, ..stream() }] {
+            let pipe = written(start.clone());
+            assert_eq!(pipe.last().copied(), Some(target_space.map_or(0, AddressSpace::code)));
+            assert_eq!(read_request(&mut pipe.as_slice()).unwrap(), Some(ToWebClient::Start(Box::new(start))));
+        }
+        codes.extend(target_space.map(AddressSpace::code));
+    }
+    codes.sort_unstable();
+    assert_eq!(codes, [1, 2, 3], "each space has its own number, and none of them is the 0 of no declaration");
+    for code in [4, 0x7F, 0xFF] {
+        let mut pipe = written(start());
+        *pipe.last_mut().unwrap() = code;
+        assert!(matches!(read_request(&mut pipe.as_slice()), Err(ProtocolError::BadValue("target address space"))), "{code}");
+    }
+    let mut short = written(start());
+    short.pop();
+    assert!(read_request(&mut short.as_slice()).is_err(), "a start without the byte is not whole");
 }
 
 #[test]
@@ -749,6 +781,7 @@ fn raw_start(start: &Start) -> Vec<u8> {
         payload.extend(field(protocol.as_bytes()));
     }
     payload.extend(field(start.last_event_id.as_bytes()));
+    payload.push(start.target_space.map_or(0, AddressSpace::code));
     payload
 }
 

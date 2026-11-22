@@ -1,0 +1,21 @@
+{
+  "page": {
+    "scriptBytes": {"used": 3427, "limit": 1048576, "most": 3427},
+    "timers": {"used": 0, "limit": 32, "most": 0},
+    "listeners": {"used": 1, "limit": 256, "most": 1},
+    "requests": {"used": 0, "limit": 40, "most": 0},
+    "sockets": {"used": 0, "limit": 8, "most": 0},
+    "soundOperations": {"used": 0, "limit": 256, "most": 0},
+    "batchBytes": {"used": 0, "limit": 262144, "most": 0},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "triplets": {"used": 31, "limit": 208, "most": 37},
+    "colours": {"used": 0, "limit": 16, "most": 0},
+    "controls": {"used": 12, "limit": 32, "most": 12},
+    "sprites": {"used": 0, "limit": 32, "most": 0},
+    "spriteFrames": {"used": 0, "limit": 512, "most": 0},
+    "objectPageTriplets": {"used": 0, "limit": 8112, "most": 0},
+    "bitmapCellsLossy": {"used": 0, "limit": 920, "most": 0},
+    "components": {"used": 13, "limit": 64, "most": 13},
+    "uiNodes": {"used": 11, "limit": 16384, "most": 11}
+  }
+}

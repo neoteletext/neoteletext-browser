@@ -470,12 +470,32 @@ impl AddressSpace {
         }
     }
 
+    /// The space's number in a message.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Public => 1,
+            Self::Local => 2,
+            Self::Loopback => 3,
+        }
+    }
+
+    /// The space of the number `code`, if it is one's.
+    #[must_use]
+    pub fn of(code: u8) -> Option<Self> {
+        Self::ALL.iter().copied().find(|space| space.code() == code)
+    }
+
     /// The space `name` names, if it names one.
     #[must_use]
     pub fn named(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|space| space.name() == name)
     }
 }
+
+/// In a `Start`, the number that says the script declared no target
+/// address space; a space's own number is [`AddressSpace::code`].
+const TARGET_SPACE_NONE: u8 = 0;
 
 /// The address space of a page opened from disk. The behaviour DEC-7315
 /// follows makes it this computer's own, so its script reaches this
@@ -484,6 +504,15 @@ impl AddressSpace {
 /// where either answer is set ([`AddressSpace::Public`] makes such a
 /// page ask).
 pub const FILE_PAGE_SPACE: AddressSpace = AddressSpace::Loopback;
+
+/// The channel identity a web client is started with for a page opened
+/// from disk (DEC-7315 version 2, TODO-7395 step 1): its origin as it is
+/// written. Such a page has no channel address: its requests carry
+/// `Origin: null`, are cross-origin to every address, and carry cookies
+/// as a cross-site request does, from a jar that is that page's alone
+/// and never kept (DEC-7401). The trusted core starts one web client for
+/// each such page and tells it nothing of the file's path.
+pub const FILE_PAGE_IDENTITY: &str = "null";
 
 /// The referrer a request starts with (the Fetch standard's request
 /// referrer).
@@ -576,6 +605,13 @@ pub struct Start {
     /// An event stream's last event ID, for its `Last-Event-ID` header;
     /// empty for none, and for any other kind.
     pub last_event_id: String,
+    /// The address space the script says the address is in (the Local
+    /// Network Access draft's `targetAddressSpace`, of `fetch` and of the
+    /// `WebSocket` constructor; DEC-7315, TODO-7316 item 10): the request
+    /// fails when the address connected to is of another, and a declared
+    /// [`AddressSpace::Local`] is not mixed content. None when the script
+    /// says nothing.
+    pub target_space: Option<AddressSpace>,
 }
 
 /// An answer's head.
@@ -985,7 +1021,9 @@ impl Start {
         for protocol in &self.protocols {
             push_bytes(payload, protocol.as_bytes())?;
         }
-        push_bytes(payload, self.last_event_id.as_bytes())
+        push_bytes(payload, self.last_event_id.as_bytes())?;
+        payload.push(self.target_space.map_or(TARGET_SPACE_NONE, AddressSpace::code));
+        Ok(())
     }
 
     fn read(fields: &mut Fields<'_>) -> Result<Self, ProtocolError> {
@@ -1021,6 +1059,10 @@ impl Start {
             protocols.push(fields.string(MAX_SUBPROTOCOL_BYTES, "subprotocol")?);
         }
         let last_event_id = fields.string(MAX_EVENT_ID_BYTES, "last event ID")?;
+        let target_space = match fields.u8()? {
+            TARGET_SPACE_NONE => None,
+            code => Some(AddressSpace::of(code).ok_or(ProtocolError::BadValue("target address space"))?),
+        };
         let start = Self {
             id,
             context,
@@ -1040,6 +1082,7 @@ impl Start {
             body,
             protocols,
             last_event_id,
+            target_space,
         };
         start.check()?;
         Ok(start)

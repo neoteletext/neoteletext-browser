@@ -1,0 +1,5 @@
+000000 page warn sound does nothing until the viewer has pressed a key or the pointer in this tab
+000020 runner note verdicts C
+000060 runner note verdicts -
+000100 runner note verdicts C
+000160 runner note verdicts -

@@ -36,6 +36,8 @@ const ORDER_NO_SCRIPT: u8 = 3;
 const ORDER_SOUND_ALLOWED: u8 = 4;
 const ORDER_TEXT: u8 = 5;
 const ORDER_WHEEL: u8 = 6;
+const ORDER_POINTER: u8 = 7;
+const ORDER_NAVIGATING: u8 = 8;
 
 // The forms of [`ScriptReport`].
 const REPORT_CLAIMS: u8 = 1;
@@ -155,6 +157,147 @@ pub enum ScriptOrder {
         /// Lines down, down positive.
         delta_y: i16,
     },
+    /// The pointer on the open page, for a script that claims it (section
+    /// 4.2): the mouse, or a contact of a touch screen or a pen, each with
+    /// its number and kind.
+    Pointer(ScriptPointer),
+    /// The tab is about to go somewhere by something other than a script
+    /// of the page: the contexts hear `navigate` first (section 4.2).
+    Navigating {
+        /// What caused it.
+        cause: NavigationCause,
+        /// Where: a page of the channel as `NNN` or `NNN/SSSS`, or an
+        /// address, at most [`MAX_URL_BYTES`].
+        target: String,
+    },
+}
+
+/// The most pointers followed at once on a script's page (section 4.4,
+/// the specification's `MAX_POINTERS`): the mouse and the contacts of a
+/// touch screen together; a further contact is not reported.
+pub const MAX_POINTERS: u8 = 4;
+
+/// What kind of pointer an event is of (section 4.2's `pointerType`), by
+/// the number the script library packs it as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerKind {
+    /// The mouse.
+    Mouse,
+    /// A contact of a touch screen.
+    Touch,
+    /// A pen.
+    Pen,
+}
+
+impl PointerKind {
+    /// The number of the kind in a pointer event's first number (the
+    /// script library's packing, bits 8 and 9).
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Mouse => 0,
+            Self::Touch => 1,
+            Self::Pen => 2,
+        }
+    }
+
+    const fn of(code: u8) -> Result<Self, ProtocolError> {
+        match code {
+            0 => Ok(Self::Mouse),
+            1 => Ok(Self::Touch),
+            2 => Ok(Self::Pen),
+            _ => Err(ProtocolError::BadValue("pointer kind")),
+        }
+    }
+}
+
+/// What caused a navigation the trusted core tells a channel's scripts of
+/// (section 4.2's `cause`), by the script library's number for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavigationCause {
+    /// A script's own `nt.navigate`, for the context that did not call it.
+    Script,
+    /// A link of the page.
+    Link,
+    /// The default action of a key the page claimed.
+    Key,
+    /// The browser's own controls: never cancelable.
+    Browser,
+}
+
+impl NavigationCause {
+    /// The script library's number for the cause (its `NavigateCause`).
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Script => 1,
+            Self::Link => 2,
+            Self::Key => 3,
+            Self::Browser => 4,
+        }
+    }
+
+    const fn of(code: u8) -> Result<Self, ProtocolError> {
+        match code {
+            1 => Ok(Self::Script),
+            2 => Ok(Self::Link),
+            3 => Ok(Self::Key),
+            4 => Ok(Self::Browser),
+            _ => Err(ProtocolError::BadValue("navigation cause")),
+        }
+    }
+}
+
+/// A pointer event of the viewer for a script's page (section 4.2), with
+/// what the rule table's input does not carry: which pointer and of what
+/// kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScriptPointer {
+    /// The trusted core's number for the event, which a verdict names.
+    pub sequence: u32,
+    /// What the pointer did.
+    pub action: crate::rules::PointerAction,
+    /// On a press or release the button; on a move the buttons held.
+    pub button: u8,
+    /// The pixel of the page's picture.
+    pub x: u16,
+    /// The pixel of the page's picture.
+    pub y: u16,
+    /// Which pointer, 1 to [`MAX_POINTERS`]: the same number from its
+    /// press to its release.
+    pub pointer: u8,
+    /// What kind it is.
+    pub kind: PointerKind,
+    /// It is the primary pointer of its kind: the mouse, or the first
+    /// contact down.
+    pub primary: bool,
+}
+
+impl ScriptPointer {
+    fn check(&self) -> Result<(), ProtocolError> {
+        if (1..=MAX_POINTERS).contains(&self.pointer) { Ok(()) } else { Err(ProtocolError::BadValue("pointer number")) }
+    }
+}
+
+const fn pointer_action_code(action: crate::rules::PointerAction) -> u8 {
+    use crate::rules::PointerAction;
+    match action {
+        PointerAction::Press => 0,
+        PointerAction::Release => 1,
+        PointerAction::Move => 2,
+        PointerAction::Gone => 3,
+    }
+}
+
+const fn pointer_action_of(code: u8) -> Result<crate::rules::PointerAction, ProtocolError> {
+    use crate::rules::PointerAction;
+    match code {
+        0 => Ok(PointerAction::Press),
+        1 => Ok(PointerAction::Release),
+        2 => Ok(PointerAction::Move),
+        3 => Ok(PointerAction::Gone),
+        _ => Err(ProtocolError::BadValue("pointer action")),
+    }
 }
 
 /// What a script's manifest claims of the pointer.
@@ -376,6 +519,20 @@ pub(super) fn push_order(payload: &mut Vec<u8>, order: &ScriptOrder) -> Result<(
                 payload.extend_from_slice(&field);
             }
         }
+        ScriptOrder::Pointer(pointer) => {
+            pointer.check()?;
+            payload.push(ORDER_POINTER);
+            payload.extend_from_slice(&pointer.sequence.to_be_bytes());
+            payload.extend_from_slice(&[pointer_action_code(pointer.action), pointer.button]);
+            payload.extend_from_slice(&pointer.x.to_be_bytes());
+            payload.extend_from_slice(&pointer.y.to_be_bytes());
+            payload.extend_from_slice(&[pointer.pointer, pointer.kind.code(), u8::from(pointer.primary)]);
+        }
+        ScriptOrder::Navigating { cause, target } => {
+            check_plain(target, MAX_URL_BYTES, "navigation target")?;
+            payload.extend_from_slice(&[ORDER_NAVIGATING, cause.code()]);
+            push_bytes(payload, target.as_bytes())?;
+        }
     }
     Ok(())
 }
@@ -398,6 +555,25 @@ pub(super) fn read_order(fields: &mut Fields<'_>) -> Result<ScriptOrder, Protoco
         ORDER_SOUND_ALLOWED => ScriptOrder::SoundAllowed,
         ORDER_TEXT => ScriptOrder::Text { sequence: fields.u32()?, text: fields.string(MAX_EVENT_PAYLOAD_BYTES, "text")? },
         ORDER_WHEEL => ScriptOrder::Wheel { sequence: fields.u32()?, x: fields.u16()?, y: fields.u16()?, delta_x: fields.i16()?, delta_y: fields.i16()? },
+        ORDER_POINTER => {
+            let pointer = ScriptPointer {
+                sequence: fields.u32()?,
+                action: pointer_action_of(fields.u8()?)?,
+                button: fields.u8()?,
+                x: fields.u16()?,
+                y: fields.u16()?,
+                pointer: fields.u8()?,
+                kind: PointerKind::of(fields.u8()?)?,
+                primary: fields.flag("primary pointer")?,
+            };
+            pointer.check()?;
+            ScriptOrder::Pointer(pointer)
+        }
+        ORDER_NAVIGATING => {
+            let (cause, target) = (NavigationCause::of(fields.u8()?)?, fields.string(MAX_URL_BYTES, "navigation target")?);
+            check_plain(&target, MAX_URL_BYTES, "navigation target")?;
+            ScriptOrder::Navigating { cause, target }
+        }
         _ => return Err(ProtocolError::BadValue("script order")),
     })
 }
@@ -527,6 +703,11 @@ mod tests {
         PageSub::new(0x1A0, 2)
     }
 
+    fn pointer(number: u8) -> ScriptPointer {
+        use crate::rules::PointerAction;
+        ScriptPointer { sequence: 11, action: PointerAction::Release, button: 0, x: 479, y: 499, pointer: number, kind: PointerKind::Touch, primary: true }
+    }
+
     fn orders() -> Vec<ScriptOrder> {
         let piece = SourcePiece { level: ContextId::Page, page: page(), name: "tides-2.js".into(), total: 9, offset: 4, bytes: b"hello".to_vec() };
         vec![
@@ -542,6 +723,9 @@ mod tests {
             ScriptOrder::SoundAllowed,
             ScriptOrder::Text { sequence: 9, text: "été".into() },
             ScriptOrder::Wheel { sequence: 10, x: 479, y: 12, delta_x: -3, delta_y: 2 },
+            ScriptOrder::Pointer(pointer(MAX_POINTERS)),
+            ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "100/0002".into() },
+            ScriptOrder::Navigating { cause: NavigationCause::Link, target: "https://example.test/harbour/200.tti".into() },
         ]
     }
 
@@ -632,6 +816,13 @@ mod tests {
             ScriptOrder::Source(SourcePiece { level: ContextId::Page, page: page(), name: name.into(), total, offset, bytes: vec![b' '; bytes] })
         };
         let past = u32::try_from(MAX_SCRIPT_BYTES).unwrap() + 1;
+        // Section 4.4: a pointer has a number from 1 to `MAX_POINTERS`;
+        // section 4.2: a navigation's target is plain text.
+        let pointers = [ScriptOrder::Pointer(pointer(0)), ScriptOrder::Pointer(pointer(MAX_POINTERS + 1))];
+        let navigating = ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "1\u{7}00".into() };
+        for order in pointers.into_iter().chain([navigating]) {
+            assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::Script(order.clone())).is_err(), "{order:?}");
+        }
         for order in [source(0, 0, 1, "a.js"), source(past, 0, 1, "a.js"), source(4, 2, 3, "a.js"), source(4, 0, 0, "a.js"), source(4, 0, 4, "../a.js")] {
             assert!(write_to_decoder(&mut Vec::new(), &ToDecoder::Script(order.clone())).is_err(), "{order:?}");
         }
