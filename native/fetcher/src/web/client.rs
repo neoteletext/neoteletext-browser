@@ -643,8 +643,9 @@ pub(crate) fn run_with(
         }
         let _ = output.flush();
     });
-    // A page opened from disk has no cookies (DEC-7315 version 2).
-    let jar = if policy.is_file_page() { Jar::closed() } else { Jar::new(suffixes) };
+    // A page opened from disk has a jar of its own that is never kept
+    // (DEC-7315 version 2, DEC-7401).
+    let jar = if policy.is_file_page() { Jar::unkept(suffixes) } else { Jar::new(suffixes) };
     let shared = Rc::new(Shared {
         engine: Engine {
             policy,
