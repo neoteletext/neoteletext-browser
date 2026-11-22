@@ -39,8 +39,8 @@ use crate::random::math_seed;
 use crate::watchdog::Watchdog;
 
 /// The log levels the container itself writes at: a warning, an error.
-const LEVEL_WARN: u8 = 3;
-const LEVEL_ERROR: u8 = 4;
+const LEVEL_WARN: u8 = protocol::script::batch::LOG_WARN;
+const LEVEL_ERROR: u8 = protocol::script::batch::LOG_ERROR;
 /// The bits of a pointer event's first whole number that hold the action.
 const POINTER_ACTION_MASK: i32 = 0x0F;
 /// The whole numbers a pointer event's payload starts with: the pointer's
@@ -307,13 +307,15 @@ impl Container {
     }
 
     /// Notes that the container has stopped: every context is marked, and
-    /// the log says why.
-    fn note_stop(&mut self, stop: &Stop) {
+    /// the log says why, under the context whose code was running when it
+    /// stopped, so that a channel's author looks in the right file; a
+    /// stop that is no one context's doing names none.
+    fn note_stop(&mut self, stop: &Stop, running: Option<ContextId>) {
         self.machine.stop(stop.clone());
         let host = self.machine.host();
         host.end_callback();
         host.stop_all(stop.reason());
-        host.log_line(LEVEL_ERROR, None, &stop.to_string());
+        host.log_line(LEVEL_ERROR, running, &stop.to_string());
     }
 
     /// Opens a context and runs `source`'s top level in it, all within
@@ -353,12 +355,14 @@ impl Container {
         let prelude = match self.engine.prelude(parts) {
             Ok(prelude) => prelude,
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 return Err(LinkError::Stopped(stop.reason(), stop.to_string()));
             }
         };
+        // The opening's wall-clock time is its cost, for the measurements;
+        // its limit is counted on the scripts' clock.
         let began = Instant::now();
-        let deadline = began.checked_add(self.time.start);
+        let deadline = crate::clock::after(self.time.start);
         let name = if open.script_url.is_empty() { UNNAMED_SCRIPT.to_owned() } else { open.script_url.clone() };
         let seed = math_seed(&open.seed);
         let result = (|| {
@@ -382,7 +386,7 @@ impl Container {
                 Ok(())
             }
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 Err(LinkError::Stopped(stop.reason(), stop.to_string()))
             }
         }
@@ -401,9 +405,9 @@ impl Container {
             let _ = self.deliver(context, EventKind::CLOSE, [0; 4], Given::None, self.time.close);
         }
         if self.machine.stopped().is_none()
-            && let Err(stop) = self.machine.close_context(context, Instant::now().checked_add(self.time.close))
+            && let Err(stop) = self.machine.close_context(context, crate::clock::after(self.time.close))
         {
-            self.note_stop(&stop);
+            self.note_stop(&stop, Some(context));
         }
         self.machine.host().close(context);
         self.queue.retain(|waiting| !(context == ContextId::Channel && waiting.owed == Owed::Channel));
@@ -477,7 +481,7 @@ impl Container {
             return Ok(None);
         }
         self.machine.host().begin_callback(context, Some(kind), numbers[0]);
-        let result = self.machine.event(context, kind.number(), numbers, payload, Instant::now().checked_add(limit));
+        let result = self.machine.event(context, kind.number(), numbers, payload, crate::clock::after(limit));
         self.machine.host().end_callback();
         match result {
             Ok(entry) => {
@@ -485,7 +489,7 @@ impl Container {
                 Ok(Some(entry))
             }
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 Err(stop)
             }
         }
@@ -827,9 +831,9 @@ impl Container {
         // The step's one ReGIS commit is checked by the renderer's
         // validator here, inside the step's time: host time is the
         // script's time (section 3.2).
-        let began = Instant::now();
+        let began = crate::clock::now();
         self.machine.host().regis_commit();
-        self.step_used = self.step_used.saturating_add(began.elapsed());
+        self.step_used = self.step_used.saturating_add(crate::clock::since(began));
         self.costs.last_step = self.step_used;
         self.costs.longest_step = self.costs.longest_step.max(self.step_used);
         // The budget over a second: this tick's time joins the window.
@@ -848,7 +852,7 @@ impl Container {
         figures.second_percent = percent(in_second, time.second);
         if in_second > time.second && self.machine.stopped().is_none() {
             self.machine.host().log_line(LEVEL_WARN, None, "SECOND_TIME_BUDGET: the scripts used more time in a second than they may");
-            self.note_stop(&Stop::Time);
+            self.note_stop(&Stop::Time, None);
         }
         Ok(self.machine.host().take_batch(step.sequence, &verdicts))
     }

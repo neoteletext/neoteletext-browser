@@ -19,6 +19,7 @@ mod descriptors;
 mod hang_up;
 mod limits;
 mod memory;
+mod own_time;
 mod termination;
 mod time;
 #[cfg(target_os = "macos")]
@@ -33,6 +34,7 @@ pub(crate) use descriptors::{hold_only, receive, send, take_inherited};
 pub(crate) use hang_up::wait_for_hang_up;
 pub use limits::{DESCRIPTORS_NEEDED, raise_descriptor_limit};
 pub(crate) use memory::limit_memory;
+pub(crate) use own_time::processor_time;
 pub use termination::{TERMINATION_SIGNALS, termination_requests};
 pub(crate) use time::local_offset;
 #[cfg(target_os = "macos")]

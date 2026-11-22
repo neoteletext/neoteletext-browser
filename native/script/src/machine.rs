@@ -189,7 +189,7 @@ impl State {
     /// A trap when the entry's deadline has passed.
     fn check_time(&self) -> Result<(), wasmi::Error> {
         match self.deadline {
-            Some(deadline) if Instant::now() > deadline => Err(wasmi::Error::host(TimeUp)),
+            Some(deadline) if crate::clock::passed(deadline) => Err(wasmi::Error::host(TimeUp)),
             _ => Ok(()),
         }
     }
@@ -472,7 +472,7 @@ impl Engine {
             return Ok(Arc::clone(bytecode));
         }
         let mut machine = Machine::new(self, Host::new(), 0, None)?;
-        let deadline = Instant::now().checked_add(PRELUDE_COMPILE_LIMIT);
+        let deadline = crate::clock::after(PRELUDE_COMPILE_LIMIT);
         machine.open_context(ContextId::Page, 0, deadline)?;
         let bytecode: Arc<[u8]> = machine.compile(ContextId::Page, crate::ops::prelude_of(parts).as_bytes(), PRELUDE_NAME, deadline)?.into();
         preludes.push((parts, Arc::clone(&bytecode)));
@@ -673,7 +673,7 @@ impl Machine {
 
     fn bounded<P: WasmParams, R: WasmResults>(&mut self, function: TypedFunc<P, R>, parameters: P, deadline: Option<Instant>) -> Result<R, Stop> {
         let Some(deadline) = deadline else { return Err(Stop::Time) };
-        if Instant::now() > deadline {
+        if crate::clock::passed(deadline) {
             return Err(Stop::Time);
         }
         self.store.data_mut().deadline = Some(deadline);
@@ -692,7 +692,7 @@ impl Machine {
                     self.longest_slice = self.longest_slice.max(now.saturating_duration_since(slice_began));
                     self.slices = self.slices.saturating_add(1);
                     slice_began = now;
-                    if now > deadline {
+                    if crate::clock::passed(deadline) {
                         return Err(Stop::Time);
                     }
                     // A function translated on its first call may need
@@ -791,7 +791,7 @@ impl Machine {
             let length = usize::try_from(length).unwrap_or(0).min(MAX_ERROR_BYTES);
             entry.error = read(self.memory.data(&self.store), self.scratch, length).map(|bytes| String::from_utf8_lossy(bytes).into_owned());
         }
-        entry.elapsed = began.elapsed();
+        entry.elapsed = crate::clock::since(began);
         if bits & ENTRY_MEMORY != 0 {
             // QuickJS's heap was full during the entry: the memory limit
             // was passed, and the container is stopped for good.
@@ -808,7 +808,7 @@ impl Machine {
     /// The stop, when the container is or becomes stopped. A script that
     /// throws is not a stop: the entry says so.
     pub fn eval(&mut self, context: ContextId, source: &[u8], name: &str, strict: bool, deadline: Option<Instant>) -> Result<Entry, Stop> {
-        let began = Instant::now();
+        let began = crate::clock::now();
         if source.len() > MAX_SCRIPT_BYTES {
             return Err(Stop::Trap("a script longer than MAX_SCRIPT_BYTES was given to the container".into()));
         }
@@ -866,7 +866,7 @@ impl Machine {
     /// bytecode it reads, so nothing but what the engine compiled itself
     /// is ever given to it.
     pub(crate) fn run(&mut self, context: ContextId, bytecode: &[u8], deadline: Option<Instant>) -> Result<Entry, Stop> {
-        let began = Instant::now();
+        let began = crate::clock::now();
         let length = i32::try_from(bytecode.len()).map_err(|_| Stop::Container("the prelude's bytecode is too long".into()))?;
         let code = self.enter(self.exports.alloc, length, deadline)?;
         if code == 0 {
@@ -885,7 +885,7 @@ impl Machine {
     /// The stop, when the container is or becomes stopped. A handler that
     /// throws is not a stop: the entry says so.
     pub fn event(&mut self, context: ContextId, kind: i32, numbers: [i32; 4], payload: Given<'_>, deadline: Option<Instant>) -> Result<Entry, Stop> {
-        let began = Instant::now();
+        let began = crate::clock::now();
         let mut words = Vec::new();
         let (bytes, payload_kind): (&[u8], i32) = match payload {
             Given::None => (&[], PAYLOAD_NONE),
@@ -956,7 +956,7 @@ impl Probe {
             })
             .collect();
         let mut out = vec![wasmi::Val::I32(0); results.len()];
-        self.store.data_mut().deadline = Instant::now().checked_add(limit);
+        self.store.data_mut().deadline = crate::clock::after(limit);
         self.store.set_fuel(FUEL_SLICE).map_err(|error| Stop::Trap(error.to_string()))?;
         let called = function.call(&mut self.store, &values, &mut out);
         self.store.data_mut().deadline = None;

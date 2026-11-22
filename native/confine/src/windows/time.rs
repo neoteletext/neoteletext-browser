@@ -1,4 +1,5 @@
-//! The local time zone's offset, by Windows's own rules (decision 57).
+//! The local time zone's offset, by Windows's own rules (decision 57), and
+//! this process's own processor time.
 
 #![expect(unsafe_code, reason = "the Win32 calls that create a confined process (requirement 10.12, decision 52)")]
 
@@ -28,4 +29,24 @@ pub(crate) fn local_offset() -> io::Result<i32> {
         _ => information.Bias,
     };
     Ok(bias.saturating_mul(SECONDS_PER_MINUTE).saturating_neg())
+}
+
+/// The processor time this process has used since it started, kernel and
+/// user together (`GetProcessTimes`, each a count of 100 nanoseconds);
+/// none when Windows does not say.
+pub(crate) fn processor_time() -> Option<std::time::Duration> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+    /// Nanoseconds in one count of a `FILETIME`.
+    const NANOSECONDS_PER_COUNT: u64 = 100;
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let (mut created, mut exited, mut kernel, mut user) = (zero, zero, zero, zero);
+    // SAFETY: the pseudo-handle of this process needs no closing, and the
+    // call writes the four live locals it is given.
+    let read = unsafe { GetProcessTimes(GetCurrentProcess(), &raw mut created, &raw mut exited, &raw mut kernel, &raw mut user) };
+    if read == 0 {
+        return None;
+    }
+    let counts = |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    Some(std::time::Duration::from_nanos(counts(kernel).saturating_add(counts(user)).saturating_mul(NANOSECONDS_PER_COUNT)))
 }

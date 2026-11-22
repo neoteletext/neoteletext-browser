@@ -658,6 +658,13 @@ fn a_declared_target_address_space_reaches_the_web_client_and_any_other_word_thr
           await fetch("https://far.test/d");
           equal("a Request shows it", new Request("/e", { targetAddressSpace: "local" }).targetAddressSpace + new Request("/e").targetAddressSpace, "localunknown");
           equal("a copy keeps it", new Request(new Request("/e", { targetAddressSpace: "local" })).targetAddressSpace, "local");
+          // A Request given as the dictionary (Fetch standard section 5.4:
+          // a RequestInit's members are read from it as from any object):
+          // its body is duplicated and its space kept, and one that
+          // declares no space, which shows "unknown", is taken.
+          const first = new Request("https://example.test/", { body: "req1", method: "POST" });
+          equal("a Request as the dictionary gives its body", await new Request("https://example.test/", first).text(), "req1");
+          equal("and its space", new Request("/e", new Request("/x", { targetAddressSpace: "local" })).targetAddressSpace, "local");
           for (const word of ["private", "unknown", "invalid", ""]) {
             throws("fetch with '" + word + "'", TypeError, "", () => new Request("/f", { targetAddressSpace: word }));
             throws("a socket with '" + word + "'", TypeError, "", () => new WebSocket("wss://example.test/s", { targetAddressSpace: word }));
@@ -669,7 +676,7 @@ fn a_declared_target_address_space_reaches_the_web_client_and_any_other_word_thr
         "#,
         mock,
         30,
-        10,
+        12,
     );
     let starts = mock.starts();
     let declared: Vec<(String, Option<protocol::web::AddressSpace>, Vec<String>)> =

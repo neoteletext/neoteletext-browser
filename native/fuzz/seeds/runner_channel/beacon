@@ -1,0 +1,1 @@
+{"name": "Beacon", "initial_page": "100", "scripts": {"pages": {"100": "beacon.js"}}}

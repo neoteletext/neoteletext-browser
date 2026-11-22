@@ -8,7 +8,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
@@ -116,17 +116,31 @@ impl hyper::body::Body for Streamed {
 
 type Handler = Arc<dyn Fn(&Asked) -> Reply + Send + Sync>;
 
+/// What a server was asked, and the signal that it was asked something
+/// more.
+type Record = Arc<(Mutex<Vec<Asked>>, Condvar)>;
+
 /// A server on this computer.
 pub(super) struct Server {
     pub(super) port: u16,
-    asked: Arc<Mutex<Vec<Asked>>>,
+    asked: Record,
     connections: Arc<AtomicUsize>,
 }
 
 impl Server {
     /// Everything asked so far, in order.
     pub(super) fn asked(&self) -> Vec<Asked> {
-        self.asked.lock().unwrap().clone()
+        self.asked.0.lock().unwrap().clone()
+    }
+
+    /// Waits until `method` has been asked of `target`: for a request
+    /// whose arrival no event of the client's tells. The wait ends when
+    /// the server records it; [`PATIENCE`] is its ceiling.
+    pub(super) fn wait_for(&self, method: &str, target: &str) {
+        let (asked, arrived) = &*self.asked;
+        let absent = |asked: &mut Vec<Asked>| !asked.iter().any(|asked| asked.method == method && asked.target == target);
+        let (_asked, waited) = arrived.wait_timeout_while(asked.lock().unwrap(), PATIENCE, absent).unwrap();
+        assert!(!waited.timed_out(), "{method} {target} was never asked");
     }
 
     /// What was asked of `target`, which was asked once.
@@ -157,11 +171,7 @@ impl Server {
     }
 }
 
-async fn answer(
-    request: hyper::Request<Incoming>,
-    handler: Handler,
-    asked: Arc<Mutex<Vec<Asked>>>,
-) -> Result<hyper::Response<Streamed>, std::convert::Infallible> {
+async fn answer(request: hyper::Request<Incoming>, handler: Handler, asked: Record) -> Result<hyper::Response<Streamed>, std::convert::Infallible> {
     let (parts, mut incoming) = request.into_parts();
     let mut body = Vec::new();
     while let Some(Ok(frame)) = poll_fn(|context| Pin::new(&mut incoming).poll_frame(context)).await {
@@ -177,7 +187,8 @@ async fn answer(
         body,
     };
     let reply = handler(&was);
-    asked.lock().unwrap().push(was);
+    asked.0.lock().unwrap().push(was);
+    asked.1.notify_all();
     let mut response = hyper::Response::builder().status(reply.status);
     if let ([Piece::Bytes(only)], false) = (reply.pieces.as_slice(), reply.headers.iter().any(|(name, _)| name == "content-length")) {
         response = response.header("content-length", only.len());
@@ -222,7 +233,7 @@ fn serve_with(tls: Option<Vec<Vec<u8>>>, handler: Handler) -> Server {
     let listener = TcpListener::bind((HERE, 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
-    let asked = Arc::new(Mutex::new(Vec::new()));
+    let asked: Record = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
     let connections = Arc::new(AtomicUsize::new(0));
     let (noted, counted) = (Arc::clone(&asked), Arc::clone(&connections));
     std::thread::spawn(move || {

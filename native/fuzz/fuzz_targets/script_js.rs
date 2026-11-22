@@ -30,17 +30,47 @@ const MARGIN: Duration = Duration::from_millis(1500);
 /// The steps each input is given.
 const STEPS: u32 = 6;
 
-fn engine() -> &'static Engine {
-    static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| Engine::new().unwrap_or_else(|stop| panic!("the module does not compile: {stop}")))
+/// The engine, warmed, and the limits the inputs run under.
+struct Prepared {
+    engine: Engine,
+    /// [`LIMITS`] with the prelude's own time added to the start limit.
+    limits: TimeLimits,
+    /// [`MARGIN`] with the prelude's own time added.
+    margin: Duration,
 }
 
-fuzz_target!(|data: &[u8]| {
-    let mut container = Container::new(engine(), &Settings { time: LIMITS, watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
-    // An empty script is no script, and one past the bound is refused
-    // before it is run: neither is this target's to try.
-    let Ok(source_bytes) = u32::try_from(data.len()) else { return };
-    let open = ContextOpen {
+/// The engine translates the module's functions on their first call, and
+/// every context's realm runs the whole prelude inside its start limit
+/// before any of its script (TODO-7386, DEC-7402). Under the fuzzer's
+/// instruments the first translation takes many seconds and one prelude
+/// far more than [`LIMITS`]' start: unwarmed, the first input passes the
+/// fuzzer's timeout, and with the bare limit every input is stopped
+/// before its first statement, so that nothing of the script is reached.
+/// The engine is therefore warmed once, before any input, and the start
+/// limit given the prelude's measured time on this build and machine, so
+/// that it is still the script's own top level that the limit holds.
+fn prepared() -> &'static Prepared {
+    static PREPARED: OnceLock<Prepared> = OnceLock::new();
+    PREPARED.get_or_init(|| {
+        let engine = Engine::new().unwrap_or_else(|stop| panic!("the module does not compile: {stop}"));
+        let script: &[u8] = b"/*! nt {\"api\":1} */\n";
+        let mut prelude = Duration::ZERO;
+        // The first opening translates; the second is the prelude alone.
+        for _ in 0..2 {
+            let mut container =
+                Container::new(&engine, &Settings { time: TimeLimits::unhurried(), watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
+            let began = Instant::now();
+            let open = opening(u32::try_from(script.len()).unwrap_or(0));
+            container.open(open, script).unwrap_or_else(|error| panic!("an empty script does not open: {error}"));
+            prelude = began.elapsed();
+            container.close(ContextId::Page);
+        }
+        Prepared { engine, limits: TimeLimits { start: LIMITS.start + prelude * 2, ..LIMITS }, margin: MARGIN + prelude }
+    })
+}
+
+fn opening(source_bytes: u32) -> ContextOpen {
+    ContextOpen {
         context: ContextId::Page,
         api: 1,
         renderer: Renderer::Teletext,
@@ -60,13 +90,23 @@ fuzz_target!(|data: &[u8]| {
         keys: vec!["Enter".into()],
         sounds: vec![1],
         source_bytes,
-    };
+    }
+}
+
+fuzz_target!(init: { prepared(); }, |data: &[u8]| {
+    let Prepared { engine, limits, margin } = prepared();
+    let (limits, margin) = (*limits, *margin);
+    let mut container = Container::new(engine, &Settings { time: limits, watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
+    // An empty script is no script, and one past the bound is refused
+    // before it is run: neither is this target's to try.
+    let Ok(source_bytes) = u32::try_from(data.len()) else { return };
+    let open = opening(source_bytes);
     if open.check().is_err() {
         return;
     }
     let began = Instant::now();
     let opened = container.open(open, data);
-    assert!(began.elapsed() <= LIMITS.start + MARGIN, "the top level took {:?}", began.elapsed());
+    assert!(began.elapsed() <= limits.start + margin, "the top level took {:?}", began.elapsed());
     let mut stopped = matches!(opened, Err(LinkError::Stopped(..)));
     for at in 0..STEPS {
         let events = vec![
@@ -84,7 +124,7 @@ fuzz_target!(|data: &[u8]| {
             ..Step::default()
         });
         // A step starts nothing past its budget, and no callback outlives its limit.
-        assert!(began.elapsed() <= LIMITS.step + LIMITS.callback + MARGIN, "a step took {:?}", began.elapsed());
+        assert!(began.elapsed() <= limits.step + limits.callback + margin, "a step took {:?}", began.elapsed());
         if stopped {
             assert!(batch.is_err() && container.costs().callbacks == callbacks, "a stopped container was entered again");
         }

@@ -6,7 +6,7 @@
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use protocol::web::{AddressSpace, ErrorKind, FromWebClient, MAX_CHUNK_BYTES, MAX_WS_MESSAGE_BYTES, Reason, RequestKind, Start, ToWebClient};
@@ -80,8 +80,9 @@ fn read_frame(stream: &mut dyn Read) -> Option<(u8, Vec<u8>)> {
 /// Serves one connection: the handshake as `answering` says, then every
 /// message echoed, with a few texts that ask the server for something
 /// else. What it read of the handshake, and each close it was sent, go to
-/// `seen`.
-fn converse(mut stream: impl Read + Write, answering: Answering, seen: &Mutex<Vec<String>>) {
+/// `seen`; the body of each close frame it was sent goes to `closes`, in
+/// the order they came, for a test to wait on.
+fn converse(mut stream: impl Read + Write, answering: Answering, seen: &Mutex<Vec<String>>, closes: &mpsc::Sender<Vec<u8>>) {
     let mut head = Vec::new();
     let mut byte = [0_u8; 1];
     while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
@@ -120,7 +121,8 @@ fn converse(mut stream: impl Read + Write, answering: Answering, seen: &Mutex<Ve
         let reply = match (opcode, payload.as_slice()) {
             // A close is answered with the same body, and ends it.
             (8, body) => {
-                seen.lock().unwrap().push(format!("close {body:?}"));
+                // The test may have gone on to other things.
+                let _ = closes.send(body.to_vec());
                 let _ = stream.write_all(&frame(8, body));
                 return;
             }
@@ -144,14 +146,35 @@ fn converse(mut stream: impl Read + Write, answering: Answering, seen: &Mutex<Ve
 
 /// A WebSocket server on this computer, plain or over TLS, and what it
 /// saw.
-fn socket_server(answering: Answering, tls: bool) -> (u16, Arc<Mutex<Vec<String>>>) {
+fn socket_server(answering: Answering, tls: bool) -> (u16, Seen) {
+    let (port, seen, _closes) = socket_server_with_closes(answering, tls);
+    (port, seen)
+}
+
+/// The head of each handshake a server read, in order.
+type Seen = Arc<Mutex<Vec<String>>>;
+
+/// How long a test waits for the server to say it was sent a close.
+const CLOSE_PATIENCE: Duration = Duration::from_secs(20);
+
+/// The body of the next close frame the server was sent. The server
+/// says so when it has read the frame, which for a close it began
+/// itself is after the client has told the script: the test waits for
+/// it and reads no record that may not be written yet.
+fn next_close(closes: &mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
+    closes.recv_timeout(CLOSE_PATIENCE).expect("the server was sent a close")
+}
+
+/// [`socket_server`], with the close frames the server was sent.
+fn socket_server_with_closes(answering: Answering, tls: bool) -> (u16, Seen, mpsc::Receiver<Vec<u8>>) {
     let listener = TcpListener::bind((HERE, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let noted = Arc::clone(&seen);
+    let (closing, closes) = mpsc::channel();
     std::thread::spawn(move || {
         for socket in listener.incoming() {
-            let (socket, noted) = (socket.unwrap(), Arc::clone(&noted));
+            let (socket, noted, closing) = (socket.unwrap(), Arc::clone(&noted), closing.clone());
             std::thread::spawn(move || {
                 if tls {
                     let (certificate, key) = certificate();
@@ -159,14 +182,14 @@ fn socket_server(answering: Answering, tls: bool) -> (u16, Arc<Mutex<Vec<String>
                     // HTTP/2 is offered: a socket's handshake must not take it.
                     config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
                     let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
-                    converse(rustls::StreamOwned::new(connection, socket), answering, &noted);
+                    converse(rustls::StreamOwned::new(connection, socket), answering, &noted, &closing);
                 } else {
-                    converse(socket, answering, &noted);
+                    converse(socket, answering, &noted, &closing);
                 }
             });
         }
     });
-    (port, seen)
+    (port, seen, closes)
 }
 
 fn as_socket(protocols: &[&str]) -> impl FnOnce(&mut Start) {
@@ -205,7 +228,7 @@ fn closed(id: u32, code: u16, reason: &str, clean: bool) -> FromWebClient {
 /// answered; a fragmented message is one message.
 #[test]
 fn a_socket_opens_and_carries_messages_each_way() {
-    let (port, seen) = socket_server(Answering::Accepts, false);
+    let (port, seen, closes) = socket_server_with_closes(Answering::Accepts, false);
     let web = serve(|_| Reply::ok("x").header("set-cookie", "sid=1; Path=/"));
     let channel = format!("http://site.test:{}/a/", web.port);
     let mut client = Client::new(&channel);
@@ -268,7 +291,7 @@ fn a_socket_opens_and_carries_messages_each_way() {
     // clean.
     client.send(&ToWebClient::SocketClose { id, code: 1000, reason: "done".into() });
     assert_eq!(next(&mut client), closed(id, 1000, "done", true));
-    assert_eq!(seen.lock().unwrap().last().unwrap(), &format!("close {:?}", [&1000_u16.to_be_bytes()[..], b"done"].concat()));
+    assert_eq!(next_close(&closes), [&1000_u16.to_be_bytes()[..], b"done"].concat());
     client.send(&ToWebClient::SocketSend { id, binary: false, last: true, bytes: b"late".to_vec() });
     assert_eq!(client.next_within(Duration::from_millis(200)), None, "a closed socket takes no more");
     client.finish().unwrap();
@@ -300,7 +323,7 @@ fn a_file_pages_socket_says_the_origin_null() {
 /// the rules each end the socket uncleanly.
 #[test]
 fn a_socket_closes_as_each_side_asks() {
-    let (port, seen) = socket_server(Answering::Accepts, false);
+    let (port, _seen, closes) = socket_server_with_closes(Answering::Accepts, false);
     let mut client = Client::new(&format!("http://site.test:{port}/a/"));
     let address = format!("ws://site.test:{port}/a/live");
     let open = |client: &mut Client| {
@@ -308,19 +331,18 @@ fn a_socket_closes_as_each_side_asks() {
         assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: String::new() });
         id
     };
-    let last_close = |seen: &Mutex<Vec<String>>| seen.lock().unwrap().iter().rev().find(|line| line.starts_with("close")).cloned().unwrap();
-    for (code, sent, told) in
-        [(1005, "close []", 1005), (1009, "close [3, 241]", 1009), (3000, "close [11, 184]", 3000), (1006, "close []", 1005), (1001, "close []", 1005)]
-    {
+    for (code, sent, told) in [(1005, None, 1005), (1009, Some(1009_u16), 1009), (3000, Some(3000), 3000), (1006, None, 1005), (1001, None, 1005)] {
         let id = open(&mut client);
         client.send(&ToWebClient::SocketClose { id, code, reason: String::new() });
         assert_eq!(client.next_event(), closed(id, told, "", true), "code {code}");
-        assert_eq!(last_close(&seen), sent, "code {code}");
+        // Each close the server was sent is taken in its turn, so none
+        // is mistaken for another socket's.
+        assert_eq!(next_close(&closes), sent.map(|code| code.to_be_bytes().to_vec()).unwrap_or_default(), "code {code}");
     }
     let id = open(&mut client);
     text(&mut client, id, "bye");
     assert_eq!(next(&mut client), closed(id, 4001, "going", true));
-    assert_eq!(last_close(&seen), "close [15, 161]", "the server's close is answered with its code");
+    assert_eq!(next_close(&closes), 4001_u16.to_be_bytes(), "the server's close is answered with its code");
     let id = open(&mut client);
     text(&mut client, id, "vanish");
     assert_eq!(next(&mut client), closed(id, 1006, "", false));

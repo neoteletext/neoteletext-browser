@@ -165,26 +165,10 @@ fn serve(stream: TcpStream, folder: &Path, asked: &Mutex<Vec<(String, u16)>>) {
 }
 
 /// The folder of the fetcher, the decoder and the script host, built
-/// beside this test in its own profile.
+/// beside this test in its own profile and feature shape, as the loading
+/// tests build them (TODO-7440).
 fn programs() -> PathBuf {
-    let mut build = std::process::Command::new(env!("CARGO"));
-    for (name, _) in std::env::vars_os() {
-        let runners = name.to_str().is_some_and(|name| name == "OUT_DIR" || (name.starts_with("CARGO_") && !matches!(name, "CARGO_HOME" | "CARGO_TARGET_DIR")));
-        if runners {
-            build.env_remove(name);
-        }
-    }
-    build.args(["build", "--quiet"]);
-    for package in ["neoteletext-script-host", "neoteletext-fetcher", "neoteletext-decoder"] {
-        build.args(["--package", package]);
-    }
-    if !cfg!(debug_assertions) {
-        build.arg("--release");
-    }
-    assert!(build.status().unwrap().success(), "the helpers did not build");
-    // The test runs from target/<profile>/deps; the programs are beside it.
-    let deps = std::env::current_exe().unwrap();
-    deps.parent().and_then(|deps| deps.parent()).unwrap().to_path_buf()
+    loading_tests::programs()
 }
 
 /// A trusted core with the real helpers, on the served channel.

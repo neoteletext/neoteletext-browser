@@ -18,7 +18,9 @@ use neoteletext::outbox::Outbox;
 use neoteletext::settings::Settings;
 use protocol::fetcher::PROCESS_TAB;
 use protocol::script::link::{Asked, HostLink, Received};
-use protocol::script::relay::{DecoderInput, DecoderOutput, HostInput, read_decoder_input, read_decoder_output, read_host_input};
+use protocol::script::relay::{
+    DecoderInput, DecoderOutput, HostInput, START_HUNG_AFTER, STEP_HUNG_AFTER, read_decoder_input, read_decoder_output, read_host_input,
+};
 use protocol::script::{
     Batch, ContextFlags, ContextOpen, Level as PageLevel, Renderer, Step, StepFlags, ToScriptHost, write_to_decoder as write_link_to_decoder, write_to_host,
 };
@@ -210,56 +212,49 @@ fn stepped(sequence: u32) -> Vec<u8> {
 /// program, started confined through the broker's wire at the trusted
 /// core's request when the decoder greets, and what it does is relayed
 /// to its decoder; told to end, the process is ended and nothing is
-/// marked stopped. A script whose start was stopped for time, as on a
-/// machine with no processor free, is not this test's to judge: the run
-/// is made again.
+/// marked stopped.
 #[test]
 fn a_script_runs_in_a_confined_process_the_broker_started_and_is_relayed_to_its_decoder() {
-    for _ in 0..5 {
-        let mut test = Test::real();
-        let mut link = HostLink::new();
-        let source = b"console.log('page ' + nt.page.number.toString(16) + ' runs'); nt.addEventListener('close', () => console.log('closed'));";
-        let mut written = Vec::new();
-        link.open(&mut written, &opening(source), source).unwrap();
-        link.step(&mut written, &step(1)).unwrap();
-        assert_eq!(test.core.script_state(test.channel), ScriptState::None);
-        test.decoder_writes(&written);
-        assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
-        let hosts = test.started(Program::ScriptHost);
-        assert_eq!(hosts.len(), 1, "one script host for the (tab, channel)");
-        assert!(hosts[0].arguments.is_empty() && !hosts[0].local_network && hosts[0].udp_port.is_none(), "{:?}", hosts[0]);
-        #[cfg(target_os = "linux")]
-        assert_eq!(hosts[0].report, "confines itself at its start");
-        assert_eq!(link.receive(test.decoder_reads().unwrap()), Received::Ready { api_max: 1 });
-        let batch = match link.receive(test.decoder_reads().unwrap()) {
-            Received::Batch { asked: Asked::Step(1), batch } => batch,
-            Received::Stopped(stopped) if stopped.reason == FailReason::Time => continue,
-            other => panic!("{other:?}"),
-        };
-        let lines: Vec<String> = batch.log.unwrap_or_default().into_iter().map(|line| line.text).collect();
-        assert_eq!(lines, vec!["page 100 runs"]);
-        // The page is left: its close's own batch, then the end.
-        let mut written = Vec::new();
-        link.close(&mut written, ContextId::Page).unwrap();
-        test.decoder_writes(&written);
-        let Received::Batch { asked: Asked::Close(ContextId::Page), batch } = link.receive(test.decoder_reads().unwrap()) else {
-            panic!("no batch for the close")
-        };
-        assert_eq!(batch.log.unwrap_or_default().into_iter().map(|line| line.text).collect::<Vec<_>>(), vec!["closed"]);
-        assert_eq!(test.core.scripts_due_at(), None, "everything asked was answered");
-        let mut written = Vec::new();
-        link.shutdown(&mut written).unwrap();
-        test.decoder_writes(&written);
-        assert_eq!(test.core.script_state(test.channel), ScriptState::None);
-        // It ends by itself, told to: the broker is asked to wait for it.
-        test.until_asked(|request| matches!(request, Request::Wait(id) if *id == hosts[0].id));
-        return;
-    }
-    panic!("stopped for time in five tries: this machine has no processor free");
+    let mut test = Test::real();
+    let mut link = HostLink::new();
+    let source = b"console.log('page ' + nt.page.number.toString(16) + ' runs'); nt.addEventListener('close', () => console.log('closed'));";
+    let mut written = Vec::new();
+    link.open(&mut written, &opening(source), source).unwrap();
+    link.step(&mut written, &step(1)).unwrap();
+    assert_eq!(test.core.script_state(test.channel), ScriptState::None);
+    test.decoder_writes(&written);
+    assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
+    let hosts = test.started(Program::ScriptHost);
+    assert_eq!(hosts.len(), 1, "one script host for the (tab, channel)");
+    assert!(hosts[0].arguments.is_empty() && !hosts[0].local_network && hosts[0].udp_port.is_none(), "{:?}", hosts[0]);
+    #[cfg(target_os = "linux")]
+    assert_eq!(hosts[0].report, "confines itself at its start");
+    assert_eq!(link.receive(test.decoder_reads().unwrap()), Received::Ready { api_max: 1 });
+    let batch = match link.receive(test.decoder_reads().unwrap()) {
+        Received::Batch { asked: Asked::Step(1), batch } => batch,
+        other => panic!("{other:?}"),
+    };
+    let lines: Vec<String> = batch.log.unwrap_or_default().into_iter().map(|line| line.text).collect();
+    assert_eq!(lines, vec!["page 100 runs"]);
+    // The page is left: its close's own batch, then the end.
+    let mut written = Vec::new();
+    link.close(&mut written, ContextId::Page).unwrap();
+    test.decoder_writes(&written);
+    let Received::Batch { asked: Asked::Close(ContextId::Page), batch } = link.receive(test.decoder_reads().unwrap()) else { panic!("no batch for the close") };
+    assert_eq!(batch.log.unwrap_or_default().into_iter().map(|line| line.text).collect::<Vec<_>>(), vec!["closed"]);
+    assert_eq!(test.core.scripts_due_at(), None, "everything asked was answered");
+    let mut written = Vec::new();
+    link.shutdown(&mut written).unwrap();
+    test.decoder_writes(&written);
+    assert_eq!(test.core.script_state(test.channel), ScriptState::None);
+    // It ends by itself, told to: the broker is asked to wait for it.
+    test.until_asked(|request| matches!(request, Request::Wait(id) if *id == hosts[0].id));
 }
 
-/// Section 11.1 and TODO-7292's check: a script host that does not
-/// answer a step within `STEP_DEADLINE` is killed, its decoder is told
+/// Section 11.1 and TODO-7292's check, as DEC-7357 was revised: a script
+/// host that owes a step's answer and says nothing for `STEP_HUNG_AFTER`
+/// is killed, and not at `STEP_DEADLINE`, which a script host on a busy
+/// machine passes with no fault of its own; its decoder is told
 /// FAILED for time, the channel's scripts are shown stopped, and no
 /// script host is started for the channel again. The script host here
 /// is two pipes that say READY and then nothing.
@@ -272,8 +267,10 @@ fn a_script_host_that_does_not_answer_a_step_is_killed_and_its_scripts_stay_stop
     let asked = Instant::now();
     test.decoder_writes(&stepped(1));
     let due = test.core.scripts_due_at().unwrap();
-    assert!(due >= asked + STEP_DEADLINE && due <= Instant::now() + STEP_DEADLINE, "the deadline is STEP_DEADLINE from the step");
-    // Not before its deadline.
+    assert!(due >= asked + STEP_HUNG_AFTER && due <= Instant::now() + STEP_HUNG_AFTER, "hung is STEP_HUNG_AFTER from the step");
+    // Not at a step's time, and not before it is taken for hung.
+    test.core.scripts_tick(asked + 4 * STEP_DEADLINE);
+    assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
     test.core.scripts_tick(due.checked_sub(Duration::from_millis(1)).unwrap());
     assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
     test.core.scripts_tick(due);
@@ -281,7 +278,7 @@ fn a_script_host_that_does_not_answer_a_step_is_killed_and_its_scripts_stay_stop
     let Some(FromScriptHost::Failed { context: ContextId::Channel, reason: FailReason::Time, text }) = test.decoder_reads() else {
         panic!("the decoder was not told")
     };
-    assert!(text.starts_with("STEP_DEADLINE"), "{text}");
+    assert!(text.starts_with("STEP_HUNG_AFTER"), "{text}");
     let host = test.started(Program::ScriptHost)[0].id;
     test.until_asked(|request| matches!(request, Request::Kill(id) if *id == host));
     // The decoder greets again, as a replaced decoder would: told again,
@@ -293,8 +290,8 @@ fn a_script_host_that_does_not_answer_a_step_is_killed_and_its_scripts_stay_stop
     assert_eq!(test.core.script_state(test.channel), ScriptState::Stopped(FailReason::Time));
 }
 
-/// Section 11.1: an opening gives a script host `START_DEADLINE`, since
-/// a context's start may take that long; and one that falls more than
+/// Section 11.1: an opening gives a script host `START_HUNG_AFTER`, since
+/// a context's start is its process's start too; and one that falls more than
 /// `MAX_STEPS_UNANSWERED` behind is killed whatever the clock says.
 #[test]
 fn an_opening_has_the_start_deadline_and_a_script_host_too_far_behind_is_killed() {
@@ -306,8 +303,8 @@ fn an_opening_has_the_start_deadline_and_a_script_host_too_far_behind_is_killed(
     let asked = Instant::now();
     test.decoder_writes(&written);
     let due = test.core.scripts_due_at().unwrap();
-    assert!(due >= asked + START_DEADLINE && due <= Instant::now() + START_DEADLINE);
-    test.core.scripts_tick(asked + STEP_DEADLINE + Duration::from_millis(50));
+    assert!(due >= asked + START_HUNG_AFTER && due <= Instant::now() + START_HUNG_AFTER);
+    test.core.scripts_tick(asked + STEP_HUNG_AFTER + Duration::from_millis(50));
     assert_eq!(test.core.script_state(test.channel), ScriptState::Running, "killed while its context may still be starting");
     for sequence in 2..=u32::try_from(MAX_STEPS_UNANSWERED).unwrap() {
         test.decoder_writes(&stepped(sequence));
@@ -387,6 +384,125 @@ fn a_request_from_a_script_host_without_the_network_is_not_relayed() {
     let Some(FromScriptHost::Failed { reason: FailReason::Link, text, .. }) = test.decoder_reads() else { panic!("the decoder was not told") };
     assert!(text.contains("asked for the network"), "{text}");
     assert!(test.started(Program::Fetcher).is_empty(), "a web client was started");
+}
+
+/// Section 11.1 and TODO-7420: the viewer leaves a page whose script has
+/// the network for one whose script has none. The decoder reports the
+/// new page's claims while the old page's context is still closing, and
+/// what that context writes to finish with the network (an abort of a
+/// request under way, the close of a socket or an event stream, the word
+/// that the context closes, and a keepalive request started in its
+/// `close` handling) is relayed for [`NETWORK_DRAIN`] and stops nothing.
+/// After it, the web client is told to end what it still holds for the
+/// channel; a message that only ends something is dropped; and one that
+/// starts something is the breach it always was.
+#[test]
+fn a_context_that_had_the_network_finishes_with_it_and_starts_nothing_after() {
+    let said = |message: &ToWebClient| {
+        let mut bytes = Vec::new();
+        write_request(&mut bytes, message).unwrap();
+        read_host_output(&mut bytes.as_slice()).unwrap().unwrap()
+    };
+    let mut test = Test::piped(|helper| match helper.program {
+        Program::ScriptHost => Some(ready()),
+        _ => Some(Vec::new()),
+    });
+    test.decoder_writes(&hello());
+    let channel = test.channel;
+    let generation = test.core.scripts.hosts[&channel].generation;
+    test.core.script_network(channel, true);
+    test.core.script_said(channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.started(Program::Fetcher).len(), 1, "the page's request reached a web client");
+    // The next page's claims: no network.
+    test.core.script_network(channel, false);
+    let finishing = [
+        ToWebClient::Abort(7),
+        ToWebClient::SocketClose { id: 8, code: 1000, reason: String::new() },
+        ToWebClient::ContextCloses(ContextId::Page),
+        ToWebClient::Start(Box::new(Start { keepalive: true, ..start() })),
+    ];
+    for message in &finishing {
+        test.core.script_said(channel, generation, said(message));
+        assert_eq!(test.core.script_state(channel), ScriptState::Running, "{message:?} is the closing context's own");
+    }
+    assert!(test.core.scripts.web.serves(channel), "and was relayed to its web client's tab");
+    assert!(test.core.scripts_due_at().is_some(), "the trusted core wakes when the time to finish is up");
+    // The time to finish is up.
+    let host = test.core.scripts.hosts.get_mut(&channel).unwrap();
+    let left = Instant::now().checked_sub(NETWORK_DRAIN + Duration::from_millis(1)).unwrap();
+    host.network = NetworkClaim::default();
+    host.network.reported(true, left);
+    host.network.reported(false, left);
+    test.core.scripts_tick(Instant::now());
+    assert!(!test.core.scripts.web.serves(channel), "the web client was told to end what it held for the channel");
+    assert_eq!(test.core.scripts_due_at(), None);
+    for message in &finishing[..3] {
+        test.core.script_said(channel, generation, said(message));
+        assert_eq!(test.core.script_state(channel), ScriptState::Running, "{message:?} only ends something: dropped");
+    }
+    assert!(!test.core.scripts.web.serves(channel), "and not relayed");
+    test.core.script_said(channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.core.script_state(channel), ScriptState::Stopped(FailReason::Link), "a context without the network starts nothing");
+    // A page with the network again has it again, at once.
+    let mut test = Test::piped(|helper| match helper.program {
+        Program::ScriptHost => Some(ready()),
+        _ => Some(Vec::new()),
+    });
+    test.decoder_writes(&hello());
+    let generation = test.core.scripts.hosts[&test.channel].generation;
+    test.core.script_network(test.channel, true);
+    test.core.script_network(test.channel, false);
+    test.core.script_network(test.channel, true);
+    test.core.script_said(test.channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
+}
+
+/// TODO-7419 (section 12.3): a JavaScript page has no page file, and the
+/// "not found" its fetcher reports for it is no fault: the warning is
+/// held, and never said once the page's script comes. It is said when
+/// the script fails to come, when none has come in [`REFUSAL_HELD`], and
+/// at once for any other status.
+#[test]
+fn a_page_file_not_found_is_no_warning_when_its_script_comes() {
+    use protocol::decoder::script::SourcePiece;
+    use protocol::fetcher::{FromFetcher, RefusedFile};
+    use protocol::rules::PageSub;
+    let mut test = Test::piped(|_| Some(Vec::new()));
+    let channel = test.channel;
+    let said = |test: &mut Test| {
+        test.core.console.set_open(true);
+        format!("{:?}", test.core.console.updates(Some(channel)))
+    };
+    let script = |page: u16| {
+        FromFetcher::Script(SourcePiece {
+            level: ContextId::Page,
+            page: PageSub::new(page, 0),
+            name: "p.js".into(),
+            total: 2,
+            offset: 0,
+            bytes: b"//".to_vec(),
+        })
+    };
+    // A JavaScript page: its file is not found, and its script comes.
+    test.core.refused(channel, RefusedFile::Page(0x101), Some(NOT_FOUND)).unwrap();
+    test.core.script_message(channel, script(0x101));
+    test.core.scripts_tick(Instant::now() + REFUSAL_HELD);
+    assert!(!said(&mut test).contains("page 101 was refused"), "nothing is said of a JavaScript page's missing file");
+    // A page whose script could not be fetched either.
+    test.core.refused(channel, RefusedFile::Page(0x102), Some(NOT_FOUND)).unwrap();
+    assert!(test.core.scripts_due_at().is_some(), "the trusted core wakes to say it");
+    test.core.script_message(channel, FromFetcher::ScriptFailed { level: ContextId::Page, page: PageSub::new(0x102, 0), name: "p.js".into() });
+    assert!(said(&mut test).contains("page 102 was refused: status 404"));
+    // A page that is missing and has no script: said when none has come.
+    test.core.refused(channel, RefusedFile::Page(0x103), Some(NOT_FOUND)).unwrap();
+    test.core.scripts_tick(Instant::now());
+    assert!(!said(&mut test).contains("page 103 was refused"), "held for its script");
+    test.core.scripts_tick(Instant::now() + REFUSAL_HELD);
+    assert!(said(&mut test).contains("page 103 was refused: status 404"));
+    assert_eq!(test.core.scripts_due_at(), None);
+    // Any other answer is said at once.
+    test.core.refused(channel, RefusedFile::Page(0x104), Some(500)).unwrap();
+    assert!(said(&mut test).contains("page 104 was refused: status 500"));
 }
 
 /// DEC-7315 version 2 (TODO-7395 step 1): the script of a page opened

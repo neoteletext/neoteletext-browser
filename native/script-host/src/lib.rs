@@ -19,8 +19,8 @@
 //!   answers an opening: what its top level logged leaves in the next
 //!   batch.
 //! - **Every STEP and every `CONTEXT_CLOSE` is answered by exactly one
-//!   BATCH**, in order, so that the trusted core can hold each to
-//!   `STEP_DEADLINE` by counting kinds. A close's batch is what the one
+//!   BATCH**, in order, so that the trusted core can tell by counting
+//!   kinds whether the script host owes an answer. A close's batch is what the one
 //!   handling of `close` staged (section 3.1), which would otherwise be
 //!   lost when the last context goes; it carries the number of the last
 //!   step answered.
@@ -62,19 +62,26 @@ use protocol::web::write_request;
 // library names (section 10.6); the confinement crate cannot name the
 // library's, so the two are held equal here, where both are in reach.
 const _: () = assert!(confine::SCRIPT_MEMORY_BYTES == neoteletext_script::limits::SCRIPT_PROCESS_MEMORY_BYTES);
-// The trusted core's deadline for a script host that is starting a
-// context covers the longest start the library allows (sections 3.2 and
-// 11.1): a container's start, a top level, the watchdog's grace, and a
-// step after them.
+// The bounds after which the trusted core takes a silent script host for
+// hung are a backstop behind the library's own limits, never in their
+// place (sections 3.2 and 11.1; DEC-7357 as revised): each is at least
+// ten times everything the library allows before the answer it waits
+// for.
 const _: () = assert!(
-    neoteletext_script::limits::CONTAINER_START_LIMIT.as_millis()
+    10 * (neoteletext_script::limits::CONTAINER_START_LIMIT.as_millis()
         + neoteletext_script::limits::START_TIME_LIMIT.as_millis()
-        + neoteletext_script::limits::WATCHDOG_GRACE.as_millis()
-        + protocol::script::relay::STEP_DEADLINE.as_millis()
-        <= protocol::script::relay::START_DEADLINE.as_millis()
+        + neoteletext_script::limits::WATCHDOG_GRACE.as_millis())
+        <= protocol::script::relay::START_HUNG_AFTER.as_millis()
+);
+const _: () = assert!(
+    10 * (neoteletext_script::limits::STEP_TIME_BUDGET.as_millis()
+        + neoteletext_script::limits::CALLBACK_TIME_LIMIT.as_millis()
+        + neoteletext_script::limits::WATCHDOG_GRACE.as_millis())
+        <= protocol::script::relay::STEP_HUNG_AFTER.as_millis()
 );
 // A callback at its limit, and the watchdog's grace after it, are within
-// the deadline for a step.
+// the time a step's answer is waited for on a machine with a processor
+// free.
 const _: () = assert!(
     neoteletext_script::limits::CALLBACK_TIME_LIMIT.as_millis() + neoteletext_script::limits::WATCHDOG_GRACE.as_millis()
         < protocol::script::relay::STEP_DEADLINE.as_millis()

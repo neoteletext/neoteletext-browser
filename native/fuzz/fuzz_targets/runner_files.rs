@@ -16,7 +16,11 @@ fuzz_target!(|data: &[u8]| {
     assert!(blobs.len() <= MAX_BLOBS);
     assert!(blobs.iter().map(|(_, bytes)| bytes.len()).sum::<usize>() <= MAX_BLOBS_BYTES.min(data.len()));
     for (index, (name, _)) in blobs.iter().enumerate() {
-        assert!(is_name(name) && !name.contains('/') && !name.contains(".."), "{name}");
+        // A name is safe as a file name when it holds no separator and is
+        // neither `.` nor `..`, which a name never is that does not begin
+        // with a full stop; `..` inside a name, as in `log.t..`, is a file
+        // name like any other.
+        assert!(is_name(name) && !name.starts_with('.') && !name.contains(['/', '\\', '\0']), "{name}");
         assert!(blobs.iter().skip(index + 1).all(|(other, _)| other != name), "{name} is given twice");
     }
     let mut written = Vec::new();

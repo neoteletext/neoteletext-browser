@@ -21,6 +21,18 @@ use protocol::script::relay::{DecoderInput, DecoderOutput, read_decoder_input, r
 use protocol::script::{FromScriptHost, ToScriptHost, write_to_host};
 
 use super::super::test_support::{core_watched, decoder_watched, sent_to_interface};
+use std::time::Duration;
+
+#[cfg(feature = "links")]
+use neoteletext::script_gate::ACTIVATION_WINDOW;
+use neoteletext::script_gate::{MAX_CONTACTS, MOUSE_POINTER};
+use neoteletext_input::event::{Action, KeyCode, Point};
+use protocol::decoder::ToDecoder;
+use protocol::decoder::script::{MAX_POINTERS, PointerKind, ScriptOrder, ScriptPointer};
+use protocol::interaction::TouchPhase;
+use protocol::rules::{KeyAction, PointerAction, RuleInput};
+use protocol::script::relay::STEP_DEADLINE;
+
 use super::*;
 
 /// The channel the tests' tab is on, and another.
@@ -238,7 +250,7 @@ fn only_a_key_the_manifest_names_and_a_script_may_have_is_given() {
     viewer.key(Action::Press, named("F11"), 0, None);
     viewer.key(Action::Release, KeyCode::Character('l'), 0, None);
     assert_eq!(viewer.given(), [], "none of these is a script's");
-    assert_eq!(viewer.core.script_gate.pending.len(), 2, "and none waits for an answer: only a's press and repeat do");
+    assert_eq!(viewer.core.script_gate.input.pending.len(), 2, "and none waits for an answer: only a's press and repeat do");
     // While another part of the browser has the keys, nothing is given.
     viewer.core.intent(ToCore::Editing(true)).unwrap();
     viewer.key(Action::Press, KeyCode::Character('a'), 0, Some("a"));
@@ -283,7 +295,7 @@ fn a_key_takes_its_default_unless_the_script_cancelled_it() {
     assert_eq!(viewer.defaults(), [], "no key acts that the viewer did not press here, and none twice");
     // A release has no default and is not waited for.
     viewer.key(Action::Release, KeyCode::Character('1'), 0, None);
-    assert_eq!(viewer.core.script_gate.pending.len(), 1, "only the press waits");
+    assert_eq!(viewer.core.script_gate.input.pending.len(), 1, "only the press waits");
 }
 
 /// Sections 4.1 and 1 principle 5 ("Fail open"), timed end to end at the
@@ -404,7 +416,7 @@ fn a_script_page_is_given_the_text_pointer_and_wheel_it_claims() {
         .filter_map(|message| if let ToDecoder::Script(ScriptOrder::Text { text, .. }) = message { Some(text) } else { None })
         .collect();
     assert_eq!(texts, ["été", "pasted", "e"], "committed text, a paste and what a key typed; never a preedit");
-    assert!(viewer.core.script_gate.pending.is_empty(), "a key that only types is not waited for");
+    assert!(viewer.core.script_gate.input.pending.is_empty(), "a key that only types is not waited for");
     viewer.input(Intent::Mouse { action: MouseAction::Move, button: 0, at: point(10, 10) });
     viewer.input(Intent::Mouse { action: MouseAction::Press, button: 0, at: point(100, 120) });
     viewer.input(Intent::Mouse { action: MouseAction::Release, button: 0, at: point(101, 121) });
@@ -412,18 +424,22 @@ fn a_script_page_is_given_the_text_pointer_and_wheel_it_claims() {
     let given = viewer.given();
     let pointers: Vec<ScriptPointer> =
         given.iter().filter_map(|message| if let ToDecoder::Script(ScriptOrder::Pointer(pointer)) = message { Some(*pointer) } else { None }).collect();
-    assert_eq!(pointers.len(), 2, "the move is not claimed: {given:?}");
+    // The decoder is told the move too: a claim of presses includes the
+    // pointer coming onto a thing and off it, which the decoder tells
+    // from where the pointer is; it gives a script no move event.
+    assert_eq!(pointers.len(), 3, "{given:?}");
     let mouse = |pointer: &ScriptPointer| (pointer.pointer, pointer.kind, pointer.primary) == (MOUSE_POINTER, PointerKind::Mouse, true);
     assert!(pointers.iter().all(mouse));
-    assert_eq!((pointers[0].action, pointers[0].x, pointers[0].y), (PointerAction::Press, 100, 120));
-    assert_eq!((pointers[1].action, pointers[1].x, pointers[1].y), (PointerAction::Release, 101, 121));
+    assert_eq!((pointers[0].action, pointers[0].x, pointers[0].y), (PointerAction::Move, 10, 10));
+    assert_eq!((pointers[1].action, pointers[1].x, pointers[1].y), (PointerAction::Press, 100, 120));
+    assert_eq!((pointers[2].action, pointers[2].x, pointers[2].y), (PointerAction::Release, 101, 121));
     assert!(given.iter().any(|message| matches!(message, ToDecoder::Script(ScriptOrder::Wheel { x: 100, y: 120, delta_x: -1, delta_y: 2, .. }))), "{given:?}");
     // A press and a release are waited for, and have no default here.
     viewer.interface();
-    assert_eq!(viewer.core.script_gate.pending.len(), 2, "the press and the release");
+    assert_eq!(viewer.core.script_gate.input.pending.len(), 2, "the press and the release");
     viewer.core.script_gate_tick(Instant::now() + VERDICT_DEADLINE).unwrap();
     assert_eq!(viewer.defaults(), [], "a pointer's press and release have no default of the browser's here");
-    assert!(viewer.core.script_gate.pending.is_empty());
+    assert!(viewer.core.script_gate.input.pending.is_empty());
     // With moves claimed, a move and the pointer's leaving are given.
     viewer.claims(&[], false, PointerClaim::Move, false);
     viewer.given();
@@ -600,18 +616,18 @@ fn the_log_says_why_a_channels_scripts_stopped() {
     assert_eq!(viewer.core.script_state(channel), ScriptState::Stopped(FailReason::Memory));
     let said = logged(&mut viewer);
     assert!(said.contains("a memory limit was passed") && said.contains("QUICKJS_HEAP_BYTES passed"), "{said}");
+    assert_eq!(said.matches("were stopped").count(), 1, "one line for one stop: {said}");
     // The viewer's stop says so.
     let mut viewer = Viewer::new();
     viewer.core.intent(ToCore::StopScripts).unwrap();
-    assert!(logged(&mut viewer).contains("the viewer stopped the page's program"));
+    let said = logged(&mut viewer);
+    assert_eq!(said.matches("the viewer stopped the page's program").count(), 1, "said once: {said}");
 }
 
 /// Section 3.1's table and TODO-7405: only a hidden tab pauses a
 /// channel's scripts. A change of the open page, the page chosen again,
 /// and the tab's own key pressed for the tab already in front tell the
-/// decoder that the tab is shown, whatever they say of the open page;
-/// another tab in front tells it the tab is hidden, and coming back that
-/// it is shown, before the page is named.
+/// decoder that the tab is shown, whatever they say of the open page.
 #[test]
 fn only_a_hidden_tab_is_told_as_hidden() {
     let shown = |told: &[ToDecoder]| -> Vec<bool> {
@@ -630,21 +646,12 @@ fn only_a_hidden_tab_is_told_as_hidden() {
     assert!(!shown(&told).contains(&false), "a change of page hides nothing: {told:?}");
     // The tab's own key, for the tab already in front.
     viewer.core.intent(ToCore::SelectTab(0)).unwrap();
-    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
-    assert!(!shown(&viewer.decoder()).contains(&false), "the tab in front chosen again is not hidden");
-    // Another tab comes in front, and this one comes back.
-    viewer.core.intent(ToCore::NewTab).unwrap();
-    viewer.core.intent(ToCore::Opened(None)).unwrap();
-    let told = viewer.decoder();
-    assert_eq!(shown(&told).last(), Some(&false), "{told:?}");
-    assert!(told.iter().any(|message| matches!(message, ToDecoder::RulesPage(None))), "{told:?}");
-    viewer.core.intent(ToCore::SelectTab(0)).unwrap();
-    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
-    let told = viewer.decoder();
-    let place = |wanted: fn(&ToDecoder) -> bool| told.iter().position(wanted);
-    let (said_shown, named) =
-        (place(|message| matches!(message, ToDecoder::Script(ScriptOrder::TabShown(true)))), place(|message| matches!(message, ToDecoder::RulesPage(Some(_)))));
-    assert!(said_shown.is_some() && said_shown < named, "shown again, then its page: {told:?}");
+    assert_eq!(viewer.decoder(), [], "the tab in front chosen again tells its decoder nothing");
+    // The tab's own key changes nothing at all: the page is still the
+    // open one, and the decoder is told nothing (TODO-7423). Another tab
+    // in front, and this one coming back, is tested with the real
+    // decoder and script host (`scripts/loading_tests.rs`).
+    assert_eq!(viewer.core.typing.opened_page(), Some(next));
     assert_eq!(viewer.core.script_state(viewer.channel()), ScriptState::Running);
 }
 
@@ -721,14 +728,14 @@ mod navigation {
         // Two asks that are refused use the second up.
         navigate(&mut viewer, ELSEWHERE);
         navigate(&mut viewer, "9FF");
-        assert_eq!(viewer.core.script_gate.navigations[&channel].len(), MAX_NAVIGATIONS_PER_SECOND);
+        assert_eq!(viewer.core.script_gate.input.navigations[&channel].len(), MAX_NAVIGATIONS_PER_SECOND);
         for target in ["200", "201", "202"] {
             navigate(&mut viewer, target);
         }
         assert_eq!(viewer.address(), home, "no more than the bound in a second");
-        assert_eq!(viewer.core.script_gate.navigations[&channel].len(), MAX_NAVIGATIONS_PER_SECOND, "and nothing kept past it");
+        assert_eq!(viewer.core.script_gate.input.navigations[&channel].len(), MAX_NAVIGATIONS_PER_SECOND, "and nothing kept past it");
         // A second later.
-        for at in viewer.core.script_gate.navigations.get_mut(&channel).unwrap() {
+        for at in viewer.core.script_gate.input.navigations.get_mut(&channel).unwrap() {
             *at = at.checked_sub(NAVIGATION_SECOND).unwrap();
         }
         navigate(&mut viewer, "200");
@@ -749,7 +756,7 @@ mod navigation {
         // that action.
         let unheard = viewer.press('a');
         viewer.report(ScriptReport::Verdict { sequence: unheard, cancelled: false, handled: false });
-        viewer.core.script_gate.navigations.clear();
+        viewer.core.script_gate.input.navigations.clear();
         navigate(&mut viewer, ELSEWHERE);
         viewer.input(Intent::Mouse { action: MouseAction::Press, button: 0, at: point(5, 5) });
         let Some(ToDecoder::Script(ScriptOrder::Pointer(press))) = viewer.given().pop() else { panic!("no press given") };
@@ -757,11 +764,11 @@ mod navigation {
         navigate(&mut viewer, ELSEWHERE);
         assert_eq!(viewer.address(), home);
         // A report of an event the gate never gave is no action either.
-        viewer.core.script_gate.navigations.clear();
+        viewer.core.script_gate.input.navigations.clear();
         viewer.report(ScriptReport::Verdict { sequence: 9_999, cancelled: true, handled: true });
         navigate(&mut viewer, ELSEWHERE);
         assert_eq!(viewer.address(), home);
-        assert!(viewer.core.script_gate.activated.is_empty());
+        assert!(viewer.core.script_gate.input.activated.is_empty());
     }
 
     /// The other half of the rule: the viewer's key press, heard by the
@@ -772,10 +779,10 @@ mod navigation {
         viewer.claims(&["a"], false, PointerClaim::None, false);
         let heard = viewer.press('a');
         viewer.report(ScriptReport::Verdict { sequence: heard, cancelled: true, handled: true });
-        assert!(viewer.core.script_gate.activated.contains_key(&viewer.channel()));
+        assert!(viewer.core.script_gate.input.activated.contains_key(&viewer.channel()));
         navigate(&mut viewer, ELSEWHERE);
         assert_eq!(viewer.address(), ELSEWHERE, "the tab left for the other channel");
-        assert!(viewer.core.script_gate.activated.is_empty(), "one action, one leaving");
+        assert!(viewer.core.script_gate.input.activated.is_empty(), "one action, one leaving");
     }
 
     /// Escape is never the action that lets a script leave: it is the
@@ -815,7 +822,7 @@ mod navigation {
         viewer.report(ScriptReport::Verdict { sequence: heard, cancelled: true, handled: true });
         let (home, channel) = (viewer.address(), viewer.channel());
         let long_ago = Instant::now().checked_sub(ACTIVATION_WINDOW + Duration::from_millis(1)).unwrap();
-        viewer.core.script_gate.activated.insert(channel, long_ago);
+        viewer.core.script_gate.input.activated.insert(channel, long_ago);
         let report = ScriptReport::Navigate { page: open_page(), target: ELSEWHERE.into() };
         viewer.core.script_reported(channel, report).unwrap();
         assert_eq!(viewer.address(), home);
@@ -834,11 +841,11 @@ mod navigation {
         viewer.report(ScriptReport::Navigate { page: PageSub::new(0x101, 0), target: "200".into() });
         viewer.core.script_reported(channel + 1, ScriptReport::Navigate { page: open_page(), target: "200".into() }).unwrap();
         for target in ["", "9FF", "100:0002", "file:///etc/passwd", "web:https://example.test/", "javascript://x/%0Aalert(1)"] {
-            viewer.core.script_gate.navigations.clear();
+            viewer.core.script_gate.input.navigations.clear();
             navigate(&mut viewer, target);
         }
         assert_eq!(viewer.address(), home);
-        viewer.core.script_gate.navigations.clear();
+        viewer.core.script_gate.input.navigations.clear();
         viewer.core.intent(ToCore::Editing(true)).unwrap();
         navigate(&mut viewer, "200");
         assert_eq!(viewer.address(), home, "the address field has the keys");

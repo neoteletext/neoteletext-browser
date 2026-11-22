@@ -261,6 +261,10 @@ fn a_keepalive_request_outlives_its_context() {
     client.start(&server.url("/a/beacon"), |start| start.keepalive = true);
     client.start(&server.url("/a/plain"), |_| {});
     client.send(&ToWebClient::ContextCloses(protocol::script::ContextId::Page));
+    // The keepalive request's redirect is followed after its context
+    // closed: the server's own record of it is waited for, since the
+    // client says nothing of a request whose context has gone.
+    server.wait_for("GET", "/a/beacon-landed");
     assert_eq!(client.next_within(Duration::from_millis(1200)), None, "neither says anything more");
     assert_eq!((server.count("GET", "/a/beacon-landed"), server.count("GET", "/a/plain-landed")), (1, 0), "the keepalive request went on, the other ended");
     // The quota: 60 kibibytes under way, and 8 more are too many; once

@@ -14,9 +14,11 @@
 //!   ended or replaced (its channel sleeps, or leaves its tab), and when
 //!   the browser ends.
 //! - **Killed** when it writes a kind it may not, when what it asks of
-//!   the network was not allowed it, when a step or a close is not
-//!   answered by its deadline ([`STEP_DEADLINE`], or [`START_DEADLINE`]
-//!   after an opening), when more than [`MAX_STEPS_UNANSWERED`] wait, when
+//!   the network was not allowed it, when it owes an answer to a step or
+//!   a close and has said nothing for so long that it is taken for hung
+//!   (`STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an opening: a
+//!   backstop on the wall clock, far past any time a busy machine makes
+//!   an honest one take), when more than [`MAX_STEPS_UNANSWERED`] wait, when
 //!   it stops reading and what waits for it passes the bound on a
 //!   process's pipe (`neoteletext::outbox::MAX_QUEUED_BYTES`), and when
 //!   it says FAILED, after which a script host has nothing more to do.
@@ -26,11 +28,11 @@
 //!   told with a FAILED of the trusted core's own, the only message of
 //!   the script link the core ever writes.
 //!
-//! The deadlines are counted by kind: every STEP and every
+//! What a script host owes is counted by kind: every STEP and every
 //! `CONTEXT_CLOSE` relayed to a script host is answered by exactly one
 //! BATCH (`native/script-host/src/lib.rs`).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -38,8 +40,11 @@ use std::time::Instant;
 
 use confine::broker::{Broker, Exit, Helper, Program};
 use neoteletext::outbox::Outbox;
+#[cfg(test)]
+pub(super) use neoteletext::script_network::NETWORK_DRAIN;
+use neoteletext::script_network::{Asked, NetworkClaim};
 use protocol::console::Level;
-use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, START_DEADLINE, STEP_DEADLINE, read_host_output};
+use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, STEP_DEADLINE, Silence, read_host_output};
 use protocol::script::{ContextId, FailReason, FromScriptHost, MAX_LOG_CHARS, write_to_decoder};
 
 use super::processes::{Decoder, end, end_aside, relay, spawn};
@@ -67,6 +72,16 @@ pub(super) const WATCHDOG_EXIT_STATUS: i32 = 70;
 /// it has only to read one message and leave.
 const END_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// How long the warning that a page's file was not found is held for
+/// the page's script to come (TODO-7419): the script is the fetcher's
+/// next request after the page's, so this is the time one request may
+/// take with room to spare, and only delays a true warning.
+pub(super) const REFUSAL_HELD: std::time::Duration = std::time::Duration::from_secs(5);
+/// The status of a file that is not found (RFC 9110 section 15.5.5).
+pub(super) const NOT_FOUND: u16 = 404;
+/// The most warnings held so at once.
+const MAX_HELD_REFUSALS: usize = 16;
+
 /// One channel's script host.
 struct ScriptHost {
     child: Helper,
@@ -78,24 +93,25 @@ struct ScriptHost {
     decoder: u64,
     /// It has said READY.
     ready: bool,
-    /// When each step and close relayed to it and not yet answered was
-    /// relayed, oldest first.
-    asked: VecDeque<Instant>,
-    /// When the last piece of an opening was relayed to it, while
-    /// anything waits: a context's start may take [`START_DEADLINE`].
-    opening: Option<Instant>,
-    /// The decoder reported that a context of it has the network
-    /// (section 11.1); without that none of its requests is relayed.
-    network: bool,
+    /// The steps and closes relayed to it and not yet answered, the
+    /// opening it may still be starting, and when it last answered: by
+    /// which it is taken for hung (`protocol::script::relay::Silence`).
+    silence: Silence,
+    /// Whether the decoder reported that a context of it has the network
+    /// (section 11.1), without which none of its requests is relayed, and
+    /// the drain after the claim went (TODO-7420).
+    network: NetworkClaim,
 }
 
 impl ScriptHost {
-    /// When it must have answered the oldest thing asked, if anything
-    /// waits.
+    /// When it is taken for hung, if it owes an answer: it has said
+    /// nothing for `STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an
+    /// opening (DEC-7357 as revised). A backstop on the wall clock, for
+    /// a script host that can no longer say anything: one whose script
+    /// runs too long stops it itself and says so, and one that is given
+    /// no processor on a busy machine is not at fault.
     fn due(&self) -> Option<Instant> {
-        let asked = self.asked.front()?.checked_add(STEP_DEADLINE)?;
-        let opening = self.opening.and_then(|at| at.checked_add(START_DEADLINE));
-        Some(opening.map_or(asked, |opening| asked.max(opening)))
+        self.silence.hung_at()
     }
 
     /// Ends it at once.
@@ -131,6 +147,13 @@ pub(super) struct Scripts {
     stopped: BTreeMap<u32, FailReason>,
     /// What each channel's scripts claim, as its decoder last reported.
     claims: BTreeMap<u32, protocol::decoder::script::ScriptClaims>,
+    /// The channels whose script host said it stopped, noted by the
+    /// relay, whose decoder has not yet said why, and since when.
+    unexplained: BTreeMap<u32, Instant>,
+    /// The warnings held for page files that were not found, until the
+    /// page's script comes or does not: the channel, the page, the line
+    /// and when it was held.
+    held_refusals: Vec<(u32, u16, String, Instant)>,
     /// The decoder of each channel that was told what its scripts'
     /// contexts are told, by its generation: a decoder that replaces it
     /// is told again before its first script.
@@ -190,7 +213,7 @@ fn start_host(broker: &Arc<Broker>, channel: u32, generation: u64, decoder: u64,
         move |said| Event::ScriptSaid(channel, generation, said),
         move |end| Event::ScriptHostEnded(channel, generation, end),
     );
-    Ok(ScriptHost { child, input, generation, decoder, ready: false, asked: VecDeque::new(), opening: None, network: false })
+    Ok(ScriptHost { child, input, generation, decoder, ready: false, silence: Silence::default(), network: NetworkClaim::default() })
 }
 
 impl Core {
@@ -217,7 +240,7 @@ impl Core {
     pub(super) fn script_network(&mut self, channel: u32, reported: bool) {
         let served = self.partition_of(channel).is_some();
         if let Some(host) = self.scripts.hosts.get_mut(&channel) {
-            host.network = reported && served;
+            host.network.reported(reported && served, Instant::now());
         }
     }
 
@@ -252,11 +275,11 @@ impl Core {
         let Some(host) = self.scripts.hosts.get_mut(&channel) else { return };
         let now = Instant::now();
         match kind {
-            Some(LinkKind::Step | LinkKind::ContextClose) => host.asked.push_back(now),
-            Some(LinkKind::ContextOpen | LinkKind::Source) => host.opening = Some(now),
+            Some(LinkKind::Step | LinkKind::ContextClose) => host.silence.asked(now),
+            Some(LinkKind::ContextOpen | LinkKind::Source) => host.silence.opening(now),
             _ => {}
         }
-        let behind = host.asked.len() > MAX_STEPS_UNANSWERED;
+        let behind = host.silence.owed() > MAX_STEPS_UNANSWERED;
         let passed = host.input.write_all(asked.frame()).and_then(|()| host.input.flush());
         if behind {
             return self.stop_scripts(channel, FailReason::Time, "the script host fell too many steps behind and was ended");
@@ -277,12 +300,7 @@ impl Core {
             HostOutput::ToDecoder(relayed) => {
                 match relayed.link_kind() {
                     Some(LinkKind::Ready) => host.ready = true,
-                    Some(LinkKind::Batch) => {
-                        host.asked.pop_front();
-                        if host.asked.is_empty() {
-                            host.opening = None;
-                        }
-                    }
+                    Some(LinkKind::Batch) => host.silence.answered(Instant::now()),
                     _ => {}
                 }
                 let decoder = host.decoder;
@@ -294,12 +312,25 @@ impl Core {
                 // A script host that said FAILED has stopped its container
                 // for good and has nothing more to do (section 3.1).
                 if relayed.link_kind() == Some(LinkKind::Failed) {
+                    // The relay reads no payload and knows no reason: the
+                    // decoder, which read the message, says why next, and
+                    // the Log has one line for the stop, with its reason
+                    // (TODO-7426).
+                    self.scripts.unexplained.insert(channel, Instant::now());
                     self.scripts_stopped(channel, FailReason::Trap, "the script host said its scripts stopped", false);
                 }
             }
             HostOutput::Request(relayed) => {
-                if !host.network {
-                    return self.stop_scripts(channel, FailReason::Link, "the script host asked for the network, which its scripts do not have, and was ended");
+                match host.network.asked(protocol::web::starts_request(relayed.kind()), Instant::now()) {
+                    Asked::Relay => {}
+                    Asked::Drop => return,
+                    Asked::Stop => {
+                        return self.stop_scripts(
+                            channel,
+                            FailReason::Link,
+                            "the script host asked for the network, which its scripts do not have, and was ended",
+                        );
+                    }
                 }
                 if let Err(error) = self.relay_request(channel, relayed) {
                     self.stop_scripts(channel, FailReason::Link, &error);
@@ -360,12 +391,17 @@ impl Core {
     /// untrusted, cleaned and bounded as a line of the log.
     pub(super) fn script_stop_explained(&mut self, channel: u32, reason: FailReason, text: &str) {
         let Some(kept) = self.scripts.stopped.get_mut(&channel) else { return };
-        if *kept == reason {
+        let unexplained = self.scripts.unexplained.remove(&channel).is_some();
+        if *kept == reason && !unexplained {
             return;
         }
         *kept = reason;
         let said = log_line(text);
-        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} stopped: {}; the script host said: {said}", reason_words(reason)));
+        self.log(
+            Level::Error,
+            Some(channel),
+            &format!("the scripts of channel {channel} were stopped: {}; the script host said: {said}", reason_words(reason)),
+        );
     }
 
     /// Notes that `channel`'s scripts have stopped for good, ends its
@@ -378,8 +414,15 @@ impl Core {
         if self.scripts.stopped.insert(channel, reason).is_some() {
             return;
         }
-        let text = log_line(text);
-        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} were stopped: {}: {text}", reason_words(reason)));
+        // The reason in the browser's own words, and what was said with
+        // it when that says more (TODO-7426: the viewer's stop said the
+        // same thing twice).
+        if self.scripts.unexplained.contains_key(&channel) {
+            return;
+        }
+        let (words, text) = (reason_words(reason), log_line(text));
+        let more = if text.is_empty() || text == words { String::new() } else { format!(": {text}") };
+        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} were stopped: {words}{more}"));
         if tell {
             self.tell_scripts_stopped_for(channel, reason, &text);
         }
@@ -419,9 +462,44 @@ impl Core {
         });
     }
 
+    /// Holds the warning that `page`'s file was not found (TODO-7419):
+    /// the fetcher asks for a page's file before its script, so the
+    /// script of a JavaScript page, which rightly has no file, comes
+    /// next. More than [`MAX_HELD_REFUSALS`] say the oldest at once.
+    pub(super) fn refusal_held(&mut self, channel: u32, page: u16, line: String) {
+        self.scripts.held_refusals.retain(|(held, of, _, _)| (*held, *of) != (channel, page));
+        if self.scripts.held_refusals.len() >= MAX_HELD_REFUSALS {
+            let (held, _, line, _) = self.scripts.held_refusals.remove(0);
+            self.log(Level::Warning, Some(held), &line);
+        }
+        self.scripts.held_refusals.push((channel, page, line, Instant::now()));
+    }
+
+    /// The script of `page` came: the page is a JavaScript page, and the
+    /// warning held for its missing file is never said.
+    pub(super) fn refusal_withdrawn(&mut self, channel: u32, page: u16) {
+        self.scripts.held_refusals.retain(|(held, of, _, _)| (*held, *of) != (channel, page));
+    }
+
+    /// No script comes for `page`: the warning held for it is said now.
+    pub(super) fn refusal_stands(&mut self, channel: u32, page: u16) {
+        self.refusals_said(|held, of, _| (held, of) == (channel, page));
+    }
+
+    fn refusals_said(&mut self, which: impl Fn(u32, u16, Instant) -> bool) {
+        let (said, kept): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.scripts.held_refusals).into_iter().partition(|(channel, page, _, at)| which(*channel, *page, *at));
+        self.scripts.held_refusals = kept;
+        for (channel, _, line, _) in said {
+            self.log(Level::Warning, Some(channel), &line);
+        }
+    }
+
     /// When the first script host must have answered, if any is asked.
     pub(super) fn scripts_due_at(&self) -> Option<Instant> {
-        self.scripts.hosts.values().filter_map(ScriptHost::due).min()
+        let held = self.scripts.held_refusals.iter().filter_map(|(_, _, _, at)| at.checked_add(REFUSAL_HELD));
+        let held = held.chain(self.scripts.unexplained.values().filter_map(|at| at.checked_add(STEP_DEADLINE))).min();
+        self.scripts.hosts.values().flat_map(|host| [host.due(), host.network.drain_due()]).flatten().chain(held).min()
     }
 
     /// The scripts' timed work, and their keeping in step with the
@@ -429,9 +507,27 @@ impl Core {
     /// 11.1), and one whose decoder was ended or replaced is ended with
     /// it.
     pub(super) fn scripts_tick(&mut self, now: Instant) {
+        // A stop whose decoder never said why is said without a reason.
+        let silent: Vec<u32> =
+            self.scripts.unexplained.iter().filter(|(_, at)| now.saturating_duration_since(**at) >= STEP_DEADLINE).map(|(&channel, _)| channel).collect();
+        for channel in silent {
+            self.scripts.unexplained.remove(&channel);
+            self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} were stopped: the script host said its scripts stopped"));
+        }
+        // A page whose file was not found and whose script has not come
+        // in time is a page that is missing: the warning is said.
+        self.refusals_said(|_, _, at| now.saturating_duration_since(at) >= REFUSAL_HELD);
+        // A script host whose contexts gave the network up has had its
+        // time to finish: whatever its web client still holds for it is
+        // ended, so that nothing of a page outlives it but a keepalive
+        // request, which the web client itself bounds.
+        let drained: Vec<u32> = self.scripts.hosts.iter_mut().filter_map(|(&channel, host)| host.network.drain_ended(now).then_some(channel)).collect();
+        for channel in drained {
+            self.web_tab_closes(channel);
+        }
         let late: Vec<u32> = self.scripts.hosts.iter().filter(|(_, host)| host.due().is_some_and(|due| now >= due)).map(|(&channel, _)| channel).collect();
         for channel in late {
-            self.stop_scripts(channel, FailReason::Time, "STEP_DEADLINE: the script host did not answer in time and was ended");
+            self.stop_scripts(channel, FailReason::Time, "STEP_HUNG_AFTER: the script host answered nothing for too long, was taken for hung and was ended");
         }
         let orphaned: Vec<u32> = self
             .scripts

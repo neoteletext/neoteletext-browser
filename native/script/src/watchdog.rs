@@ -85,7 +85,8 @@ impl Watchdog {
         Self::start(|| std::process::exit(WATCHDOG_EXIT_STATUS))
     }
 
-    /// An entry begins: it must have returned by `deadline`.
+    /// An entry begins: it must have returned by `deadline`, an instant
+    /// of the scripts' clock ([`crate::clock`]).
     pub fn arm(&self, deadline: Instant) {
         let mut watched = self.shared.lock();
         watched.deadline = Some(deadline);
@@ -113,7 +114,12 @@ fn watch(shared: &Shared, late: &dyn Fn()) {
             watched = shared.changed.wait(watched).unwrap_or_else(PoisonError::into_inner);
             continue;
         };
-        let now = Instant::now();
+        // On the scripts' clock (`crate::clock`): where that counts the
+        // process's work, an entry that was merely given no processor is
+        // not late, and the wait below, which is of the wall clock, ends
+        // no later than the clock can reach the limit and is then made
+        // again for what is left.
+        let now = crate::clock::now();
         if now >= limit {
             if watched.entry == acted_for {
                 watched = shared.changed.wait(watched).unwrap_or_else(PoisonError::into_inner);

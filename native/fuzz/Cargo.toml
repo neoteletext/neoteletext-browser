@@ -36,8 +36,11 @@ script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
 # expect.json and the files between its two processes.
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "427bc51442f3da9bdc5054468274b079586c16d7" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "427bc51442f3da9bdc5054468274b079586c16d7" }
+# The engine's page limits, which the targets of a channel's pages hold
+# to (the engine's REQ-329).
+neoteletext-core = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "427bc51442f3da9bdc5054468274b079586c16d7", default-features = false }
 
 [workspace]
 members = ["."]
@@ -523,6 +526,167 @@ bench = false
 [[bin]]
 name = "runner_expect"
 path = "fuzz_targets/runner_expect.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_manifest"
+path = "fuzz_targets/script_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_batch_apply"
+path = "fuzz_targets/script_batch_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ui_options"
+path = "fuzz_targets/ui_options.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_host_handles"
+path = "fuzz_targets/script_host_handles.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_keys"
+path = "fuzz_targets/script_keys.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_navigation"
+path = "fuzz_targets/script_navigation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sprite_cells"
+path = "fuzz_targets/sprite_cells.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regis_painter"
+path = "fuzz_targets/regis_painter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runner_channel"
+path = "fuzz_targets/runner_channel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_url_sequences"
+path = "fuzz_targets/script_url_sequences.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_location"
+path = "fuzz_targets/web_location.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_handshake"
+path = "fuzz_targets/web_socket_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_frames"
+path = "fuzz_targets/web_socket_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_address"
+path = "fuzz_targets/web_socket_address.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_body_ratio"
+path = "fuzz_targets/web_body_ratio.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_cookie_suffixes"
+path = "fuzz_targets/web_cookie_suffixes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_channel_relation"
+path = "fuzz_targets/web_channel_relation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_referrer"
+path = "fuzz_targets/web_referrer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_address_space"
+path = "fuzz_targets/web_address_space.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_script_gate"
+path = "fuzz_targets/core_script_gate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_script_network"
+path = "fuzz_targets/core_script_network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_read_script"
+path = "fuzz_targets/core_read_script.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runner_live_answer"
+path = "fuzz_targets/runner_live_answer.rs"
 test = false
 doc = false
 bench = false

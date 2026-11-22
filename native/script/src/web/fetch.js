@@ -667,7 +667,11 @@ class Request {
     if (init.redirect !== undefined) state.redirect = oneOf(init.redirect, REDIRECT_MODES, "redirect mode");
     if (init.integrity !== undefined) state.integrity = String(init.integrity);
     if (init.keepalive !== undefined) state.keepalive = !!init.keepalive;
-    if (init.targetAddressSpace !== undefined) state.targetAddressSpace = oneOf(init.targetAddressSpace, TARGET_ADDRESS_SPACES, "target address space");
+    // A Request given as the dictionary names its space by its state, not
+    // by its attribute's word: one that declares none shows "unknown",
+    // which is not a word a script may give.
+    if (#state in init) state.targetAddressSpace = init.#state.targetAddressSpace;
+    else if (init.targetAddressSpace !== undefined) state.targetAddressSpace = oneOf(init.targetAddressSpace, TARGET_ADDRESS_SPACES, "target address space");
     if (init.priority !== undefined) oneOf(init.priority, ["high", "low", "auto"], "priority");
     if (init.duplex !== undefined) oneOf(init.duplex, ["half"], "duplex");
     if (init.method !== undefined) {

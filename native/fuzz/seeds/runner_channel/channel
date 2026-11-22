@@ -1,0 +1,23 @@
+{
+  "name": "Script demo",
+  "initial_page": "100",
+  "scripts": {
+    "channel": "channel.js",
+    "pages": {
+      "100": "index.js",
+      "101": "teletext-page.js",
+      "110": "teletext-game.js",
+      "120": "bitmap.js",
+      "130": "components-teletext.js",
+      "141": "event-stream.js",
+      "142": "websocket.js",
+      "150": "typescript-page.js",
+      "200": "regis-page.js",
+      "210": "regis-game.js",
+      "230": "components-regis.js",
+      "300": "naplps-page.js",
+      "310": "naplps-game.js",
+      "330": "components-naplps.js"
+    }
+  }
+}

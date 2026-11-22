@@ -61,7 +61,7 @@ mod time;
 
 pub(crate) use channel::Channel;
 pub use process::Inner;
-pub(crate) use time::local_offset;
+pub(crate) use time::{local_offset, processor_time};
 
 use acl::grant;
 use attributes::start;

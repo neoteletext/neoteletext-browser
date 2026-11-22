@@ -27,22 +27,20 @@
 //!   page's program runs, holds input or has stopped, for the trusted
 //!   indications, and the viewer's own key stops it.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use interface_core::browser::scripts::{ScriptRun, ScriptView, may_be_scripts};
+use interface_core::browser::scripts::{ScriptRun, ScriptView};
 use interface_core::canvas::PageKey;
+use neoteletext::script_gate::{Claimed, Given};
 use neoteletext::script_keys as keys;
-use neoteletext_input::event::{Action, KeyCode, MouseAction, Point};
+use neoteletext_input::event::MouseAction;
 use protocol::ToInterface;
 use protocol::console::Level;
-use protocol::decoder::ToDecoder;
-use protocol::decoder::script::{MAX_POINTERS, PointerClaim, PointerKind, ScriptClaims, ScriptOrder, ScriptPointer};
+use protocol::decoder::script::{PointerClaim, ScriptClaims};
 use protocol::interaction::script::KeyDefault;
-use protocol::interaction::{InputIntent, Intent, TouchPhase, Typing as TypingState};
-use protocol::rules::{KeyAction, KeyAsks, PageSub, PointerAction, RuleInput};
-use protocol::script::relay::STEP_DEADLINE;
-use protocol::script::{FailReason, MAX_EVENT_PAYLOAD_BYTES};
+use protocol::interaction::{InputIntent, Intent, Typing as TypingState};
+use protocol::rules::{KeyAsks, PageSub};
+use protocol::script::FailReason;
 
 use super::Core;
 use super::scripts::ScriptState;
@@ -52,96 +50,19 @@ mod navigate;
 #[cfg(all(test, unix))]
 mod tests;
 
-/// How long a script's answer to a key is waited for before the key's
-/// default action is taken without it (section 4.1: "If the context is
-/// stopped, absent, or passes its time limit in that handler, the default
-/// happens"): the time a script host has to answer a step, and as long
-/// again for the decoder's report of it. A decoder reports an event its
-/// script host never answered as not cancelled when the host is ended at
-/// [`STEP_DEADLINE`]; this bound holds even of a decoder that reports
-/// nothing.
-pub(super) const VERDICT_DEADLINE: Duration = Duration::from_millis(500);
-const _: () = assert!(VERDICT_DEADLINE.as_millis() == 2 * STEP_DEADLINE.as_millis());
+/// The gate's own state and its decisions, which are the library's
+/// (`neoteletext::script_gate`, where a test and a fuzz target reach them
+/// with no process; rdm TODO-7439), and its time for an answer.
+#[cfg(all(test, unix))]
+use neoteletext::script_gate::VERDICT_DEADLINE;
 
-/// The most events whose answer is waited for at once: what a decoder
-/// queues for its scripts (section 4.7's `MAX_QUEUED_EVENTS`). One more
-/// takes the oldest one's default at once.
-pub(super) const MAX_PENDING_VERDICTS: usize = neoteletext_rules::limits::MAX_QUEUED_EVENTS;
-
-/// The most keys followed as down on a script's page, for the release
-/// that follows a press whatever the modifiers have become: the engine's
-/// bound of keys held (section 3.4's `MAX_KEYS_DOWN`).
-const MAX_KEYS_DOWN: usize = neoteletext_rules::limits::MAX_KEYS_DOWN;
-
-/// How long after a script answered the viewer's key press or pointer
-/// release its navigation to another channel is still that action's
-/// (section 3.3: "only while a `keydown`, `pointerup` or component
-/// activation of this step is being handled"). The answer and the
-/// navigation leave the decoder together, in the report of one step, so
-/// the time is only what a loaded machine may put between two messages
-/// of one write: the time a step may take.
-const ACTIVATION_WINDOW: Duration = STEP_DEADLINE;
-
-/// The mouse's number among a page's pointers (section 4.2's
-/// `pointerId`); the contacts of a touch screen take the numbers after it.
-const MOUSE_POINTER: u8 = 1;
-/// The most contacts of a touch screen followed at once: every pointer
-/// but the mouse (section 4.4: "at most `MAX_POINTERS` pointers are
-/// followed at once, and a further touch is not reported").
-const MAX_CONTACTS: usize = (MAX_POINTERS - MOUSE_POINTER) as usize;
-
-/// A unit of the wheel's turning in an intent: 1/120th of a line (DOC-1938).
-const WHEEL_UNITS_PER_LINE: i32 = 120;
-
-/// What of an event's default is still owed while its answer is waited for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Awaited {
-    /// A key down: its default is taken unless a script cancelled it.
-    Key {
-        /// The key.
-        code: KeyCode,
-        /// What it typed, when that was one character.
-        typed: Option<char>,
-    },
-    /// A pointer's press: nothing is owed for it.
-    Press,
-    /// A pointer's release: nothing is owed for it, and with a key down
-    /// it is what lets a script leave its channel.
-    Release,
-}
-
-/// An event given to a script whose answer has not come.
-#[derive(Clone, Copy, Debug)]
-struct Pending {
-    sequence: u32,
-    key: PageKey,
-    awaited: Awaited,
-    asked: Instant,
-}
-
-/// The gate's state.
+/// The gate: what it decides of the viewer's input, and what the
+/// interface was last told.
 #[derive(Default)]
 pub(super) struct Gate {
-    /// The number of the last event given to a decoder for its scripts.
-    sequence: u32,
-    /// The events whose answers are waited for, oldest first.
-    pending: VecDeque<Pending>,
-    /// The keys whose press was given to the open page's scripts and that
-    /// have not come up, and the page they went to.
-    down: Vec<(PageKey, KeyCode)>,
-    /// The contacts of a touch screen given to the open page's scripts,
-    /// each with its number among the pointers.
-    contacts: Vec<(u64, u8)>,
-    /// The channels in whose tab the viewer has pressed a key or the
-    /// pointer on a script's page: their scripts may sound (DEC-7282
-    /// item 7).
-    acted: BTreeSet<u32>,
-    /// When a script of each channel last answered the viewer's key press
-    /// or pointer release as heard.
-    activated: BTreeMap<u32, Instant>,
-    /// When each channel's scripts asked to navigate, within the last
-    /// second.
-    navigations: BTreeMap<u32, VecDeque<Instant>>,
+    /// The events given, the answers waited for and what the viewer has
+    /// done, with every decision made of them.
+    pub(super) input: neoteletext::script_gate::Gate,
     /// What the interface was last told of the open page's program.
     told: Option<ScriptView>,
     /// What the open page's scripts held when the interface was last told
@@ -167,20 +88,6 @@ impl Held<'_> {
     fn holds(&self) -> bool {
         self.asks.text || !self.asks.keys.is_empty() || self.claims.pointer != PointerClaim::None
     }
-}
-
-/// The dot of a page's picture an intent's point is at, within a `u16`.
-fn dot(at: &Point, picture: Option<(u16, u16)>) -> Option<(u16, u16)> {
-    picture.or_else(|| at.pixels.and_then(|(x, y)| Some((u16::try_from(x).ok()?, u16::try_from(y).ok()?))))
-}
-
-/// `text` cut to at most `limit` bytes, at a character's end.
-fn cut(text: &str, limit: usize) -> &str {
-    let mut end = text.len().min(limit);
-    while !text.is_char_boundary(end) {
-        end = end.saturating_sub(1);
-    }
-    text.get(..end).unwrap_or("")
 }
 
 impl Core {
@@ -249,117 +156,37 @@ impl Core {
         Some(ScriptView { channel: key.channel, page: key.page, run, holds, text })
     }
 
-    /// The number of the next event given to a decoder for its scripts.
-    fn script_sequence(&mut self) -> u32 {
-        self.script_gate.sequence = self.script_gate.sequence.wrapping_add(1);
-        self.script_gate.sequence
-    }
-
-    /// Waits for the answer to an event just given, within the bound: one
-    /// more than the bound takes the oldest one's default now.
-    fn script_awaits(&mut self, sequence: u32, key: PageKey, awaited: Awaited) -> Result<(), String> {
-        while self.script_gate.pending.len() >= MAX_PENDING_VERDICTS {
-            let Some(oldest) = self.script_gate.pending.pop_front() else { break };
-            self.script_default(&oldest)?;
-        }
-        self.script_gate.pending.push_back(Pending { sequence, key, awaited, asked: Instant::now() });
-        Ok(())
-    }
-
-    /// Takes the default action of an event a script did not cancel: a
-    /// key's goes to the interface, which acts on it as on a page with no
-    /// program (section 4.2). The pointer's press and release have none
-    /// here: a link or a control of the page is the browser's own and is
-    /// never given to a script (RULE-51 item 3).
-    fn script_default(&mut self, pending: &Pending) -> Result<(), String> {
-        let Awaited::Key { code, typed } = pending.awaited else { return Ok(()) };
-        self.in_window_of(pending.key.channel, |core| core.send(&ToInterface::KeyDefault(KeyDefault { key: pending.key, code, typed })))
-    }
-
-    /// The viewer acted on a script's page of `channel`: its scripts may
-    /// sound from now on (section 3.5; DEC-7282 item 7).
-    fn script_viewer_acted(&mut self, channel: u32) {
-        if self.script_gate.acted.insert(channel) {
-            self.tell(channel, ToDecoder::Script(ScriptOrder::SoundAllowed));
-        }
+    /// Takes the default action of a key no script cancelled: it goes to
+    /// the interface, which acts on it as on a page with no program
+    /// (section 4.2).
+    fn script_default(&mut self, default: KeyDefault) -> Result<(), String> {
+        self.in_window_of(default.key.channel, |core| core.send(&ToInterface::KeyDefault(default)))
     }
 
     /// An intent of the viewer for a page: taken here, and nowhere else,
     /// when the page is a script's. Returns whether it was a script's
-    /// page.
+    /// page. What the page's scripts are given of it is the gate's
+    /// decision (`neoteletext::script_gate::Gate::input`).
     pub(super) fn script_input(&mut self, input: &InputIntent) -> Result<bool, String> {
         let Some(held) = self.script_held(input.key) else { return Ok(false) };
-        let (page, text, pointer, wheel, asks) = (held.claims.page, held.asks.text, held.claims.pointer, held.claims.wheel, held.asks);
+        let (page, pointer, wheel, asks) = (held.claims.page, held.claims.pointer, held.claims.wheel, held.asks);
         // The page has the keyboard only while the window has it and no
         // other part of the browser has the keys (REQ-1554).
         if self.typing.keys_away() {
             return Ok(true);
         }
-        let channel = input.key.channel;
-        match &input.intent {
-            Intent::Key { action, key, mods, text: typed, base } => {
-                let followed = self.script_gate.down.contains(&(input.key, *key));
-                // A release and a repeat follow their press, whatever the
-                // modifiers have become; a press is held to what a script
-                // may ever be given, and to what its manifest names.
-                let named = if *action == Action::Press { may_be_scripts(*key, *mods) && keys::names(&asks, *key, *mods) } else { followed };
-                if *action == Action::Press {
-                    self.script_viewer_acted(channel);
-                }
-                if named {
-                    self.script_key(input.key, page, *action, *key, *mods, *base, typed.as_deref())?;
-                }
-                // What the key typed is text for a script that claims
-                // text, whether or not it names the key.
-                let typed = typed.as_deref().filter(|_| *action != Action::Release && text && may_be_scripts(*key, *mods));
-                if let Some(typed) = typed.filter(|typed| typed.chars().any(|character| !character.is_control())) {
-                    let sequence = self.script_sequence();
-                    self.tell(channel, ToDecoder::Script(ScriptOrder::Text { sequence, text: cut(typed, MAX_EVENT_PAYLOAD_BYTES).to_owned() }));
-                }
+        // The mouse gone from the page is told by the intent of its own
+        // (`Intent::Gone`), and draws nothing.
+        if matches!(input.intent, Intent::Mouse { action: MouseAction::Gone, .. }) {
+            return Ok(true);
+        }
+        let claimed = Claimed { page, asks: &asks, pointer, wheel };
+        let picture = self.regis_pointing.at(input.key);
+        for given in self.script_gate.input.input(&claimed, input.key, &input.intent, picture, Instant::now()) {
+            match given {
+                Given::Decoder(message) => self.tell(input.key.channel, message),
+                Given::Default(default) => self.script_default(default)?,
             }
-            Intent::Text(typed) | Intent::Paste(typed) => {
-                if text && !typed.is_empty() {
-                    let sequence = self.script_sequence();
-                    self.tell(channel, ToDecoder::Script(ScriptOrder::Text { sequence, text: cut(typed, MAX_EVENT_PAYLOAD_BYTES).to_owned() }));
-                }
-            }
-            Intent::Mouse { action, button, at } => {
-                let action = match action {
-                    MouseAction::Press => PointerAction::Press,
-                    MouseAction::Release => PointerAction::Release,
-                    MouseAction::Move => PointerAction::Move,
-                    MouseAction::Gone => return Ok(true),
-                };
-                self.script_pointer(input.key, pointer, action, *button, at, (MOUSE_POINTER, PointerKind::Mouse, true))?;
-            }
-            Intent::Gone => {
-                if pointer != PointerClaim::None {
-                    let sequence = self.script_sequence();
-                    let gone = ScriptPointer {
-                        sequence,
-                        action: PointerAction::Gone,
-                        button: 0,
-                        x: 0,
-                        y: 0,
-                        pointer: MOUSE_POINTER,
-                        kind: PointerKind::Mouse,
-                        primary: true,
-                    };
-                    self.tell(channel, ToDecoder::Script(ScriptOrder::Pointer(gone)));
-                }
-            }
-            Intent::Touch { phase, contact, at } => self.script_touch(input.key, pointer, *phase, *contact, at)?,
-            Intent::Wheel { dx, dy, at } => {
-                let lines =
-                    |units: i32| i16::try_from(units.checked_div(WHEEL_UNITS_PER_LINE).unwrap_or(0)).unwrap_or(if units < 0 { i16::MIN } else { i16::MAX });
-                if let (true, Some((x, y))) = (wheel, dot(at, self.regis_pointing.at(input.key))) {
-                    let sequence = self.script_sequence();
-                    self.tell(channel, ToDecoder::Script(ScriptOrder::Wheel { sequence, x, y, delta_x: lines(*dx), delta_y: lines(*dy) }));
-                }
-            }
-            // An input method's preedit is not committed text, and a
-            // control of the page file is the browser's own.
-            Intent::Compose { .. } | Intent::Hover { .. } => {}
         }
         // A script's answer is drawn by the page's next frame, which its
         // interval does not hold (REQ-RCH-002).
@@ -367,138 +194,14 @@ impl Core {
         Ok(true)
     }
 
-    /// Gives a key to the scripts of the open page, and waits for the
-    /// answer to a key down.
-    #[expect(clippy::too_many_arguments, reason = "a key event's fields, each named where it is read")]
-    fn script_key(
-        &mut self,
-        key: PageKey,
-        page: PageSub,
-        action: Action,
-        code: KeyCode,
-        mods: u8,
-        base: Option<char>,
-        typed: Option<&str>,
-    ) -> Result<(), String> {
-        let down = &mut self.script_gate.down;
-        match action {
-            Action::Press if !down.contains(&(key, code)) => {
-                // One more key than is followed is not given: its release
-                // could not be.
-                if down.len() >= MAX_KEYS_DOWN {
-                    return Ok(());
-                }
-                down.push((key, code));
-            }
-            Action::Release => down.retain(|held| *held != (key, code)),
-            Action::Press | Action::Repeat => {}
-        }
-        let (named, number) = match code {
-            KeyCode::Character(character) => (false, u32::from(character)),
-            KeyCode::Functional(number) => (true, number),
-        };
-        let action_told = match action {
-            Action::Press => KeyAction::Press,
-            Action::Repeat => KeyAction::Repeat,
-            Action::Release => KeyAction::Release,
-        };
-        let sequence = self.script_sequence();
-        if action != Action::Release {
-            let mut characters = typed.unwrap_or("").chars();
-            let typed = characters.next().filter(|_| characters.next().is_none());
-            self.script_awaits(sequence, key, Awaited::Key { code, typed })?;
-        }
-        let input = RuleInput::Key { action: action_told, named, code: number, base: base.map(u32::from), mods };
-        self.tell(key.channel, ToDecoder::RuleInput { page, sequence, input });
-        Ok(())
-    }
-
-    /// Gives a pointer's event to the scripts of the open page, when
-    /// their manifests claim it, and waits for the answer to a press and
-    /// a release.
-    fn script_pointer(
-        &mut self,
-        key: PageKey,
-        claim: PointerClaim,
-        action: PointerAction,
-        button: u8,
-        at: &Point,
-        which: (u8, PointerKind, bool),
-    ) -> Result<(), String> {
-        let wanted = if action == PointerAction::Move { PointerClaim::Move } else { PointerClaim::Press };
-        let Some((x, y)) = dot(at, self.regis_pointing.at(key)).filter(|_| claim >= wanted) else { return Ok(()) };
-        let sequence = self.script_sequence();
-        match action {
-            PointerAction::Press => {
-                self.script_viewer_acted(key.channel);
-                self.script_awaits(sequence, key, Awaited::Press)?;
-            }
-            PointerAction::Release => self.script_awaits(sequence, key, Awaited::Release)?,
-            PointerAction::Move | PointerAction::Gone => {}
-        }
-        let (pointer, kind, primary) = which;
-        self.tell(key.channel, ToDecoder::Script(ScriptOrder::Pointer(ScriptPointer { sequence, action, button, x, y, pointer, kind, primary })));
-        Ok(())
-    }
-
-    /// A contact of a touch screen on a script's page, as a pointer of
-    /// its own with its number (section 4.4): at most [`MAX_CONTACTS`]
-    /// are followed, and a further one is not reported. The first down is
-    /// the primary one.
-    fn script_touch(&mut self, key: PageKey, claim: PointerClaim, phase: TouchPhase, contact: u64, at: &Point) -> Result<(), String> {
-        let contacts = &mut self.script_gate.contacts;
-        let known = contacts.iter().position(|(id, _)| *id == contact);
-        let place = match (phase, known) {
-            (TouchPhase::Began, None) if contacts.len() < MAX_CONTACTS => {
-                let taken: Vec<u8> = contacts.iter().map(|(_, number)| *number).collect();
-                let Some(number) = (MOUSE_POINTER.saturating_add(1)..=MAX_POINTERS).find(|number| !taken.contains(number)) else { return Ok(()) };
-                contacts.push((contact, number));
-                contacts.len().saturating_sub(1)
-            }
-            (TouchPhase::Moved | TouchPhase::Ended | TouchPhase::Cancelled, Some(place)) => place,
-            // A contact not followed, and a contact that began twice.
-            _ => return Ok(()),
-        };
-        let Some(&(_, number)) = contacts.get(place) else { return Ok(()) };
-        let primary = place == 0;
-        // A contact's press is its main button, and a move holds it
-        // (W3C Pointer Events: a touch contact is button 0, buttons 1).
-        let (action, button) = match phase {
-            TouchPhase::Began => (PointerAction::Press, 0),
-            TouchPhase::Moved => (PointerAction::Move, 1),
-            TouchPhase::Ended => (PointerAction::Release, 0),
-            TouchPhase::Cancelled => (PointerAction::Gone, 0),
-        };
-        if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
-            contacts.remove(place);
-        }
-        self.script_pointer(key, claim, action, button, at, (number, PointerKind::Touch, primary))
-    }
-
     /// A decoder's report of what became of an event (section 4.1): the
-    /// default of a key down is taken unless a script cancelled it. A
-    /// number that names nothing waited for changes nothing, so a decoder
-    /// can make no key act that the viewer did not press, and none twice.
+    /// default of a key down is taken unless a script cancelled it
+    /// (`neoteletext::script_gate::Gate::verdict`).
     pub(super) fn script_verdict(&mut self, channel: u32, sequence: u32, cancelled: bool, handled: bool) -> Result<(), String> {
-        let Some(place) = self.script_gate.pending.iter().position(|pending| pending.sequence == sequence && pending.key.channel == channel) else {
-            return Ok(());
-        };
-        let Some(pending) = self.script_gate.pending.remove(place) else { return Ok(()) };
-        // A script heard the viewer's own action: what it asks in the same
-        // step may leave the channel (section 3.3).
-        // Escape is never that action, as on the web (HTML's activation
-        // triggering input events leave it out): it is the key a viewer
-        // presses to get away.
-        let escape = neoteletext_input::keys::code("Escape").map(KeyCode::Functional);
-        let acted = match pending.awaited {
-            Awaited::Key { code, .. } => Some(code) != escape,
-            Awaited::Release => true,
-            Awaited::Press => false,
-        };
-        if handled && acted {
-            self.script_gate.activated.insert(channel, Instant::now());
+        match self.script_gate.input.verdict(channel, sequence, cancelled, handled, Instant::now()) {
+            Some(default) => self.script_default(default),
+            None => Ok(()),
         }
-        if cancelled { Ok(()) } else { self.script_default(&pending) }
     }
 
     /// A page context named its page (section 3.3): the title of the
@@ -524,7 +227,7 @@ impl Core {
     /// When the gate has timed work: the deadline of the oldest answer
     /// waited for.
     pub(super) fn script_gate_due_at(&self) -> Option<Instant> {
-        self.script_gate.pending.iter().filter_map(|pending| pending.asked.checked_add(VERDICT_DEADLINE)).min()
+        self.script_gate.input.due_at()
     }
 
     /// The gate's work after every event and at its deadlines: an answer
@@ -534,34 +237,22 @@ impl Core {
     /// indications say when that changed.
     pub(super) fn script_gate_tick(&mut self, now: Instant) -> Result<(), String> {
         let open = self.typing.opened_page();
-        let mut waiting = VecDeque::new();
-        for pending in std::mem::take(&mut self.script_gate.pending) {
-            let late = pending.asked.checked_add(VERDICT_DEADLINE).is_none_or(|deadline| now >= deadline);
-            let gone = self.script_state(pending.key.channel) != ScriptState::Running;
-            if late || gone {
-                // The default is taken on the page the key was pressed on,
-                // which the interface holds it to.
-                self.script_default(&pending)?;
-            } else {
-                waiting.push_back(pending);
-            }
+        // The default is taken on the page the key was pressed on, which
+        // the interface holds it to.
+        let mut gate = std::mem::take(&mut self.script_gate.input);
+        let defaults = gate.expire(now, |channel| self.script_state(channel) == ScriptState::Running);
+        self.script_gate.input = gate;
+        for default in defaults {
+            self.script_default(default)?;
         }
-        self.script_gate.pending = waiting;
         let holding = open.filter(|key| self.script_held(*key).is_some());
-        self.script_gate.down.retain(|(key, _)| Some(*key) == holding);
-        if holding.is_none() {
-            self.script_gate.contacts.clear();
-        }
+        self.script_gate.input.held_by(holding);
         // What is kept for a channel is forgotten when its scripts no
         // longer run: a reload makes a new channel.
-        let gate = &self.script_gate;
-        if !(gate.acted.is_empty() && gate.activated.is_empty() && gate.navigations.is_empty()) {
+        if self.script_gate.input.keeps_channels() {
             let running: Vec<u32> =
                 self.session.all_tabs().map(|tab| tab.channel.id).filter(|channel| self.script_state(*channel) == ScriptState::Running).collect();
-            let gate = &mut self.script_gate;
-            gate.acted.retain(|channel| running.contains(channel));
-            gate.activated.retain(|channel, at| running.contains(channel) && now.saturating_duration_since(*at) <= ACTIVATION_WINDOW);
-            gate.navigations.retain(|channel, _| running.contains(channel));
+            self.script_gate.input.forget_channels(&running, now);
         }
         self.script_log_claims();
         let view = self.script_view();

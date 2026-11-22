@@ -52,9 +52,44 @@ socket.onclose = () => {};
 socket.onerror = () => {};
 "#;
 
+/// The engine, warmed before any input: it translates the module's
+/// functions on their first call, which under the fuzzer's instruments
+/// takes longer than the fuzzer's timeout, so that unwarmed the first
+/// input, whatever it is, is reported as a timeout (TODO-7386, DEC-7402).
 fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| Engine::new().unwrap_or_else(|stop| panic!("the module does not compile: {stop}")))
+    ENGINE.get_or_init(|| {
+        let engine = Engine::new().unwrap_or_else(|stop| panic!("the module does not compile: {stop}"));
+        let mut container =
+            Container::new(&engine, &Settings { time: TimeLimits::unhurried(), watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
+        container.open(opening(), SCRIPT.as_bytes()).unwrap_or_else(|error| panic!("the script does not open: {error}"));
+        container.close(ContextId::Page);
+        engine
+    })
+}
+
+fn opening() -> ContextOpen {
+    ContextOpen {
+        context: ContextId::Page,
+        api: 1,
+        renderer: Renderer::Teletext,
+        level: Level::TwoFive,
+        page: 0x100,
+        subcode: 0,
+        flags: ContextFlags { network: true, ..ContextFlags::default() },
+        tick_divisor: 0,
+        language: "en".into(),
+        channel_url: "https://example.test/chan/".into(),
+        page_url: "https://example.test/chan/100.tti".into(),
+        script_url: "https://example.test/chan/page.js".into(),
+        channel_title: "Example".into(),
+        seed: [3; 32],
+        epoch_seconds: 1_800_000_000,
+        zone_minutes: 0,
+        keys: Vec::new(),
+        sounds: Vec::new(),
+        source_bytes: u32::try_from(SCRIPT.len()).unwrap_or(0),
+    }
 }
 
 /// Reads the input a piece at a time; past its end every read is zero.
@@ -121,30 +156,10 @@ fn answer(input: &mut Bytes<'_>) -> FromWebClient {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+fuzz_target!(init: { engine(); }, |data: &[u8]| {
     let mut input = Bytes(data);
     let mut container = Container::new(engine(), &Settings { time: LIMITS, watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
-    let open = ContextOpen {
-        context: ContextId::Page,
-        api: 1,
-        renderer: Renderer::Teletext,
-        level: Level::TwoFive,
-        page: 0x100,
-        subcode: 0,
-        flags: ContextFlags { network: true, ..ContextFlags::default() },
-        tick_divisor: 0,
-        language: "en".into(),
-        channel_url: "https://example.test/chan/".into(),
-        page_url: "https://example.test/chan/100.tti".into(),
-        script_url: "https://example.test/chan/page.js".into(),
-        channel_title: "Example".into(),
-        seed: [3; 32],
-        epoch_seconds: 1_800_000_000,
-        zone_minutes: 0,
-        keys: Vec::new(),
-        sounds: Vec::new(),
-        source_bytes: u32::try_from(SCRIPT.len()).unwrap_or(0),
-    };
+    let open = opening();
     if container.open(open, SCRIPT.as_bytes()).is_err() {
         // Stopped for its time on a machine with none to give: not this target's finding.
         return;

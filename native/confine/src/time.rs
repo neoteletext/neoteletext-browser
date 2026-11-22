@@ -24,6 +24,21 @@ impl LocalTime {
     }
 }
 
+/// The processor time this process has used since it started, every thread
+/// of it, from the operating system's account: time on a processor, and
+/// none of the time it was ready to run without one. None where the
+/// system does not say. A script host counts its scripts' time limits
+/// against it (`neoteletext_script::clock`).
+#[must_use]
+pub fn processor_time() -> Option<std::time::Duration> {
+    #[cfg(unix)]
+    return crate::unix::processor_time();
+    #[cfg(windows)]
+    return crate::windows::processor_time();
+    #[cfg(not(any(unix, windows)))]
+    None
+}
+
 /// The time now and the local offset, by the operating system's own rules
 /// for the user's time zone. The broker reads them for the confined core,
 /// which may not read the system's time-zone files (decision 56).

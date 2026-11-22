@@ -36,22 +36,101 @@ use super::{
     ToScriptHost, is_to_decoder_kind, is_to_host_kind, read_to_decoder, read_to_host,
 };
 
-/// How long a script host has to answer a step with its batch before the
-/// trusted core ends it (the specification's `STEP_DEADLINE`, sections 3.2
-/// rule 5(b) and 10.6): twenty times the step's own budget of 12 ms and
-/// five times the longest callback, so that a host that is merely slow on
-/// a loaded machine is not ended, and far less than a viewer waits for a
-/// page that has stopped.
+/// How long a step's answer is waited for before the page goes on without
+/// it (the specification's `STEP_DEADLINE`, section 10.6): twenty times
+/// the step's own budget of 12 ms and five times the longest callback.
+/// The trusted core takes a key's default no later than twice this
+/// whatever the script host does. It ends no script host: on 23 November
+/// 2026 it was measured that a script host given no processor, or one in
+/// an unoptimised build that needs a second of its own work to start,
+/// passes any wall-clock time of this size without a fault of its own
+/// (DEC-7357 as revised; [`Silence`]).
 pub const STEP_DEADLINE: Duration = Duration::from_millis(250);
 
-/// How long a script host has from the last piece of an opening the
-/// trusted core relayed to it until it must have answered what waits:
-/// its process's start, a container's start (at most a second), a
-/// script's top level (at most `START_TIME_LIMIT`, a second), its
-/// watchdog's grace, and [`STEP_DEADLINE`] after them. The script-host
-/// program asserts that this covers the script library's limits, which
-/// this crate cannot name.
-pub const START_DEADLINE: Duration = Duration::from_millis(2_500);
+/// How long a script host that owes an answer may say nothing before it is
+/// taken for hung and ended: counted on the wall clock from the oldest
+/// thing asked of it, or from its last answer when that is later. It is
+/// a backstop and nothing else. A script that runs too long is stopped
+/// by the script host itself, which counts its limits on its own
+/// processor time and says so within them; this bound is for a script
+/// host that can no longer say anything. It is forty times
+/// [`STEP_DEADLINE`]: the slowest honest answer is a step at its budget
+/// and a callback at its limit, about 60 ms of the script host's work, so
+/// a script host that takes this long was given less than one part in a
+/// hundred and sixty of a processor, or is hung.
+pub const STEP_HUNG_AFTER: Duration = Duration::from_secs(10);
+
+/// As [`STEP_HUNG_AFTER`], from the last piece of an opening until the
+/// first answer to something asked after it: the script host's process
+/// starts, compiles the engine's module and the prelude, starts a
+/// container and runs a script's top level before that answer. Measured
+/// on 23 November 2026 on twenty processors at a load of 22 to 35: 0.28
+/// seconds of its own work in an optimised build and 0.99 in an
+/// unoptimised one when alone, 1.8 with eight at once, and with thirty-two
+/// at once each had been given 0.7 to 0.9 seconds of work in 2.5 seconds.
+/// Thirty seconds is some ten times the longest start that reasoning
+/// gives for that machine, and still an end for a viewer who is waiting.
+pub const START_HUNG_AFTER: Duration = Duration::from_secs(30);
+
+/// What a script host owes and since when: the one rule by which the
+/// trusted core, which ends the process, and the decoder, which stops
+/// drawing for it, take a script host for hung.
+#[derive(Clone, Debug, Default)]
+pub struct Silence {
+    /// When each thing asked and not yet answered was asked, oldest first.
+    asked: std::collections::VecDeque<std::time::Instant>,
+    /// When the last piece of an opening was passed on, until something
+    /// asked after it is answered.
+    opening: Option<std::time::Instant>,
+    /// When the script host last answered.
+    heard: Option<std::time::Instant>,
+}
+
+impl Silence {
+    /// A step or a close was asked at `now`.
+    pub fn asked(&mut self, now: std::time::Instant) {
+        self.asked.push_back(now);
+    }
+
+    /// A piece of an opening was passed on at `now`.
+    pub const fn opening(&mut self, now: std::time::Instant) {
+        self.opening = Some(now);
+    }
+
+    /// The oldest thing asked was answered at `now`. A script host takes
+    /// what it is given in order, so an answer to something asked after
+    /// an opening says the opening is done.
+    pub fn answered(&mut self, now: std::time::Instant) {
+        let answered = self.asked.pop_front();
+        self.heard = Some(now);
+        if let (Some(asked), Some(opening)) = (answered, self.opening)
+            && asked >= opening
+        {
+            self.opening = None;
+        }
+    }
+
+    /// How many things asked wait for their answer.
+    #[must_use]
+    pub fn owed(&self) -> usize {
+        self.asked.len()
+    }
+
+    /// Nothing is owed any more: the script host was ended or told to end.
+    pub fn forget(&mut self) {
+        *self = Self::default();
+    }
+
+    /// When the script host is taken for hung, if it owes anything.
+    #[must_use]
+    pub fn hung_at(&self) -> Option<std::time::Instant> {
+        let oldest = *self.asked.front()?;
+        let silent_since = self.heard.map_or(oldest, |heard| heard.max(oldest));
+        let step = silent_since.checked_add(STEP_HUNG_AFTER)?;
+        let start = self.opening.and_then(|opening| opening.checked_add(START_HUNG_AFTER));
+        Some(start.map_or(step, |start| start.max(step)))
+    }
+}
 
 /// The most steps a script host may be behind by before the trusted core
 /// ends it: a second of the page's ticks. A decoder sends a step for each

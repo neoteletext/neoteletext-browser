@@ -48,3 +48,10 @@ path = "fuzz_targets/http_response.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "update_file_name"
+path = "fuzz_targets/update_file_name.rs"
+test = false
+doc = false
+bench = false

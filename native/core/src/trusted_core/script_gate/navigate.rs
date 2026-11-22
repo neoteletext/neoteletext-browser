@@ -6,7 +6,9 @@
 //! channel's scripts are told `navigate` before the tab goes somewhere by
 //! the browser's own doing, which no script can cancel.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+use neoteletext::script_gate::Navigation;
 
 use protocol::console::Level;
 use protocol::decoder::ToDecoder;
@@ -15,17 +17,11 @@ use protocol::rules::PageSub;
 
 use super::super::Core;
 use super::super::scripts::ScriptState;
-use super::ACTIVATION_WINDOW;
 
-/// The most navigations a channel's scripts may ask in any second
-/// (sections 3.3 and 10.5's `MAX_NAVIGATIONS_PER_SECOND`). The decoder
-/// holds the same bound over its script host, counted in ticks
-/// (`decoder::scripts::limits`, which this program does not link); a
-/// test holds the two equal.
-pub(super) const MAX_NAVIGATIONS_PER_SECOND: usize = 2;
-
-/// The second navigations are counted over.
-pub(super) const NAVIGATION_SECOND: Duration = Duration::from_secs(1);
+/// The bound on a channel's navigations in a second, which is the
+/// library's with the gate's decision of it.
+#[cfg(all(test, unix))]
+pub(super) use neoteletext::script_gate::{MAX_NAVIGATIONS_PER_SECOND, NAVIGATION_SECOND};
 
 /// A page and sub-code as a script names them (section 3.3): `NNN`, or
 /// `NNN/SSSS` when the sub-code names one sub-page.
@@ -52,17 +48,10 @@ impl Core {
         if !open || self.typing.keys_away() {
             return Ok(());
         }
-        let asked = self.script_gate.navigations.entry(channel).or_default();
-        while asked.front().is_some_and(|at| now.saturating_duration_since(*at) >= NAVIGATION_SECOND) {
-            asked.pop_front();
-        }
-        if asked.len() >= MAX_NAVIGATIONS_PER_SECOND {
+        let Navigation::Asked { activated } = self.script_gate.input.navigation_asked(channel, now) else {
             self.log(Level::Warning, Some(channel), "a script's navigation was not followed: MAX_NAVIGATIONS_PER_SECOND");
             return Ok(());
-        }
-        asked.push_back(now);
-        // One action of the viewer's lets a script leave once.
-        let activated = self.script_gate.activated.remove(&channel).is_some_and(|at| now.saturating_duration_since(at) <= ACTIVATION_WINDOW);
+        };
         let at = self.now();
         let Some(followed) = self.with_channel(channel, |links, on| links.script_navigation(target, on, activated, at)) else { return Ok(()) };
         if followed.is_ok() {

@@ -34,7 +34,7 @@ use protocol::decoder::script::{ChannelFacts, PointerClaim, PointerKind, ScriptC
 use protocol::decoder::{FromDecoder, write_to_core};
 use protocol::rules::{KeyAction, PageSub, PointerAction, RuleInput};
 use protocol::script::link::{Asked, HostLink, Received, Stopped};
-use protocol::script::relay::{START_DEADLINE, STEP_DEADLINE};
+use protocol::script::relay::Silence;
 use protocol::script::{
     Batch, ContextFlags, ContextId, ContextOpen, Event, EventKind, FailReason, FromScriptHost, Level, MAX_EVENT_PAYLOAD_BYTES, MAX_SCRIPT_BYTES, Renderer,
     Step, StepFlags,
@@ -50,6 +50,7 @@ pub mod events;
 pub mod limits;
 pub mod manifest;
 pub mod rates;
+mod reports;
 #[cfg(test)]
 mod tests;
 
@@ -93,6 +94,47 @@ struct Context {
     stopped: bool,
 }
 
+/// What a page's script last wrote of a teletext page (section 13 item
+/// 5: the script host keeps the plane and sends only what changed): the
+/// rows it wrote, each as last written, its enhancement data and its
+/// settings. A page file fetched again replaces the page's packets, and
+/// these are written over it again, so that a script's page does not
+/// fall back to its file until the script next draws (TODO-7379 item 3).
+#[derive(Debug, Default)]
+struct Drawn {
+    rows: BTreeMap<u8, protocol::script::batch::TeletextRow>,
+    enhancement: Option<Vec<protocol::script::batch::Triplet>>,
+    settings: Option<protocol::script::batch::TeletextSettings>,
+}
+
+impl Drawn {
+    fn keep(&mut self, batch: &Batch) {
+        for row in batch.teletext_rows.iter().flatten() {
+            self.rows.insert(row.row, *row);
+        }
+        if let Some(enhancement) = &batch.teletext_enhancement {
+            self.enhancement = Some(enhancement.clone());
+        }
+        if let Some(settings) = &batch.teletext_settings {
+            self.settings = Some(settings.clone());
+        }
+    }
+
+    /// What was drawn as a batch that draws it again, or none when the
+    /// script has drawn nothing on the page.
+    fn again(&self) -> Option<Batch> {
+        if self.rows.is_empty() && self.enhancement.is_none() && self.settings.is_none() {
+            return None;
+        }
+        Some(Batch {
+            teletext_rows: (!self.rows.is_empty()).then(|| self.rows.values().copied().collect()),
+            teletext_enhancement: self.enhancement.clone(),
+            teletext_settings: self.settings.clone(),
+            ..Batch::new(0)
+        })
+    }
+}
+
 /// The page context, and the page it draws on.
 #[derive(Debug)]
 struct PageContext {
@@ -104,6 +146,9 @@ struct PageContext {
     /// The page's packet X/28/0 has been written with the context's
     /// language.
     designated: bool,
+    /// What the script has drawn on the teletext page, to draw again
+    /// over a page file that is fetched again.
+    drawn: Drawn,
     /// Another script has arrived for the page since: the context ends
     /// and the new script's begins.
     stale: bool,
@@ -126,7 +171,6 @@ struct Waiting {
     asked: Asked,
     /// The container tick it was asked at.
     tick: u64,
-    at: Instant,
     /// Which open page it was asked for.
     epoch: u64,
     /// The trusted core's numbers of its events, in order.
@@ -184,9 +228,9 @@ pub struct Scripts {
     sound_allowed: bool,
     sequence: u32,
     waiting: VecDeque<Waiting>,
-    /// When the last piece of an opening was written, while anything
-    /// waits ([`START_DEADLINE`]).
-    opening: Option<Instant>,
+    /// What the script host owes and since when, by which it is taken
+    /// for hung (`protocol::script::relay::Silence`).
+    silence: Silence,
     queue: VecDeque<Queued>,
     /// The keys held down, by name, for the releases a script is owed
     /// when the page loses the keyboard (section 4.7).
@@ -206,6 +250,8 @@ pub struct Scripts {
     rates: rates::Rates,
     /// The drawings painted since the last step.
     painted: Vec<i32>,
+    /// What else a step reports of the page and its sounds.
+    reports: reports::Reports,
     claims: Option<ScriptClaims>,
 }
 
@@ -251,7 +297,7 @@ impl Scripts {
             sound_allowed: false,
             sequence: 0,
             waiting: VecDeque::new(),
-            opening: None,
+            silence: Silence::default(),
             queue: VecDeque::new(),
             down: Vec::new(),
             base: None,
@@ -261,6 +307,7 @@ impl Scripts {
             owed: false,
             rates: rates::Rates::default(),
             painted: Vec::new(),
+            reports: reports::Reports::default(),
             claims: None,
         }
     }
@@ -342,9 +389,13 @@ impl Scripts {
                 self.enqueue(claimed, event, None, false, out)?;
             }
             ScriptOrder::Wheel { sequence, x, y, delta_x, delta_y } => {
-                let claimed = self.claimed(|manifest| manifest.wheel);
-                let thing = self.target(engine).and_then(|at| engine.script_pick(at, x, y).first().copied()).unwrap_or(0);
-                let event = Event { kind: EventKind::Wheel, numbers: [i32::from(delta_x), i32::from(delta_y), thing, 0], payload: Vec::new() };
+                // Only over a thing a script made to take the wheel
+                // (section 4.2; the batch's watch list): anywhere else no
+                // event is sent.
+                let things = self.target(engine).map(|at| engine.script_pick(at, x, y)).unwrap_or_default();
+                let thing = self.reports.wheel_thing(&things);
+                let claimed = self.claimed(|manifest| manifest.wheel) && thing.is_some();
+                let event = Event { kind: EventKind::Wheel, numbers: [i32::from(delta_x), i32::from(delta_y), thing.unwrap_or(0), 0], payload: Vec::new() };
                 let _ = sequence;
                 self.enqueue(claimed, event, None, false, out)?;
             }
@@ -352,19 +403,9 @@ impl Scripts {
             // or a contact's. A press and a release are answered, claimed
             // or not, as the rule table's input is.
             ScriptOrder::Pointer(pointer) => {
-                let moving = pointer.action == PointerAction::Move;
                 let answered = matches!(pointer.action, PointerAction::Press | PointerAction::Release).then_some(pointer.sequence);
-                let claim = if moving { PointerClaim::Move } else { PointerClaim::Press };
-                let claimed = self.claimed(|manifest| manifest.pointer >= claim);
-                let at = self.target(engine);
-                let things = at.map(|at| engine.script_pick(at, pointer.x, pointer.y)).unwrap_or_default();
-                let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
                 let which = events::Which { id: i32::from(pointer.pointer), kind: pointer.kind, primary: pointer.primary };
-                let event = events::pointer(pointer.action, pointer.button, (pointer.x, pointer.y), teletext, &things, which);
-                // A move of one pointer never replaces another's (section
-                // 4.7 merges the waiting moves "for one target"): only the
-                // mouse's moves are merged, a contact's are each kept.
-                self.enqueue(claimed, event, answered, moving && pointer.kind == PointerKind::Mouse, out)?;
+                self.pointed(answered, (pointer.action, pointer.button), (pointer.x, pointer.y), which, engine, out)?;
             }
             // Section 4.2: `navigate`, to the page context then the
             // channel's, before the tab goes. Only a cause the browser's
@@ -445,6 +486,23 @@ impl Scripts {
     /// # Errors
     /// When the decoder's output cannot be written.
     pub fn page_file_names(&mut self, page: PageSub, name: Option<String>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
+        // The open page's file came again, and its packets replaced the
+        // page's: what its script drew is drawn over it again, at once.
+        let mut redrawn = Outcome::default();
+        if let Some(held) = self.page.as_ref().filter(|held| held.at.renderer == Renderer::Teletext && PageSub::new(held.at.page, held.at.sub) == page)
+            && let Some(again) = held.drawn.again()
+            && let Ok(arrived) = engine.apply_script(held.at, &again, held.designated)
+        {
+            redrawn.arrived = arrived;
+            redrawn.applied = true;
+        }
+        let mut outcome = self.page_file_named(page, name, engine, out)?;
+        outcome.applied |= redrawn.applied;
+        outcome.arrived.extend(redrawn.arrived);
+        Ok(outcome)
+    }
+
+    fn page_file_named(&mut self, page: PageSub, name: Option<String>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
         match name {
             Some(name) => {
                 if self.pages.get(&page).is_some_and(|held| held.name != name) {
@@ -525,6 +583,20 @@ impl Scripts {
         Ok(())
     }
 
+    /// The sound helper heard a cue of the sound on `voice` (section 3.5:
+    /// `cue` on `nt.sound`): told in the next step, which is owed at the
+    /// next tick, when the sound is one a script started.
+    ///
+    /// # Errors
+    /// When the decoder's output cannot be written.
+    pub fn cue(&mut self, voice: u8, number: u8, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        if self.reports.cue(voice, number) {
+            self.owed = true;
+            self.wake(engine, out)?;
+        }
+        Ok(())
+    }
+
     /// Brings the script host's contexts to what the scripts held and the
     /// page shown ask for (section 3.1's table), then asks whatever step
     /// is due.
@@ -555,6 +627,17 @@ impl Scripts {
                 changed = true;
             }
         }
+        // The channel context hears that the page before is hidden ahead
+        // of the new page's context opening, in a step of its own: the
+        // script host drops what the channel context drew, and the
+        // renderer state of the page left, at `pagehide` (section 3.1),
+        // and a new page's top level, which runs as its context opens,
+        // must not have its first drawings dropped with them.
+        if let Some(before) = self.shown.filter(|before| self.channel.is_some() && *before != open) {
+            self.push(Event { kind: EventKind::PageHide, numbers: [i32::from(before.page), i32::from(before.sub), 0, 0], payload: Vec::new() }, None, false);
+            self.shown = None;
+            self.step(engine, false, StepFlags::default(), out)?;
+        }
         if self.page.is_none()
             && wanted.is_some()
             && let Some(script) = self.pages.remove(&open)
@@ -565,7 +648,7 @@ impl Scripts {
                     engine.script_begins_again(at);
                 }
                 outcome.arrived = engine.script_blank_page(at);
-                self.page = Some(PageContext { context, at, script: open, designated: false, stale: false });
+                self.page = Some(PageContext { context, at, script: open, designated: false, drawn: Drawn::default(), stale: false });
                 self.pages.insert(open, script);
                 self.epoch = self.epoch.wrapping_add(1);
                 changed = true;
@@ -575,13 +658,6 @@ impl Scripts {
         }
         // The channel context hears of the page shown (section 4.2).
         if self.channel.is_some() && self.shown != Some(open) {
-            if let Some(before) = self.shown {
-                self.push(
-                    Event { kind: EventKind::PageHide, numbers: [i32::from(before.page), i32::from(before.sub), 0, 0], payload: Vec::new() },
-                    None,
-                    false,
-                );
-            }
             let renderer = self.target(engine).map_or(Renderer::Teletext, |at| at.renderer);
             let shown = Event {
                 kind: EventKind::PageShow,
@@ -692,7 +768,9 @@ impl Scripts {
             epoch_seconds: self.facts.epoch_seconds.saturating_add(self.facts_at.elapsed().as_secs()),
             zone_minutes: self.facts.zone_minutes,
             keys: manifest.keys.clone(),
-            sounds: Vec::new(),
+            // What the channel's files have announced so far (section
+            // 3.5): a sound announced later is one a later context has.
+            sounds: engine.script_sounds().into_iter().take(protocol::script::MAX_SOUND_HANDLES).collect(),
             source_bytes,
         };
         match self.link.open(out, &open, &script.source) {
@@ -700,7 +778,7 @@ impl Scripts {
             Err(protocol::script::link::Refusal::Message(ProtocolError::Io(error))) => return Err(ProtocolError::Io(error)),
             Err(refusal) => return refuse(out, &refusal.to_string()),
         }
-        self.opening = Some(Instant::now());
+        self.silence.opening(Instant::now());
         if self.base.is_none() {
             self.base = Some(tick_at(engine.now_us()));
         }
@@ -721,12 +799,13 @@ impl Scripts {
         }
         self.epoch = self.epoch.wrapping_add(1);
         self.rates.page_ended();
+        self.reports.page_left();
         match self.link.close(out, ContextId::Page) {
             Ok(()) => {
+                self.silence.asked(Instant::now());
                 self.waiting.push_back(Waiting {
                     asked: Asked::Close(ContextId::Page),
                     tick: self.last_tick.unwrap_or(0),
-                    at: Instant::now(),
                     epoch: self.epoch,
                     events: Vec::new(),
                 });
@@ -793,7 +872,6 @@ impl Scripts {
         if !self.running() || self.link.stopped().is_some() || self.open != Some(page) || self.paused {
             return default(out);
         }
-        let at = self.target(engine);
         match *input {
             RuleInput::Key { action, named, code, mods, .. } => {
                 let name = events::key_name(named, code);
@@ -814,17 +892,16 @@ impl Scripts {
                 }
                 self.enqueue(true, events::key(action, mods, &name), sequence, false, out)?;
             }
-            RuleInput::Pointer { action, button, x, y, .. } => {
-                let claim = if action == PointerAction::Move { PointerClaim::Move } else { PointerClaim::Press };
-                let claimed = self.claimed(|manifest| manifest.pointer >= claim);
-                let things = at.map(|at| engine.script_pick(at, x, y)).unwrap_or_default();
-                let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
-                let event = events::pointer(action, button, (x, y), teletext, &things, events::Which::MOUSE);
-                self.enqueue(claimed, event, sequence, action == PointerAction::Move, out)?;
-            }
+            RuleInput::Pointer { action, button, x, y, .. } => self.pointed(sequence, (action, button), (x, y), events::Which::MOUSE, engine, out)?,
             RuleInput::Drawing { leave, drawing } => {
                 let claimed = self.claimed(|manifest| manifest.pointer >= PointerClaim::Press);
-                self.enqueue(claimed, events::hover(leave, i32::from(drawing)), sequence, false, out)?;
+                // The trusted core's own picking says the drawing and
+                // not the place: the place is the mouse's when it was
+                // last told on this drawing, and none otherwise.
+                let thing = i32::from(drawing);
+                let (place, local) =
+                    self.reports.hovered.filter(|hovered| hovered.thing == thing).map_or_else(Default::default, |hovered| (hovered.at, hovered.local));
+                self.enqueue(claimed, events::hover(leave, thing, place, local), sequence, false, out)?;
             }
             RuleInput::Focus => self.enqueue(true, Event { kind: EventKind::Focus, numbers: [0; 4], payload: Vec::new() }, sequence, false, out)?,
             RuleInput::Blur => {
@@ -836,6 +913,51 @@ impl Scripts {
             RuleInput::Text | RuleInput::Wheel { .. } => {}
         }
         self.wake(engine, out)
+    }
+
+    /// A pointer's event on the open page (sections 4.2 and 4.4): what is
+    /// under it is found in the page's own renderer, with the place in
+    /// the renderer's units and within the thing hit. A press and a
+    /// release are a script's when a manifest claims presses, a move when
+    /// one claims moves; and whenever the mouse comes onto another thing,
+    /// or off one, the thing left hears `pointerleave` and the thing
+    /// entered `pointerenter`, which a claim of presses includes.
+    fn pointed(
+        &mut self,
+        sequence: Option<u32>,
+        (action, button): (PointerAction, u8),
+        (x, y): (u16, u16),
+        which: events::Which,
+        engine: &Engine,
+        out: &mut dyn Write,
+    ) -> Result<(), ProtocolError> {
+        let moving = action == PointerAction::Move;
+        let presses = self.claimed(|manifest| manifest.pointer >= PointerClaim::Press);
+        let claimed = if moving { self.claimed(|manifest| manifest.pointer >= PointerClaim::Move) } else { presses };
+        let hit = if action == PointerAction::Gone {
+            crate::ScriptHit::default()
+        } else {
+            self.target(engine).map(|at| engine.script_hit(at, x, y)).unwrap_or_default()
+        };
+        if which == events::Which::MOUSE {
+            let over = hit.things.first().map(|&thing| reports::Hovered { thing, at: hit.at, local: hit.local });
+            let before = core::mem::replace(&mut self.reports.hovered, over);
+            if before.map(|hovered| hovered.thing) != over.map(|hovered| hovered.thing) && presses {
+                if let Some(left) = before {
+                    // A pointer that went off the picture has no place
+                    // now: its leaving is told where it last was.
+                    let (place, local) = if action == PointerAction::Gone { (left.at, left.local) } else { (hit.at, left.local_of(hit.at)) };
+                    self.enqueue(true, events::hover(true, left.thing, place, local), None, false, out)?;
+                }
+                if let Some(entered) = over {
+                    self.enqueue(true, events::hover(false, entered.thing, entered.at, entered.local), None, false, out)?;
+                }
+            }
+        }
+        // A move of one pointer never replaces another's (section 4.7
+        // merges the waiting moves "for one target"): only the mouse's
+        // moves are merged, a contact's are each kept.
+        self.enqueue(claimed, events::pointer(action, button, &hit, which), sequence, moving && which.kind == PointerKind::Mouse, out)
     }
 
     /// Queues the release of every key held, marked as not seen (section
@@ -920,30 +1042,39 @@ impl Scripts {
                 decoder_tick.checked_sub(1).map_or(0, due_after)
             })
         };
-        [deadline, step].into_iter().flatten().min()
+        // A cycle that runs once, and a script's sound, end with nothing
+        // else to wake the loop: it looks again at the next tick.
+        let watching = (!self.paused && self.reports.watching()).then(|| due_after(tick_at(now)));
+        [deadline, step, watching].into_iter().flatten().min()
     }
 
-    /// When the oldest thing asked must have been answered (section 3.2
-    /// rule 5(b)): [`STEP_DEADLINE`] after it was asked, or
-    /// [`START_DEADLINE`] after the last piece of an opening when that is
-    /// later, as the trusted core counts it.
+    /// When the script host is taken for hung (section 3.2 rule 5(b);
+    /// DEC-7357 as revised): it owes an answer and has said nothing for
+    /// `STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an opening, as the
+    /// trusted core, which ends the process, counts it. A script that
+    /// merely runs too long is stopped by the script host itself, within
+    /// its own limits, and says so; a busy machine stops none.
     fn deadline(&self) -> Option<Instant> {
-        let asked = self.waiting.front()?.at.checked_add(STEP_DEADLINE)?;
-        let opening = self.opening.and_then(|at| at.checked_add(START_DEADLINE));
-        Some(opening.map_or(asked, |opening| asked.max(opening)))
+        self.silence.hung_at()
     }
 
-    /// The loop woke: the script host is failed when it has not answered
-    /// by its deadline, and a step is asked when one is due.
+    /// The loop woke: the script host is failed when it is taken for
+    /// hung, and a step is asked when one is due.
     ///
     /// # Errors
     /// When the decoder's output cannot be written.
     pub fn wake(&mut self, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        self.wake_at(Instant::now(), engine, out)
+    }
+
+    /// [`Self::wake`] at `now`, the wall clock's instant the silence of
+    /// the script host is counted to.
+    fn wake_at(&mut self, now: Instant, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
         if self.link.stopped().is_some() || !self.running() {
             return Ok(());
         }
-        if self.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
-            return self.fail(FailReason::Time, "STEP_DEADLINE: the script host did not answer in time", out);
+        if self.deadline().is_some_and(|deadline| now >= deadline) {
+            return self.fail(FailReason::Time, "STEP_HUNG_AFTER: the script host answered nothing for too long and is taken for hung", out);
         }
         if self.paused {
             return Ok(());
@@ -953,6 +1084,9 @@ impl Scripts {
             self.painted.truncate(protocol::script::MAX_WATCHED_PAINTINGS);
             self.owed |= !self.painted.is_empty();
         }
+        // What the renderers and the sounds did since the last look.
+        let shown = self.target(engine);
+        self.owed |= self.reports.gather(shown, engine) || self.reports.any();
         let now = self.tick(engine);
         let due = self.next_tick().filter(|due| *due <= now);
         let ticking = due.is_some();
@@ -993,6 +1127,7 @@ impl Scripts {
         let taken: Vec<Queued> = self.queue.drain(..lost.saturating_add(MAX_EVENTS_PER_TICK).min(self.queue.len())).collect();
         let sequence = self.sequence;
         self.sequence = self.sequence.wrapping_add(1);
+        let told = self.reports.take(self.target(engine), engine);
         let step = Step {
             sequence,
             tick,
@@ -1000,7 +1135,10 @@ impl Scripts {
             flags: StepFlags { tick: ticking, resumed: core::mem::take(&mut self.resumed), sound_allowed: self.sound_allowed, ..flags },
             events: taken.iter().map(|queued| queued.event.clone()).collect(),
             painted: core::mem::take(&mut self.painted),
-            ..Step::default()
+            cycle_ended: told.cycle_ended,
+            bounds: told.bounds,
+            sound: told.sound,
+            faults: told.faults,
         };
         let numbers: Vec<Option<u32>> = taken.iter().map(|queued| queued.sequence).collect();
         match self.link.step(out, &step) {
@@ -1010,7 +1148,8 @@ impl Scripts {
             // fault; its events keep their defaults.
             Err(_) => return Self::defaults(&numbers, out),
         }
-        self.waiting.push_back(Waiting { asked: Asked::Step(sequence), tick, at: Instant::now(), epoch: self.epoch, events: numbers });
+        self.silence.asked(Instant::now());
+        self.waiting.push_back(Waiting { asked: Asked::Step(sequence), tick, epoch: self.epoch, events: numbers });
         if ticking || self.owed {
             self.last_tick = Some(tick);
         }
@@ -1044,6 +1183,7 @@ impl Scripts {
     /// default (section 1 principle 5), nothing is claimed any more, and
     /// the last picture stays.
     fn stopped_now(&mut self, stopped: &Stopped, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        self.reports.forget();
         let waiting: Vec<Waiting> = self.waiting.drain(..).collect();
         for step in &waiting {
             Self::defaults(&step.events, out)?;
@@ -1053,7 +1193,7 @@ impl Scripts {
         self.channel = None;
         self.page = None;
         self.down.clear();
-        self.opening = None;
+        self.silence.forget();
         self.epoch = self.epoch.wrapping_add(1);
         report(out, ScriptReport::Stopped { reason: stopped.reason, text: log_line(&stopped.text) })?;
         self.say_claims(out)
@@ -1080,9 +1220,7 @@ impl Scripts {
                     self.fail(FailReason::Link, "the script host's answer is not to what this decoder asked", out)?;
                     return Ok(outcome);
                 };
-                if self.waiting.is_empty() {
-                    self.opening = None;
-                }
+                self.silence.answered(Instant::now());
                 outcome = self.take_batch(&waiting, &batch, engine, out)?;
                 self.wake(engine, out)?;
             }
@@ -1135,7 +1273,9 @@ impl Scripts {
                 self.page.as_mut().filter(|_| batch.teletext_rows.is_some() || batch.teletext_enhancement.is_some() || batch.teletext_settings.is_some())
             {
                 page.designated = true;
+                page.drawn.keep(batch);
             }
+            self.reports.applied(at, batch);
             if let Some(painted) = batch.watch.as_ref().and_then(|watch| watch.painted.as_ref()) {
                 engine.script_watch(at, painted);
             }
@@ -1153,6 +1293,7 @@ impl Scripts {
         // stops what its context played.
         if let (Some(operations), Some(open)) = (&batch.sound, self.open) {
             engine.script_sound(open.page, operations);
+            self.reports.sounded(operations);
         }
         for line in batch.log.iter().flatten() {
             report(out, ScriptReport::Log { level: line.level, context: line.context, text: line.text.clone() })?;
