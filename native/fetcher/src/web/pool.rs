@@ -23,7 +23,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 use url::Url;
 
-use super::connect::{Settings, open, resolving};
+use super::connect::{Opened, Settings, open, resolving};
 use super::limits::{IDLE_CONNECTION, MAX_IDLE_PER_PLACE, MAX_POOLED_PLACES, MAX_RESPONSE_HEAD};
 use super::local::Asker;
 
@@ -289,6 +289,17 @@ impl Pool {
         Rc::new(Self { settings, resolving: resolving(), idle: RefCell::default(), shared: RefCell::default() })
     }
 
+    /// A connection of its own to `host` and `port`, never kept and never
+    /// shared, speaking HTTP/1.1: a WebSocket's.
+    pub(crate) async fn open_alone(&self, secure: bool, host: &str, port: u16, page: Asker) -> Result<Opened, Reason> {
+        open(&self.settings, &self.resolving, secure, host, port, page, true).await
+    }
+
+    /// The longest wait for an answer's head.
+    pub(crate) const fn head_timeout(&self) -> std::time::Duration {
+        self.settings.head_timeout
+    }
+
     /// Lets every kept connection go: none is used again.
     pub(crate) fn forget(&self) {
         self.idle.borrow_mut().clear();
@@ -350,7 +361,7 @@ impl Pool {
 
     /// A new connection to `place`.
     async fn opened(&self, place: &Place, page: Asker) -> Result<Connection, Reason> {
-        let opened = open(&self.settings, &self.resolving, place.secure, &place.host, place.port, page).await?;
+        let opened = open(&self.settings, &self.resolving, place.secure, &place.host, place.port, page, false).await?;
         let peer = opened.peer;
         if opened.http2 {
             let mut builder = http2::Builder::new(Spawner);

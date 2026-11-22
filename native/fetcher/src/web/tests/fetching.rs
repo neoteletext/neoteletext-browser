@@ -4,7 +4,7 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use protocol::web::{BodySource, CacheMode, Credentials, Mode, Reason, RedirectMode, Referrer, ReferrerPolicy, RequestKind, ResponseType, ToWebClient};
+use protocol::web::{BodySource, CacheMode, Credentials, Mode, Reason, RedirectMode, Referrer, ReferrerPolicy, ResponseType, ToWebClient};
 
 use super::support::{Client, Reply, Server, header, serve};
 use crate::web::coding::tests::{BROTLI, BROTLI_TEXT, gzip};
@@ -377,19 +377,5 @@ fn coded_bodies_are_decoded() {
     // bytes.
     client.fetch(&server.url("/a/range"), |start| start.headers = vec![header("Range", "bytes=0-9")]);
     assert_eq!(server.the("/a/range").header("accept-encoding").as_deref(), Some("identity"));
-    client.finish().unwrap();
-}
-
-/// A WebSocket's start is refused by name until it is built, and its
-/// messages act on nothing.
-#[test]
-fn what_is_not_built_is_refused_by_name() {
-    let (server, mut client) = echo();
-    let socket = server.at("ws", "site.test", "/a/socket");
-    assert_eq!(client.fetch(&socket, |start| (start.kind, start.protocols) = (RequestKind::WebSocket, vec!["chat".into()])).reason(), Reason::Unsupported);
-    client.send(&ToWebClient::SocketSend { id: 1, binary: false, last: true, bytes: b"hello".to_vec() });
-    client.send(&ToWebClient::SocketClose { id: 1, code: 1000, reason: String::new() });
-    assert_eq!(client.get(&server.url("/a/after")).ok().status, 200, "and the process goes on");
-    assert_eq!(server.asked().len(), 1);
     client.finish().unwrap();
 }

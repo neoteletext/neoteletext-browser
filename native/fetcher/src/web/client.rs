@@ -35,6 +35,7 @@ use super::limits::{
 };
 use super::policy::ChannelPolicy;
 use super::pool::Pool;
+use super::socket::{self, Command, Told};
 use super::sse::EventStream;
 
 /// What the reader thread found on the pipe.
@@ -147,6 +148,10 @@ impl Tab {
     }
 }
 
+/// A socket's task's end of its commands, and the count of bytes handed
+/// over to it.
+type Socket = (mpsc::UnboundedReceiver<Command>, Rc<Cell<usize>>);
+
 /// A request, known by its tab and the number its script host gave it.
 type Key = (u32, u32);
 
@@ -161,6 +166,30 @@ struct Live {
     upload: Option<(Box<Start>, Vec<u8>)>,
     /// Whether it is a keepalive request, which outlives its context.
     keepalive: bool,
+    /// A socket's way in for what the script sends, and the bytes handed
+    /// over that the socket has not yet taken.
+    socket: Option<(mpsc::UnboundedSender<Command>, Rc<Cell<usize>>)>,
+}
+
+/// A request's task, telling its events and waiting for its room.
+struct Teller<'a> {
+    shared: &'a Shared,
+    room: &'a Room,
+    tab: u32,
+}
+
+impl Told for Teller<'_> {
+    async fn tell(&self, event: FromWebClient) {
+        self.shared.tell(self.room, self.tab, event).await;
+    }
+
+    async fn room(&self, count: usize) {
+        self.room.take(count).await;
+    }
+
+    async fn jar(&self) {
+        self.shared.send_jar().await;
+    }
 }
 
 /// What the loop and every request's task share.
@@ -339,7 +368,7 @@ const fn failure(id: u32, reason: Reason) -> FromWebClient {
 }
 
 /// One request, from its place among its tab's to its last event.
-async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, body: Option<Bytes>, room: Rc<Room>) {
+async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, body: Option<Bytes>, room: Rc<Room>, socket: Option<Socket>) {
     let outcome = async {
         // The keepalive requests under way together have a bound on their
         // bodies, which the script host held first and may not have.
@@ -355,10 +384,15 @@ async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, bo
             None
         };
         let _place = tab.enter().await?;
-        match start.kind {
-            RequestKind::EventSource => event_source(&shared, key, &start, &room).await,
-            RequestKind::Fetch => fetch_one(&shared, key, &start, body, &room).await,
-            RequestKind::WebSocket => Err(Reason::Unsupported),
+        match (start.kind, socket) {
+            (RequestKind::EventSource, _) => event_source(&shared, key, &start, &room).await.map(|()| FromWebClient::End(key.1)),
+            (RequestKind::Fetch, _) => fetch_one(&shared, key, &start, body, &room).await.map(|()| FromWebClient::End(key.1)),
+            // A socket's last event is its closing, which it returns.
+            (RequestKind::WebSocket, Some((mut commands, queued))) => {
+                let told = Teller { shared: &shared, room: &room, tab: key.0 };
+                socket::run(&shared.engine, &start, &told, &mut commands, &queued).await
+            }
+            (RequestKind::WebSocket, None) => Err(Reason::Request),
         }
     }
     .await;
@@ -370,7 +404,7 @@ async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, bo
     // No longer live before its last event is said, so an abort that
     // crosses it is answered by nothing more.
     shared.ended(key);
-    shared.send(key.0, outcome.map_or_else(|reason| failure(key.1, reason), |()| FromWebClient::End(key.1))).await;
+    shared.send(key.0, outcome.unwrap_or_else(|reason| failure(key.1, reason))).await;
 }
 
 /// The tab `tab`'s count and rate.
@@ -383,7 +417,14 @@ fn spawn(shared: &Rc<Shared>, key: Key, start: Box<Start>, body: Option<Vec<u8>>
     let tab = tab_of(shared, key.0);
     let mut live = shared.live.borrow_mut();
     let Some(entry) = live.get_mut(&key) else { return };
-    entry.task = Some(tokio::task::spawn_local(serve(Rc::clone(shared), tab, key, start, body.map(Bytes::from), Rc::clone(&entry.room))));
+    // A socket's commands reach its task by a queue of its own.
+    let socket = (start.kind == RequestKind::WebSocket).then(|| {
+        let (commands, taken) = mpsc::unbounded_channel();
+        let queued = Rc::new(Cell::new(0));
+        entry.socket = Some((commands, Rc::clone(&queued)));
+        (taken, queued)
+    });
+    entry.task = Some(tokio::task::spawn_local(serve(Rc::clone(shared), tab, key, start, body.map(Bytes::from), Rc::clone(&entry.room), socket)));
 }
 
 /// Fails a request that never became a task, or was stopped as one.
@@ -418,13 +459,11 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], tab: u32, message:
             }
             let admitted = tab_of(shared, tab).admits(Instant::now());
             let room = Room::new();
-            shared
-                .live
-                .borrow_mut()
-                .insert(key, Live { context: start.context, room, task: None, upload: None, keepalive: start.keepalive && start.kind == RequestKind::Fetch });
-            if start.kind == RequestKind::WebSocket {
-                refuse(shared, key, failure(start.id, Reason::Unsupported)).await;
-            } else if !admitted {
+            shared.live.borrow_mut().insert(
+                key,
+                Live { context: start.context, room, task: None, upload: None, keepalive: start.keepalive && start.kind == RequestKind::Fetch, socket: None },
+            );
+            if !admitted {
                 refuse(shared, key, failure(start.id, Reason::Busy)).await;
             } else if start.body == BodySource::None {
                 spawn(shared, key, start, None);
@@ -495,8 +534,29 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], tab: u32, message:
             shared.engine.pool.forget();
             shared.send_jar().await;
         }
-        // No WebSocket is ever live, so there is none to act on.
-        ToWebClient::SocketSend { .. } | ToWebClient::SocketClose { .. } => {}
+        ToWebClient::SocketSend { id, binary, last, bytes } => {
+            let key = (tab, id);
+            // What a script hands over faster than its socket takes it is
+            // bounded by its host; a host that does not keep to that
+            // loses the socket.
+            let flooded = shared.live.borrow().get(&key).and_then(|live| live.socket.as_ref()).is_some_and(|(commands, queued)| {
+                queued.set(queued.get().saturating_add(bytes.len()));
+                queued.get() > socket::MAX_QUEUED_BYTES || commands.send(Command::Send { binary, last, bytes }).is_err()
+            });
+            if flooded {
+                if let Some(task) = shared.live.borrow_mut().get_mut(&key).and_then(|live| live.task.take()) {
+                    task.abort();
+                }
+                refuse(shared, key, FromWebClient::SocketClosed { id, code: neoteletext_web::consts::CLOSE_TOO_BIG, reason: String::new(), clean: false })
+                    .await;
+            }
+        }
+        ToWebClient::SocketClose { id, code, reason } => {
+            if let Some((commands, _)) = shared.live.borrow().get(&(tab, id)).and_then(|live| live.socket.as_ref()) {
+                // A socket that has ended by itself takes no more.
+                let _ = commands.send(Command::Close { code, reason });
+            }
+        }
     }
     Ok(())
 }

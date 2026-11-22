@@ -48,7 +48,7 @@ const PROXY_AUTHENTICATION_REQUIRED: u16 = 407;
 /// The browser as it names itself, the channel fetcher's own words
 /// (requirement 5.14): its name, its version and its system's family, and
 /// nothing of the viewer.
-fn user_agent() -> Vec<u8> {
+pub(crate) fn user_agent() -> Vec<u8> {
     neoteletext_web::user_agent::UserAgentString::of(crate::agent::product().as_ref()).as_bytes().to_vec()
 }
 
@@ -65,6 +65,16 @@ pub(crate) struct Engine {
     /// The address space its channel was loaded from, as the trusted core
     /// told the process at its start.
     pub(crate) space: AddressSpace,
+}
+
+impl Engine {
+    /// The channel asking, for the rule on this computer and the local
+    /// network: its address space as the trusted core told the process,
+    /// and whether it is a secure context, loaded over `https` or from
+    /// this computer itself. Nothing of it is a script host's word.
+    pub(crate) fn asker(&self) -> Asker {
+        Asker { space: self.space, secure: self.policy.folder().is_some_and(|folder| folder.scheme() == "https" || is_loopback(folder)) }
+    }
 }
 
 /// An answer, filtered for the script.
@@ -191,7 +201,7 @@ fn is_web(url: &Url) -> bool {
 /// Whether `url` names this computer itself, to which a request from a
 /// page loaded securely is not mixed content (the W3C Mixed Content
 /// standard's "potentially trustworthy" addresses).
-fn is_loopback(url: &Url) -> bool {
+pub(crate) fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(name)) => name == "localhost" || name.ends_with(".localhost"),
         Some(url::Host::Ipv4(address)) => address.is_loopback(),
