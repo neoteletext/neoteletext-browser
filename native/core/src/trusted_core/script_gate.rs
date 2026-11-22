@@ -419,8 +419,12 @@ impl Core {
         at: &Point,
         which: (u8, PointerKind, bool),
     ) -> Result<(), String> {
-        let wanted = if action == PointerAction::Move { PointerClaim::Move } else { PointerClaim::Press };
-        let Some((x, y)) = dot(at, self.regis_pointing.at(key)).filter(|_| claim >= wanted) else { return Ok(()) };
+        // A claim of presses includes the pointer coming onto a thing and
+        // off it (section 3.1's manifest: "press, release, enter, leave
+        // and cancel events"), which the decoder tells from where the
+        // pointer is: so it is told the moves too, and gives a script a
+        // move event only when a manifest claims moves.
+        let Some((x, y)) = dot(at, self.regis_pointing.at(key)).filter(|_| claim >= PointerClaim::Press) else { return Ok(()) };
         let sequence = self.script_sequence();
         match action {
             PointerAction::Press => {

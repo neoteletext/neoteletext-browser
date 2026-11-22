@@ -412,11 +412,15 @@ fn a_script_page_is_given_the_text_pointer_and_wheel_it_claims() {
     let given = viewer.given();
     let pointers: Vec<ScriptPointer> =
         given.iter().filter_map(|message| if let ToDecoder::Script(ScriptOrder::Pointer(pointer)) = message { Some(*pointer) } else { None }).collect();
-    assert_eq!(pointers.len(), 2, "the move is not claimed: {given:?}");
+    // The decoder is told the move too: a claim of presses includes the
+    // pointer coming onto a thing and off it, which the decoder tells
+    // from where the pointer is; it gives a script no move event.
+    assert_eq!(pointers.len(), 3, "{given:?}");
     let mouse = |pointer: &ScriptPointer| (pointer.pointer, pointer.kind, pointer.primary) == (MOUSE_POINTER, PointerKind::Mouse, true);
     assert!(pointers.iter().all(mouse));
-    assert_eq!((pointers[0].action, pointers[0].x, pointers[0].y), (PointerAction::Press, 100, 120));
-    assert_eq!((pointers[1].action, pointers[1].x, pointers[1].y), (PointerAction::Release, 101, 121));
+    assert_eq!((pointers[0].action, pointers[0].x, pointers[0].y), (PointerAction::Move, 10, 10));
+    assert_eq!((pointers[1].action, pointers[1].x, pointers[1].y), (PointerAction::Press, 100, 120));
+    assert_eq!((pointers[2].action, pointers[2].x, pointers[2].y), (PointerAction::Release, 101, 121));
     assert!(given.iter().any(|message| matches!(message, ToDecoder::Script(ScriptOrder::Wheel { x: 100, y: 120, delta_x: -1, delta_y: 2, .. }))), "{given:?}");
     // A press and a release are waited for, and have no default here.
     viewer.interface();

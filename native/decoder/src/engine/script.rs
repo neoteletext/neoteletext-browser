@@ -499,13 +499,19 @@ impl Engine {
             let drawings: Vec<u16> = drawings.iter().filter_map(|handle| u16::try_from(*handle).ok()).filter(|number| *number != 0).collect();
             self.regis.set_watch((!drawings.is_empty()).then_some(((at.page, at.sub), drawings, false)));
         }
+        // A NAPLPS page's whole picture, by the backdrop's handle.
+        self.script_watch_backdrop(at, drawings.contains(&crate::scripts::limits::NAPLPS_BACKDROP_HANDLE));
     }
 
     /// The watched drawings of the open sub-page that became whole since
     /// the last call, by their handles, which are their numbers (section
     /// 11.2).
     pub fn script_painted(&mut self, at: ScriptPage) -> Vec<i32> {
-        if at.renderer == Renderer::Regis { self.regis.take_painted(at.page, at.sub).into_iter().map(i32::from).collect() } else { Vec::new() }
+        match at.renderer {
+            Renderer::Regis => self.regis.take_painted(at.page, at.sub).into_iter().map(i32::from).collect(),
+            Renderer::Naplps => self.script_backdrop_painted(at).into_iter().collect(),
+            Renderer::Teletext => Vec::new(),
+        }
     }
 
     /// What is under the pointer at `x`, `y` of the open page's picture,
@@ -527,7 +533,9 @@ impl Engine {
             Renderer::Naplps => {
                 let mut objects = [0_u16; neoteletext_rules::limits::MAX_POINTER_OBJECTS];
                 let count = self.naplps.objects_at(at.page, Some(at.sub), x, y, &mut objects);
-                objects.iter().take(count).map(|object| i32::from(*object)).collect()
+                // Topmost first, each by the handle the script host knows
+                // an actor or a region by (TODO-7383 item 2(b)).
+                objects.iter().take(count).rev().map(|object| Self::script_handle(at, *object)).collect()
             }
             Renderer::Teletext => {
                 let (column, row) = cell_at(x, y);

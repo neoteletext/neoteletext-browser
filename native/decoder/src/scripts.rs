@@ -50,6 +50,7 @@ pub mod events;
 pub mod limits;
 pub mod manifest;
 pub mod rates;
+mod reports;
 #[cfg(test)]
 mod tests;
 
@@ -93,6 +94,47 @@ struct Context {
     stopped: bool,
 }
 
+/// What a page's script last wrote of a teletext page (section 13 item
+/// 5: the script host keeps the plane and sends only what changed): the
+/// rows it wrote, each as last written, its enhancement data and its
+/// settings. A page file fetched again replaces the page's packets, and
+/// these are written over it again, so that a script's page does not
+/// fall back to its file until the script next draws (TODO-7379 item 3).
+#[derive(Debug, Default)]
+struct Drawn {
+    rows: BTreeMap<u8, protocol::script::batch::TeletextRow>,
+    enhancement: Option<Vec<protocol::script::batch::Triplet>>,
+    settings: Option<protocol::script::batch::TeletextSettings>,
+}
+
+impl Drawn {
+    fn keep(&mut self, batch: &Batch) {
+        for row in batch.teletext_rows.iter().flatten() {
+            self.rows.insert(row.row, *row);
+        }
+        if let Some(enhancement) = &batch.teletext_enhancement {
+            self.enhancement = Some(enhancement.clone());
+        }
+        if let Some(settings) = &batch.teletext_settings {
+            self.settings = Some(settings.clone());
+        }
+    }
+
+    /// What was drawn as a batch that draws it again, or none when the
+    /// script has drawn nothing on the page.
+    fn again(&self) -> Option<Batch> {
+        if self.rows.is_empty() && self.enhancement.is_none() && self.settings.is_none() {
+            return None;
+        }
+        Some(Batch {
+            teletext_rows: (!self.rows.is_empty()).then(|| self.rows.values().copied().collect()),
+            teletext_enhancement: self.enhancement.clone(),
+            teletext_settings: self.settings.clone(),
+            ..Batch::new(0)
+        })
+    }
+}
+
 /// The page context, and the page it draws on.
 #[derive(Debug)]
 struct PageContext {
@@ -104,6 +146,9 @@ struct PageContext {
     /// The page's packet X/28/0 has been written with the context's
     /// language.
     designated: bool,
+    /// What the script has drawn on the teletext page, to draw again
+    /// over a page file that is fetched again.
+    drawn: Drawn,
     /// Another script has arrived for the page since: the context ends
     /// and the new script's begins.
     stale: bool,
@@ -206,6 +251,8 @@ pub struct Scripts {
     rates: rates::Rates,
     /// The drawings painted since the last step.
     painted: Vec<i32>,
+    /// What else a step reports of the page and its sounds.
+    reports: reports::Reports,
     claims: Option<ScriptClaims>,
 }
 
@@ -261,6 +308,7 @@ impl Scripts {
             owed: false,
             rates: rates::Rates::default(),
             painted: Vec::new(),
+            reports: reports::Reports::default(),
             claims: None,
         }
     }
@@ -342,9 +390,13 @@ impl Scripts {
                 self.enqueue(claimed, event, None, false, out)?;
             }
             ScriptOrder::Wheel { sequence, x, y, delta_x, delta_y } => {
-                let claimed = self.claimed(|manifest| manifest.wheel);
-                let thing = self.target(engine).and_then(|at| engine.script_pick(at, x, y).first().copied()).unwrap_or(0);
-                let event = Event { kind: EventKind::Wheel, numbers: [i32::from(delta_x), i32::from(delta_y), thing, 0], payload: Vec::new() };
+                // Only over a thing a script made to take the wheel
+                // (section 4.2; the batch's watch list): anywhere else no
+                // event is sent.
+                let things = self.target(engine).map(|at| engine.script_pick(at, x, y)).unwrap_or_default();
+                let thing = self.reports.wheel_thing(&things);
+                let claimed = self.claimed(|manifest| manifest.wheel) && thing.is_some();
+                let event = Event { kind: EventKind::Wheel, numbers: [i32::from(delta_x), i32::from(delta_y), thing.unwrap_or(0), 0], payload: Vec::new() };
                 let _ = sequence;
                 self.enqueue(claimed, event, None, false, out)?;
             }
@@ -352,19 +404,9 @@ impl Scripts {
             // or a contact's. A press and a release are answered, claimed
             // or not, as the rule table's input is.
             ScriptOrder::Pointer(pointer) => {
-                let moving = pointer.action == PointerAction::Move;
                 let answered = matches!(pointer.action, PointerAction::Press | PointerAction::Release).then_some(pointer.sequence);
-                let claim = if moving { PointerClaim::Move } else { PointerClaim::Press };
-                let claimed = self.claimed(|manifest| manifest.pointer >= claim);
-                let at = self.target(engine);
-                let things = at.map(|at| engine.script_pick(at, pointer.x, pointer.y)).unwrap_or_default();
-                let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
                 let which = events::Which { id: i32::from(pointer.pointer), kind: pointer.kind, primary: pointer.primary };
-                let event = events::pointer(pointer.action, pointer.button, (pointer.x, pointer.y), teletext, &things, which);
-                // A move of one pointer never replaces another's (section
-                // 4.7 merges the waiting moves "for one target"): only the
-                // mouse's moves are merged, a contact's are each kept.
-                self.enqueue(claimed, event, answered, moving && pointer.kind == PointerKind::Mouse, out)?;
+                self.pointed(answered, (pointer.action, pointer.button), (pointer.x, pointer.y), which, engine, out)?;
             }
             // Section 4.2: `navigate`, to the page context then the
             // channel's, before the tab goes. Only a cause the browser's
@@ -445,6 +487,23 @@ impl Scripts {
     /// # Errors
     /// When the decoder's output cannot be written.
     pub fn page_file_names(&mut self, page: PageSub, name: Option<String>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
+        // The open page's file came again, and its packets replaced the
+        // page's: what its script drew is drawn over it again, at once.
+        let mut redrawn = Outcome::default();
+        if let Some(held) = self.page.as_ref().filter(|held| held.at.renderer == Renderer::Teletext && PageSub::new(held.at.page, held.at.sub) == page)
+            && let Some(again) = held.drawn.again()
+            && let Ok(arrived) = engine.apply_script(held.at, &again, held.designated)
+        {
+            redrawn.arrived = arrived;
+            redrawn.applied = true;
+        }
+        let mut outcome = self.page_file_named(page, name, engine, out)?;
+        outcome.applied |= redrawn.applied;
+        outcome.arrived.extend(redrawn.arrived);
+        Ok(outcome)
+    }
+
+    fn page_file_named(&mut self, page: PageSub, name: Option<String>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
         match name {
             Some(name) => {
                 if self.pages.get(&page).is_some_and(|held| held.name != name) {
@@ -525,6 +584,20 @@ impl Scripts {
         Ok(())
     }
 
+    /// The sound helper heard a cue of the sound on `voice` (section 3.5:
+    /// `cue` on `nt.sound`): told in the next step, which is owed at the
+    /// next tick, when the sound is one a script started.
+    ///
+    /// # Errors
+    /// When the decoder's output cannot be written.
+    pub fn cue(&mut self, voice: u8, number: u8, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        if self.reports.cue(voice, number) {
+            self.owed = true;
+            self.wake(engine, out)?;
+        }
+        Ok(())
+    }
+
     /// Brings the script host's contexts to what the scripts held and the
     /// page shown ask for (section 3.1's table), then asks whatever step
     /// is due.
@@ -562,7 +635,7 @@ impl Scripts {
             let opened = self.open_context(ContextId::Page, open, &script, engine, out)?;
             if let Some((context, at)) = opened {
                 outcome.arrived = engine.script_blank_page(at);
-                self.page = Some(PageContext { context, at, script: open, designated: false, stale: false });
+                self.page = Some(PageContext { context, at, script: open, designated: false, drawn: Drawn::default(), stale: false });
                 self.pages.insert(open, script);
                 self.epoch = self.epoch.wrapping_add(1);
                 changed = true;
@@ -689,7 +762,9 @@ impl Scripts {
             epoch_seconds: self.facts.epoch_seconds.saturating_add(self.facts_at.elapsed().as_secs()),
             zone_minutes: self.facts.zone_minutes,
             keys: manifest.keys.clone(),
-            sounds: Vec::new(),
+            // What the channel's files have announced so far (section
+            // 3.5): a sound announced later is one a later context has.
+            sounds: engine.script_sounds().into_iter().take(protocol::script::MAX_SOUND_HANDLES).collect(),
             source_bytes,
         };
         match self.link.open(out, &open, &script.source) {
@@ -718,6 +793,7 @@ impl Scripts {
         }
         self.epoch = self.epoch.wrapping_add(1);
         self.rates.page_ended();
+        self.reports.page_left();
         match self.link.close(out, ContextId::Page) {
             Ok(()) => {
                 self.waiting.push_back(Waiting {
@@ -790,7 +866,6 @@ impl Scripts {
         if !self.running() || self.link.stopped().is_some() || self.open != Some(page) || self.paused {
             return default(out);
         }
-        let at = self.target(engine);
         match *input {
             RuleInput::Key { action, named, code, mods, .. } => {
                 let name = events::key_name(named, code);
@@ -811,14 +886,7 @@ impl Scripts {
                 }
                 self.enqueue(true, events::key(action, mods, &name), sequence, false, out)?;
             }
-            RuleInput::Pointer { action, button, x, y, .. } => {
-                let claim = if action == PointerAction::Move { PointerClaim::Move } else { PointerClaim::Press };
-                let claimed = self.claimed(|manifest| manifest.pointer >= claim);
-                let things = at.map(|at| engine.script_pick(at, x, y)).unwrap_or_default();
-                let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
-                let event = events::pointer(action, button, (x, y), teletext, &things, events::Which::MOUSE);
-                self.enqueue(claimed, event, sequence, action == PointerAction::Move, out)?;
-            }
+            RuleInput::Pointer { action, button, x, y, .. } => self.pointed(sequence, (action, button), (x, y), events::Which::MOUSE, engine, out)?,
             RuleInput::Drawing { leave, drawing } => {
                 let claimed = self.claimed(|manifest| manifest.pointer >= PointerClaim::Press);
                 self.enqueue(claimed, events::hover(leave, i32::from(drawing)), sequence, false, out)?;
@@ -833,6 +901,47 @@ impl Scripts {
             RuleInput::Text | RuleInput::Wheel { .. } => {}
         }
         self.wake(engine, out)
+    }
+
+    /// A pointer's event on the open page (sections 4.2 and 4.4): what is
+    /// under it is found in the page's own renderer, with the place in
+    /// the renderer's units and within the thing hit. A press and a
+    /// release are a script's when a manifest claims presses, a move when
+    /// one claims moves; and whenever the mouse comes onto another thing,
+    /// or off one, the thing left hears `pointerleave` and the thing
+    /// entered `pointerenter`, which a claim of presses includes.
+    fn pointed(
+        &mut self,
+        sequence: Option<u32>,
+        (action, button): (PointerAction, u8),
+        (x, y): (u16, u16),
+        which: events::Which,
+        engine: &Engine,
+        out: &mut dyn Write,
+    ) -> Result<(), ProtocolError> {
+        let moving = action == PointerAction::Move;
+        let presses = self.claimed(|manifest| manifest.pointer >= PointerClaim::Press);
+        let claimed = if moving { self.claimed(|manifest| manifest.pointer >= PointerClaim::Move) } else { presses };
+        let hit = if action == PointerAction::Gone {
+            crate::ScriptHit::default()
+        } else {
+            self.target(engine).map(|at| engine.script_hit(at, x, y)).unwrap_or_default()
+        };
+        if which == events::Which::MOUSE {
+            let over = hit.things.first().copied();
+            let before = core::mem::replace(&mut self.reports.hovered, over);
+            if before != over && presses {
+                for (leave, thing) in [(true, before), (false, over)] {
+                    if let Some(thing) = thing {
+                        self.enqueue(true, events::hover(leave, thing), None, false, out)?;
+                    }
+                }
+            }
+        }
+        // A move of one pointer never replaces another's (section 4.7
+        // merges the waiting moves "for one target"): only the mouse's
+        // moves are merged, a contact's are each kept.
+        self.enqueue(claimed, events::pointer(action, button, &hit, which), sequence, moving && which.kind == PointerKind::Mouse, out)
     }
 
     /// Queues the release of every key held, marked as not seen (section
@@ -917,7 +1026,10 @@ impl Scripts {
                 decoder_tick.checked_sub(1).map_or(0, due_after)
             })
         };
-        [deadline, step].into_iter().flatten().min()
+        // A cycle that runs once, and a script's sound, end with nothing
+        // else to wake the loop: it looks again at the next tick.
+        let watching = (!self.paused && self.reports.watching()).then(|| due_after(tick_at(now)));
+        [deadline, step, watching].into_iter().flatten().min()
     }
 
     /// When the oldest thing asked must have been answered (section 3.2
@@ -950,6 +1062,9 @@ impl Scripts {
             self.painted.truncate(protocol::script::MAX_WATCHED_PAINTINGS);
             self.owed |= !self.painted.is_empty();
         }
+        // What the renderers and the sounds did since the last look.
+        let shown = self.target(engine);
+        self.owed |= self.reports.gather(shown, engine) || self.reports.any();
         let now = self.tick(engine);
         let due = self.next_tick().filter(|due| *due <= now);
         let ticking = due.is_some();
@@ -990,6 +1105,7 @@ impl Scripts {
         let taken: Vec<Queued> = self.queue.drain(..lost.saturating_add(MAX_EVENTS_PER_TICK).min(self.queue.len())).collect();
         let sequence = self.sequence;
         self.sequence = self.sequence.wrapping_add(1);
+        let told = self.reports.take(self.target(engine), engine);
         let step = Step {
             sequence,
             tick,
@@ -997,7 +1113,10 @@ impl Scripts {
             flags: StepFlags { tick: ticking, resumed: core::mem::take(&mut self.resumed), sound_allowed: self.sound_allowed, ..flags },
             events: taken.iter().map(|queued| queued.event.clone()).collect(),
             painted: core::mem::take(&mut self.painted),
-            ..Step::default()
+            cycle_ended: told.cycle_ended,
+            bounds: told.bounds,
+            sound: told.sound,
+            faults: told.faults,
         };
         let numbers: Vec<Option<u32>> = taken.iter().map(|queued| queued.sequence).collect();
         match self.link.step(out, &step) {
@@ -1041,6 +1160,7 @@ impl Scripts {
     /// default (section 1 principle 5), nothing is claimed any more, and
     /// the last picture stays.
     fn stopped_now(&mut self, stopped: &Stopped, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        self.reports.forget();
         let waiting: Vec<Waiting> = self.waiting.drain(..).collect();
         for step in &waiting {
             Self::defaults(&step.events, out)?;
@@ -1132,7 +1252,9 @@ impl Scripts {
                 self.page.as_mut().filter(|_| batch.teletext_rows.is_some() || batch.teletext_enhancement.is_some() || batch.teletext_settings.is_some())
             {
                 page.designated = true;
+                page.drawn.keep(batch);
             }
+            self.reports.applied(at, batch);
             if let Some(painted) = batch.watch.as_ref().and_then(|watch| watch.painted.as_ref()) {
                 engine.script_watch(at, painted);
             }
@@ -1150,6 +1272,7 @@ impl Scripts {
         // stops what its context played.
         if let (Some(operations), Some(open)) = (&batch.sound, self.open) {
             engine.script_sound(open.page, operations);
+            self.reports.sounded(operations);
         }
         for line in batch.log.iter().flatten() {
             report(out, ScriptReport::Log { level: line.level, context: line.context, text: line.text.clone() })?;

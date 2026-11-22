@@ -356,6 +356,44 @@ fn a_change_of_page_and_a_hidden_tab_stop_no_script() {
     assert!(browser.scripts.running());
 }
 
+/// Section 3.5, end to end through the real script host (TODO-7379 item
+/// 3): once the viewer has acted, a script's `nt.synth.start` and a note
+/// reach the decoder's sound output as a local sound's start and its
+/// MIDI message, which the trusted core's reader takes; before the
+/// viewer has acted nothing sounds.
+#[test]
+fn a_scripts_synthesizer_starts_and_plays_once_the_viewer_has_acted() {
+    use protocol::audio::Audio;
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"tick":1} */
+        let told = false;
+        nt.addEventListener("tick", () => {
+            if (told) return;
+            nt.synth.start(0, FAMILY_NAME, { gain: 100 });
+            nt.synth.noteOn(0, 60, 100);
+            if (nt.sound.allowed) { told = true; console.log("played"); }
+        });
+        console.log("listening");"#;
+    let script = String::from_utf8(script.to_vec()).unwrap().replace("FAMILY_NAME", "\"dx7\"");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    // A few ticks with sound not allowed: nothing is sent to sound.
+    let began = Instant::now();
+    browser.run_until(|_| began.elapsed() > Duration::from_millis(100));
+    assert!(browser.engine.take_sounds().is_empty(), "no sound before the viewer has acted");
+    browser.order(ScriptOrder::SoundAllowed);
+    assert!(browser.run_until(|browser| browser.logged().iter().any(|line| line == "played") || browser.scripts.stopped().is_some()), "{:?}", browser.reports);
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let sounds = browser.engine.take_sounds();
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::Local { channel: 0, start } if start.gain == 100)), "the synthesizer's start: {sounds:?}");
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::LocalMidi { channel: 0, status: 0x90, data1: 60, data2: 100 })), "its note: {sounds:?}");
+}
+
 /// Section 4.1 and principle 5 ("Fail open"), timed end to end through
 /// the real script host (work package F5, TODO-7294): a script that
 /// takes a key and never answers does not hold it. Its handler never
@@ -445,6 +483,10 @@ fn the_decoders_bounds_and_event_packing_are_the_script_librarys() {
     assert_eq!(limits::MAX_QUEUED_EVENTS, library::MAX_QUEUED_EVENTS);
     assert_eq!((limits::NAPLPS_REPAINT_TICKS, limits::NAPLPS_MAX_BYTES_PER_SECOND), (naplps::NAPLPS_REPAINT_TICKS, naplps::NAPLPS_MAX_BYTES_PER_SECOND));
     assert_eq!(limits::SECOND_TICKS, u64::from(neoteletext_rules::limits::TICKS_PER_SECOND));
+    // The handles the decoder names a NAPLPS page's things by.
+    assert_eq!(limits::NAPLPS_HANDLE_KIND_SHIFT, neoteletext_script::host::naplps::HANDLE_KIND_SHIFT);
+    assert_eq!(limits::NAPLPS_KIND_ACTOR, neoteletext_script::host::naplps::KIND_ACTOR);
+    assert_eq!(limits::NAPLPS_BACKDROP_HANDLE, neoteletext_script::host::naplps::BACKDROP_HANDLE);
     let keys = [events::KEY_SHIFT, events::KEY_CTRL, events::KEY_ALT, events::KEY_META, events::KEY_REPEAT_OR_LOST];
     assert_eq!(keys, [KeyBit::SHIFT, KeyBit::CTRL, KeyBit::ALT, KeyBit::META, KeyBit::REPEAT_OR_LOST].map(KeyBit::number));
     let pointer = [events::POINTER_DOWN, events::POINTER_UP, events::POINTER_MOVE, events::POINTER_ENTER, events::POINTER_LEAVE, events::POINTER_CANCEL];
