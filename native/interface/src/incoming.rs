@@ -134,6 +134,9 @@ pub enum Incoming {
     /// Whether keys go to the open page's channel.
     #[cfg(feature = "interaction")]
     Typing(protocol::interaction::Typing),
+    /// Of the open page's program (script-api.md sections 4.1 and 4.6).
+    #[cfg(feature = "interaction")]
+    Program(Program),
     /// The last input event sent, with the trusted core's `--input-trace`.
     #[cfg(feature = "interaction")]
     InputTrace(protocol::interaction::TraceLine),
@@ -179,4 +182,14 @@ pub enum Incoming {
     CloseWindow(u32),
     /// The trusted core closed the pipe, asked to close, or broke the protocol.
     End(Option<String>),
+}
+
+/// What the trusted core says of the open page's program.
+#[cfg(feature = "interaction")]
+pub enum Program {
+    /// Whether it runs, holds the keys or has stopped, for the trusted
+    /// indications.
+    View(interface_core::browser::scripts::ScriptView),
+    /// A key it let through: the key's default action is taken.
+    KeyDefault(protocol::interaction::script::KeyDefault),
 }

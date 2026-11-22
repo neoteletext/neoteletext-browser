@@ -98,6 +98,11 @@ fn subpage(text: &str) -> Option<u16> {
     (text.len() == SUBPAGE_DIGITS && text.bytes().all(|byte| byte.is_ascii_hexdigit())).then(|| u16::from_str_radix(text, HEXADECIMAL).ok())?
 }
 
+/// A sub-page that names one sub-page, as four hexadecimal digits.
+pub(super) fn subpage_of(text: &str) -> Option<u16> {
+    subpage(text).filter(|subpage| names_one_subpage(*subpage))
+}
+
 /// Whether four digits name one sub-page: 3F7F names none, and a value with
 /// bits outside the thirteen is no sub-code (the engine's REQ-NUM-002).
 fn names_one_subpage(subpage: u16) -> bool {

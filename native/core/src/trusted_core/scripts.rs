@@ -109,7 +109,10 @@ impl ScriptHost {
 /// What the trusted strip may say of a channel's scripts (section 3.1;
 /// the indication itself is work package F5's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "read by the trusted strip's indication, which work package F5 builds (TODO-7294)"))]
+#[cfg_attr(
+    not(any(all(test, unix), feature = "interaction")),
+    expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
+)]
 pub(super) enum ScriptState {
     /// The channel has no script host.
     None,
@@ -178,7 +181,10 @@ fn start_host(broker: &Arc<Broker>, channel: u32, generation: u64, decoder: u64,
 
 impl Core {
     /// What the strip may say of `channel`'s scripts.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the trusted strip's indication, which work package F5 builds (TODO-7294)"))]
+    #[cfg_attr(
+        not(any(all(test, unix), feature = "interaction")),
+        expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
+    )]
     pub(super) fn script_state(&self, channel: u32) -> ScriptState {
         match (self.scripts.stopped.get(&channel), self.scripts.hosts.contains_key(&channel)) {
             (Some(reason), _) => ScriptState::Stopped(*reason),
@@ -327,7 +333,7 @@ impl Core {
 
     /// Kills `channel`'s script host and stops its scripts until the
     /// channel is reloaded.
-    fn stop_scripts(&mut self, channel: u32, reason: FailReason, text: &str) {
+    pub(super) fn stop_scripts(&mut self, channel: u32, reason: FailReason, text: &str) {
         self.scripts_stopped(channel, reason, text, true);
     }
 

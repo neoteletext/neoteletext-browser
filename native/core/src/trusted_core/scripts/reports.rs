@@ -6,11 +6,11 @@
 //! Built here: a script's claim of the network reaches the relay, which
 //! passes a script host's requests only then; a decoder that stopped its
 //! scripts has their script host ended; a script's log lines are the
-//! channel's. The key claims, the verdicts, navigation, titles and labels
-//! are kept or passed over for the trusted strip and the key routing,
-//! which are work package F5's (TODO-7294), and a script's bytes are
-//! given by [`Core::give_script`], which script loading calls (work
-//! package C2, TODO-7304).
+//! channel's. The key claims are kept, and the verdicts, navigation and
+//! titles given to the trusted core's gate (`script_gate.rs`, TODO-7294),
+//! which decides what the viewer's input, the tab and the page list do
+//! with them; a script's bytes are given by [`Core::give_script`], which
+//! script loading calls (work package C2, TODO-7304).
 
 use neoteletext_core::consts::MAX_SCRIPT_NAME;
 use protocol::clean;
@@ -54,15 +54,22 @@ impl Core {
     /// What `channel`'s scripts last claimed, as its decoder read their
     /// manifests; none when no script of it runs.
     #[cfg_attr(
-        not(all(test, unix, feature = "interaction")),
-        expect(dead_code, reason = "read by the key routing and the trusted strip, which work package F5 builds (TODO-7294)")
+        not(feature = "interaction"),
+        expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
     )]
     pub(in super::super) fn script_claims(&self, channel: u32) -> Option<&ScriptClaims> {
         self.scripts.claims.get(&channel)
     }
 
     /// A decoder's report of its channel's scripts.
-    pub(in super::super) fn script_reported(&mut self, channel: u32, report: ScriptReport) {
+    ///
+    /// # Errors
+    /// When the interface cannot be written to.
+    #[cfg_attr(
+        not(feature = "interaction"),
+        expect(clippy::unnecessary_wraps, reason = "only the gate of a script's page writes to the interface, and a build without typing has none")
+    )]
+    pub(in super::super) fn script_reported(&mut self, channel: u32, report: ScriptReport) -> Result<(), String> {
         match report {
             ScriptReport::Claims(claims) => {
                 // Section 11.1: the network kinds are relayed only for a
@@ -85,14 +92,29 @@ impl Core {
                 let who = if context == ContextId::Channel { "channel script" } else { "page script" };
                 self.channel_log(channel, console_level(level), None, &format!("{who}: {text}"));
             }
-            // Each event's verdict, a script's navigation, a page's title
-            // and a thing's label: taken by the key routing, the
-            // navigation gate and the screen reader's tree, which work
-            // package F5 builds (TODO-7294). Until then every default
-            // stands, as with no script.
-            ScriptReport::Verdict { .. } | ScriptReport::Navigate { .. } | ScriptReport::Title { .. } | ScriptReport::Label { .. } => {}
+            // What became of an event the gate gave: its default is
+            // taken unless a script cancelled it (section 4.1).
+            #[cfg(feature = "interaction")]
+            ScriptReport::Verdict { sequence, cancelled, handled } => self.script_verdict(channel, sequence, cancelled, handled)?,
+            // A script's navigation, through the checks a link's goes
+            // through (section 3.3).
+            #[cfg(all(feature = "interaction", feature = "links"))]
+            ScriptReport::Navigate { page, target } => self.script_navigate(channel, page, &target)?,
+            // The page's title, where every page's title shows.
+            #[cfg(feature = "interaction")]
+            ScriptReport::Title { page, title } => self.script_titled(channel, page, &title)?,
+            // A thing's label is the screen reader's, and nothing reads
+            // one yet (section 18): it is bounded by its reader and kept
+            // nowhere. In a build without typing no script is given the
+            // viewer's input, and none of these has anything to act on.
+            ScriptReport::Label { .. } => {}
+            #[cfg(not(feature = "interaction"))]
+            ScriptReport::Verdict { .. } | ScriptReport::Title { .. } => {}
+            #[cfg(not(all(feature = "interaction", feature = "links")))]
+            ScriptReport::Navigate { .. } => {}
             ScriptReport::Wanted { page, name } => self.script_wanted(channel, page, &name),
         }
+        Ok(())
     }
 
     /// A page file of `channel` names a script its decoder does not hold

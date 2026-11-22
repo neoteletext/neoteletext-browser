@@ -73,6 +73,11 @@ impl Core {
                 {
                     return Ok(());
                 }
+                // A script's page is given the viewer's input by the gate
+                // and by nothing else (script-api.md section 4.6).
+                if self.script_input(&intent)? {
+                    return Ok(());
+                }
                 self.pointer_context(&intent);
                 let sends = self.typing.input_intent(&intent, self.now_us());
                 // What was given to the page's decoder (RULE-52 item 1).
@@ -96,6 +101,7 @@ impl Core {
                 let sends = self.typing.editing(editing, self.now_us());
                 self.deliver_typing(sends)?;
             }
+            ToCore::StopScripts => self.script_stop_asked(),
             ToCore::WallWithoutPage => {
                 if let Some(channel) = self.active_channel() {
                     let sends = self.typing.selects_nothing(channel, self.now_us());
@@ -162,6 +168,12 @@ impl Core {
                 // 4): the view's local sounds are silenced, their
                 // instruments kept, while it is paused.
                 Send::RulesPage { channel, page } => {
+                    // The scripts of the page left hear `navigate` first
+                    // (script-api.md section 4.2).
+                    #[cfg(feature = "links")]
+                    if let Some(next) = page {
+                        self.script_page_leaving(channel, next);
+                    }
                     self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page));
                     // A page opening is told the interface's frames again,
                     // for its tick 0 (RULE-98 item 2).
@@ -172,6 +184,9 @@ impl Core {
                 }
                 Send::ConnectionEnded { channel } => self.tell(channel, protocol::decoder::ToDecoder::ConnectionEnded),
                 Send::Interface(state) => {
+                    // What the open page's scripts hold is the page's, as
+                    // a table's keys are (script-api.md section 4.6).
+                    let state = self.script_typing(state);
                     self.send(&ToInterface::Typing(state))?;
                     // Keys may have started or stopped going to the
                     // channel: the looks and the hover follow (REQ-6374).
