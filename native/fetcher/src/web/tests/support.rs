@@ -203,7 +203,7 @@ async fn answer(
 }
 
 /// The test certificate, for `localhost`, and its key.
-fn certificate() -> (rustls::pki_types::CertificateDer<'static>, rustls::pki_types::PrivateKeyDer<'static>) {
+pub(super) fn certificate() -> (rustls::pki_types::CertificateDer<'static>, rustls::pki_types::PrivateKeyDer<'static>) {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     (
         CertificateDer::from(include_bytes!("../../transport/testdata/localhost-certificate.der").to_vec()),

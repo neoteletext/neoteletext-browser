@@ -7,6 +7,7 @@ mod support;
 
 mod cookies;
 mod fetching;
+mod hostile;
 mod protections;
 mod standards;
 mod streams;
