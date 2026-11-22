@@ -307,13 +307,15 @@ impl Container {
     }
 
     /// Notes that the container has stopped: every context is marked, and
-    /// the log says why.
-    fn note_stop(&mut self, stop: &Stop) {
+    /// the log says why, under the context whose code was running when it
+    /// stopped, so that a channel's author looks in the right file; a
+    /// stop that is no one context's doing names none.
+    fn note_stop(&mut self, stop: &Stop, running: Option<ContextId>) {
         self.machine.stop(stop.clone());
         let host = self.machine.host();
         host.end_callback();
         host.stop_all(stop.reason());
-        host.log_line(LEVEL_ERROR, None, &stop.to_string());
+        host.log_line(LEVEL_ERROR, running, &stop.to_string());
     }
 
     /// Opens a context and runs `source`'s top level in it, all within
@@ -353,7 +355,7 @@ impl Container {
         let prelude = match self.engine.prelude(parts) {
             Ok(prelude) => prelude,
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 return Err(LinkError::Stopped(stop.reason(), stop.to_string()));
             }
         };
@@ -382,7 +384,7 @@ impl Container {
                 Ok(())
             }
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 Err(LinkError::Stopped(stop.reason(), stop.to_string()))
             }
         }
@@ -403,7 +405,7 @@ impl Container {
         if self.machine.stopped().is_none()
             && let Err(stop) = self.machine.close_context(context, Instant::now().checked_add(self.time.close))
         {
-            self.note_stop(&stop);
+            self.note_stop(&stop, Some(context));
         }
         self.machine.host().close(context);
         self.queue.retain(|waiting| !(context == ContextId::Channel && waiting.owed == Owed::Channel));
@@ -485,7 +487,7 @@ impl Container {
                 Ok(Some(entry))
             }
             Err(stop) => {
-                self.note_stop(&stop);
+                self.note_stop(&stop, Some(context));
                 Err(stop)
             }
         }
@@ -848,7 +850,7 @@ impl Container {
         figures.second_percent = percent(in_second, time.second);
         if in_second > time.second && self.machine.stopped().is_none() {
             self.machine.host().log_line(LEVEL_WARN, None, "SECOND_TIME_BUDGET: the scripts used more time in a second than they may");
-            self.note_stop(&Stop::Time);
+            self.note_stop(&Stop::Time, None);
         }
         Ok(self.machine.host().take_batch(step.sequence, &verdicts))
     }
