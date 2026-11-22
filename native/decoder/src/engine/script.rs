@@ -509,17 +509,28 @@ impl Engine {
     /// script watches (the batch's section WATCH, at most the renderer's
     /// `MAX_WATCHED_PAINTINGS`).
     pub fn script_watch(&mut self, at: ScriptPage, drawings: &[i32]) {
-        if at.renderer == Renderer::Regis {
-            let drawings: Vec<u16> = drawings.iter().filter_map(|handle| u16::try_from(*handle).ok()).filter(|number| *number != 0).collect();
-            self.regis.set_watch((!drawings.is_empty()).then_some(((at.page, at.sub), drawings, false)));
+        match at.renderer {
+            Renderer::Regis => {
+                let drawings: Vec<u16> = drawings.iter().filter_map(|handle| u16::try_from(*handle).ok()).filter(|number| *number != 0).collect();
+                self.regis.set_watch((!drawings.is_empty()).then_some(((at.page, at.sub), drawings, false)));
+            }
+            // A NAPLPS page has one thing that is painted: its backdrop,
+            // the whole picture of the stream (section 7.2).
+            Renderer::Naplps => self.naplps.set_watch(drawings.contains(&protocol::script::naplps::BACKDROP_HANDLE).then_some((at.page, at.sub))),
+            Renderer::Teletext => {}
         }
     }
 
-    /// The watched drawings of the open sub-page that became whole since
-    /// the last call, by their handles, which are their numbers (section
-    /// 11.2).
+    /// The watched things of the open sub-page that became whole since
+    /// the last call, by their handles (section 11.2): a ReGIS drawing's
+    /// is its number; a NAPLPS page's backdrop is painted when
+    /// everything appended is drawn and every WAIT has passed.
     pub fn script_painted(&mut self, at: ScriptPage) -> Vec<i32> {
-        if at.renderer == Renderer::Regis { self.regis.take_painted(at.page, at.sub).into_iter().map(i32::from).collect() } else { Vec::new() }
+        match at.renderer {
+            Renderer::Regis => self.regis.take_painted(at.page, at.sub).into_iter().map(i32::from).collect(),
+            Renderer::Naplps if self.naplps.take_backdrop_painted(at.page, at.sub) => vec![protocol::script::naplps::BACKDROP_HANDLE],
+            Renderer::Naplps | Renderer::Teletext => Vec::new(),
+        }
     }
 
     /// What is under the pointer at `x`, `y` of the open page's picture,
@@ -539,9 +550,15 @@ impl Engine {
                 things
             }
             Renderer::Naplps => {
+                // The renderer gives the objects in drawing order, the
+                // topmost last; a script is given the topmost first, each
+                // by the script host's handle for an object of the cast,
+                // which is made from the object's number (TODO-7425: the
+                // bare number names nothing to the script host, and a
+                // press reached no component).
                 let mut objects = [0_u16; neoteletext_rules::limits::MAX_POINTER_OBJECTS];
                 let count = self.naplps.objects_at(at.page, Some(at.sub), x, y, &mut objects);
-                objects.iter().take(count).map(|object| i32::from(*object)).collect()
+                objects.iter().take(count).rev().map(|object| protocol::script::naplps::object_handle(*object)).collect()
             }
             Renderer::Teletext => {
                 let (column, row) = cell_at(x, y);

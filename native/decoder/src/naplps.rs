@@ -843,6 +843,20 @@ impl NaplpsPages {
         self.pages.get_mut(&(page, sub)).is_some_and(|held| held.whole.take(held.player.idle(), tick))
     }
 
+    /// Takes the whole picture's "painted" report for the script that
+    /// watches the backdrop of the sub-page `sub` of `page` (script API
+    /// section 7.2), if it is owed: bytes were drawn, and the player
+    /// holds none and plays no WAIT. Once for each time the picture
+    /// becomes whole.
+    pub fn take_backdrop_painted(&mut self, page: u16, sub: u16) -> bool {
+        self.pages.get_mut(&(page, sub)).is_some_and(|held| {
+            // The report is the script's alone, asked for at most once a
+            // step: no other "painted" of this tick can stand before it.
+            let idle = held.player.idle();
+            held.whole.due(idle) && held.whole.take(idle, held.told.unwrap_or(0).wrapping_add(1))
+        })
+    }
+
     /// Whether the sub-page `sub` of `page` has the whole picture's
     /// "painted" event to give its rule table.
     #[must_use]

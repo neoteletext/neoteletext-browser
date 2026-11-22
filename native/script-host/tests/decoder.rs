@@ -537,3 +537,101 @@ fn a_regis_script_page_reached_from_another_page_draws_and_a_page_come_back_to_b
     assert_eq!(faults, Vec::<String>::new());
     assert!(browser.scripts.stopped().is_none());
 }
+
+/// TODO-7425, the NAPLPS part, and section 4.4: on a NAPLPS page of
+/// components the decoder picks the region under the pointer from the
+/// page's cast and names it in the pointer event by the script host's
+/// handle for it, kind 5 and the object's number
+/// (`protocol::script::naplps::object_handle`), so that a press and a
+/// release on a button reach the button. The page is the script
+/// library's own page of thirteen kinds; the press is on its Refresh
+/// button, at raster dot (20, 305), and then on the first row of its
+/// menu, at (40, 190).
+#[test]
+fn a_press_on_a_naplps_component_reaches_it_through_the_decoders_pick() {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x330, 0);
+    let script = include_bytes!("../../script/tests/naplps_page/thirteen.js");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.open(page, "330.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line.starts_with("made 13 components")) || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let pointer = |sequence, action, x, y| ScriptPointer { sequence, action, button: 0, x, y, pointer: 1, kind: PointerKind::Mouse, primary: true };
+    for (sequence, (x, y)) in [(5, (20, 305)), (7, (40, 190))] {
+        browser.order(ScriptOrder::Pointer(pointer(sequence, Told::Press, x, y)));
+        browser.order(ScriptOrder::Pointer(pointer(sequence + 1, Told::Release, x, y)));
+    }
+    let heard = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("activate menu")) || browser.scripts.stopped().is_some();
+    let reached = browser.run_until(heard);
+    let logged = browser.logged();
+    assert!(reached, "the presses reached no component: {logged:?} {:?}", browser.reports);
+    assert!(logged.contains(&"activate refresh null".to_owned()), "{logged:?}");
+    assert!(logged.contains(&"activate menu \"ship\"".to_owned()), "{logged:?}");
+}
+
+/// Section 7.2 and TODO-7383's decoder part: a NAPLPS script page's
+/// backdrop is reported painted, by its handle
+/// (`protocol::script::naplps::BACKDROP_HANDLE`), once everything its
+/// script appended is drawn and its WAIT has passed; and a NAPLPS script
+/// page reached by a change of page, and the one gone back to, each
+/// begin a generation of their own and draw (TODO-7424 saw ReGIS script
+/// pages come up blank when reached so).
+#[test]
+fn a_naplps_script_page_reached_by_a_page_change_draws_and_hears_its_backdrop_painted() {
+    let (first, second) = (PageSub::new(0x300, 0), PageSub::new(0x301, 0));
+    let one = br#"/*! nt {"api":1,"renderer":"naplps"} */
+        nt.naplps.backdrop.addEventListener("painted", () => console.log("one painted"));
+        nt.naplps.backdrop.paint((p) => p.ink("red").fillRect(0, 0, 240, 460).wait(2).ink("green").fillRect(240, 0, 240, 460));
+        console.log("one runs");"#;
+    let two = br#"/*! nt {"api":1,"renderer":"naplps"} */
+        nt.naplps.backdrop.addEventListener("painted", () => console.log("two painted"));
+        nt.naplps.backdrop.paint((p) => p.ink("blue").fillRect(0, 0, 480, 460));
+        console.log("two runs");"#;
+    let count = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| *logged == line).count();
+    // The decoder's loop brings the picture to the clock at every wake:
+    // the player's WAIT passes there.
+    let heard = |page: u16, line: &'static str, times: usize| {
+        move |browser: &mut Browser| {
+            let now = browser.engine.now_us();
+            let _ = browser.engine.animation_step(&[page], now);
+            browser.logged().iter().filter(|logged| *logged == line).count() == times || browser.scripts.stopped().is_some()
+        }
+    };
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        let piece = SourcePiece {
+            level: ContextId::Page,
+            page: second,
+            name: "301.js".into(),
+            total: u32::try_from(two.len()).unwrap(),
+            offset: 0,
+            bytes: two.to_vec(),
+        };
+        browser.order(ScriptOrder::Source(piece));
+        browser.open(first, "300.js", one);
+        browser.run_until(heard(0x300, "one painted", 1));
+        browser
+    });
+    assert_eq!((count(&browser, "one runs"), count(&browser, "one painted")), (1, 1), "{:?}", browser.reports);
+    let drew = |browser: &mut Browser, page: u16| {
+        let now = browser.engine.now_us();
+        browser.engine.naplps().stream_end(page, 0).is_some() && browser.engine.take_pictures(page, Some(0), now).1.is_some()
+    };
+    assert!(drew(&mut browser, 0x300));
+    // The page changes: the trusted core says no page is open, then names the next.
+    browser.page(None);
+    browser.page(Some(second));
+    assert!(browser.run_until(heard(0x301, "two painted", 1)), "{:?}", browser.reports);
+    assert!(drew(&mut browser, 0x301), "the page reached by a change of page drew: {:?}", browser.reports);
+    // And back.
+    browser.page(None);
+    browser.page(Some(first));
+    assert!(browser.run_until(heard(0x300, "one painted", 2)), "{:?}", browser.reports);
+    assert_eq!(count(&browser, "one runs"), 2);
+    assert!(drew(&mut browser, 0x300), "the page gone back to drew again: {:?}", browser.reports);
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+}
