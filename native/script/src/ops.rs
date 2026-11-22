@@ -597,33 +597,56 @@ pub const FAMILIES: [(&str, neoteletext_audio::Codec); 7] = [
     ("synth80", neoteletext_audio::Codec::Synth80),
 ];
 
-/// The prelude with the numbers and bounds in front of it, as each
-/// context's realm runs it before any script.
+/// The parts of the prelude beside the shared core. Every context's realm
+/// runs them all ([`crate::Container::open`]); a choice of them is for
+/// measuring what each costs a context's start (`tests/start.rs`, rdm
+/// TODO-7386).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(clippy::struct_excessive_bools, reason = "four independent parts, each named where it is chosen")]
+pub struct Parts {
+    /// `nt.teletext` with the sixel bitmap and sprites.
+    pub teletext: bool,
+    /// `nt.regis`.
+    pub regis: bool,
+    /// `nt.naplps`.
+    pub naplps: bool,
+    /// The web APIs with the bundled streams.
+    pub web: bool,
+}
+
+impl Parts {
+    /// Every part.
+    pub const ALL: Self = Self { teletext: true, regis: true, naplps: true, web: true };
+    /// The shared core alone.
+    pub const CORE: Self = Self { teletext: false, regis: false, naplps: false, web: false };
+}
+
+/// The whole prelude: the shared core and every part.
 #[must_use]
 pub fn prelude() -> String {
-    use core::fmt::Write as _;
+    prelude_of(Parts::ALL)
+}
 
+/// The prelude with the numbers and bounds in front of it, as a context's
+/// realm runs it before any script: the shared core and the parts named.
+/// A part left out leaves in its place only the names the core reads it
+/// by, undefined.
+#[must_use]
+pub fn prelude_of(parts: Parts) -> String {
     use crate::limits;
     // One function holds the tables and the prelude, so that none of
     // their names is a global of the script's realm.
     let mut out = String::from("(function () {\n\"use strict\";\n");
-    let mut table = |name: &str, entries: &mut dyn Iterator<Item = (&str, i64)>| {
-        let _ = write!(out, "const {name} = Object.freeze({{");
-        for (key, number) in entries {
-            let _ = write!(out, "{key}: {number}, ");
-        }
-        out.push_str("});\n");
-    };
-    table("OP", &mut Op::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("EV", &mut EventKind::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("INFO", &mut Info::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("PROP", &mut Property::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("POINTER_ACTION", &mut PointerAction::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("KEY_BIT", &mut KeyBit::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("DISPATCH", &mut DispatchBit::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("CAUSE", &mut NavigateCause::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("HANDLE", &mut Handle::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("FAMILY", &mut FAMILIES.iter().map(|(name, codec)| (*name, i64::from(codec.code()))));
+    table(&mut out, "OP", &mut Op::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "EV", &mut EventKind::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "INFO", &mut Info::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "PROP", &mut Property::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "POINTER_ACTION", &mut PointerAction::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "KEY_BIT", &mut KeyBit::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "DISPATCH", &mut DispatchBit::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "CAUSE", &mut NavigateCause::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "HANDLE", &mut Handle::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table(&mut out, "FAMILY", &mut FAMILIES.iter().map(|(name, codec)| (*name, i64::from(codec.code()))));
     // The bounds the prelude itself needs: to round delays to ticks, to
     // cut a log line before it is sent, and to give the standard's errors
     // where a standard names one.
@@ -636,21 +659,47 @@ pub fn prelude() -> String {
         ("MAX_GAIN", i64::from(limits::MAX_GAIN)),
         ("MAX_MIDI_BEND", i64::from(limits::MAX_MIDI_BEND)),
     ];
-    table("BOUND", &mut bounds.iter().copied());
-    table("NP", &mut crate::host::naplps::program::table());
-    table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
-    table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
-    table("TTB", &mut crate::teletext::bitmap::prelude_numbers().iter().copied());
-    table("RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
-    table("RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
+    table(&mut out, "BOUND", &mut bounds.iter().copied());
     out.push_str(include_str!("prelude.js"));
-    out.push_str(include_str!("host/naplps/prelude.js"));
-    out.push_str(crate::teletext::bitmap::PRELUDE);
-    out.push_str(crate::teletext::PRELUDE);
-    out.push_str(include_str!("regis.js"));
-    // The web APIs (work package W2), inside the same function.
-    crate::web::write_prelude(&mut out);
+    if parts.naplps {
+        table(&mut out, "NP", &mut crate::host::naplps::program::table());
+        table(&mut out, "NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
+        out.push_str(include_str!("host/naplps/prelude.js"));
+    } else {
+        out.push_str("\nconst naplpsApi = undefined;\n");
+    }
+    if parts.teletext {
+        table(&mut out, "TT", &mut crate::teletext::prelude_numbers().iter().copied());
+        table(&mut out, "TTB", &mut crate::teletext::bitmap::prelude_numbers().iter().copied());
+        out.push_str(crate::teletext::bitmap::PRELUDE);
+        out.push_str(crate::teletext::PRELUDE);
+    } else {
+        out.push_str("\nconst teletextApi = undefined;\n");
+    }
+    if parts.regis {
+        table(&mut out, "RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+        table(&mut out, "RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+        table(&mut out, "RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
+        out.push_str(include_str!("regis.js"));
+    }
+    if parts.web {
+        // The web APIs (work package W2), inside the same function.
+        crate::web::write_prelude(&mut out);
+    } else {
+        // No event of the network reaches a realm without them.
+        out.push_str("\nfunction webDispatch() { return 0; }\n");
+    }
     out.push_str("\n})();\n");
     out
+}
+
+/// Writes a table of numbers into the prelude: a frozen object of the
+/// name given.
+fn table(out: &mut String, name: &str, entries: &mut dyn Iterator<Item = (&str, i64)>) {
+    use core::fmt::Write as _;
+    let _ = write!(out, "const {name} = Object.freeze({{");
+    for (key, number) in entries {
+        let _ = write!(out, "{key}: {number}, ");
+    }
+    out.push_str("});\n");
 }

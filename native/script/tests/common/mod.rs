@@ -18,7 +18,14 @@ pub const CHANNEL: &str = "https://example.test/chan/";
 /// The engine, compiled once for the test program.
 pub fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| Engine::new().expect("the module compiles"))
+    ENGINE.get_or_init(|| {
+        let engine = Engine::new().expect("the module compiles");
+        // As the script host does when it starts: the prelude's bytecode
+        // is made before any context opens, so no test's timing of an
+        // opening holds the one compilation.
+        engine.prelude(neoteletext_script::ops::Parts::ALL).expect("the prelude compiles");
+        engine
+    })
 }
 
 /// A context's opening for `context` with nothing claimed. Its script's
