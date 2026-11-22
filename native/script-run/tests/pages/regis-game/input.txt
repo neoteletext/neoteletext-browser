@@ -1,0 +1,2 @@
+# the second worked example of section 6.4: the right arrow held, so the boat sails right
+1 keydown ArrowRight

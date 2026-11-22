@@ -52,6 +52,9 @@ pub(crate) struct Settings {
     pub(crate) proxy: Option<Proxy>,
     /// TLS as every connection has it, offering HTTP/2 and HTTP/1.1.
     pub(crate) tls: Arc<rustls::ClientConfig>,
+    /// The same, offering HTTP/1.1 alone: for a WebSocket, whose upgrade
+    /// is HTTP/1.1's.
+    pub(crate) tls_http1: Arc<rustls::ClientConfig>,
     /// A test's resolver.
     pub(crate) names: Option<Names>,
     /// The one deadline over a connection's opening: [`OPEN_DEADLINE`],
@@ -68,7 +71,17 @@ impl Settings {
         // The engine's configuration: resumption, no early data, ring.
         let mut tls = neoteletext_transport::client_config(roots);
         tls.alpn_protocols = vec![ALPN_HTTP2.to_vec(), ALPN_HTTP1.to_vec()];
-        Self { allowed: allowed.to_vec(), proxy, tls: Arc::new(tls), names: None, open_deadline: OPEN_DEADLINE, head_timeout: HEAD_TIMEOUT }
+        let mut tls_http1 = tls.clone();
+        tls_http1.alpn_protocols = vec![ALPN_HTTP1.to_vec()];
+        Self {
+            allowed: allowed.to_vec(),
+            proxy,
+            tls: Arc::new(tls),
+            tls_http1: Arc::new(tls_http1),
+            names: None,
+            open_deadline: OPEN_DEADLINE,
+            head_timeout: HEAD_TIMEOUT,
+        }
     }
 
     /// Why the page `page` may not ask `ip`, if it may not
@@ -273,8 +286,17 @@ async fn reach(settings: &Settings, resolving: &Arc<Semaphore>, host: &str, port
 }
 
 /// Opens a connection to `host` and `port`, with TLS when `secure`, for a
-/// page `page`, all within the one deadline.
-pub(crate) async fn open(settings: &Settings, resolving: &Arc<Semaphore>, secure: bool, host: &str, port: u16, page: Asker) -> Result<Opened, Reason> {
+/// page `page`, all within the one deadline; with `http1_alone`, HTTP/2
+/// is not offered in the TLS handshake.
+pub(crate) async fn open(
+    settings: &Settings,
+    resolving: &Arc<Semaphore>,
+    secure: bool,
+    host: &str,
+    port: u16,
+    page: Asker,
+    http1_alone: bool,
+) -> Result<Opened, Reason> {
     let opening = async {
         let (socket, peer) = reach(settings, resolving, host, port, page).await?;
         socket.inner.set_nodelay(true).map_err(|_| Reason::Connection)?;
@@ -282,11 +304,14 @@ pub(crate) async fn open(settings: &Settings, resolving: &Arc<Semaphore>, secure
             return Ok(Opened { stream: Stream::Plain(socket), http2: false, peer });
         }
         let name = rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(|_| Reason::Address)?;
-        let stream = tokio_rustls::TlsConnector::from(Arc::clone(&settings.tls)).connect(name, socket).await.map_err(|error| {
-            // A certificate refused, or any other fault of TLS itself, is
-            // a hard stop told apart from a socket that failed.
-            if error.get_ref().is_some_and(<dyn std::error::Error + Send + Sync>::is::<rustls::Error>) { Reason::Certificate } else { Reason::Connection }
-        })?;
+        let stream = tokio_rustls::TlsConnector::from(Arc::clone(if http1_alone { &settings.tls_http1 } else { &settings.tls }))
+            .connect(name, socket)
+            .await
+            .map_err(|error| {
+                // A certificate refused, or any other fault of TLS itself, is
+                // a hard stop told apart from a socket that failed.
+                if error.get_ref().is_some_and(<dyn std::error::Error + Send + Sync>::is::<rustls::Error>) { Reason::Certificate } else { Reason::Connection }
+            })?;
         let http2 = stream.get_ref().1.alpn_protocol() == Some(ALPN_HTTP2);
         Ok(Opened { stream: Stream::Tls(Box::new(stream)), http2, peer })
     };
