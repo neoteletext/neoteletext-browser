@@ -13,7 +13,7 @@ use protocol::script::Renderer;
 use super::Engine;
 use super::script::{ScriptPage, cell_at};
 use crate::animation::Counters;
-use crate::scripts::limits::{NAPLPS_BACKDROP_HANDLE, NAPLPS_HANDLE_KIND_SHIFT, NAPLPS_KIND_ACTOR, NAPLPS_TOP_LINE};
+use crate::scripts::limits::NAPLPS_TOP_LINE;
 
 /// What is under the pointer on a script's page (section 4.4).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -50,21 +50,15 @@ impl Engine {
 
     /// The renderer's number of the thing a script host names by
     /// `handle`: a sprite's or a drawing's number is its handle, and an
-    /// actor's or a region's is under its kind (TODO-7383 item 2(b)).
-    /// None for a handle that names no such thing: the backdrop, a
-    /// control of the page file.
+    /// actor's or a region's is under its kind
+    /// (`protocol::script::naplps`). None for a handle that names no such
+    /// thing: the backdrop, a control of the page file.
     #[must_use]
     pub fn script_number(at: ScriptPage, handle: i32) -> Option<u16> {
-        let number = match at.renderer {
-            Renderer::Teletext | Renderer::Regis => handle,
-            Renderer::Naplps => {
-                if handle.checked_shr(NAPLPS_HANDLE_KIND_SHIFT) != Some(NAPLPS_KIND_ACTOR) {
-                    return None;
-                }
-                handle & LAST_NUMBER_HANDLE
-            }
-        };
-        u16::try_from(number).ok().filter(|number| *number != 0)
+        match at.renderer {
+            Renderer::Teletext | Renderer::Regis => u16::try_from(handle).ok().filter(|number| *number != 0),
+            Renderer::Naplps => protocol::script::naplps::object_number(handle),
+        }
     }
 
     /// The handle a script host knows the renderer's thing `number` by.
@@ -72,7 +66,7 @@ impl Engine {
     pub fn script_handle(at: ScriptPage, number: u16) -> i32 {
         match at.renderer {
             Renderer::Teletext | Renderer::Regis => i32::from(number),
-            Renderer::Naplps => NAPLPS_KIND_ACTOR.checked_shl(NAPLPS_HANDLE_KIND_SHIFT).unwrap_or(0) | i32::from(number),
+            Renderer::Naplps => protocol::script::naplps::object_handle(number),
         }
     }
 
@@ -104,22 +98,6 @@ impl Engine {
     /// nothing, which a script hears as `fault` events.
     pub fn script_animation_cost(&mut self, at: ScriptPage) -> Counters {
         self.take_animation_counters_of(at.page, Some(at.sub))
-    }
-
-    /// The whole picture of the open NAPLPS page became whole since it
-    /// was last asked (section 7.2: `painted` on the backdrop), by the
-    /// backdrop's handle.
-    pub fn script_backdrop_painted(&mut self, at: ScriptPage) -> Option<i32> {
-        let tick = crate::animation::tick_at(self.now_us());
-        (at.renderer == Renderer::Naplps && self.naplps.take_whole(at.page, at.sub, tick)).then_some(NAPLPS_BACKDROP_HANDLE)
-    }
-
-    /// Watches, or stops watching, the whole picture of the open NAPLPS
-    /// page for a script that listens for `painted` on its backdrop.
-    pub fn script_watch_backdrop(&mut self, at: ScriptPage, watched: bool) {
-        if at.renderer == Renderer::Naplps {
-            self.naplps.set_watch(watched.then_some((at.page, at.sub)));
-        }
     }
 
     /// What is under the pointer at the pixel `x`, `y` of the open

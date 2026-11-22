@@ -33,6 +33,7 @@ use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_bytes, push_count, read_fra
 
 pub mod batch;
 pub mod link;
+pub mod naplps;
 pub mod relay;
 pub mod sprites;
 pub mod teletext;
