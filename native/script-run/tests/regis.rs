@@ -56,3 +56,51 @@ fn the_regis_game_example_matches_its_kept_run() {
     assert_eq!(output.status.code(), Some(0), "{all}");
     assert!(all.contains("matched the 5 kept files"), "{all}");
 }
+
+/// Section 8 on ReGIS (work package U2, rdm TODO-7306): the page of all
+/// thirteen kinds of component (`native/script/tests/ui/thirteen-regis.js`,
+/// the page of the teletext run with its renderer changed) run against
+/// its kept results, with scripted keys, typed text and a press of the
+/// pointer on a row of the menu. Each component's event is in the kept
+/// log, line by line the events of the teletext run, and the components'
+/// drawings are painted by the decoder's own engine with the decoder's
+/// fonts: the highlight moved, the toggle's knob, the slider's thumb, the
+/// field's text and its caret are in the kept pictures.
+#[test]
+fn the_page_of_all_thirteen_kinds_on_regis_matches_its_kept_run() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let kept = manifest.join("tests/pages/thirteen-regis");
+    let output = Command::new(PROGRAM)
+        .arg("run")
+        .arg(manifest.join("../script/tests/ui/thirteen-regis.js"))
+        .args(["--page", "100", "--ticks", "70", "--png-at", "0,45,69", "--input"])
+        .arg(kept.join("input.txt"))
+        .arg("--expect")
+        .arg(kept.join("expect"))
+        .arg("--unconfined")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    let all = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{all}");
+    assert!(all.contains("matched the 6 kept files"), "{all}");
+    let log = std::fs::read_to_string(kept.join("expect/log.txt")).unwrap();
+    let events: Vec<&str> = log.lines().filter(|line| line.contains(" page log ")).map(|line| line.split(" page log ").nth(1).unwrap()).collect();
+    assert_eq!(
+        events,
+        vec![
+            "made 13 components, 73 drawings, 3860 bytes of contents; focus on story",
+            "move menu 1",
+            "move menu 3",
+            "move tides 1",
+            "change sound true",
+            "change volume 5",
+            "change name \"Mary Rose\"",
+            "change name \"Mary Ros\"",
+            "activate menu 3",
+        ]
+    );
+    // Every section of every batch was drawn: ReGIS and its animation
+    // operations are all a page of components sends.
+    assert!(!all.contains("NOT DRAWN"), "{all}");
+}
