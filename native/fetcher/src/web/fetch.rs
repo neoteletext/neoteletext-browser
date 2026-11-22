@@ -23,12 +23,13 @@ use super::cookies::{self, Jar};
 use super::cors::{self, Allowed, PreflightCache};
 use super::integrity;
 use super::limits::{DECODED_RATIO_FLOOR, MAX_DECODED_BODY, MAX_DECOMPRESSED_RATIO, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
-use super::local::Asker;
+use super::local::{Asker, space_of};
 use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
 use super::referrer::{DEFAULT_POLICY, policy_of, referer};
 use super::rules::{is_bad_port, is_forbidden_method, is_forbidden_request_header, is_forbidden_response_header};
 use protocol::web::AddressSpace;
+use std::net::IpAddr;
 
 /// The headers of a request's body, which go when a redirect makes it a
 /// `GET` (the Fetch standard, "request-body-header name").
@@ -196,6 +197,8 @@ struct Request<'a> {
     sent: Cell<usize>,
     /// Whether every address so far was of the asking page's site.
     same_site: bool,
+    /// The address space the answers for the current address came from.
+    landed: Cell<Option<AddressSpace>>,
 }
 
 fn is_web(url: &Url) -> bool {
@@ -272,6 +275,7 @@ impl<'a> Request<'a> {
             redirects: 0,
             sent: Cell::new(0),
             same_site,
+            landed: Cell::new(None),
         })
     }
 
@@ -288,6 +292,19 @@ impl<'a> Request<'a> {
             Some(client) if !self.tainted_origin => client.origin().ascii_serialization(),
             _ => "null".to_owned(),
         }
+    }
+
+    /// Notes the address an answer for the request's current address
+    /// came from.
+    ///
+    /// # Errors
+    /// When an earlier answer for the same address, its preflight's or a
+    /// first try's, came from another address space (TODO-7316 item 5,
+    /// "inconsistent addresses"): a name that answers from the internet
+    /// for one connection and from the local network for the next is
+    /// asked nothing more, and what it answered is not used.
+    fn lands(&self, peer: Option<IpAddr>) -> Result<(), Reason> {
+        lands_as_before(&self.landed, peer)
     }
 
     /// The request's current address as an answer shows it: without its
@@ -403,6 +420,7 @@ impl<'a> Request<'a> {
             .pool
             .send(&Outgoing { method: &self.method, url: &self.url, headers: &headers, body: self.body.clone(), page: self.asker(), credentials })
             .await?;
+        self.lands(answer.peer)?;
         if self.redirects == 0 {
             self.sent.set(self.body.as_ref().map_or(0, Bytes::len));
         }
@@ -436,6 +454,7 @@ impl<'a> Request<'a> {
         set(&mut headers, "origin", origin.clone());
         let answer =
             engine.pool.send(&Outgoing { method: "OPTIONS", url: &self.url, headers: &headers, body: None, page: self.asker(), credentials: false }).await?;
+        self.lands(answer.peer)?;
         let allowed = (cors::cors_check(&answer.headers, &origin, with_credentials) && (200..300).contains(&answer.status))
             .then(|| Allowed::read(&answer.headers, with_credentials, Instant::now()))
             .flatten()
@@ -503,6 +522,8 @@ impl<'a> Request<'a> {
             self.same_site &= cookies::same_site(jar.suffixes(), client, &target);
         }
         self.url = target;
+        // A redirect's address is judged afresh.
+        self.landed.set(None);
         self.redirects = self.redirects.saturating_add(1);
         Ok(true)
     }
@@ -511,7 +532,7 @@ impl<'a> Request<'a> {
     /// responses), its body decoded and, when the request names integrity
     /// metadata, already checked whole.
     async fn filtered(&self, answer: Answer, response_type: ResponseType) -> Result<Fetched, Reason> {
-        let Answer { status, status_text, headers, mut body } = answer;
+        let Answer { status, status_text, headers, mut body, peer: _ } = answer;
         if response_type == ResponseType::OpaqueRedirect {
             if integrity::asks(&self.start.integrity) {
                 return Err(Reason::Integrity);
@@ -566,6 +587,17 @@ impl<'a> Request<'a> {
     }
 }
 
+/// Notes in `landed` the space of `peer`, the address an answer came
+/// from, and fails when an earlier one noted there was of another space.
+/// An answer through a proxy has no such address and is not judged.
+fn lands_as_before(landed: &Cell<Option<AddressSpace>>, peer: Option<IpAddr>) -> Result<(), Reason> {
+    let Some(space) = peer.map(space_of) else { return Ok(()) };
+    match landed.replace(Some(space)) {
+        Some(earlier) if earlier != space => Err(Reason::LocalRefused),
+        _ => Ok(()),
+    }
+}
+
 /// Fetches what `start` asks for, with `body` as its body: the Fetch
 /// standard's main fetch, to the answer's head. The body is then read
 /// from the answer's [`Reader`].
@@ -615,5 +647,34 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         }
         let response_type = request.tainting;
         return request.filtered(answer, response_type).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TODO-7316 item 5, "inconsistent addresses": the answers for one
+    /// address of a request, its preflight's and its own, come from one
+    /// address space, or the request fails; a redirect's address starts
+    /// afresh, and an answer through a proxy is not judged.
+    #[test]
+    fn answers_from_two_address_spaces_fail_the_request() {
+        let ip = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+        let landed = Cell::new(None);
+        assert_eq!(lands_as_before(&landed, ip("93.184.216.34")), Ok(()));
+        assert_eq!(lands_as_before(&landed, ip("2606:2800:220:1::1")), Ok(()), "another address of the same space");
+        assert_eq!(lands_as_before(&landed, None), Ok(()), "through a proxy");
+        assert_eq!(
+            lands_as_before(&landed, ip("192.168.1.10")),
+            Err(Reason::LocalRefused),
+            "the preflight from the internet, the request from the local network"
+        );
+        let landed = Cell::new(None);
+        assert_eq!(lands_as_before(&landed, ip("10.0.0.1")), Ok(()));
+        assert_eq!(lands_as_before(&landed, ip("127.0.0.1")), Err(Reason::LocalRefused), "the local network and this computer are two spaces");
+        // What a redirect does: the next address is judged by itself.
+        landed.set(None);
+        assert_eq!(lands_as_before(&landed, ip("127.0.0.1")), Ok(()));
     }
 }
