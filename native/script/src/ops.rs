@@ -142,6 +142,8 @@ numbered! {
     TT_COLOUR_DEFINE = 110,
     /// Teletext: redefines a Colour Map entry.
     TT_COLOUR_SET = 111,
+    /// Teletext: makes a sprite of frames given as blocks' cells; gives its handle.
+    TT_SPRITE = 112,
     /// Teletext: labels a sprite or a control.
     TT_LABEL = 113,
     /// Teletext: an animation operation on a sprite or a control.
@@ -156,6 +158,8 @@ numbered! {
     TT_LANGUAGES = 118,
     /// Teletext: the receiver's presentation level.
     TT_LEVEL = 119,
+    /// Teletext: a text as the cells of a block, three bytes a cell.
+    TT_BLOCK_TEXT = 120,
     /// The teletext sixel bitmap: the rows it owns.
     BM_ROWS = 130,
     /// The sixel bitmap: fills the back buffer and frees its text cells.

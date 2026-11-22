@@ -471,7 +471,7 @@ fn the_standard_globals_work_within_their_bounds() {
         console.debug("d", 1); console.info("i", { a: 1 }); console.warn("w", [1, 2]); console.error("e", null, undefined); nt.log("l", new Error("in a log").message);
         console.log("x".repeat(1000));
         const budget = nt.budget();
-        equal("budget entries", Object.keys(budget).join(), "scriptBytes,heapBytes,timers,listeners,requests,sockets,soundOperations,callbackPercent,callbackPercentMax,stepPercentMax,secondPercent,batchBytes,hostBytes,failures,triplets,colours,controls,bitmapCellsLossy");
+        equal("budget entries", Object.keys(budget).join(), "scriptBytes,heapBytes,timers,listeners,requests,sockets,soundOperations,callbackPercent,callbackPercentMax,stepPercentMax,secondPercent,batchBytes,hostBytes,failures,triplets,colours,controls,sprites,spriteFrames,objectPageTriplets,bitmapCellsLossy");
         check("heap is counted", budget.heapBytes.used > 100000 && budget.heapBytes.limit === 48 * 1024 * 1024);
         check("script bytes", budget.scriptBytes.used > 1000 && budget.scriptBytes.limit === 1048576);
         check("host bytes", budget.hostBytes.used > 0 && budget.hostBytes.limit === 8388608);

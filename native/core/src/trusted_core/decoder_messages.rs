@@ -42,6 +42,8 @@ impl Core {
             FromDecoder::ChannelLog { level, page, text } => self.channel_log(channel, level, page, &text),
             // A channel's decoder took a font for pictures, or refused it (PAR-35).
             FromDecoder::FontChecked { refusal, .. } => self.font_taken(channel, refusal.as_deref()),
+            // The channel's scripts (script-api.md sections 4.6 and 11.2).
+            FromDecoder::Script(report) => self.script_reported(channel, report),
             // Only a decoder started to read bookmarks reports them, only
             // one started to convert a picture makes one, and only one
             // started in snapshot mode draws a snapshot (REQ-6885): from a

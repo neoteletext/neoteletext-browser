@@ -129,3 +129,8 @@ pub(super) const KIND_SNAPSHOT: u8 = 214;
 pub(super) const KIND_SNAPSHOT_SOURCE: u8 = 215;
 pub(super) const KIND_SNAPSHOT_DRAWN: u8 = 216;
 pub(super) const KIND_SNAPSHOT_REFUSED: u8 = 217;
+// A channel's scripts (the script API's specification sections 11.2 and
+// 12.5; TODO-7293), in two numbers no pipe used on 22 November 2026: the
+// trusted core's orders to a decoder, and the decoder's reports.
+pub(super) const KIND_SCRIPT_ORDER: u8 = 194;
+pub(super) const KIND_SCRIPT_REPORT: u8 = 195;
