@@ -65,7 +65,7 @@ pub use linux::probe;
 #[cfg(target_os = "linux")]
 pub use linux::scheduling;
 pub use process::{Input, Output, Process};
-pub use role::{Report, Role};
+pub use role::{Report, Role, SCRIPT_MEMORY_BYTES};
 pub use spawn::{Spawn, apply, spawn};
 pub use time::{LocalTime, MAX_OFFSET, local_time};
 #[cfg(unix)]

@@ -42,7 +42,7 @@ pub(super) fn landlock(role: Role, writable: Option<&Path>) -> Result<(), String
         Role::Core | Role::Updater { .. } => writable,
         // Its own empty `/dev/shm`, which nothing else sees (`runtime`).
         Role::Interface => Some(Path::new(super::runtime::SHARED_MEMORY)).filter(|folder| folder.is_dir()),
-        Role::Decoder | Role::Network => None,
+        Role::Decoder | Role::Script | Role::Network => None,
     };
     if let Some(folder) = written
         && let Ok(fd) = PathFd::new(folder)
