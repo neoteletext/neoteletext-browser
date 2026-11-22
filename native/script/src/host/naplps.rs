@@ -21,6 +21,7 @@
 mod cast;
 pub mod limits;
 pub mod program;
+mod ui;
 pub mod writer;
 
 use std::collections::VecDeque;
@@ -139,6 +140,8 @@ pub struct Naplps {
     tick: u64,
     /// The definitions and the cast (work package N2).
     cast: cast::Cast,
+    /// The page's components as NAPLPS draws them (work package U3).
+    components: ui::Components,
 }
 
 impl Default for Naplps {
@@ -158,6 +161,7 @@ impl Default for Naplps {
             wait_tenths: 0,
             tick: 0,
             cast: cast::Cast::default(),
+            components: ui::Components::default(),
         }
     }
 }
@@ -221,6 +225,7 @@ impl Naplps {
             .saturating_add(self.blinks.len().saturating_mul(size_of::<Blink>()))
             .saturating_add(self.second.len().saturating_mul(size_of::<(u64, usize)>()))
             .saturating_add(self.cast.state_bytes())
+            .saturating_add(self.components.state_bytes())
     }
 
     /// The bytes staged for the step's output.
@@ -663,6 +668,15 @@ impl Host {
         let (room, bound) = if own < callback { (own, "NAPLPS_MAX_BYTES_PER_SECOND") } else { (callback, "NAPLPS_MAX_BYTES_PER_CALLBACK") };
         let outcome =
             painter.run(program, &self.naplps.language, &cast::Defined(&self.naplps.cast, ContextId::Page), &mut out, opening.saturating_add(room), bound)?;
+        if fresh {
+            // A new generation paints from nothing: the components, which
+            // are painted on the backdrop, are painted again over the
+            // script's new one, each by the program the host kept.
+            for (program, named) in self.naplps.components.programs() {
+                let language = if named.is_empty() { self.naplps.language.as_str() } else { named };
+                let _ = painter.run(program, language, &cast::Defined(&self.naplps.cast, ContextId::Page), &mut out, usize::MAX, "NAPLPS_MAX_BYTES_PER_SECOND");
+            }
+        }
         // What a repaint replaces is no longer part of the step's output.
         let replaced = if fresh { self.naplps.staged.len() } else { 0 };
         if self.batch_bytes().saturating_sub(replaced).saturating_add(out.len()) > self.batch_limit {
