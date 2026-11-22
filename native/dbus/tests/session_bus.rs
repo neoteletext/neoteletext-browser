@@ -9,27 +9,89 @@ use std::process::{Child, Command, Stdio};
 
 use neoteletext_dbus::{Connection, Error, Kind, Message, Value, parse_addresses};
 
-/// A private session bus, ended when dropped.
+/// The longest path a local socket may be bound at on Linux and macOS:
+/// `sun_path` of `sockaddr_un` is 108 bytes on Linux and 104 on macOS, with
+/// its terminating zero (`unix(7)`), so 103 holds on both.
+const MOST_SOCKET_PATH: usize = 103;
+/// How many names are tried for a bus's folder before the test gives up.
+const FOLDER_NAMES_TRIED: u32 = 1_000;
+
+/// Where a test's bus has its folder: the user's own runtime folder when
+/// the session names one that can be written, and otherwise the temporary
+/// folder the environment names (`TMPDIR`). Never the build folder, whose
+/// path is as long as wherever the workspace was checked out, where a
+/// socket's may be at most [`MOST_SOCKET_PATH`] bytes (TODO-7446).
+fn short_base() -> std::path::PathBuf {
+    let usable = |folder: &std::path::PathBuf| {
+        let trial = folder.join(format!("nt-dbus-{}-trial", std::process::id()));
+        let made = std::fs::create_dir(&trial).is_ok();
+        let _ = std::fs::remove_dir(&trial);
+        made
+    };
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|folder| folder.is_absolute() && folder.is_dir() && usable(folder))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// A new folder under [`short_base`], for its owner alone, removed when
+/// dropped.
+struct Folder(std::path::PathBuf);
+
+impl Folder {
+    fn new() -> Self {
+        use std::os::unix::fs::DirBuilderExt as _;
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let base = short_base();
+        (0..FOLDER_NAMES_TRIED)
+            .find_map(|_| {
+                let count = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let folder = base.join(format!("nt-dbus-{}-{count}", std::process::id()));
+                match std::fs::DirBuilder::new().mode(0o700).create(&folder) {
+                    Ok(()) => Some(Self(folder)),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(error) => panic!("cannot make a bus's folder {}: {error}", folder.display()),
+                }
+            })
+            .unwrap_or_else(|| panic!("every name tried for a bus's folder in {} is taken", base.display()))
+    }
+}
+
+impl Drop for Folder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A private session bus, ended when dropped, and its folder removed
+/// after it.
 struct Bus {
     daemon: Child,
     address: String,
+    _folder: Folder,
 }
 
 impl Bus {
-    fn start(name: &str) -> Self {
-        let folder = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::create_dir_all(&folder).unwrap();
+    fn start() -> Self {
+        let folder = Folder::new();
+        let socket = folder.0.join("bus");
+        let length = socket.as_os_str().len();
+        assert!(
+            length <= MOST_SOCKET_PATH,
+            "the bus's socket {} would have a path of {length} bytes, and a local socket's may be at most {MOST_SOCKET_PATH}: \
+             run the test with XDG_RUNTIME_DIR or TMPDIR naming a folder with a shorter path",
+            socket.display()
+        );
         let mut daemon = Command::new("dbus-daemon")
             .args(["--session", "--nofork", "--print-address"])
-            .arg(format!("--address=unix:path={}", folder.join("bus").display()))
+            .arg(format!("--address=unix:path={}", socket.display()))
             .stdout(Stdio::piped())
             .spawn()
             .expect("dbus-daemon, which this test needs");
         // The daemon prints its address once it listens.
         let mut address = String::new();
         BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
-        Self { daemon, address: address.trim().to_owned() }
+        Self { daemon, address: address.trim().to_owned(), _folder: folder }
     }
 
     fn connect(&self) -> Connection {
@@ -47,7 +109,7 @@ impl Drop for Bus {
 #[test]
 #[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
 fn the_client_authenticates_calls_and_hears_a_signal() {
-    let bus = Bus::start("calls");
+    let bus = Bus::start();
     let mut first = bus.connect();
     let mut second = bus.connect();
     assert!(first.unique_name().starts_with(':') && first.unique_name() != second.unique_name());
@@ -75,7 +137,7 @@ fn the_client_authenticates_calls_and_hears_a_signal() {
 #[test]
 #[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
 fn a_signal_from_another_sender_is_not_taken() {
-    let bus = Bus::start("senders");
+    let bus = Bus::start();
     let mut listener = bus.connect();
     let mut impostor = bus.connect();
     let mut genuine = bus.connect();
@@ -115,7 +177,7 @@ fn flush(connection: &mut Connection) {
 #[test]
 #[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
 fn unasked_for_signals_neither_fail_a_call_nor_are_kept() {
-    let bus = Bus::start("unasked");
+    let bus = Bus::start();
     let mut victim = bus.connect();
     let mut sender = bus.connect();
     let flood = neoteletext_dbus::MAX_WAITING_SIGNALS + 8;
@@ -132,7 +194,7 @@ fn unasked_for_signals_neither_fail_a_call_nor_are_kept() {
 #[test]
 #[ignore = "needs dbus-daemon (Debian and Ubuntu's dbus-daemon package), so it runs by hand: cargo test -p neoteletext-dbus -- --ignored"]
 fn an_expected_signal_during_a_call_is_kept_for_its_wait() {
-    let bus = Bus::start("expected");
+    let bus = Bus::start();
     let mut listener = bus.connect();
     let mut service = bus.connect();
     let mut impostor = bus.connect();

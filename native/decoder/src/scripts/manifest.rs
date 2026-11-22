@@ -13,7 +13,7 @@
 
 use neoteletext_core::charset::language::language;
 use protocol::decoder::script::PointerClaim;
-use protocol::script::{MAX_KEY_ASKS, MAX_KEY_NAME_BYTES, MAX_LANGUAGE_BYTES, MAX_TICK_DIVISOR, Renderer};
+use protocol::script::{MAX_KEY_ASKS, MAX_KEY_NAME_BYTES, MAX_TICK_DIVISOR, Renderer, is_language_tag};
 
 use super::limits::{FIRST_API, MAX_MANIFEST_BYTES};
 
@@ -349,7 +349,11 @@ impl Members {
             "language" => {
                 // Section 5.6: a tag of the engine's list, and no other.
                 let tag = text(value, name)?;
-                if tag.len() > MAX_LANGUAGE_BYTES || language(&tag).is_none() {
+                // The tag's form by the link's own rule, the one definition
+                // of it, before the engine's list is asked: the list's
+                // lookup takes a tag by its beginning, so alone it would
+                // let through text the context's opening then refuses.
+                if !is_language_tag(&tag) || language(&tag).is_none() {
                     return Err(range);
                 }
                 keep(&mut self.language, tag, name)
@@ -535,5 +539,23 @@ mod tests {
         let mut endless = b"/*! nt ".to_vec();
         endless.resize(protocol::script::MAX_SCRIPT_BYTES, b' ');
         assert_eq!(read(&endless), Err(ManifestError::TooLong));
+    }
+    /// TODO-7441, found by the fuzz target `script_manifest` on 23
+    /// November 2026 (its input, kept here): a `language` whose beginning
+    /// is a tag of the engine's list and whose rest is not a tag at all
+    /// is refused by the manifest's reader, with the manifest's reason,
+    /// and never reaches a context's opening, whose own check is the same
+    /// rule. A tag of the list with a region is still taken.
+    #[test]
+    fn a_language_that_only_begins_as_a_tag_is_refused_by_the_manifest() {
+        let found = "/*! nt {\"api\":1,\"renderer\":\"regis\",\"keys\":[\"Enter\",\"Arrop\",\"a\",\"F1\"],\"text\":true,\"pointer\":\"move\",\"wheel\":true,\"tick\":60,\"language\":\"de-0\u{74f}\",\"network\":true} */";
+        assert_eq!(read(found.as_bytes()), Err(ManifestError::Range("language")));
+        for tag in ["de-\u{e9}", "de_AT", "de AT", "de-AT!", "d\u{435}"] {
+            assert_eq!(manifest(&format!(r#"{{"api":1,"language":"{tag}"}}"#)), Err(ManifestError::Range("language")), "{tag}");
+        }
+        for tag in ["de", "de-AT", "en"] {
+            let taken = manifest(&format!(r#"{{"api":1,"language":"{tag}"}}"#)).unwrap().language.unwrap();
+            assert!(is_language_tag(&taken), "{taken}");
+        }
     }
 }

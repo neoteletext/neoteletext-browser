@@ -31,7 +31,7 @@ mod helper;
 mod staging;
 pub mod transport;
 
-pub use client::{Config, MAX_ATTEMPTS, METADATA, newest, now, target_name};
+pub use client::{Config, MAX_ATTEMPTS, METADATA, asked_for, folder_address, newest, now, target_name};
 pub use helper::run;
 pub use staging::{COMPRESSED, PARTIAL};
 pub use transport::Https;

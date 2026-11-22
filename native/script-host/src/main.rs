@@ -60,6 +60,13 @@ const _: () = assert!(WATCHDOG_EXIT_STATUS != 0 && WATCHDOG_EXIT_STATUS != 1);
 
 /// Compiles the engine, starts the watchdog and serves the pipes.
 fn run() -> Result<End, String> {
+    // The scripts' time limits are counted on this process's own
+    // processor time (`neoteletext_script::clock`; DEC-7357 as revised):
+    // a script is stopped for the work it did, and never for the time
+    // this process waited for a processor on a busy machine.
+    if !neoteletext_script::clock::install(confine::processor_time) {
+        eprintln!("neoteletext-script-host: the system gives no processor time for this process, so its scripts' limits are counted on the wall clock");
+    }
     let engine = Engine::new().map_err(|stop| format!("the script engine's module does not compile: {stop}"))?;
     // The prelude's bytecode now, while the opening is still arriving,
     // and not within the first context's opening (rdm TODO-7386).

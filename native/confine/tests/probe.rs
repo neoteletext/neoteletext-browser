@@ -100,26 +100,95 @@ fn a_file_to_read_keeps_landlock_whole() {
     assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
 }
 
+/// The longest path a local socket may be bound at: `sun_path` of
+/// `sockaddr_un` less its terminating zero (`unix(7)`; 107 on Linux).
+const MOST_SOCKET_PATH: usize = size_of::<libc::sockaddr_un>() - std::mem::offset_of!(libc::sockaddr_un, sun_path) - 1;
+/// The sockets a runtime folder of these tests holds, named as the session
+/// bus, the Wayland display and the sound server name theirs.
+const RUNTIME_SOCKETS: [&str; 3] = ["bus", "wayland-0", "pipewire-0"];
+/// How many names are tried for a runtime folder before the test gives up:
+/// each is this process's number and a count, so one is taken only by a
+/// folder an earlier process of the same number left.
+const FOLDER_NAMES_TRIED: u32 = 1_000;
+
+/// Where these tests make their runtime folders: the user's own runtime
+/// folder when the session names one that can be written (`/run/user/<uid>`
+/// on a desktop, where a real runtime folder's sockets are), and otherwise
+/// the temporary folder the environment names, as the standard library
+/// reads it (`TMPDIR`). Never the build folder: a socket's path may be at
+/// most [`MOST_SOCKET_PATH`] bytes, and the build folder's path is as long
+/// as wherever the workspace was checked out (TODO-7446: 97 bytes at the
+/// longest socket in the main checkout, 129 in a worktree, where every test
+/// that binds one failed).
+fn short_base() -> std::path::PathBuf {
+    let usable = |folder: &std::path::PathBuf| {
+        let trial = folder.join(format!("nt-probe-{}-trial", std::process::id()));
+        let made = std::fs::create_dir(&trial).is_ok();
+        let _ = std::fs::remove_dir(&trial);
+        made
+    };
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .filter(|folder| folder.is_absolute() && folder.is_dir() && usable(folder))
+        .unwrap_or_else(std::env::temp_dir)
+}
+
 /// A runtime folder of the test's own, as `XDG_RUNTIME_DIR` names one,
 /// holding listening sockets named as the session bus, the Wayland display
 /// and the sound server name theirs. The listeners live as long as the
-/// value; a connection is queued without being accepted.
+/// value; a connection is queued without being accepted. The folder is made
+/// new under [`short_base`], for its owner alone, and removed with the
+/// value, on every path out of the test.
+///
+/// What a helper is confined to is unchanged by where the folder is: the
+/// helper is told the folder as `XDG_RUNTIME_DIR`, Landlock is told that
+/// folder to read, and its private `/run` and `/tmp` cover the folder, by
+/// itself when it lies elsewhere and with `/run` when it lies under it, as
+/// a session's own does, with only its role's socket put back
+/// (`confine/src/linux/runtime.rs`, `paths.rs`).
 struct Runtime {
     folder: std::path::PathBuf,
-    _listeners: Vec<std::os::unix::net::UnixListener>,
+    /// Held, never read: the sockets listen for as long as it lives.
+    listeners: Vec<std::os::unix::net::UnixListener>,
 }
 
 impl Runtime {
-    fn new(name: &str) -> Self {
-        let folder = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("probe-runtime-{name}"));
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::create_dir_all(&folder).unwrap();
-        let listeners = ["bus", "wayland-0", "pipewire-0"].iter().map(|socket| std::os::unix::net::UnixListener::bind(folder.join(socket)).unwrap()).collect();
-        Self { folder, _listeners: listeners }
+    fn new() -> Self {
+        use std::os::unix::fs::DirBuilderExt as _;
+        static MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let base = short_base();
+        let folder = (0..FOLDER_NAMES_TRIED)
+            .find_map(|_| {
+                let count = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let folder = base.join(format!("nt-probe-{}-{count}", std::process::id()));
+                match std::fs::DirBuilder::new().mode(0o700).create(&folder) {
+                    Ok(()) => Some(folder),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                    Err(error) => panic!("cannot make a runtime folder {}: {error}", folder.display()),
+                }
+            })
+            .unwrap_or_else(|| panic!("every name tried for a runtime folder in {} is taken", base.display()));
+        // Held from here, so that the folder goes whatever follows.
+        let mut runtime = Self { folder, listeners: Vec::new() };
+        let longest = RUNTIME_SOCKETS.iter().map(|socket| runtime.folder.join(socket).as_os_str().len()).max().unwrap();
+        assert!(
+            longest <= MOST_SOCKET_PATH,
+            "a socket in the runtime folder {} would have a path of {longest} bytes, and a local socket's may be at most {MOST_SOCKET_PATH}: \
+             run the tests with XDG_RUNTIME_DIR or TMPDIR naming a folder with a shorter path",
+            runtime.folder.display()
+        );
+        runtime.listeners = RUNTIME_SOCKETS.iter().map(|socket| std::os::unix::net::UnixListener::bind(runtime.folder.join(socket)).unwrap()).collect();
+        runtime
     }
 
     fn probe(&self, role: &str) -> String {
         probe(role, &[("XDG_RUNTIME_DIR", self.folder.to_str().unwrap())])
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.folder);
     }
 }
 
@@ -131,7 +200,7 @@ impl Runtime {
 /// netlink socket.
 #[test]
 fn a_network_helper_reaches_no_local_socket() {
-    let runtime = Runtime::new("network");
+    let runtime = Runtime::new();
     for role in ["network", "updater"] {
         let line = runtime.probe(role);
         for expected in
@@ -148,7 +217,7 @@ fn a_network_helper_reaches_no_local_socket() {
 /// connected, and the real session bus was there to reach.
 #[test]
 fn the_interface_reaches_its_display_and_no_bus() {
-    let runtime = Runtime::new("interface");
+    let runtime = Runtime::new();
     let line = runtime.probe("interface");
     assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
     for expected in ["display=connected", "bus=absent", "sound=absent", "user-bus=absent", "system-bus=absent"] {
@@ -174,7 +243,7 @@ fn only_the_interface_makes_shared_memory_and_in_its_own_folder() {
 /// Decision 86: the sound helper reaches its sound server and no bus.
 #[test]
 fn the_sound_helper_reaches_its_server_and_no_bus() {
-    let runtime = Runtime::new("sound");
+    let runtime = Runtime::new();
     let line = runtime.probe("sound");
     assert!(line.starts_with("PROBE report=network namespace, private /run and /tmp, Landlock, seccomp;"), "{line}");
     for expected in ["sound=connected", "bus=absent", "display=absent", "user-bus=absent", "system-bus=absent"] {

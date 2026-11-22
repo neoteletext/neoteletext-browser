@@ -24,10 +24,6 @@ use neoteletext_script::{API_VERSION, InProcess, LinkError, ProcessLink, ScriptL
 use protocol::script::relay::{HostOutput, STEP_DEADLINE, read_host_output};
 use protocol::script::{ContextId, ContextOpen, EventKind, FailReason, FromScriptHost, LINK_VERSION, ToScriptHost, read_to_decoder, write_to_host};
 
-/// How often a test whose script was stopped for time is tried again
-/// when this machine had no processor for it.
-const STARVED_TRIES: usize = 5;
-
 /// The script host, started confined as the broker starts it.
 fn start() -> Process {
     let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-script-host"));
@@ -59,12 +55,6 @@ fn opening_of(context: ContextId, source: &[u8]) -> ContextOpen {
 
 fn ended(mut process: Process) -> std::process::ExitStatus {
     process.wait().unwrap()
-}
-
-/// Whether a run was stopped for time, which on a machine with no
-/// processor free says nothing of the script.
-fn starved<T>(result: &Result<T, LinkError>) -> bool {
-    matches!(result, Err(LinkError::Stopped(FailReason::Time, _)))
 }
 
 /// Section 11.1 and 11.2: a script host says READY, with this link's
@@ -112,20 +102,12 @@ fn the_scripts_do_the_same_in_a_process_of_their_own_as_in_the_callers() {
     let mut in_process = InProcess::new(engine().clone(), Settings { time: TimeLimits::unhurried(), watchdog: None });
     let expected = drive(&mut in_process).unwrap();
     assert_eq!(expected, vec!["page key Enter", "channel key Enter", "page timer", "channel timer", "page tick", "channel tick"]);
-    for _ in 0..STARVED_TRIES {
-        let (process, mut link) = linked();
-        let driven = drive(&mut link);
-        if starved(&driven) {
-            continue;
-        }
-        assert_eq!(driven.unwrap(), expected);
-        assert_eq!(link.api_max(), Some(API_VERSION));
-        assert!(matches!(link.step(tick(4, 3)), Err(LinkError::Context(_))), "a step after every context closed");
-        link.shutdown();
-        assert!(ended(process).success());
-        return;
-    }
-    panic!("stopped for time in {STARVED_TRIES} tries: this machine has no processor free");
+    let (process, mut link) = linked();
+    assert_eq!(drive(&mut link).unwrap(), expected);
+    assert_eq!(link.api_max(), Some(API_VERSION));
+    assert!(matches!(link.step(tick(4, 3)), Err(LinkError::Context(_))), "a step after every context closed");
+    link.shutdown();
+    assert!(ended(process).success());
 }
 
 /// Section 3.1 and TODO-7338 item 3: what the one handling of `close`
@@ -134,32 +116,21 @@ fn the_scripts_do_the_same_in_a_process_of_their_own_as_in_the_callers() {
 /// process, in a new container.
 #[test]
 fn what_a_close_handler_staged_leaves_in_a_last_batch() {
-    for _ in 0..STARVED_TRIES {
-        let (process, mut link) = linked();
-        let source = b"nt.addEventListener('close', () => console.log('closing ' + nt.page.number));";
-        let opened = link.open(opening_of(ContextId::Page, source), source).and_then(|()| link.step(tick(1, 0)));
-        if starved(&opened) {
-            continue;
-        }
-        opened.unwrap();
-        link.close(ContextId::Page);
-        let closed = link.take_closed();
-        let closed: Vec<(ContextId, Vec<String>)> = closed.iter().map(|(context, batch)| (*context, lines(batch))).collect();
-        assert_eq!(closed.len(), 1, "{closed:?}");
-        assert_eq!(closed[0].0, ContextId::Page);
-        assert!(closed[0].1.iter().any(|line| line.starts_with("closing ")), "{closed:?}");
-        // The next page, in the same process.
-        let next = b"console.log('next page');";
-        let opened = link.open(opening_of(ContextId::Page, next), next).and_then(|()| link.step(tick(2, 0)));
-        if starved(&opened) {
-            continue;
-        }
-        assert_eq!(lines(&opened.unwrap()), vec!["next page"]);
-        link.shutdown();
-        assert!(ended(process).success());
-        return;
-    }
-    panic!("stopped for time in {STARVED_TRIES} tries: this machine has no processor free");
+    let (process, mut link) = linked();
+    let source = b"nt.addEventListener('close', () => console.log('closing ' + nt.page.number));";
+    link.open(opening_of(ContextId::Page, source), source).and_then(|()| link.step(tick(1, 0))).unwrap();
+    link.close(ContextId::Page);
+    let closed = link.take_closed();
+    let closed: Vec<(ContextId, Vec<String>)> = closed.iter().map(|(context, batch)| (*context, lines(batch))).collect();
+    assert_eq!(closed.len(), 1, "{closed:?}");
+    assert_eq!(closed[0].0, ContextId::Page);
+    assert!(closed[0].1.iter().any(|line| line.starts_with("closing ")), "{closed:?}");
+    // The next page, in the same process.
+    let next = b"console.log('next page');";
+    let opened = link.open(opening_of(ContextId::Page, next), next).and_then(|()| link.step(tick(2, 0)));
+    assert_eq!(lines(&opened.unwrap()), vec!["next page"]);
+    link.shutdown();
+    assert!(ended(process).success());
 }
 
 /// Section 13 item 7, TODO-7279 item 3 and TODO-7338 item 4: a context's
@@ -171,20 +142,13 @@ fn what_a_close_handler_staged_leaves_in_a_last_batch() {
 fn a_context_given_the_same_seed_twice_draws_different_numbers() {
     let source = b"const bytes = new Uint8Array(16); crypto.getRandomValues(bytes); console.log(Array.from(bytes).join(',') + ' ' + Math.random());";
     let mut drawn = Vec::new();
-    for _ in 0..STARVED_TRIES {
+    for _ in 0..2 {
         let (process, mut link) = linked();
         let run = link.open(opening_of(ContextId::Page, source), source).and_then(|()| link.step(tick(1, 0)));
         link.shutdown();
         let _ = ended(process);
-        if starved(&run) {
-            continue;
-        }
         drawn.push(lines(&run.unwrap()));
-        if drawn.len() == 2 {
-            break;
-        }
     }
-    assert_eq!(drawn.len(), 2, "this machine has no processor free");
     assert!(drawn[0].len() == 1 && drawn[1].len() == 1, "{drawn:?}");
     assert_ne!(drawn[0], drawn[1], "two contexts with the same seed drew the same numbers");
 }
@@ -376,6 +340,59 @@ fn kibibytes(pid: u32, file: &str, field: &str) -> u64 {
     line.split_whitespace().nth(1).unwrap().parse().unwrap()
 }
 
+/// Sends `signal` to the process `pid`, which this test started.
+#[cfg(target_os = "linux")]
+fn signal(pid: u32, signal: &str) {
+    assert!(std::process::Command::new("kill").args([signal, &pid.to_string()]).status().unwrap().success());
+}
+
+/// Section 3.2 rules 1 and 5 as DEC-7357 was revised (TODO-7409): the
+/// script host counts its scripts' time limits on its own processor
+/// time, so a script is stopped for the work it did and never for time
+/// its process had no processor. The process is held still (`SIGSTOP`,
+/// which is to it exactly a machine with no processor free) for more
+/// than twice `START_TIME_LIMIT` while a page's top level is running, a
+/// top level that needs a fraction of that limit; let go, the script
+/// finishes and answers. On the wall clock the limit had passed while
+/// it was held, and the script was stopped for time it never had. What
+/// a script gains is nothing: one that does work without end is still
+/// stopped, by the same limit (the hostile scripts' test above).
+#[cfg(target_os = "linux")]
+#[test]
+fn a_script_whose_process_had_no_processor_is_not_stopped_for_time() {
+    use neoteletext_script::limits::START_TIME_LIMIT;
+    use std::process::{Command, Stdio};
+    /// The turns of the page's top level: 100,000 took 0.37 seconds of
+    /// the interpreter's work in an unoptimised build on this machine at
+    /// a load of 40 (and 600,000 passed the limit by themselves), so half
+    /// of that is well inside the limit and far longer than the 40 ms
+    /// after which the process is held.
+    const TURNS: u32 = 50_000;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_neoteletext-script-host")).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let pid = child.id();
+    let mut link = ProcessLink::new(BufReader::new(child.stdout.take().unwrap()), child.stdin.take().unwrap());
+    // The channel's context first, so that the process has started and
+    // made its container before the page opens.
+    let channel = b"console.log('channel runs');";
+    link.open(opening_of(ContextId::Channel, channel), channel).unwrap();
+    assert_eq!(lines(&link.step(tick(1, 0)).unwrap()), vec!["channel runs"]);
+    let page = format!("let sum = 0; for (let turn = 0; turn < {TURNS}; turn++) sum += turn; console.log('page ran ' + sum);");
+    link.open(opening_of(ContextId::Page, page.as_bytes()), page.as_bytes()).unwrap();
+    // Once the top level is under way the process is given no processor.
+    std::thread::sleep(Duration::from_millis(40));
+    signal(pid, "-STOP");
+    let held = 2 * START_TIME_LIMIT + Duration::from_millis(200);
+    std::thread::sleep(held);
+    signal(pid, "-CONT");
+    let began = Instant::now();
+    let answered = link.step(tick(2, 1));
+    println!("held still for {held:?} from 40 ms into the page's opening; answered {:?} after it was let go", began.elapsed());
+    let logged = lines(&answered.unwrap_or_else(|error| panic!("the script was stopped: {error}")));
+    assert!(logged.iter().any(|line| line.starts_with("page ran ")), "{logged:?}");
+    link.shutdown();
+    assert!(child.wait().unwrap().success());
+}
+
 /// TODO-7292's measurement, and section 11.1's memory limit as the
 /// kernel holds it: how long a script host takes from its start to
 /// READY (its confinement and the engine's module compiled) and from an
@@ -404,11 +421,9 @@ fn a_script_hosts_start_and_memory_are_measured_and_its_limit_is_the_kernels() {
     let data = limits.lines().find(|line| line.starts_with("Max data size")).unwrap();
     let held: Vec<&str> = data.split_whitespace().collect();
     assert_eq!(held.get(3..5), Some(&["134217728", "134217728"][..]), "{data}");
-    if !starved(&first) {
-        first.unwrap();
-        for sequence in 2..62 {
-            link.step(tick(sequence, u64::from(sequence))).unwrap();
-        }
+    first.unwrap();
+    for sequence in 2..62 {
+        link.step(tick(sequence, u64::from(sequence))).unwrap();
     }
     let private = kibibytes(pid, "smaps_rollup", "Private_Dirty:") + kibibytes(pid, "smaps_rollup", "Private_Clean:");
     println!(

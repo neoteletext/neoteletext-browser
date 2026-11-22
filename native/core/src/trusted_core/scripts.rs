@@ -14,9 +14,11 @@
 //!   ended or replaced (its channel sleeps, or leaves its tab), and when
 //!   the browser ends.
 //! - **Killed** when it writes a kind it may not, when what it asks of
-//!   the network was not allowed it, when a step or a close is not
-//!   answered by its deadline ([`STEP_DEADLINE`], or [`START_DEADLINE`]
-//!   after an opening), when more than [`MAX_STEPS_UNANSWERED`] wait, when
+//!   the network was not allowed it, when it owes an answer to a step or
+//!   a close and has said nothing for so long that it is taken for hung
+//!   (`STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an opening: a
+//!   backstop on the wall clock, far past any time a busy machine makes
+//!   an honest one take), when more than [`MAX_STEPS_UNANSWERED`] wait, when
 //!   it stops reading and what waits for it passes the bound on a
 //!   process's pipe (`neoteletext::outbox::MAX_QUEUED_BYTES`), and when
 //!   it says FAILED, after which a script host has nothing more to do.
@@ -26,11 +28,11 @@
 //!   told with a FAILED of the trusted core's own, the only message of
 //!   the script link the core ever writes.
 //!
-//! The deadlines are counted by kind: every STEP and every
+//! What a script host owes is counted by kind: every STEP and every
 //! `CONTEXT_CLOSE` relayed to a script host is answered by exactly one
 //! BATCH (`native/script-host/src/lib.rs`).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -38,8 +40,11 @@ use std::time::Instant;
 
 use confine::broker::{Broker, Exit, Helper, Program};
 use neoteletext::outbox::Outbox;
+#[cfg(test)]
+pub(super) use neoteletext::script_network::NETWORK_DRAIN;
+use neoteletext::script_network::{Asked, NetworkClaim};
 use protocol::console::Level;
-use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, START_DEADLINE, STEP_DEADLINE, read_host_output};
+use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, STEP_DEADLINE, Silence, read_host_output};
 use protocol::script::{ContextId, FailReason, FromScriptHost, MAX_LOG_CHARS, write_to_decoder};
 
 use super::processes::{Decoder, end, end_aside, relay, spawn};
@@ -67,18 +72,6 @@ pub(super) const WATCHDOG_EXIT_STATUS: i32 = 70;
 /// it has only to read one message and leave.
 const END_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// How long a script host whose contexts no longer have the network may
-/// still write to its web client (TODO-7420): the time its closing
-/// context has to finish, which is a step's. A page context that had the
-/// network ends its requests, its event streams and its sockets as it
-/// closes, and may start a `fetch` with `keepalive` in its one handling
-/// of `close` (section 4.2); its decoder reports the next page's claims,
-/// with no network, at the same moment, and the two arrive in no fixed
-/// order. After this time a request that starts something is the breach
-/// it always was, and one that only ends something is dropped, since
-/// the web client has by then been told to end everything of the tab.
-pub(super) const NETWORK_DRAIN: std::time::Duration = STEP_DEADLINE;
-
 /// How long the warning that a page's file was not found is held for
 /// the page's script to come (TODO-7419): the script is the fetcher's
 /// next request after the page's, so this is the time one request may
@@ -100,31 +93,25 @@ struct ScriptHost {
     decoder: u64,
     /// It has said READY.
     ready: bool,
-    /// When each step and close relayed to it and not yet answered was
-    /// relayed, oldest first.
-    asked: VecDeque<Instant>,
-    /// When the last piece of an opening was relayed to it, while
-    /// anything waits: a context's start may take [`START_DEADLINE`].
-    opening: Option<Instant>,
-    /// The decoder reported that a context of it has the network
-    /// (section 11.1); without that none of its requests is relayed.
-    network: bool,
-    /// When its contexts last stopped having the network, having had it:
-    /// the context that had it is closing, and what it still writes to
-    /// finish with the network is its own for [`NETWORK_DRAIN`]
-    /// (TODO-7420). None for a script host that never had the network.
-    network_left: Option<Instant>,
-    /// What its web client still held for it after the drain was ended.
-    drained: bool,
+    /// The steps and closes relayed to it and not yet answered, the
+    /// opening it may still be starting, and when it last answered: by
+    /// which it is taken for hung (`protocol::script::relay::Silence`).
+    silence: Silence,
+    /// Whether the decoder reported that a context of it has the network
+    /// (section 11.1), without which none of its requests is relayed, and
+    /// the drain after the claim went (TODO-7420).
+    network: NetworkClaim,
 }
 
 impl ScriptHost {
-    /// When it must have answered the oldest thing asked, if anything
-    /// waits.
+    /// When it is taken for hung, if it owes an answer: it has said
+    /// nothing for `STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an
+    /// opening (DEC-7357 as revised). A backstop on the wall clock, for
+    /// a script host that can no longer say anything: one whose script
+    /// runs too long stops it itself and says so, and one that is given
+    /// no processor on a busy machine is not at fault.
     fn due(&self) -> Option<Instant> {
-        let asked = self.asked.front()?.checked_add(STEP_DEADLINE)?;
-        let opening = self.opening.and_then(|at| at.checked_add(START_DEADLINE));
-        Some(opening.map_or(asked, |opening| asked.max(opening)))
+        self.silence.hung_at()
     }
 
     /// Ends it at once.
@@ -226,18 +213,7 @@ fn start_host(broker: &Arc<Broker>, channel: u32, generation: u64, decoder: u64,
         move |said| Event::ScriptSaid(channel, generation, said),
         move |end| Event::ScriptHostEnded(channel, generation, end),
     );
-    Ok(ScriptHost {
-        child,
-        input,
-        generation,
-        decoder,
-        ready: false,
-        asked: VecDeque::new(),
-        opening: None,
-        network: false,
-        network_left: None,
-        drained: false,
-    })
+    Ok(ScriptHost { child, input, generation, decoder, ready: false, silence: Silence::default(), network: NetworkClaim::default() })
 }
 
 impl Core {
@@ -264,13 +240,7 @@ impl Core {
     pub(super) fn script_network(&mut self, channel: u32, reported: bool) {
         let served = self.partition_of(channel).is_some();
         if let Some(host) = self.scripts.hosts.get_mut(&channel) {
-            let had = core::mem::replace(&mut host.network, reported && served);
-            if host.network {
-                host.network_left = None;
-            } else if had {
-                host.network_left = Some(Instant::now());
-                host.drained = false;
-            }
+            host.network.reported(reported && served, Instant::now());
         }
     }
 
@@ -305,11 +275,11 @@ impl Core {
         let Some(host) = self.scripts.hosts.get_mut(&channel) else { return };
         let now = Instant::now();
         match kind {
-            Some(LinkKind::Step | LinkKind::ContextClose) => host.asked.push_back(now),
-            Some(LinkKind::ContextOpen | LinkKind::Source) => host.opening = Some(now),
+            Some(LinkKind::Step | LinkKind::ContextClose) => host.silence.asked(now),
+            Some(LinkKind::ContextOpen | LinkKind::Source) => host.silence.opening(now),
             _ => {}
         }
-        let behind = host.asked.len() > MAX_STEPS_UNANSWERED;
+        let behind = host.silence.owed() > MAX_STEPS_UNANSWERED;
         let passed = host.input.write_all(asked.frame()).and_then(|()| host.input.flush());
         if behind {
             return self.stop_scripts(channel, FailReason::Time, "the script host fell too many steps behind and was ended");
@@ -330,12 +300,7 @@ impl Core {
             HostOutput::ToDecoder(relayed) => {
                 match relayed.link_kind() {
                     Some(LinkKind::Ready) => host.ready = true,
-                    Some(LinkKind::Batch) => {
-                        host.asked.pop_front();
-                        if host.asked.is_empty() {
-                            host.opening = None;
-                        }
-                    }
+                    Some(LinkKind::Batch) => host.silence.answered(Instant::now()),
                     _ => {}
                 }
                 let decoder = host.decoder;
@@ -356,18 +321,10 @@ impl Core {
                 }
             }
             HostOutput::Request(relayed) => {
-                if !host.network {
-                    // A context that had the network is closing: what it
-                    // writes to finish is its own for a step's time, and
-                    // after that only a request that starts something is
-                    // a breach. A script host that never had the network
-                    // has nothing to finish (section 11.1; TODO-7420).
-                    let draining = host.network_left.is_some_and(|left| left.elapsed() <= NETWORK_DRAIN);
-                    let ends_only = host.network_left.is_some() && !protocol::web::starts_request(relayed.kind());
-                    if !draining && ends_only {
-                        return;
-                    }
-                    if !draining {
+                match host.network.asked(protocol::web::starts_request(relayed.kind()), Instant::now()) {
+                    Asked::Relay => {}
+                    Asked::Drop => return,
+                    Asked::Stop => {
                         return self.stop_scripts(
                             channel,
                             FailReason::Link,
@@ -542,8 +499,7 @@ impl Core {
     pub(super) fn scripts_due_at(&self) -> Option<Instant> {
         let held = self.scripts.held_refusals.iter().filter_map(|(_, _, _, at)| at.checked_add(REFUSAL_HELD));
         let held = held.chain(self.scripts.unexplained.values().filter_map(|at| at.checked_add(STEP_DEADLINE))).min();
-        let draining = |host: &ScriptHost| host.network_left.filter(|_| !host.network && !host.drained).and_then(|left| left.checked_add(NETWORK_DRAIN));
-        self.scripts.hosts.values().flat_map(|host| [host.due(), draining(host)]).flatten().chain(held).min()
+        self.scripts.hosts.values().flat_map(|host| [host.due(), host.network.drain_due()]).flatten().chain(held).min()
     }
 
     /// The scripts' timed work, and their keeping in step with the
@@ -565,22 +521,13 @@ impl Core {
         // time to finish: whatever its web client still holds for it is
         // ended, so that nothing of a page outlives it but a keepalive
         // request, which the web client itself bounds.
-        let drained: Vec<u32> = self
-            .scripts
-            .hosts
-            .iter()
-            .filter(|(_, host)| !host.network && !host.drained && host.network_left.is_some_and(|left| now.saturating_duration_since(left) > NETWORK_DRAIN))
-            .map(|(&channel, _)| channel)
-            .collect();
+        let drained: Vec<u32> = self.scripts.hosts.iter_mut().filter_map(|(&channel, host)| host.network.drain_ended(now).then_some(channel)).collect();
         for channel in drained {
-            if let Some(host) = self.scripts.hosts.get_mut(&channel) {
-                host.drained = true;
-            }
             self.web_tab_closes(channel);
         }
         let late: Vec<u32> = self.scripts.hosts.iter().filter(|(_, host)| host.due().is_some_and(|due| now >= due)).map(|(&channel, _)| channel).collect();
         for channel in late {
-            self.stop_scripts(channel, FailReason::Time, "STEP_DEADLINE: the script host did not answer in time and was ended");
+            self.stop_scripts(channel, FailReason::Time, "STEP_HUNG_AFTER: the script host answered nothing for too long, was taken for hung and was ended");
         }
         let orphaned: Vec<u32> = self
             .scripts
