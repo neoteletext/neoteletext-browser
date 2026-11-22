@@ -1,0 +1,692 @@
+# The web-platform-tests' websockets suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 214 files run, 143 not run here; cases: 162 pass, 164 fail as a listed departure, 164 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	websockets/Close-1000-reason.any.js?default	OK	0	1
+FILE	websockets/Close-1000-reason.any.js?wss	OK	0	1
+FILE	websockets/Close-1000-reason.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-1000-verify-code.any.js?default	OK	0	1
+FILE	websockets/Close-1000-verify-code.any.js?wss	OK	0	1
+FILE	websockets/Close-1000-verify-code.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-1000.any.js?default	OK	0	1
+FILE	websockets/Close-1000.any.js?wss	OK	0	1
+FILE	websockets/Close-1000.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-1005-verify-code.any.js?default	OK	0	1
+FILE	websockets/Close-1005-verify-code.any.js?wss	OK	0	1
+FILE	websockets/Close-1005-verify-code.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-1005.any.js?default	OK	0	1
+FILE	websockets/Close-1005.any.js?wss	OK	0	1
+FILE	websockets/Close-1005.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-2999-reason.any.js?default	OK	0	1
+FILE	websockets/Close-2999-reason.any.js?wss	OK	0	1
+FILE	websockets/Close-2999-reason.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-3000-reason.any.js?default	OK	0	1
+FILE	websockets/Close-3000-reason.any.js?wss	OK	0	1
+FILE	websockets/Close-3000-reason.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-3000-verify-code.any.js?default	OK	0	1
+FILE	websockets/Close-3000-verify-code.any.js?wss	OK	0	1
+FILE	websockets/Close-3000-verify-code.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-4999-reason.any.js?default	OK	0	1
+FILE	websockets/Close-4999-reason.any.js?wss	OK	0	1
+FILE	websockets/Close-4999-reason.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-Reason-124Bytes.any.js?default	OK	0	1
+FILE	websockets/Close-Reason-124Bytes.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-Reason-124Bytes.any.js?wss	OK	0	1
+FILE	websockets/Close-delayed.any.js?default	OK	0	1
+FILE	websockets/Close-delayed.any.js?wss	OK	0	1
+FILE	websockets/Close-delayed.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-onlyReason.any.js?default	OK	0	1
+FILE	websockets/Close-onlyReason.any.js?wss	OK	0	1
+FILE	websockets/Close-onlyReason.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-readyState-Closed.any.js?default	OK	0	1
+FILE	websockets/Close-readyState-Closed.any.js?wss	OK	0	1
+FILE	websockets/Close-readyState-Closed.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-readyState-Closing.any.js?default	OK	0	1
+FILE	websockets/Close-readyState-Closing.any.js?wss	OK	0	1
+FILE	websockets/Close-readyState-Closing.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-reason-unpaired-surrogates.any.js?default	OK	0	1
+FILE	websockets/Close-reason-unpaired-surrogates.any.js?wss	OK	0	1
+FILE	websockets/Close-reason-unpaired-surrogates.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-server-initiated-close.any.js?default	OK	0	1
+FILE	websockets/Close-server-initiated-close.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-server-initiated-close.any.js?wss	OK	0	1
+FILE	websockets/Close-undefined.any.js?default	OK	0	1
+FILE	websockets/Close-undefined.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Close-undefined.any.js?wss	OK	0	1
+FILE	websockets/Create-asciiSep-protocol-string.any.js?default	OK	1	0
+FILE	websockets/Create-asciiSep-protocol-string.any.js?wss	OK	1	0
+FILE	websockets/Create-asciiSep-protocol-string.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-blocked-port.any.js	OK	83	1
+FILE	websockets/Create-extensions-empty.any.js?default	OK	0	1
+FILE	websockets/Create-extensions-empty.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-extensions-empty.any.js?wss	OK	0	1
+FILE	websockets/Create-http-urls.any.js	OK	1	0
+FILE	websockets/Create-invalid-urls.any.js	OK	8	0
+FILE	websockets/Create-non-absolute-url.any.js	OK	5	0
+FILE	websockets/Create-nonAscii-protocol-string.any.js?default	OK	1	0
+FILE	websockets/Create-nonAscii-protocol-string.any.js?wss	OK	1	0
+FILE	websockets/Create-nonAscii-protocol-string.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-on-worker-shutdown.any.js	OK	0	1
+FILE	websockets/Create-protocol-with-space.any.js?default	OK	1	0
+FILE	websockets/Create-protocol-with-space.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-protocol-with-space.any.js?wss	OK	1	0
+FILE	websockets/Create-protocols-repeated-case-insensitive.any.js?default	OK	1	0
+FILE	websockets/Create-protocols-repeated-case-insensitive.any.js?wss	OK	1	0
+FILE	websockets/Create-protocols-repeated-case-insensitive.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-protocols-repeated.any.js?default	OK	1	0
+FILE	websockets/Create-protocols-repeated.any.js?wss	OK	1	0
+FILE	websockets/Create-protocols-repeated.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-url-with-space.any.js?default	OK	1	0
+FILE	websockets/Create-url-with-space.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-url-with-space.any.js?wss	OK	1	0
+FILE	websockets/Create-valid-url-array-protocols.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url-array-protocols.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url-array-protocols.any.js?wss	OK	0	1
+FILE	websockets/Create-valid-url-binaryType-blob.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url-binaryType-blob.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url-binaryType-blob.any.js?wss	OK	0	1
+FILE	websockets/Create-valid-url-protocol-empty.any.js?default	OK	1	0
+FILE	websockets/Create-valid-url-protocol-empty.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Create-valid-url-protocol-empty.any.js?wss	OK	1	0
+FILE	websockets/Create-valid-url-protocol-setCorrectly.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url-protocol-setCorrectly.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url-protocol-setCorrectly.any.js?wss	OK	0	1
+FILE	websockets/Create-valid-url-protocol-string.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url-protocol-string.any.js?wss	OK	0	1
+FILE	websockets/Create-valid-url-protocol-string.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url-protocol.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url-protocol.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url-protocol.any.js?wss	OK	0	1
+FILE	websockets/Create-valid-url.any.js?default	OK	0	1
+FILE	websockets/Create-valid-url.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Create-valid-url.any.js?wss	OK	0	1
+FILE	websockets/Send-0byte-data.any.js?default	OK	0	1
+FILE	websockets/Send-0byte-data.any.js?wss	OK	0	1
+FILE	websockets/Send-0byte-data.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-65K-data.any.js?default	OK	0	1
+FILE	websockets/Send-65K-data.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-65K-data.any.js?wss	OK	0	1
+FILE	websockets/Send-before-open.any.js?default	OK	1	0
+FILE	websockets/Send-before-open.any.js?wss	OK	1	0
+FILE	websockets/Send-before-open.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/Send-binary-65K-arraybuffer.any.js?default	OK	0	1
+FILE	websockets/Send-binary-65K-arraybuffer.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-65K-arraybuffer.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybuffer.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybuffer.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybuffer.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float16.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float16.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float16.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float32.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float32.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float32.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float64.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float64.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-float64.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int16-offset.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int16-offset.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int16-offset.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int32.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int32.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int32.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int8.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int8.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-int8.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint32-offset.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint32-offset.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint32-offset.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset.any.js?default	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-arraybufferview-uint8-offset.any.js?wss	OK	0	1
+FILE	websockets/Send-binary-blob.any.js?default	OK	0	1
+FILE	websockets/Send-binary-blob.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-binary-blob.any.js?wss	OK	0	1
+FILE	websockets/Send-data.any.js?default	OK	0	1
+FILE	websockets/Send-data.any.js?wss	OK	0	1
+FILE	websockets/Send-data.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-null.any.js?default	OK	0	1
+FILE	websockets/Send-null.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-null.any.js?wss	OK	0	1
+FILE	websockets/Send-paired-surrogates.any.js?default	OK	0	1
+FILE	websockets/Send-paired-surrogates.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-paired-surrogates.any.js?wss	OK	0	1
+FILE	websockets/Send-unicode-data.any.js?default	OK	0	1
+FILE	websockets/Send-unicode-data.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/Send-unicode-data.any.js?wss	OK	0	1
+FILE	websockets/Send-unpaired-surrogates.any.js?default	OK	0	1
+FILE	websockets/Send-unpaired-surrogates.any.js?wss	OK	0	1
+FILE	websockets/Send-unpaired-surrogates.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/basic-auth.any.js?wss	OK	0	1
+FILE	websockets/basic-auth.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/binaryType-wrong-value.any.js?default	OK	0	1
+FILE	websockets/binaryType-wrong-value.any.js?wss	OK	0	1
+FILE	websockets/binaryType-wrong-value.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?default	OK	0	1
+FILE	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?wss	OK	0	1
+FILE	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/close-invalid.any.js?default	OK	6	0
+FILE	websockets/close-invalid.any.js?wss	OK	6	0
+FILE	websockets/close-invalid.any.js?wpt_flags=h2	OK	6	0
+FILE	websockets/constructor/option-bag.any.js?default	OK	0	2
+FILE	websockets/constructor/option-bag.any.js?wss	OK	0	2
+FILE	websockets/constructor/target-address-space.any.js?default	OK	2	4
+FILE	websockets/constructor/target-address-space.any.js?wss	OK	2	4
+FILE	websockets/constructor/third-param-ignored.any.js?default	OK	0	3
+FILE	websockets/constructor/third-param-ignored.any.js?wss	OK	0	3
+FILE	websockets/constructor.any.js?default	OK	1	0
+FILE	websockets/constructor.any.js?wss	OK	1	0
+FILE	websockets/constructor.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/eventhandlers.any.js?default	OK	4	0
+FILE	websockets/eventhandlers.any.js?wss	OK	4	0
+FILE	websockets/eventhandlers.any.js?wpt_flags=h2	OK	4	0
+FILE	websockets/idlharness.any.js	NO-FILE	0	0
+FILE	websockets/interfaces/WebSocket/close/close-connecting-async.any.js?default	OK	1	0
+FILE	websockets/interfaces/WebSocket/close/close-connecting-async.any.js?wpt_flags=h2	OK	1	0
+FILE	websockets/interfaces/WebSocket/close/close-connecting-async.any.js?wss	OK	1	0
+FILE	websockets/mixed-content.https.any.js	OK	1	0
+FILE	websockets/referrer.any.js	OK	0	1
+FILE	websockets/send-many-64K-messages-with-backpressure.any.js?default	OK	0	1
+FILE	websockets/send-many-64K-messages-with-backpressure.any.js?wss	OK	0	1
+FILE	websockets/send-many-64K-messages-with-backpressure.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/stream/tentative/abort.any.js?wss	OK	0	5
+FILE	websockets/stream/tentative/abort.any.js?wpt_flags=h2	OK	0	5
+FILE	websockets/stream/tentative/backpressure-receive.any.js?wss	OK	0	1
+FILE	websockets/stream/tentative/backpressure-receive.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/stream/tentative/backpressure-send.any.js?wss	OK	0	1
+FILE	websockets/stream/tentative/backpressure-send.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/stream/tentative/close.any.js?default	OK	0	27
+FILE	websockets/stream/tentative/close.any.js?wss	OK	0	27
+FILE	websockets/stream/tentative/close.any.js?wpt_flags=h2	OK	0	27
+FILE	websockets/stream/tentative/constructor.any.js?wss	OK	0	8
+FILE	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	OK	0	8
+FILE	websockets/stream/tentative/read.any.js?default	OK	0	1
+FILE	websockets/stream/tentative/read.any.js?wss	OK	0	1
+FILE	websockets/stream/tentative/read.any.js?wpt_flags=h2	OK	0	1
+FILE	websockets/stream/tentative/remote-close.any.js?default	OK	0	7
+FILE	websockets/stream/tentative/remote-close.any.js?wss	OK	0	7
+FILE	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	OK	0	7
+FILE	websockets/stream/tentative/websocket-error.any.js	OK	0	10
+FILE	websockets/stream/tentative/write.any.js?default	OK	0	6
+FILE	websockets/stream/tentative/write.any.js?wss	OK	0	6
+FILE	websockets/stream/tentative/write.any.js?wpt_flags=h2	OK	0	6
+FAIL	TODO-7321	websockets/Close-1000-reason.any.js?default	Create WebSocket - Close the Connection - close(1000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1000-reason.any.js?wss	Create WebSocket - Close the Connection - close(1000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1000-reason.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(1000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1000-verify-code.any.js?default	Create WebSocket - Close the Connection - close(1000, reason) - event.code == 1000 and event.reason = 'Clean Close'
+FAIL	TODO-7321	websockets/Close-1000-verify-code.any.js?wss	Create WebSocket - Close the Connection - close(1000, reason) - event.code == 1000 and event.reason = 'Clean Close'
+FAIL	TODO-7321	websockets/Close-1000-verify-code.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(1000, reason) - event.code == 1000 and event.reason = 'Clean Close'
+FAIL	TODO-7321	websockets/Close-1000.any.js?default	Create WebSocket - Close the Connection - close(1000) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1000.any.js?wss	Create WebSocket - Close the Connection - close(1000) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1000.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(1000) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1005-verify-code.any.js?default	Create WebSocket - Close the Connection - close() - return close code is 1005 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1005-verify-code.any.js?wss	Create WebSocket - Close the Connection - close() - return close code is 1005 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1005-verify-code.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close() - return close code is 1005 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-1005.any.js?default	Create WebSocket - Close the Connection - close(1005) - see '7.1.5.  The WebSocket Connection Close Code' in http://www.ietf.org/rfc/rfc6455.txt
+FAIL	TODO-7321	websockets/Close-1005.any.js?wss	Create WebSocket - Close the Connection - close(1005) - see '7.1.5.  The WebSocket Connection Close Code' in http://www.ietf.org/rfc/rfc6455.txt
+FAIL	TODO-7321	websockets/Close-1005.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(1005) - see '7.1.5.  The WebSocket Connection Close Code' in http://www.ietf.org/rfc/rfc6455.txt
+FAIL	TODO-7321	websockets/Close-2999-reason.any.js?default	Create WebSocket - Close the Connection - close(2999, reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-2999-reason.any.js?wss	Create WebSocket - Close the Connection - close(2999, reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-2999-reason.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(2999, reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-3000-reason.any.js?default	Create WebSocket - Close the Connection - close(3000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-3000-reason.any.js?wss	Create WebSocket - Close the Connection - close(3000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-3000-reason.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(3000, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-3000-verify-code.any.js?default	Create WebSocket - Close the Connection - close(3000, reason) - verify return code is 3000 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-3000-verify-code.any.js?wss	Create WebSocket - Close the Connection - close(3000, reason) - verify return code is 3000 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-3000-verify-code.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(3000, reason) - verify return code is 3000 - Connection should be closed
+FAIL	TODO-7321	websockets/Close-4999-reason.any.js?default	Create WebSocket - Close the Connection - close(4999, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-4999-reason.any.js?wss	Create WebSocket - Close the Connection - close(4999, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-4999-reason.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(4999, reason) - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-Reason-124Bytes.any.js?default	Create WebSocket - Close the Connection - close(code, 'reason more than 123 bytes') - SYNTAX_ERR is thrown
+FAIL	TODO-7321	websockets/Close-Reason-124Bytes.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(code, 'reason more than 123 bytes') - SYNTAX_ERR is thrown
+FAIL	TODO-7321	websockets/Close-Reason-124Bytes.any.js?wss	Create WebSocket - Close the Connection - close(code, 'reason more than 123 bytes') - SYNTAX_ERR is thrown
+FAIL	TODO-7321	websockets/Close-delayed.any.js?default	Create WebSocket - Close the Connection - close should not emit until handshake completes - Connection should be closed
+FAIL	TODO-7321	websockets/Close-delayed.any.js?wss	Create WebSocket - Close the Connection - close should not emit until handshake completes - Connection should be closed
+FAIL	TODO-7321	websockets/Close-delayed.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close should not emit until handshake completes - Connection should be closed
+FAIL	TODO-7321	websockets/Close-onlyReason.any.js?default	Create WebSocket - Close the Connection - close(only reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-onlyReason.any.js?wss	Create WebSocket - Close the Connection - close(only reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-onlyReason.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(only reason) - INVALID_ACCESS_ERR is thrown
+FAIL	TODO-7321	websockets/Close-readyState-Closed.any.js?default	Create WebSocket - Close the Connection - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-readyState-Closed.any.js?wss	Create WebSocket - Close the Connection - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-readyState-Closed.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-readyState-Closing.any.js?default	Create WebSocket - Close the Connection - readyState should be in CLOSING state just before onclose is called
+FAIL	TODO-7321	websockets/Close-readyState-Closing.any.js?wss	Create WebSocket - Close the Connection - readyState should be in CLOSING state just before onclose is called
+FAIL	TODO-7321	websockets/Close-readyState-Closing.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - readyState should be in CLOSING state just before onclose is called
+FAIL	TODO-7321	websockets/Close-reason-unpaired-surrogates.any.js?default	Create WebSocket - Close the Connection - close(reason with unpaired surrogates) - connection should get closed
+FAIL	TODO-7321	websockets/Close-reason-unpaired-surrogates.any.js?wss	Create WebSocket - Close the Connection - close(reason with unpaired surrogates) - connection should get closed
+FAIL	TODO-7321	websockets/Close-reason-unpaired-surrogates.any.js?wpt_flags=h2	Create WebSocket - Close the Connection - close(reason with unpaired surrogates) - connection should get closed
+FAIL	TODO-7321	websockets/Close-server-initiated-close.any.js?default	Create WebSocket - Server initiated Close - Client sends back a CLOSE - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-server-initiated-close.any.js?wpt_flags=h2	Create WebSocket - Server initiated Close - Client sends back a CLOSE - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-server-initiated-close.any.js?wss	Create WebSocket - Server initiated Close - Client sends back a CLOSE - readyState should be in CLOSED state and wasClean is TRUE - Connection should be closed
+FAIL	TODO-7321	websockets/Close-undefined.any.js?default	Close-undefined
+FAIL	TODO-7321	websockets/Close-undefined.any.js?wpt_flags=h2	Close-undefined
+FAIL	TODO-7321	websockets/Close-undefined.any.js?wss	Close-undefined
+FAIL	TODO-7321	websockets/Create-blocked-port.any.js	Basic check
+FAIL	TODO-7321	websockets/Create-extensions-empty.any.js?default	Create WebSocket - wsocket.extensions should be set to '' after connection is established - Connection should be closed
+FAIL	TODO-7321	websockets/Create-extensions-empty.any.js?wpt_flags=h2	Create WebSocket - wsocket.extensions should be set to '' after connection is established - Connection should be closed
+FAIL	TODO-7321	websockets/Create-extensions-empty.any.js?wss	Create WebSocket - wsocket.extensions should be set to '' after connection is established - Connection should be closed
+FAIL	D-9.1	websockets/Create-on-worker-shutdown.any.js	WebSocket created after a worker self.close()
+FAIL	TODO-7321	websockets/Create-valid-url-array-protocols.any.js?default	Create WebSocket - Pass a valid URL and array of protocol strings - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-array-protocols.any.js?wpt_flags=h2	Create WebSocket - Pass a valid URL and array of protocol strings - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-array-protocols.any.js?wss	Create WebSocket - Pass a valid URL and array of protocol strings - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-binaryType-blob.any.js?default	Create WebSocket - wsocket.binaryType should be set to 'blob' after connection is established - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-binaryType-blob.any.js?wpt_flags=h2	Create WebSocket - wsocket.binaryType should be set to 'blob' after connection is established - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-binaryType-blob.any.js?wss	Create WebSocket - wsocket.binaryType should be set to 'blob' after connection is established - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-setCorrectly.any.js?default	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-setCorrectly.any.js?wpt_flags=h2	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-setCorrectly.any.js?wss	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-string.any.js?default	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-string.any.js?wss	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol-string.any.js?wpt_flags=h2	Create WebSocket - Pass a valid URL and protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol.any.js?default	Create WebSocket - Pass a valid URL and a protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol.any.js?wpt_flags=h2	Create WebSocket - Pass a valid URL and a protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url-protocol.any.js?wss	Create WebSocket - Pass a valid URL and a protocol string - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url.any.js?default	Create WebSocket - Pass a valid URL - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url.any.js?wpt_flags=h2	Create WebSocket - Pass a valid URL - Connection should be closed
+FAIL	TODO-7321	websockets/Create-valid-url.any.js?wss	Create WebSocket - Pass a valid URL - Connection should be closed
+FAIL	TODO-7321	websockets/Send-0byte-data.any.js?default	Send 0 byte data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-0byte-data.any.js?wss	Send 0 byte data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-0byte-data.any.js?wpt_flags=h2	Send 0 byte data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-65K-data.any.js?default	Send 65K data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-65K-data.any.js?wpt_flags=h2	Send 65K data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-65K-data.any.js?wss	Send 65K data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-65K-arraybuffer.any.js?default	Send 65K binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-65K-arraybuffer.any.js?wpt_flags=h2	Send 65K binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-65K-arraybuffer.any.js?wss	Send 65K binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybuffer.any.js?default	Send binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybuffer.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybuffer.any.js?wss	Send binary data on a WebSocket - ArrayBuffer - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float16.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Float16Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float16.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Float16Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float16.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Float16Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float32.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Float32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float32.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Float32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float32.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Float32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float64.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Float64Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float64.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Float64Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-float64.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Float64Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int16-offset.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Int16Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int16-offset.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Int16Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int16-offset.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Int16Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int32.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Int32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int32.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Int32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int32.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Int32Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int8.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Int8Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int8.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Int8Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-int8.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Int8Array - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Uint16Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Uint16Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint16-offset-length.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Uint16Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint32-offset.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Uint32Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint32-offset.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Uint32Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint32-offset.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Uint32Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset-length.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset and length - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset.any.js?default	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset.any.js?wpt_flags=h2	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-arraybufferview-uint8-offset.any.js?wss	Send binary data on a WebSocket - ArrayBufferView - Uint8Array with offset - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-blob.any.js?default	Send binary data on a WebSocket - Blob - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-blob.any.js?wpt_flags=h2	Send binary data on a WebSocket - Blob - Connection should be closed
+FAIL	TODO-7321	websockets/Send-binary-blob.any.js?wss	Send binary data on a WebSocket - Blob - Connection should be closed
+FAIL	TODO-7321	websockets/Send-data.any.js?default	Send data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-data.any.js?wss	Send data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-data.any.js?wpt_flags=h2	Send data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-null.any.js?default	Send null data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-null.any.js?wpt_flags=h2	Send null data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-null.any.js?wss	Send null data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-paired-surrogates.any.js?default	Send paired surrogates data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-paired-surrogates.any.js?wpt_flags=h2	Send paired surrogates data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-paired-surrogates.any.js?wss	Send paired surrogates data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unicode-data.any.js?default	Send unicode data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unicode-data.any.js?wpt_flags=h2	Send unicode data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unicode-data.any.js?wss	Send unicode data on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unpaired-surrogates.any.js?default	Send unpaired surrogates on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unpaired-surrogates.any.js?wss	Send unpaired surrogates on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/Send-unpaired-surrogates.any.js?wpt_flags=h2	Send unpaired surrogates on a WebSocket - Connection should be closed
+FAIL	TODO-7321	websockets/basic-auth.any.js?wss	HTTP basic authentication should work with WebSockets
+FAIL	TODO-7321	websockets/basic-auth.any.js?wpt_flags=h2	HTTP basic authentication should work with WebSockets
+FAIL	TODO-7321	websockets/binaryType-wrong-value.any.js?default	Create WebSocket - set binaryType to something other than blob or arraybuffer - SYNTAX_ERR is returned - Connection should be closed
+FAIL	TODO-7321	websockets/binaryType-wrong-value.any.js?wss	Create WebSocket - set binaryType to something other than blob or arraybuffer - SYNTAX_ERR is returned - Connection should be closed
+FAIL	TODO-7321	websockets/binaryType-wrong-value.any.js?wpt_flags=h2	Create WebSocket - set binaryType to something other than blob or arraybuffer - SYNTAX_ERR is returned - Connection should be closed
+FAIL	TODO-7321	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?default	bufferedAmount should not be updated during a sync XHR
+FAIL	TODO-7321	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?wss	bufferedAmount should not be updated during a sync XHR
+FAIL	TODO-7321	websockets/bufferedAmount-unchanged-by-sync-xhr.any.js?wpt_flags=h2	bufferedAmount should not be updated during a sync XHR
+FAIL	TODO-7321	websockets/constructor/option-bag.any.js?default	Empty option bag should be accepted
+FAIL	TODO-7321	websockets/constructor/option-bag.any.js?default	Option bag with protocols array should be accepted
+FAIL	TODO-7321	websockets/constructor/option-bag.any.js?wss	Empty option bag should be accepted
+FAIL	TODO-7321	websockets/constructor/option-bag.any.js?wss	Option bag with protocols array should be accepted
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with targetAddressSpace 'private' throws TypeError as it is an unsupported legacy alias
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with targetAddressSpace 'unknown' throws TypeError
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with invalid targetAddressSpace throws TypeError
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with targetAddressSpace 'private' throws TypeError as it is an unsupported legacy alias
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with targetAddressSpace 'unknown' throws TypeError
+FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with invalid targetAddressSpace throws TypeError
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	a third parameter to the constructor should be ignored
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	protocol string should work with ignored third parameter
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	protocol sequence should work with ignored third parameter
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?wss	a third parameter to the constructor should be ignored
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?wss	protocol string should work with ignored third parameter
+FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?wss	protocol sequence should work with ignored third parameter
+HARNESS	TODO-7372/14b	websockets/idlharness.any.js	NO-FILE	no file resources/WebIDLParser.js
+FAIL	TODO-7321	websockets/referrer.any.js	Ensure no Referer header is included
+FAIL	TODO-7321	websockets/send-many-64K-messages-with-backpressure.any.js?default	sending 50 messages of size 65536 with backpressure applied should not hang
+FAIL	TODO-7321	websockets/send-many-64K-messages-with-backpressure.any.js?wss	sending 50 messages of size 65536 with backpressure applied should not hang
+FAIL	TODO-7321	websockets/send-many-64K-messages-with-backpressure.any.js?wpt_flags=h2	sending 50 messages of size 65536 with backpressure applied should not hang
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wss	abort before constructing should prevent connection
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wss	close after abort before constructing should do nothing
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wss	abort during handshake should work
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wss	close after abort during handshake should do nothing
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wss	abort after connect should do nothing
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wpt_flags=h2	abort before constructing should prevent connection
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wpt_flags=h2	close after abort before constructing should do nothing
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wpt_flags=h2	abort during handshake should work
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wpt_flags=h2	close after abort during handshake should do nothing
+FAIL	D-9.1	websockets/stream/tentative/abort.any.js?wpt_flags=h2	abort after connect should do nothing
+FAIL	D-9.1	websockets/stream/tentative/backpressure-receive.any.js?wss	backpressure should be applied to received messages
+FAIL	D-9.1	websockets/stream/tentative/backpressure-receive.any.js?wpt_flags=h2	backpressure should be applied to received messages
+FAIL	D-9.1	websockets/stream/tentative/backpressure-send.any.js?wss	backpressure should be applied to sent messages
+FAIL	D-9.1	websockets/stream/tentative/backpressure-send.any.js?wpt_flags=h2	backpressure should be applied to sent messages
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close code should be sent to server and reflected back
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	no close argument should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	unspecified close code should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	unspecified close code with empty reason should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	unspecified close code with non-empty reason should set code to 1000
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close(true) should throw a TypeError
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close() with an overlong reason should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close during handshake should work
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close() with invalid code 999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close() with invalid code 1001 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close() with invalid code 2999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	close() with invalid code 5000 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	closing the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	writer close() promise should not resolve until handshake completes
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	incomplete closing handshake should be considered unclean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	aborting the writable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?default	canceling the readable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close code should be sent to server and reflected back
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	no close argument should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	unspecified close code should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	unspecified close code with empty reason should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	unspecified close code with non-empty reason should set code to 1000
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close(true) should throw a TypeError
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close() with an overlong reason should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close during handshake should work
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close() with invalid code 999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close() with invalid code 1001 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close() with invalid code 2999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	close() with invalid code 5000 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	closing the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	writer close() promise should not resolve until handshake completes
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	incomplete closing handshake should be considered unclean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	aborting the writable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wss	canceling the readable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close code should be sent to server and reflected back
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	no close argument should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	unspecified close code should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	unspecified close code with empty reason should send empty Close frame
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	unspecified close code with non-empty reason should set code to 1000
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close(true) should throw a TypeError
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close() with an overlong reason should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close during handshake should work
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close() with invalid code 999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close() with invalid code 1001 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close() with invalid code 2999 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	close() with invalid code 5000 should throw
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	closing the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	writer close() promise should not resolve until handshake completes
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	incomplete closing handshake should be considered unclean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	aborting the writable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable should result in a clean close
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable with attributes not wrapped in a WebSocketError should be ignored
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable with a code should send that code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable with a code and reason should use them
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable with a reason but no code should default the close code
+FAIL	D-9.1	websockets/stream/tentative/close.any.js?wpt_flags=h2	canceling the readable with a DOMException not set code or reason
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	constructing with no URL should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	constructing with an invalid URL should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	constructing with invalid options should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	protocols should be required to be a list
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	constructing with a valid URL should work
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	setting a protocol in the constructor should work
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	connection failure should reject the promises
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wss	wss.opened should resolve to the right types
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	constructing with no URL should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	constructing with an invalid URL should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	constructing with invalid options should throw
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	protocols should be required to be a list
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	constructing with a valid URL should work
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	setting a protocol in the constructor should work
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	connection failure should reject the promises
+FAIL	D-9.1	websockets/stream/tentative/constructor.any.js?wpt_flags=h2	wss.opened should resolve to the right types
+FAIL	D-9.1	websockets/stream/tentative/read.any.js?default	read type for binary messages is Uint8Array
+FAIL	D-9.1	websockets/stream/tentative/read.any.js?wss	read type for binary messages is Uint8Array
+FAIL	D-9.1	websockets/stream/tentative/read.any.js?wpt_flags=h2	read type for binary messages is Uint8Array
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	clean close should be clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	close frame with no body should result in status code 1005
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	reason should be passed through
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	UTF-8 reason should work
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	close with unwritten data should not be considered clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	remote code and reason should be used
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?default	abrupt close should give an error
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	clean close should be clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	close frame with no body should result in status code 1005
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	reason should be passed through
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	UTF-8 reason should work
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	close with unwritten data should not be considered clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	remote code and reason should be used
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wss	abrupt close should give an error
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	clean close should be clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	close frame with no body should result in status code 1005
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	reason should be passed through
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	UTF-8 reason should work
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	close with unwritten data should not be considered clean
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	remote code and reason should be used
+FAIL	D-9.1	websockets/stream/tentative/remote-close.any.js?wpt_flags=h2	abrupt close should give an error
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	WebSocketError defaults should be correct
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	WebSocketError should be initialised from arguments
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	new WebSocketError with invalid code 999 should throw
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	new WebSocketError with invalid code 1001 should throw
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	new WebSocketError with invalid code 2999 should throw
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	new WebSocketError with invalid code 5000 should throw
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	passing only close code to WebSocketError should work
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	passing a non-empty reason should cause the close code to be set to 1000
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	overlong reason should throw
+FAIL	D-9.1	websockets/stream/tentative/websocket-error.any.js	reason should be rejected based on utf-8 bytes, not character count
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	a write that was incomplete at close time should reject
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	garbage collection after close with a pending write promise should not crash
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	writing a value that cannot be stringified should cause a rejection
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	writing a resizable ArrayBuffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	writing a view on a shared buffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?default	Garbage collecting a WebSocket stream doesn't crash while write promise is pending
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	a write that was incomplete at close time should reject
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	garbage collection after close with a pending write promise should not crash
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	writing a value that cannot be stringified should cause a rejection
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	writing a resizable ArrayBuffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	writing a view on a shared buffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wss	Garbage collecting a WebSocket stream doesn't crash while write promise is pending
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	a write that was incomplete at close time should reject
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	garbage collection after close with a pending write promise should not crash
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	writing a value that cannot be stringified should cause a rejection
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	writing a resizable ArrayBuffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	writing a view on a shared buffer should be rejected
+FAIL	D-9.1	websockets/stream/tentative/write.any.js?wpt_flags=h2	Garbage collecting a WebSocket stream doesn't crash while write promise is pending
+SKIP	PAGE	D-9.1	websockets/Create-url-with-windows-1252-encoding.html
+SKIP	WORKER-FILE	D-9.1	websockets/Send-data.worker.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-closes-open-websocket-connection.tentative.window.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-with-closed-websocket-connection-ccns.tentative.window.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-with-closed-websocket-connection.window.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-with-open-websocket-connection-and-close-it-in-pagehide.window.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-with-open-websocket-connection-ccns.tentative.window.js
+SKIP	PAGE	D-9.1	websockets/back-forward-cache-with-open-websocket-connection.window.js
+SKIP	PAGE	D-9.1	websockets/binary/001.html
+SKIP	PAGE	D-9.1	websockets/binary/002.html
+SKIP	PAGE	D-9.1	websockets/binary/004.html
+SKIP	PAGE	D-9.1	websockets/binary/005.html
+SKIP	PAGE	D-9.1	websockets/closing-handshake/002.html
+SKIP	PAGE	D-9.1	websockets/closing-handshake/003.html
+SKIP	PAGE	D-9.1	websockets/closing-handshake/004.html
+SKIP	PAGE	D-9.1	websockets/constructor/001.html
+SKIP	PAGE	D-9.1	websockets/constructor/004.html
+SKIP	PAGE	D-9.1	websockets/constructor/005.html
+SKIP	PAGE	D-9.1	websockets/constructor/006.html
+SKIP	PAGE	D-9.1	websockets/constructor/007.html
+SKIP	PAGE	D-9.1	websockets/constructor/008.html
+SKIP	PAGE	D-9.1	websockets/constructor/009.html
+SKIP	PAGE	D-9.1	websockets/constructor/010.html
+SKIP	PAGE	D-9.1	websockets/constructor/011.html
+SKIP	PAGE	D-9.1	websockets/constructor/012.html
+SKIP	PAGE	D-9.1	websockets/constructor/013.html
+SKIP	PAGE	D-9.1	websockets/constructor/014.html
+SKIP	PAGE	D-9.1	websockets/constructor/016.html
+SKIP	PAGE	D-9.1	websockets/constructor/017.html
+SKIP	PAGE	D-9.1	websockets/constructor/018.html
+SKIP	PAGE	D-9.1	websockets/constructor/019.html
+SKIP	PAGE	D-9.1	websockets/constructor/020.html
+SKIP	PAGE	D-9.1	websockets/constructor/021.html
+SKIP	PAGE	D-9.1	websockets/constructor/022.html
+SKIP	PAGE	D-9.1	websockets/cookies/001.html
+SKIP	PAGE	D-9.1	websockets/cookies/002.html
+SKIP	PAGE	D-9.1	websockets/cookies/003.html
+SKIP	PAGE	D-9.1	websockets/cookies/004.html
+SKIP	PAGE	D-9.1	websockets/cookies/005.html
+SKIP	PAGE	D-9.1	websockets/cookies/006.html
+SKIP	PAGE	D-9.1	websockets/cookies/007.html
+SKIP	PAGE	D-9.1	websockets/cookies/cross-origin-cookie-set.html
+SKIP	PAGE	D-9.1	websockets/cookies/third-party-cookie-accepted.https.html
+SKIP	PAGE	D-9.1	websockets/extended-payload-length.html
+SKIP	PAGE	D-9.1	websockets/interfaces/CloseEvent/clean-close.html
+SKIP	PAGE	D-9.1	websockets/interfaces/CloseEvent/constructor.html
+SKIP	PAGE	D-9.1	websockets/interfaces/CloseEvent/historical.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-arraybuffer.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-blob.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-defineProperty-getter.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-defineProperty-setter.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-deleting.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-getting.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-initial.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-large.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-readonly.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-unicode.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-basic.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-connecting.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-multiple.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-nested.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-replace.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/close/close-return.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/002.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/003.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/004.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/005.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/constants/006.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/002.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/003.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/004.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/006.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/007.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/008.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/009.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/010.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/011.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/012.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/013.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/014.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/015.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/016.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/017.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/018.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/019.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/events/020.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/extensions/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/protocol/protocol-initial.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/002.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/003.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/004.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/005.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/006.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/007.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/readyState/008.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/002.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/003.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/004.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/005.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/006.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/007.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/008.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/009.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/010.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/011.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/send/012.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/001.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/002.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/003.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/004.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/005.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/006.html
+SKIP	PAGE	D-9.1	websockets/interfaces/WebSocket/url/resolve.html
+SKIP	PAGE	D-9.1	websockets/keeping-connection-open/001.html
+SKIP	PAGE	D-9.1	websockets/multi-globals/message-received.html
+SKIP	PAGE	D-9.1	websockets/multi-globals/url-parsing/current/current.html
+SKIP	PAGE	D-9.1	websockets/multi-globals/url-parsing/incumbent/incumbent.html
+SKIP	PAGE	D-9.1	websockets/multi-globals/url-parsing/url-parsing.html
+SKIP	PAGE	D-9.1	websockets/opening-handshake/001.html
+SKIP	PAGE	D-9.1	websockets/opening-handshake/002.html
+SKIP	WORKER-FILE	D-9.1	websockets/opening-handshake/003-sets-origin.worker.js
+SKIP	PAGE	D-9.1	websockets/opening-handshake/003.html
+SKIP	PAGE	D-9.1	websockets/opening-handshake/005.html
+SKIP	PAGE	D-9.1	websockets/opening-handshake/006.html
+SKIP	PAGE	D-9.1	websockets/opening-handshake/received-301-code.html
+SKIP	PAGE	D-9.1	websockets/remove-own-iframe-during-onerror.window.js
+SKIP	PAGE	D-9.1	websockets/security/001.html
+SKIP	PAGE	D-9.1	websockets/security/002.html
+SKIP	PAGE	D-9.1	websockets/send-data-isolation.sub.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/001-1.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/001-2.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/001.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/002-1.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/002-2.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/002.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/003.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/004.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/005-1.html
+SKIP	PAGE	D-9.1	websockets/unload-a-document/005.html

@@ -1785,6 +1785,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-script-wpt"
+version = "0.1.0"
+dependencies = [
+ "neoteletext-script",
+ "neoteletext-script-run",
+ "protocol",
+]
+
+[[package]]
 name = "neoteletext-secret-store"
 version = "0.1.0"
 dependencies = [
