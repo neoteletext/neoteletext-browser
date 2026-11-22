@@ -18,6 +18,8 @@ use protocol::web::{FromWebClient, Referrer, ReferrerPolicy, RequestKind};
 use url::Url;
 
 use super::support::{Client, Reply, serve};
+use crate::web::cookies::{Context, Jar, same_site};
+use crate::web::cors::PreflightCache;
 use crate::web::policy::ChannelPolicy;
 use crate::web::referrer::referer;
 
@@ -70,8 +72,10 @@ fn read_as_the_web_client_reads(url: &Url) {
 /// TODO-7390 step 3, the web client's own functions: each hard address,
 /// alone and joined to a base as a redirect's `Location` is joined, is
 /// read and changed as the web client does, given to the referrer's
-/// cutting under every policy both as the page and as the target, and
-/// judged by the channel's policy. Nothing panics, in debug or release.
+/// cutting under every policy both as the page and as the target, to the
+/// cookie jar as the address a cookie is set from and sent to, and to the
+/// preflight cache, and judged by the channel's policy. Nothing panics,
+/// in debug or release.
 #[test]
 fn the_web_clients_readings_take_the_addresses_that_break_position_slicing() {
     let bases: Vec<Url> = ["http://site.test/a/page", "https://user@site.test/a/", "http://site.test"].iter().map(|base| Url::parse(base).unwrap()).collect();
@@ -87,6 +91,11 @@ fn the_web_clients_readings_take_the_addresses_that_break_position_slicing() {
         ReferrerPolicy::StrictOriginWhenCrossOrigin,
         ReferrerPolicy::UnsafeUrl,
     ];
+    // The cookie jar (its host, path and scheme readings, and the
+    // library's that keeps the jar) and the preflight cache's key.
+    let mut jar = Jar::new(None);
+    let mut preflights = PreflightCache::default();
+    let context = Context { same_site: true, navigation: false, safe_method: true };
     let mut parsed = 0;
     for hard in HARD {
         let mut urls: Vec<Url> = Url::parse(hard).into_iter().collect();
@@ -95,6 +104,13 @@ fn the_web_clients_readings_take_the_addresses_that_break_position_slicing() {
             parsed += 1;
             read_as_the_web_client_reads(url);
             let _ = (policy.relation(url), policy.is_same_origin(url));
+            let _ = jar.store(url, b"a=1; Path=/", context);
+            let _ = jar.store(url, b"b=2; Domain=localhost; Secure", context);
+            let _ = jar.header(url, context);
+            let _ = preflights.allows("http://site.test", url, true, "PUT", &[], std::time::Instant::now());
+            for base in &bases {
+                let _ = (same_site(&None, url, base), same_site(&None, base, url));
+            }
             for referrer_policy in policies {
                 for base in &bases {
                     let _ = referer(referrer_policy, url, base, true);
@@ -152,6 +168,12 @@ fn a_location_or_a_request_with_such_an_address_is_answered_or_failed() {
         let socket = address.replacen("http", "ws", 1);
         let id = client.start(&socket, |start| start.kind = RequestKind::WebSocket);
         ended(&mut client, id);
+    }
+    // Every redirect was asked for, so every hard `Location` was read
+    // (the empty one names the redirect itself, and is followed to the
+    // limit).
+    for (index, hard) in HARD.iter().enumerate() {
+        assert!(server.count("GET", &format!("/a/to/{index}")) >= 1, "{hard}");
     }
     assert_eq!(client.get(&server.url("/a/fast")).text(), "fast", "the web client still serves");
     client.finish().unwrap();
