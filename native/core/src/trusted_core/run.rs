@@ -95,6 +95,12 @@ pub(super) fn handle(core: &mut Core, event: Event) -> Result<bool, String> {
             core.updates.ended(reason);
             core.send_update()?;
         }
+        Event::ScriptAsked(channel, decoder, asked) => core.script_asked(channel, decoder, &asked),
+        Event::ScriptSaid(channel, generation, said) => core.script_said(channel, generation, said),
+        Event::ScriptHostEnded(channel, generation, reason) => core.script_host_ended(channel, generation, reason),
+        Event::ScriptHostExited(channel, decoder, exit) => core.script_host_exited(channel, decoder, &exit),
+        Event::WebClientSaid(generation, said) => core.web_client_said(generation, said),
+        Event::WebClientEnded(generation, reason) => core.web_client_ended(generation, reason),
         Event::InterfaceEnded(None) => return Ok(false),
         Event::InterfaceEnded(Some(reason)) => return Err(format!("the interface broke the protocol and was closed: {reason}")),
         #[cfg(unix)]
@@ -303,6 +309,7 @@ pub(super) fn shut_down(mut core: Core) {
     for (_, decoder) in std::mem::take(&mut core.decoders) {
         stop_decoder(decoder);
     }
+    core.end_scripts();
     if let Some((mut helper, mut input)) = core.sound.take() {
         let _ = write_to_sound(&mut input, &ToSound::Close);
         let _ = input.flush();

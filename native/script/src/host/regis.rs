@@ -1354,7 +1354,7 @@ impl Host {
         let batch = !bytes.is_empty();
         for (entry, colour) in regis.colours.iter_mut().enumerate() {
             colour.written.retain(|written| written.saturating_add(TICKS_PER_SECOND) > tick);
-            let allowed = colour.written.len() < usize::try_from(MAX_COLOUR_SETS_PER_SECOND).unwrap_or(0);
+            let allowed = colour.written.len() < MAX_COLOUR_SETS_PER_SECOND;
             if allowed && let Some((hue, lightness, saturation)) = colour.pending.take() {
                 put(&mut bytes, format_args!("S(M{entry}(H{hue}L{lightness}S{saturation}))"));
                 colour.written.push(tick);

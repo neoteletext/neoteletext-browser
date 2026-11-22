@@ -32,12 +32,24 @@ const fn is_unsafe_byte(byte: u8) -> bool {
 }
 
 /// Whether a `Range` value is the simple range the standard safelists:
-/// `bytes=` then digits, `-`, and digits or nothing.
+/// `bytes=` then digits, `-`, and digits or nothing, the first number no
+/// greater than the second.
 fn is_simple_range(value: &[u8]) -> bool {
     let Some(range) = value.strip_prefix(b"bytes=") else { return false };
     let mut parts = range.splitn(2, |&byte| byte == b'-');
     let (Some(first), Some(last)) = (parts.next(), parts.next()) else { return false };
-    !first.is_empty() && first.iter().all(u8::is_ascii_digit) && last.iter().all(u8::is_ascii_digit)
+    if first.is_empty() || !first.iter().all(u8::is_ascii_digit) || !last.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    // A range that ends before it starts is no range (the standard's
+    // "parse a single range header value"). Digits are compared as the
+    // numbers they write, however many: without their leading zeros, the
+    // longer is the greater, and of equal lengths the greater in order.
+    let number = |digits: &'_ [u8]| -> (usize, Vec<u8>) {
+        let significant: Vec<u8> = digits.iter().copied().skip_while(|&digit| digit == b'0').collect();
+        (significant.len(), significant)
+    };
+    last.is_empty() || number(first) <= number(last)
 }
 
 /// Whether the request header `name` (in lower case) with `value` needs no

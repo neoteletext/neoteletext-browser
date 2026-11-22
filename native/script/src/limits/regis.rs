@@ -81,9 +81,10 @@ pub const MAX_POINTS: usize = 1024;
 /// The most vertices one `fill` may trace (the renderer's, by name).
 pub const MAX_FILL_VERTICES: usize = regis::limits::MAX_FILL_VERTICES;
 /// The redefinitions of one colour entry that take effect in a second:
-/// three flashes, the most that is safe for viewers (section 10.5). A
-/// later value waits for the next tick the rate allows.
-pub const MAX_COLOUR_SETS_PER_SECOND: u32 = 6;
+/// three flashes, the most that is safe for viewers (section 10.5). It is
+/// one rule for every renderer, defined once, with the teletext API's
+/// limits; a later value waits for the next tick the rate allows.
+pub use crate::teletext::limits::MAX_COLOUR_SETS_PER_SECOND;
 /// The longest name `colours.define` takes, in bytes (this work package's
 /// choice: the specification bounds no name).
 pub const MAX_COLOUR_NAME_BYTES: usize = 32;

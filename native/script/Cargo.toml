@@ -44,6 +44,20 @@ neoteletext-audio.workspace = true
 regis.workspace = true
 # The bound on the keys a page may claim, by name.
 protocol.workspace = true
+# The teletext API (script-api.md section 5, work package T1): the engine
+# core's constants, character set designations and control limits, by name.
+neoteletext-core.workspace = true
+# The engine's own text encoder, `write_text::write_runs` (section 5.6,
+# DEC-2199). Its feature `write-text` brings unicode-bidi (MIT or
+# Apache-2.0, pure Rust; the engine's decision E.82, rdm DEC-606), for
+# right-to-left runs.
+neoteletext-formats = { workspace = true, features = ["write-text"] }
+
+[dev-dependencies]
+# The teletext tests' receiver (tests/teletext/receiver.rs): the engine as
+# the browser's decoder builds it, so that a kept picture is what the
+# browser would show.
+neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
 
 [lints]
 workspace = true

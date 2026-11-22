@@ -125,7 +125,7 @@ fn profile(program: &Path, role: Role, writable: Option<&Path>, local_network: b
     let mut parameters = Parameters::default();
     let mut profile = preamble(&parameters.path("PROGRAM", program));
     match role {
-        Role::Decoder => profile.push_str("(deny network*)\n"),
+        Role::Decoder | Role::Script => profile.push_str("(deny network*)\n"),
         // Names are resolved through mDNSResponder's socket and
         // opendirectoryd's libinfo, with the hosts file.
         Role::Network => {
@@ -269,8 +269,15 @@ const SOUND_SERVICES: &str = "(allow mach-lookup
 ";
 
 /// A process's own side: the broker confined it at its start.
-pub(crate) fn apply() -> Report {
-    Report { layers: vec![String::from("sandbox-exec, by its parent")] }
+/// A script host also holds its own memory to its bound
+/// (`script-api.md` section 11.1), which no profile can say.
+pub(crate) fn apply(role: Role) -> Result<Report, String> {
+    let mut report = Report { layers: vec![String::from("sandbox-exec, by its parent")] };
+    if role == Role::Script {
+        crate::unix::limit_memory(crate::SCRIPT_MEMORY_BYTES).map_err(|error| format!("cannot limit its memory: {error}"))?;
+        report.layers.push(String::from("memory limit"));
+    }
+    Ok(report)
 }
 
 /// The command that runs the helper under its profile, each path a `-D`
@@ -297,7 +304,7 @@ mod tests {
     #[test]
     fn profiles_start_from_nothing_and_give_the_network_only_to_fetchers() {
         let program = Path::new("/Applications/NeoTeletext.app/Contents/MacOS/neoteletext-decoder");
-        for role in [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound] {
+        for role in [Role::Decoder, Role::Script, Role::Network, Role::Interface, Role::Core, Role::Sound] {
             let (profile, parameters) = profile(program, role, None, false, None).unwrap();
             assert!(profile.starts_with("(version 1)\n(deny default)\n(import \"system.sb\")\n"), "{role:?}");
             assert!(profile.contains("(allow process-exec (literal (param \"PROGRAM\")))"), "{role:?}");
@@ -375,7 +382,7 @@ mod tests {
         assert!(rules.contains("(allow file-read* (literal (param \"PROGRAM_FOLDER\")))"), "{rules}");
         assert_eq!(read(&parameters, "PROGRAM_FOLDER"), Some(PathBuf::from("/Users/someone/neoteletext-browser/native/target/release")));
         assert!(!rules.contains("BUNDLE"), "not a bundle: {rules}");
-        for role in [Role::Decoder, Role::Network, Role::Core, Role::Sound] {
+        for role in [Role::Decoder, Role::Script, Role::Network, Role::Core, Role::Sound] {
             let (rules, _) = profile(bundled, role, None, false, None).unwrap();
             assert!(!rules.contains("BUNDLE") && !rules.contains("PROGRAM_FOLDER"), "{role:?}");
         }
@@ -429,7 +436,7 @@ mod tests {
         assert!(with.find(rule).unwrap() < refusal, "the later rule wins: this computer stays refused over UDP");
         let local = profile(program, Role::Network, None, true, Some(443)).unwrap().0;
         assert!(local.contains("(remote udp \"*:443\")") && !local.contains("localhost"));
-        for role in [Role::Decoder, Role::Interface, Role::Core, Role::Sound, Role::Updater { port: 443 }] {
+        for role in [Role::Decoder, Role::Script, Role::Interface, Role::Core, Role::Sound, Role::Updater { port: 443 }] {
             assert_eq!(profile(program, role, None, false, Some(8443)).unwrap().0, profile(program, role, None, false, None).unwrap().0, "{role:?}");
         }
     }

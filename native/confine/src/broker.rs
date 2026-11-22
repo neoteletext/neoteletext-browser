@@ -147,6 +147,9 @@ pub enum Program {
     Sound,
     /// The updater (`installation-and-updates.md` section 3).
     Updater,
+    /// A (tab, channel)'s script host (`script-api.md` section 11.1,
+    /// DEC-7266).
+    ScriptHost,
 }
 
 /// What the broker's own rules give the updater: the folder it writes and
@@ -160,7 +163,7 @@ pub struct UpdaterGrant {
 }
 
 impl Program {
-    const ALL: [Self; 6] = [Self::Decoder, Self::Fetcher, Self::Interface, Self::Keyboard, Self::Sound, Self::Updater];
+    const ALL: [Self; 7] = [Self::Decoder, Self::Fetcher, Self::Interface, Self::Keyboard, Self::Sound, Self::Updater, Self::ScriptHost];
 
     /// The role it is confined as, decided here and never by the core; the
     /// updater's port is the broker's handler's (`Handlers::updater`), and
@@ -173,6 +176,7 @@ impl Program {
             Self::Interface => Role::Interface,
             Self::Sound => Role::Sound,
             Self::Updater => Role::Updater { port: HTTPS_PORT },
+            Self::ScriptHost => Role::Script,
         }
     }
 
@@ -186,6 +190,7 @@ impl Program {
             Self::Keyboard => "phone keyboard",
             Self::Sound => "sound helper",
             Self::Updater => "updater",
+            Self::ScriptHost => "script host",
         }
     }
 
@@ -199,6 +204,7 @@ impl Program {
             Self::Keyboard => "neoteletext-keyboard",
             Self::Sound => "neoteletext-sound",
             Self::Updater => "neoteletext-updater",
+            Self::ScriptHost => "neoteletext-script-host",
         };
         format!("{name}{}", std::env::consts::EXE_SUFFIX)
     }
@@ -211,6 +217,7 @@ impl Program {
             Self::Keyboard => 4,
             Self::Sound => 5,
             Self::Updater => 6,
+            Self::ScriptHost => 7,
         }
     }
 

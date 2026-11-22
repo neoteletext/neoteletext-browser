@@ -294,6 +294,18 @@ impl<'a> Request<'a> {
         cookies::Context { same_site: self.same_site, navigation: false, safe_method: matches!(self.method.as_str(), "GET" | "HEAD" | "OPTIONS" | "TRACE") }
     }
 
+    /// Main fetch's step "set request's referrer to the result of invoking
+    /// determine request's referrer": the request's referrer becomes what
+    /// its policy lets the current address be told, and stays so. A
+    /// redirect runs it again on what an earlier address was told, so a
+    /// referrer once cut to its origin, or withheld, is never given back
+    /// whole under a later, looser policy.
+    fn determine_referrer(&mut self) {
+        let own = self.is_own(&self.url);
+        self.referrer =
+            self.referrer.as_ref().and_then(|referrer| referer(self.referrer_policy, referrer, &self.url, own)).and_then(|told| Url::parse(&told).ok());
+    }
+
     /// The `Origin` header's value, if the request carries one (the
     /// standard's "append a request `Origin` header").
     fn origin_header(&self) -> Option<String> {
@@ -304,21 +316,26 @@ impl<'a> Request<'a> {
             return None;
         }
         let downgraded = self.client.as_ref().is_some_and(|client| client.scheme() == "https") && self.url.scheme() != "https";
-        let withheld = match self.referrer_policy {
-            ReferrerPolicy::NoReferrer => true,
-            ReferrerPolicy::NoReferrerWhenDowngrade | ReferrerPolicy::StrictOrigin | ReferrerPolicy::StrictOriginWhenCrossOrigin | ReferrerPolicy::Unset => {
-                downgraded
-            }
-            ReferrerPolicy::SameOrigin => !self.is_own(&self.url),
-            ReferrerPolicy::Origin | ReferrerPolicy::OriginWhenCrossOrigin | ReferrerPolicy::UnsafeUrl => false,
-        };
+        // The referrer policy withholds the origin only of a request that
+        // is not in the mode `cors` (the standard's step 3.1).
+        let withheld = self.start.mode != Mode::Cors
+            && match self.referrer_policy {
+                ReferrerPolicy::NoReferrer => true,
+                ReferrerPolicy::NoReferrerWhenDowngrade
+                | ReferrerPolicy::StrictOrigin
+                | ReferrerPolicy::StrictOriginWhenCrossOrigin
+                | ReferrerPolicy::Unset => downgraded,
+                ReferrerPolicy::SameOrigin => !self.is_own(&self.url),
+                ReferrerPolicy::Origin | ReferrerPolicy::OriginWhenCrossOrigin | ReferrerPolicy::UnsafeUrl => false,
+            };
         Some(if withheld { "null".to_owned() } else { self.origin() })
     }
 
     /// The headers every request to the network carries beside its own.
     fn common_headers(&self, headers: &mut Vec<Header>) {
-        if let Some(value) = self.referrer.as_ref().and_then(|referrer| referer(self.referrer_policy, referrer, &self.url, self.is_own(&self.url))) {
-            set(headers, "referer", value);
+        // The referrer as main fetch last determined it for this address.
+        if let Some(referrer) = &self.referrer {
+            set(headers, "referer", referrer.as_str());
         }
         if let Some(origin) = self.origin_header() {
             set(headers, "origin", origin);
@@ -346,8 +363,11 @@ impl<'a> Request<'a> {
         match self.start.cache {
             CacheMode::OnlyIfCached => return Err(Reason::NotCached),
             CacheMode::NoCache => set_if_absent(&mut headers, "cache-control", "max-age=0"),
-            CacheMode::Default | CacheMode::ForceCache if !conditional => {}
-            CacheMode::NoStore | CacheMode::Reload | CacheMode::Default | CacheMode::ForceCache => {
+            // Only `default` is turned by a conditional header; under
+            // `force-cache` nothing is added.
+            CacheMode::ForceCache => {}
+            CacheMode::Default if !conditional => {}
+            CacheMode::NoStore | CacheMode::Reload | CacheMode::Default => {
                 set_if_absent(&mut headers, "pragma", "no-cache");
                 set_if_absent(&mut headers, "cache-control", "no-cache");
             }
@@ -407,8 +427,18 @@ impl<'a> Request<'a> {
     /// whether `answer` redirects, the request then being the one to
     /// send next.
     fn redirect(&mut self, answer: &Answer, jar: &Jar) -> Result<bool, Reason> {
-        let Some((_, location)) = answer.headers.iter().find(|(name, _)| name == "location") else { return Ok(false) };
-        let mut target = std::str::from_utf8(location).ok().and_then(|location| self.url.join(location).ok()).ok_or(Reason::Redirect)?;
+        // The standard's "location URL" (section 2.2.6): `Location` allows
+        // one header, so two are a failure, a network error. Its value is
+        // bytes, each the code point of its number, which the address
+        // parser percent-encodes above 0x7F: a `Location` that is not
+        // UTF-8 is followed, not refused.
+        let mut locations = answer.headers.iter().filter(|(name, _)| name == "location").map(|(_, value)| value);
+        let Some(location) = locations.next() else { return Ok(false) };
+        if locations.next().is_some() {
+            return Err(Reason::Redirect);
+        }
+        let location: String = location.iter().copied().map(char::from).collect();
+        let mut target = self.url.join(&location).map_err(|_| Reason::Redirect)?;
         if target.fragment().is_none() {
             target.set_fragment(self.url.fragment());
         }
@@ -522,6 +552,7 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         if !is_web(&request.url) {
             return Err(Reason::Address);
         }
+        request.determine_referrer();
         if request.url.port_or_known_default().is_none_or(is_bad_port) {
             return Err(Reason::BadPort);
         }

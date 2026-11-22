@@ -421,9 +421,8 @@ done();
     receiver.take(&batch);
     assert_eq!(receiver.commits, 1);
     assert!((1..=20).all(|number| receiver.terminal.committed_drawing(number).is_none()), "cleared: no drawing is left at the receiver");
-    // On a page that is not a ReGIS page there is nothing to draw on.
-    let mut teletext =
-        common::page(&script(r#"throws("not a ReGIS page", TypeError, "the page shown is not a ReGIS page", () => nt.regis.drawing({})); done();"#));
+    // A page context has its own page's renderer's API and no other.
+    let mut teletext = common::page(&script(r#"equal("a teletext page's context has no ReGIS API", nt.regis, undefined); done();"#));
     assert_checks(&lines(&teletext.step(&tick(0, 0)).unwrap()), 1);
 }
 

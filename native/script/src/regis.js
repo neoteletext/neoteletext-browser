@@ -365,13 +365,17 @@
     set(entry, colour) { host(OP.RG_COLOUR_SET, whole(entry, undefined, "a colour entry"), ...colourArguments(colour)); },
   });
 
-  core.regis = Object.freeze({
+  const api = Object.freeze({
     colours,
     drawing,
     symbol(fn) { return drawing({ visible: false }).draw(fn); },
     group(options) { return drawing(options); },
     clear() { settleRemoved(host(OP.RG_CLEAR)); },
   });
+  // A page context has the API of its own page's renderer and no other;
+  // the channel context has it for whatever page is shown, and the host
+  // refuses its calls while that page is not a ReGIS page (section 3.1).
+  if (!isPage || host(OP.INFO, INFO.PAGE_RENDERER) === "regis") core.regis = api;
   // What work package R2 builds on: the painter's class and the way its
   // further calls record their whole numbers, and the program of a
   // function that paints (for macrographs).

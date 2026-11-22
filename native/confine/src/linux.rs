@@ -38,6 +38,12 @@ mod seccomp;
 /// (decision 58).
 pub(crate) fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
     let mut report = Report::default();
+    // First, while nothing has been read: a script host's memory is held
+    // to its bound by the kernel (`script-api.md` section 11.1).
+    if role == Role::Script {
+        crate::unix::limit_memory(crate::SCRIPT_MEMORY_BYTES).map_err(|error| format!("cannot limit its memory: {error}"))?;
+        report.layers.push(String::from("memory limit"));
+    }
     namespace::no_new_privileges().map_err(|error| format!("cannot refuse new privileges: {error}"))?;
     if !matches!(role, Role::Network | Role::Updater { .. }) {
         namespace::network_namespace().map_err(|error| format!("cannot make an empty network namespace: {error}"))?;

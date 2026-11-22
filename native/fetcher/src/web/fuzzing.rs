@@ -4,10 +4,15 @@
 
 use url::Url;
 
+use std::time::Instant;
+
 use super::coding::{Decoder, gzip_header_length};
 use super::cookies::{Context, Jar};
+use super::cors::{Allowed, cors_check, exposed};
+use super::integrity;
 use super::limits::{MAX_COOKIES_PER_JAR, MAX_GZIP_HEADER};
 use super::policy::ChannelPolicy;
+use super::rules::is_forbidden_response_header;
 use super::sse::EventStream;
 
 /// Whether the address `url` is judged inside the channel whose identity
@@ -96,4 +101,44 @@ pub fn jar(url: &str, headers: &[&[u8]], kept: &[u8]) -> Option<(Option<String>,
     again.read_written(&session);
     assert_eq!(again.header(&url, SAME), jar.header(&url, SAME), "a jar written out reads back");
     Some((jar.header(&url, SAME), [lasting, session].concat()))
+}
+
+/// What the CORS rules make of an answer's `headers` (names in lower
+/// case) to a request of `origin` with `method` and the unsafe header
+/// names `names`, with credentials or without: whether the CORS check
+/// passes, whether as a preflight's answer it allows the request (`None`
+/// when its lists are malformed), and the names of the headers a script
+/// may read.
+///
+/// # Panics
+/// When a header a script may never read is among those it may, or a
+/// header is exposed that the answer did not carry.
+#[must_use]
+pub fn cors(headers: &[(String, Vec<u8>)], origin: &str, with_credentials: bool, method: &str, names: &[String]) -> (bool, Option<bool>, Vec<String>) {
+    let passes = cors_check(headers, origin, with_credentials);
+    let allows = Allowed::read(headers, with_credentials, Instant::now()).map(|allowed| allowed.allows(method, names));
+    let shown = exposed(headers, with_credentials);
+    for (name, value) in &shown {
+        assert!(!is_forbidden_response_header(name), "{name} is never a script's to read");
+        assert!(headers.iter().any(|(carried, bytes)| carried == name && bytes == value), "{name} was not in the answer");
+    }
+    (passes, allows, shown.into_iter().map(|(name, _)| name).collect())
+}
+
+/// Whether `metadata` names a hash the standard knows, and whether
+/// `body` matches it.
+///
+/// # Panics
+/// When metadata that names no known hash does not match, or a body does
+/// not match its own SHA-256 or another body's does.
+#[must_use]
+pub fn integrity_of(metadata: &str, body: &[u8]) -> (bool, bool) {
+    let (asks, matches) = (integrity::asks(metadata), integrity::matches(metadata, body));
+    assert!(asks || matches, "metadata that names no known hash matches anything");
+    let own = integrity::metadata_of(body);
+    assert!(integrity::matches(&own, body), "a body matches its own hash");
+    let mut other = body.to_vec();
+    other.push(0);
+    assert!(!integrity::matches(&own, &other), "and no other body does");
+    (asks, matches)
 }
