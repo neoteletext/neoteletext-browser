@@ -332,7 +332,6 @@ fn the_referrer_policy_withholds_origin_only_outside_the_mode_cors() {
 /// `no-store`; under `force-cache` the request carries no `Pragma` or
 /// `Cache-Control` of the browser's.
 #[test]
-#[ignore = "fault TODO-7345 item 5: force-cache with a conditional header is sent as no-store (Pragma and Cache-Control added)"]
 fn a_conditional_request_under_force_cache_is_not_made_no_store() {
     let server = serve(|_| Reply::ok("x"));
     let mut client = Client::new(&server.url("/a/"));

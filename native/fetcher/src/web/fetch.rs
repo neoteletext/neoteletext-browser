@@ -350,8 +350,11 @@ impl<'a> Request<'a> {
         match self.start.cache {
             CacheMode::OnlyIfCached => return Err(Reason::NotCached),
             CacheMode::NoCache => set_if_absent(&mut headers, "cache-control", "max-age=0"),
-            CacheMode::Default | CacheMode::ForceCache if !conditional => {}
-            CacheMode::NoStore | CacheMode::Reload | CacheMode::Default | CacheMode::ForceCache => {
+            // Only `default` is turned by a conditional header; under
+            // `force-cache` nothing is added.
+            CacheMode::ForceCache => {}
+            CacheMode::Default if !conditional => {}
+            CacheMode::NoStore | CacheMode::Reload | CacheMode::Default => {
                 set_if_absent(&mut headers, "pragma", "no-cache");
                 set_if_absent(&mut headers, "cache-control", "no-cache");
             }
