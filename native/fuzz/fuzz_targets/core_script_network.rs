@@ -60,7 +60,7 @@ fuzz_target!(|data: &[u8]| {
     let mut now = began;
     let mut claim = NetworkClaim::default();
     let mut model = Model::default();
-    let mut schedule = schedule.chunks_exact(2);
+    let mut schedule = schedule.as_chunks::<2>().0.iter();
     let mut host = host;
     for _ in 0..MAX_REQUESTS {
         // A report of the claim, and the clock's step, between requests.

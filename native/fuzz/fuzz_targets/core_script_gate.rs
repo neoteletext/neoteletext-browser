@@ -161,7 +161,7 @@ fuzz_target!(|data: &[u8]| {
                 } else {
                     u32::from(input.byte())
                 };
-                let answering = if input.byte() & 7 == 0 { CHANNELS[usize::from(input.byte()) % CHANNELS.len()] } else { channel };
+                let answering = if input.byte().is_multiple_of(8) { CHANNELS[usize::from(input.byte()) % CHANNELS.len()] } else { channel };
                 let (cancelled, handled) = (input.byte() & 1 != 0, input.byte() & 1 != 0);
                 let waited =
                     gate.pending.iter().find(|pending| pending.sequence == sequence && pending.key.channel == answering).map(|pending| pending.awaited);
@@ -180,7 +180,7 @@ fuzz_target!(|data: &[u8]| {
                 assert!(gate.due_at().is_none_or(|due| due <= now + VERDICT_DEADLINE));
             }
             5 => {
-                let asking = if input.byte() & 3 == 0 { CHANNELS[usize::from(input.byte()) % CHANNELS.len()] } else { channel };
+                let asking = if input.byte().is_multiple_of(4) { CHANNELS[usize::from(input.byte()) % CHANNELS.len()] } else { channel };
                 let counted =
                     gate.navigations.get(&asking).map_or(0, |asked| asked.iter().filter(|at| now.saturating_duration_since(**at) < NAVIGATION_SECOND).count());
                 match gate.navigation_asked(asking, now) {
