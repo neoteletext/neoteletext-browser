@@ -377,20 +377,22 @@ fn a_hostile_pages_arguments_are_refused_or_bounded() {
 /// it.
 #[test]
 fn a_callback_that_presents_for_ever_is_stopped_at_the_callback_limit() {
-    // The longest one present may take past the limit's own margin: three
-    // conversions (the bitmap's `PRESENT_ATTEMPTS`), measured at under
-    // 4 ms each optimised and under 60 ms each with debug assertions.
-    let one_present = if cfg!(debug_assertions) { Duration::from_millis(180) } else { Duration::from_millis(12) };
-    let mut container = limited();
-    container.open_with(opening_at(Level::TwoFive), include_bytes!("bitmap/hostile_presents.js")).unwrap();
-    let (batch, took) = timed(|| container.step(&tick(1, 0)));
-    let batch = batch.expect("the step in which the container stopped is answered");
-    println!("a callback that presents for ever was stopped after {:?} ({:?} running)", took.wall, took.running);
-    assert!(took.wall >= CALLBACK_TIME_LIMIT, "stopped after {:?}, before its limit", took.wall);
-    assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN + one_present, "ran {:?} under a limit of {CALLBACK_TIME_LIMIT:?}", took.running);
-    assert_eq!(view(&batch).states.iter().map(|state| state.stopped).collect::<Vec<_>>(), vec![Some(FailReason::Time)]);
-    assert_eq!(container.stop_reason(), Some(FailReason::Time));
-    assert!(staged_triplets(&batch) <= LOCAL_TRIPLETS);
+    common::unless_starved(|| {
+        // The longest one present may take past the limit's own margin: three
+        // conversions (the bitmap's `PRESENT_ATTEMPTS`), measured at under
+        // 4 ms each optimised and under 60 ms each with debug assertions.
+        let one_present = if cfg!(debug_assertions) { Duration::from_millis(180) } else { Duration::from_millis(12) };
+        let mut container = limited();
+        container.open_with(opening_at(Level::TwoFive), include_bytes!("bitmap/hostile_presents.js")).unwrap();
+        let (batch, took) = timed(|| container.step(&tick(1, 0)));
+        let batch = batch.expect("the step in which the container stopped is answered");
+        println!("a callback that presents for ever was stopped after {:?} ({:?} running)", took.wall, took.running);
+        assert!(took.wall >= CALLBACK_TIME_LIMIT, "stopped after {:?}, before its limit", took.wall);
+        assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN + one_present, "ran {:?} under a limit of {CALLBACK_TIME_LIMIT:?}", took.running);
+        assert_eq!(view(&batch).states.iter().map(|state| state.stopped).collect::<Vec<_>>(), vec![Some(FailReason::Time)]);
+        assert_eq!(container.stop_reason(), Some(FailReason::Time));
+        assert!(staged_triplets(&batch) <= LOCAL_TRIPLETS);
+    });
 }
 
 /// TODO-7297 step 4 and DEC-7245, which asks for this figure: a
