@@ -235,10 +235,10 @@ fn a_body_that_ends_early_fails_in_each_framing() {
         ("no last chunk", b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n", Some(&[Reason::Protocol, Reason::Connection])),
         (
             "a chunk size that is no number",
-            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n", // hyper reports a malformed chunk as a fault of the connection's
-            // reading, not of the head's parsing, so the developer log says
-            // Connection (TODO-7345 item 7).
-            Some(&[Reason::Protocol, Reason::Connection]),
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nhello\r\n0\r\n\r\n",
+            // A chunk size that is no number breaks a rule of HTTP/1.1 (RFC
+            // 9112 section 7.1), and the developer log says so.
+            Some(&[Reason::Protocol]),
         ),
         ("a body to the connection's end", b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nhello", None),
     ];
