@@ -298,7 +298,7 @@ $found"
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js painter_programs script_url_resolve script_web_host script_web_answers)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_bitmap_ops script_imports script_js painter_programs script_url_resolve script_web_host script_web_answers)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed

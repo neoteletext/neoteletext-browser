@@ -156,6 +156,24 @@ numbered! {
     TT_LANGUAGES = 118,
     /// Teletext: the receiver's presentation level.
     TT_LEVEL = 119,
+    /// The teletext sixel bitmap: the rows it owns.
+    BM_ROWS = 130,
+    /// The sixel bitmap: fills the back buffer and frees its text cells.
+    BM_CLEAR = 131,
+    /// The sixel bitmap: one sixel of the back buffer.
+    BM_SET = 132,
+    /// The sixel bitmap: the colour of a sixel of the back buffer.
+    BM_GET = 133,
+    /// The sixel bitmap: a line.
+    BM_LINE = 134,
+    /// The sixel bitmap: a rectangle, filled or outlined.
+    BM_RECT = 135,
+    /// The sixel bitmap: a rectangle of sixels, one byte each.
+    BM_BLIT = 136,
+    /// The sixel bitmap: cells reserved for characters.
+    BM_TEXT = 137,
+    /// The sixel bitmap: shows the back buffer; the cells changed plus 65,536 times the cells that lost detail.
+    BM_PRESENT = 138,
     /// ReGIS: names a colour and sets it; gives its entry.
     RG_COLOUR_DEFINE = 200,
     /// ReGIS: sets a colour entry.
@@ -618,11 +636,13 @@ pub fn prelude() -> String {
     table("NP", &mut crate::host::naplps::program::table());
     table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
     table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
+    table("TTB", &mut crate::teletext::bitmap::prelude_numbers().iter().copied());
     table("RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
     table("RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
     table("RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
     out.push_str(include_str!("prelude.js"));
     out.push_str(include_str!("host/naplps/prelude.js"));
+    out.push_str(crate::teletext::bitmap::PRELUDE);
     out.push_str(crate::teletext::PRELUDE);
     out.push_str(include_str!("regis.js"));
     // The web APIs (work package W2), inside the same function.

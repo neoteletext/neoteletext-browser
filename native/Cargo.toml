@@ -104,9 +104,11 @@ neoteletext-audio-instruments = { git = "file:///Users/andrewstuart/devel/neotel
 neoteletext-audio-mix = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
 # The engine's picture converter (its DEC-2325): a picture file's bytes to a
 # teletext page, run only in a decoder started to convert one picture
-# (the Tools menu, docs/picture-tools.md). It brings the image crate's five
-# decoders, approved by the engine's DEC-2142.
-neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
+# (the Tools menu, docs/picture-tools.md). Its feature `decode` brings the
+# image crate's five decoders, approved by the engine's DEC-2142, and is
+# named by the decoder alone: the script library takes the crate without
+# it, for the sixel bitmap's converter (script-api.md section 5.7).
+neoteletext-picture = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf", default-features = false }
 # The ReGIS renderer, maintained in its own repository and pinned to one
 # commit as the engine is (its DEC-6270; DEC-6335): DEC's vector graphics
 # language with the numbered drawings of ReGIS v2, drawn by the decoder for
