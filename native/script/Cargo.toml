@@ -44,6 +44,16 @@ neoteletext-audio.workspace = true
 regis.workspace = true
 # The bound on the keys a page may claim, by name.
 protocol.workspace = true
+# MIT or Apache-2.0: the URL standard's parser and its API's setters, for
+# a script's `URL` (operation 40; script-api.md section 9.1), the same
+# crate at the same version the web client reads every address with, so
+# that the two never read one address two ways (DEC-7260 item 5).
+url.workspace = true
+# (Apache-2.0 or MIT) and BSD-3-Clause, pure Rust: the Encoding standard's
+# decoders, for a script's `TextDecoder` (operation 49; script-api.md
+# section 9.1 names it; under the standing approval of pure-Rust
+# libraries, DEC-6579). `alloc` alone: decoding to a `String`.
+encoding_rs = { version = "=0.8.35", default-features = false, features = ["alloc"] }
 # The NAPLPS renderer (MIT, the project's own, pinned by revision): the
 # dot mapping every writer of NAPLPS calls (naplps-raster.md RAS-2) and
 # the renderer's limits by name (script-api.md section 7; work package N1).
@@ -63,6 +73,11 @@ neoteletext-formats = { workspace = true, features = ["write-text", "picture-tex
 # without turning on the core's `render` feature that holds it (the
 # engine's TODO-7363, after which the feature goes from this line).
 neoteletext-core = { workspace = true, features = ["render"] }
+# The engine's converter of the teletext sixel bitmap,
+# `neoteletext_picture::bitmap::present` (section 5.7; the owner's
+# DEC-7245, the engine's DEC-7355): the crate without its picture
+# decoders, so that the script host links no decoder of a picture file.
+neoteletext-picture = { workspace = true, default-features = false }
 
 [dev-dependencies]
 # The teletext tests' receiver (tests/teletext/receiver.rs): the engine as

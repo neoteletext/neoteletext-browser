@@ -17,7 +17,11 @@
 //! - **the Colour Map** ([`colours`]): entries 16 to 31, redefined by
 //!   X/28/0 format 1;
 //! - **text** ([`text`]): through the engine's own encoder, for the
-//!   page's language or a run's own.
+//!   page's language or a run's own;
+//! - **the sixel bitmap** ([`bitmap`], work package T3): two buffers of
+//!   sixels beside these, which `present()` has the engine turn into the
+//!   codes of the plane's rows it owns and into triplets of the same
+//!   local enhancement data.
 //!
 //! The host holds the page as the script drew it and, for each step,
 //! stages only what changed as the batch's sections `TELETEXT_ROWS`,
@@ -31,6 +35,7 @@
 //! of the page, the copy's enhancement data is written and counted, and
 //! only a copy within the budget replaces the page.
 
+pub mod bitmap;
 pub mod colours;
 pub mod limits;
 pub mod model;
@@ -307,6 +312,8 @@ pub struct Teletext {
     looks_told: [u8; MAX_CONTROLS],
     /// Labels not yet told, one at most for a control.
     labels: Vec<Label>,
+    /// The sixel bitmap's two buffers (section 5.7).
+    bitmap: Box<bitmap::Bitmap>,
 }
 
 impl Teletext {
@@ -324,6 +331,7 @@ impl Teletext {
             settings_told: TeletextSettings::default(),
             looks_told: [0; MAX_CONTROLS],
             labels: Vec::new(),
+            bitmap: bitmap::Bitmap::new(),
         })
     }
 
@@ -335,7 +343,8 @@ impl Teletext {
             .saturating_add(MAX_CONTROLS.saturating_mul(size_of::<Control>()))
             .saturating_add(size_of::<[[u8; COLUMNS]; PLANE_ROWS]>())
             .saturating_add(LOCAL_TRIPLETS.saturating_mul(size_of::<Triplet>()).saturating_mul(2))
-            .saturating_add(self.languages.state_bytes());
+            .saturating_add(self.languages.state_bytes())
+            .saturating_add(size_of::<bitmap::Bitmap>());
         fixed.saturating_add(self.batch_bytes())
     }
 
@@ -662,7 +671,14 @@ impl Teletext {
 
     /// One operation of the page context.
     fn operate(&mut self, op: Op, ints: &[i32], payload: Payload<'_>, scope: i32, tick: u64) -> Result<Reply, Reply> {
+        // The page plane writes no row the sixel bitmap owns (section 5.7).
+        if let Some(why) = self.bitmap.refuses(op, ints) {
+            return Err(Reply::Type(why));
+        }
         match op {
+            Op::BM_ROWS | Op::BM_CLEAR | Op::BM_SET | Op::BM_GET | Op::BM_LINE | Op::BM_RECT | Op::BM_BLIT | Op::BM_TEXT | Op::BM_PRESENT => {
+                self.bitmap_operate(op, ints, payload)
+            }
             Op::TT_PUT => self.put(op, ints, payload),
             Op::TT_CODES | Op::TT_BLIT | Op::TT_AT | Op::TT_CLEAR | Op::TT_SCROLL | Op::TT_SETTINGS => self.plane(op, ints, payload),
             Op::TT_OVERLAY_PUT | Op::TT_OVERLAY_FILL | Op::TT_OVERLAY_CLEAR => self.overlay(op, ints, payload),
@@ -845,6 +861,7 @@ impl Slot {
                 held.colours.defined(),
                 held.model.controls.len(),
             );
+            let _ = write!(out, ",\"bitmapCellsLossy\":{{\"used\":{},\"limit\":{}}}", held.bitmap.lossy(), bitmap::CELLS);
         }
     }
 

@@ -101,6 +101,6 @@ const scope = nt.scope(() => { tt.control(9, 0, 4); });
 equal("a scope's control", tt.overlay.triplets.used, 9);
 scope.end();
 equal("gone with the scope", tt.overlay.triplets.used, 7);
-equal("budget", Object.keys(nt.budget()).slice(-3).join(), "triplets,colours,controls");
+equal("budget", Object.keys(nt.budget()).slice(-4).join(), "triplets,colours,controls,bitmapCellsLossy");
 equal("controls", nt.budget().controls.used, 1);
 done();

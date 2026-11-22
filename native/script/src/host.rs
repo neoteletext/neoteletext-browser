@@ -307,6 +307,8 @@ pub struct Host {
     /// constants, lowered only by this module's own tests.
     state_limit: usize,
     batch_limit: usize,
+    /// The network: requests, event streams, sockets and decoders (work package W2).
+    web: web::Web,
     /// The open page's NAPLPS (work package N1).
     naplps: naplps::Naplps,
     /// The teletext page the page context draws on (work package T1).
@@ -457,6 +459,7 @@ impl Host {
             figures: TimeFigures::default(),
             state_limit: MAX_HOST_STATE_BYTES,
             batch_limit: MAX_BATCH_BYTES,
+            web: web::Web::default(),
             naplps: naplps::Naplps::default(),
             teletext: crate::teletext::Slot::default(),
             regis: regis::Regis::new(),
@@ -512,6 +515,8 @@ impl Host {
             *slot = None;
         }
         self.shared_notices.retain(|(to, _)| *to != context);
+        let any_open = self.contexts.iter().any(Option::is_some);
+        self.web.close(context, any_open);
         if context == ContextId::Channel {
             self.shared.clear();
             self.shared_notices.clear();
@@ -558,6 +563,7 @@ impl Host {
     /// start again, and notes due are released.
     pub fn begin_step(&mut self, tick: u64, sound_allowed: bool) {
         self.tick = self.tick.max(tick);
+        self.web.begin_step(self.tick);
         self.sound_step = 0;
         self.sound_allowed |= sound_allowed;
         self.naplps.begin_step(self.tick);
@@ -602,6 +608,7 @@ impl Host {
             Some(EventKind::POINTER) => first & POINTER_ACTION_MASK == PointerAction::UP.number(),
             _ => false,
         };
+        self.web.closing = kind == Some(EventKind::CLOSE);
         self.callback = Some((context, Callback { activation, sound_operations: 0 }));
         self.naplps.begin_callback();
     }
@@ -689,6 +696,10 @@ impl Host {
             | EventKind::SHARED
             | EventKind::TIMER
             | EventKind::TICK => true,
+            // The network's events are the host's own, made for the
+            // context whose request they answer.
+            kind if kind.is_network() => true,
+            _ => false,
         }
     }
 
@@ -842,6 +853,7 @@ impl Host {
         bytes = self.shared.iter().fold(bytes, |sum, (key, value)| sum.saturating_add(cost(key)).saturating_add(cost(value)));
         bytes = self.shared_notices.iter().fold(bytes, |sum, (_, key)| sum.saturating_add(cost(key)).saturating_add(size_of::<ContextId>()));
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
+        bytes = bytes.saturating_add(self.web.state_bytes());
         bytes = bytes.saturating_add(self.naplps.state_bytes());
         bytes = bytes.saturating_add(self.teletext.state_bytes());
         bytes = bytes.saturating_add(self.regis.held_bytes());
@@ -1077,6 +1089,16 @@ impl Host {
                 no_payload(op, payload)?;
                 self.sound_operation(context, op, ints)
             }
+            Op::URL_PARSE
+            | Op::FETCH
+            | Op::FETCH_BODY
+            | Op::FETCH_ABORT
+            | Op::FETCH_CREDIT
+            | Op::WS_OPEN
+            | Op::WS_SEND
+            | Op::WS_CLOSE
+            | Op::URL_SET
+            | Op::DECODE => self.web_operation(context, op, ints, payload),
             Op::NP_COLOUR_DEFINE
             | Op::NP_COLOUR_SET
             | Op::NP_BLINK
@@ -1108,7 +1130,16 @@ impl Host {
             | Op::TT_CONTROL
             | Op::TT_MEASURE
             | Op::TT_LANGUAGES
-            | Op::TT_LEVEL => {
+            | Op::TT_LEVEL
+            | Op::BM_ROWS
+            | Op::BM_CLEAR
+            | Op::BM_SET
+            | Op::BM_GET
+            | Op::BM_LINE
+            | Op::BM_RECT
+            | Op::BM_BLIT
+            | Op::BM_TEXT
+            | Op::BM_PRESENT => {
                 // A label waiting to leave is the one thing teletext stages
                 // whose size a script chooses.
                 self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;
@@ -1520,7 +1551,8 @@ impl Host {
     }
 
     /// The budget report (section 3.7), as JSON text.
-    fn budget(&self, context: ContextId) -> String {
+    #[must_use]
+    pub fn budget(&self, context: ContextId) -> String {
         let held = self.context(context);
         let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
         let mut second = RateWindow { counts: self.sound_second.counts.clone() };
@@ -1529,9 +1561,9 @@ impl Host {
             ("heapBytes", count(self.heap_bytes), u64::from(QUICKJS_HEAP_BYTES.unsigned_abs())),
             ("timers", held.map_or(0, |held| count(held.timers.len())), count(MAX_TIMERS)),
             ("listeners", held.map_or(0, |held| count(held.listens.len())), count(MAX_LISTENS)),
-            // The network is work package W2's: the core has no request and no socket.
-            ("requests", 0, 0),
-            ("sockets", 0, 0),
+            // Fetches under way and waiting; sockets and event streams.
+            ("requests", count(self.web.budget().0), count(web::limits::MAX_REQUESTS_IN_FLIGHT + web::limits::MAX_REQUESTS_QUEUED)),
+            ("sockets", count(self.web.budget().1), count(web::limits::MAX_SOCKETS + web::limits::MAX_EVENT_STREAMS)),
             ("soundOperations", u64::from(second.count(self.tick)), u64::from(MAX_SOUND_OPERATIONS_PER_SECOND)),
             ("callbackPercent", u64::from(self.figures.callback_percent), PERCENT),
             ("callbackPercentMax", u64::from(self.figures.callback_percent_max), PERCENT),
@@ -1578,3 +1610,4 @@ pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
 
 #[cfg(test)]
 mod tests;
+pub mod web;

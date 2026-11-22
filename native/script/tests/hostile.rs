@@ -13,9 +13,7 @@ mod common;
 use std::time::Duration;
 
 use common::{Opens as _, Took, all_lines, limited, lines, opening, tick, timed, view};
-use neoteletext_script::limits::{
-    CALLBACK_TIME_LIMIT, MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, MAX_SOUND_OPERATIONS_PER_CALLBACK, START_TIME_LIMIT, TIME_CHECK_MARGIN, WASM_MEMORY_BYTES,
-};
+use neoteletext_script::limits::{CALLBACK_TIME_LIMIT, MAX_SOUND_OPERATIONS_PER_CALLBACK, START_TIME_LIMIT, TIME_CHECK_MARGIN, WASM_MEMORY_BYTES};
 use neoteletext_script::{Container, LinkError};
 use protocol::script::batch::SoundOperation;
 use protocol::script::{Batch, ContextId, FailReason};
@@ -228,57 +226,6 @@ fn sound_stops_are_held_to_the_callbacks_rate() {
     assert!(log[0].starts_with("uncaught: RangeError: MAX_SOUND_OPERATIONS_PER_CALLBACK: "), "{log:?}");
     assert!(!log.iter().any(|line| line == "stopped"));
     assert_eq!(container.stop_reason(), None);
-}
-
-/// The most steps the scripts whose every timer fails are given to be
-/// stopped for their failures.
-const FAILING_STEPS: u32 = 120;
-
-/// S-06 (TODO-7272) and the review's request floods: the scripts that
-/// made the spike's host hold 130 MB through ReGIS drawings, and make
-/// 1,240 requests in a step, use parts of the API the shared core does
-/// not have (work packages R1 and W2, which owe their own regression
-/// tests with these same scripts). Here they find nothing to call: no
-/// request is made, nothing is drawn, the host holds no more than its
-/// bound, and thirty-one failing timers a tick stop the context after
-/// sixteen failures in a row.
-#[test]
-fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
-    for (name, source) in
-        [("fetchabort.js", hostile!("fetchabort")), ("fetchabort2.js", hostile!("fetchabort2")), ("sse.js", hostile!("sse")), ("sse2.js", hostile!("sse2"))]
-    {
-        let mut container = opened(name, source);
-        // Thirty-one timers that each fail, sixteen failures to stop the
-        // context: a few steps on a quiet machine, more where the step's
-        // budget lets fewer callbacks start.
-        let mut batches = Vec::new();
-        for at in 0..FAILING_STEPS {
-            batches.push(container.step(&tick(at, u64::from(at))));
-            let stopped = batches.last().and_then(|batch| batch.as_ref().ok()).is_some_and(|batch| view(batch).states[0].stopped.is_some());
-            if at >= 3 && (stopped || !name.ends_with("2.js")) {
-                break;
-            }
-        }
-        let log = all_lines(&batches);
-        assert!(
-            log.iter()
-                .any(|line| line.starts_with("uncaught: ") && (line.contains("not a function") || line.contains("not defined") || line.contains("undefined"))),
-            "{name}: {log:?}"
-        );
-        assert!(!log.iter().any(|line| line.starts_with("issued") || line.starts_with("opened")), "{name}: {log:?}");
-        assert_eq!(container.take_requests(), Vec::new(), "{name} made a request");
-        assert!(container.host_bytes() <= MAX_HOST_STATE_BYTES, "{name}: the host holds {} bytes", container.host_bytes());
-        for batch in batches.iter().flatten() {
-            assert!(view(batch).sound.is_empty() && batch.navigate.is_none() && batch.title.is_none(), "{name}");
-            let bytes: usize = view(batch).log.iter().map(|line| line.text.len()).sum();
-            assert!(bytes <= MAX_BATCH_BYTES, "{name}: a batch of {bytes} bytes of log");
-        }
-        assert_eq!(container.stop_reason(), None, "{name}");
-        if name.ends_with("2.js") {
-            let stopped = view(batches.last().unwrap().as_ref().unwrap()).states[0].stopped;
-            assert_eq!(stopped, Some(FailReason::Failures), "{name}");
-        }
-    }
 }
 
 /// The review's survey of the realm: no shared memory and no `Atomics`
