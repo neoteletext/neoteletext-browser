@@ -1,3 +1,2 @@
-# the first worked example of section 6.4: the caption reported painted, then a release on the button
-30 painted 2
+# the first worked example of section 6.4: a release on the button, which navigates
 35 pointer up 400 320 thing=6 local=80,20

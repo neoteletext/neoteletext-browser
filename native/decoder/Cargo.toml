@@ -64,7 +64,7 @@ neoteletext-web.workspace = true
 neoteletext-image.workspace = true
 # A picture converted for the Tools menu, in a decoder started for it alone
 # (`--picture`), never in a channel's.
-neoteletext-picture.workspace = true
+neoteletext-picture = { workspace = true, features = ["decode", "picture-languages"] }
 interface-core.workspace = true
 protocol.workspace = true
 # The ReGIS renderer and its font: the sub-pages a channel sends REGIS

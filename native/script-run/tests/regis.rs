@@ -32,7 +32,13 @@ fn said(output: &Output) -> String {
 }
 
 /// The page: a background with its title, a caption, and a button whose
-/// release navigates; the caption's `painted` plays a sound.
+/// release navigates. The run gives no `painted` report: the example
+/// answers one by playing sound 1, and a JavaScript page with no page
+/// file has no way yet to bring a sound (the specification's section 18),
+/// so the call would be refused and the kept log would hold an error's
+/// stack, whose line numbers move with every change to the prelude. The
+/// script library's own test of the example gives the report and hears
+/// the sound.
 #[test]
 fn the_regis_page_example_matches_its_kept_run() {
     let output = example("example-page.js", "regis-page", "40", "0,39");
