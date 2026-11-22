@@ -313,6 +313,8 @@ pub struct Host {
     naplps: naplps::Naplps,
     /// The teletext page the page context draws on (work package T1).
     teletext: crate::teletext::Slot,
+    /// The components (work package U1).
+    ui: crate::ui::Ui,
     /// The page's ReGIS drawings and colours (work package R1).
     regis: regis::Regis,
 }
@@ -462,6 +464,7 @@ impl Host {
             web: web::Web::default(),
             naplps: naplps::Naplps::default(),
             teletext: crate::teletext::Slot::default(),
+            ui: crate::ui::Ui::default(),
             regis: regis::Regis::new(),
         }
     }
@@ -505,6 +508,8 @@ impl Host {
     pub fn close(&mut self, context: ContextId) {
         self.release_sound(context);
         self.naplps.close(context);
+        // A context's components go with it, before the page they are on.
+        self.ui.remove_context(context);
         self.teletext.close(context);
         // The page's one ReGIS stream ends with the context that drew on it.
         self.regis_reset();
@@ -568,6 +573,7 @@ impl Host {
         self.sound_allowed |= sound_allowed;
         self.naplps.begin_step(self.tick);
         self.teletext.begin_step(self.tick);
+        self.ui_begin_step();
         for held in self.contexts.iter_mut().flatten() {
             held.keys_pressed.clear();
             if held.origin.is_none() {
@@ -751,6 +757,20 @@ impl Host {
         self.context(context).is_some_and(|held| held.listens.contains(&(handle, kind)))
     }
 
+    /// Whether a component of `context` may be offered an event of `kind`:
+    /// a key, typed text or the pointer.
+    #[must_use]
+    pub fn ui_hears(&self, context: ContextId, kind: EventKind) -> bool {
+        matches!(kind, EventKind::KEY_DOWN | EventKind::TEXT | EventKind::POINTER) && self.ui.has_any(context)
+    }
+
+    /// The focused component of `context`, or 0: what a key is offered to
+    /// first (section 8).
+    #[must_use]
+    pub fn ui_focused(&self, context: ContextId) -> i32 {
+        self.ui.focused(context)
+    }
+
     /// The context's tick count.
     #[must_use]
     pub fn now(&self, context: ContextId) -> u64 {
@@ -801,7 +821,7 @@ impl Host {
         let timer = held.timers.iter().map(|timer| origin.saturating_add(timer.due)).min();
         let note = self.pending_notes.iter().filter(|note| note.context == context).map(|note| note.due).min();
         let renderer = if context == ContextId::Page { self.teletext.next_due(self.tick) } else { None };
-        [timer, note, renderer, self.regis_wake(context)].into_iter().flatten().min()
+        [timer, note, renderer, self.regis_wake(context), self.ui_wake(context)].into_iter().flatten().min()
     }
 
     /// The next change of the shared store to tell, with the context to tell.
@@ -874,6 +894,7 @@ impl Host {
         bytes = bytes.saturating_add(self.web.state_bytes());
         bytes = bytes.saturating_add(self.naplps.state_bytes());
         bytes = bytes.saturating_add(self.teletext.state_bytes());
+        bytes = bytes.saturating_add(self.ui.state_bytes());
         bytes = bytes.saturating_add(self.regis.held_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
@@ -1102,6 +1123,9 @@ impl Host {
                 let [handle, kind, on] = ints.exactly()?;
                 no_payload(op, payload)?;
                 self.listen(context, handle, kind, on)
+            }
+            Op::UI_CREATE | Op::UI_SET | Op::UI_REMOVE | Op::UI_FOCUS | Op::UI_KEYS | Op::UI_VALUE | Op::UI_OFFER | Op::UI_SETTLE => {
+                self.ui_call(context, op, ints, payload)
             }
             Op::SOUND_PLAY | Op::SOUND_STOP | Op::SYNTH_START | Op::SYNTH_MIDI | Op::SYNTH_NOTE | Op::SYNTH_STOP => {
                 no_payload(op, payload)?;
@@ -1339,7 +1363,8 @@ impl Host {
             held.scopes.retain(|scope| *scope != id);
             held.scope_stack.retain(|scope| *scope != id);
             held.timers.retain(|timer| timer.scope != id);
-            let removed = self.teletext.scope_end(context, id);
+            let mut removed = self.ui_scope_end(context, id);
+            removed.extend(self.teletext.scope_end(context, id));
             if let Some(held) = self.context_mut(context) {
                 held.listens.retain(|(handle, _)| !removed.contains(handle));
             }
@@ -1436,7 +1461,11 @@ impl Host {
         }
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
-        if Handle::from_number(handle).is_none() && !self.naplps.is_thing(context, handle) && !self.teletext.has_thing(context, handle) {
+        if Handle::from_number(handle).is_none()
+            && !self.naplps.is_thing(context, handle)
+            && !self.teletext.has_thing(context, handle)
+            && !self.ui.owns(context, handle)
+        {
             // Otherwise a ReGIS drawing, by its number, or no thing at all.
             self.regis_listen(context, handle, kind, on == 1)?;
         }
@@ -1597,6 +1626,7 @@ impl Host {
         }
         self.naplps.budget(&mut out);
         self.teletext.budget(&mut out);
+        self.ui.budget(&mut out);
         self.regis_budget(context, &mut out);
         out.push('}');
         out
@@ -1622,6 +1652,8 @@ fn is_page_target(target: &str) -> bool {
 
 mod regis;
 pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
+mod ui;
+pub(crate) use ui::ui_prelude_numbers;
 
 #[cfg(test)]
 mod tests;

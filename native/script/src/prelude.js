@@ -618,6 +618,7 @@ class Nt extends EventTarget {
   get synth() { return synth; }
   get naplps() { return naplpsApi; }
   get teletext() { return teletextApi; }
+  get ui() { return uiApi; }
   get regis() { return core.regis; }
   now() { return host(OP.NOW); }
   navigate(target) {
@@ -689,24 +690,30 @@ function dispatch(kind, a, b, c, d, payload) {
   let event = null;
   let target = nt;
   let bubbles = false;
+  let ui = null;
   switch (kind) {
     case EV.TICK:
       event = new NtTickEvent("tick", { tick: a, missed: b });
       break;
     case EV.KEY_DOWN:
       event = keyEvent("keydown", a, payload, true);
+      ui = core.ui.key(kind, a, b, payload);
       break;
     case EV.KEY_UP:
       event = keyEvent("keyup", a, payload, false);
       break;
     case EV.TEXT:
       event = new NtTextEvent("text", { data: payload });
+      ui = core.ui.key(kind, a, b, payload);
       break;
     case EV.POINTER: {
       const action = a & 15;
       const type = POINTER_TYPES[action];
       if (!type) return 0;
-      const thing = things.get(d) || null;
+      // What was hit may be a part of a component, which is then the
+      // target (section 8).
+      if (!things.has(d) && d !== HANDLE.NT) ui = core.ui.pointer(d, action);
+      const thing = things.get(d) || (ui && ui.target) || null;
       const more = payload || [];
       const under = [];
       if (thing) under.push(thing);
@@ -805,8 +812,14 @@ function dispatch(kind, a, b, c, d, payload) {
   // The channel context is given the page's input with the same fields
   // and a target of null (section 4.5): things are the page context's.
   if (!isPage && (kind === EV.KEY_DOWN || kind === EV.KEY_UP || kind === EV.TEXT || kind === EV.POINTER || kind === EV.WHEEL)) eventInternals.untarget(event);
+  // A focused component hears a key first, then nt.
+  if (ui && ui.target && kind !== EV.POINTER) { target = ui.target; bubbles = true; }
   fire(target, trusted(event), bubbles);
-  return (event.defaultPrevented ? DISPATCH.CANCELLED : 0) | (dispatching.handled ? DISPATCH.HANDLED : 0) | (dispatching.threw ? DISPATCH.THREW : 0);
+  // What a component does with the event is the event's default action
+  // (section 8): taken only when no listener cancelled it. A key a
+  // component used is not also the browser's.
+  const used = ui ? ui.settle(event.defaultPrevented) : false;
+  return (event.defaultPrevented || used ? DISPATCH.CANCELLED : 0) | (dispatching.handled ? DISPATCH.HANDLED : 0) | (dispatching.threw ? DISPATCH.THREW : 0);
 }
 
 setDispatch(function (kind, a, b, c, d, payload) {
@@ -821,4 +834,7 @@ const core = {
   dispatchMore: new Map(),
   scopeEnds(end) { if (currentScope) currentScope.ends.push(end); },
   pageHides: [],
+  // The components' part of the prelude replaces this: what a key, typed
+  // text or the pointer is offered to.
+  ui: { key() { return null; }, pointer() { return null; } },
 };
