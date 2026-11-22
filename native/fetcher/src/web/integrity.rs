@@ -88,8 +88,8 @@ pub(crate) fn matches(metadata: &str, body: &[u8]) -> bool {
     named.iter().filter(|&&(hash, _)| hash == strongest).any(|&(_, expected)| expected.replace('-', "+").replace('_', "/") == actual)
 }
 
-/// The SHA-256 integrity metadata of `body`, for a test to ask with.
-#[cfg(test)]
+/// The SHA-256 integrity metadata of `body`, for a test or a fuzz target
+/// to ask with.
 pub(crate) fn metadata_of(body: &[u8]) -> String {
     format!("sha256-{}", base64(digest(&SHA256, body).as_ref()))
 }

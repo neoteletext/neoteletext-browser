@@ -420,3 +420,17 @@ path = "fuzz_targets/script_js.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "cors_response"
+path = "fuzz_targets/cors_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "integrity_metadata"
+path = "fuzz_targets/integrity_metadata.rs"
+test = false
+doc = false
+bench = false
