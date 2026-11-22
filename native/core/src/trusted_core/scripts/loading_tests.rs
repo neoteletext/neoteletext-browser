@@ -42,11 +42,11 @@ const LIMIT: Duration = Duration::from_secs(60);
 /// media type each is served with. The channel file names a script for
 /// the channel, one for page 100 and one for page 101; page 101's own
 /// file names another, which wins (section 12.6).
-const FILES: [(&str, &str, &str); 8] = [
+const FILES: [(&str, &str, &str); 11] = [
     (
         "channel.ttx",
         "application/vnd.neoteletext+json",
-        r#"{"name":"Harbour","initial_page":"100","scripts":{"channel":"channel.js","pages":{"100":"p100.js","101":"other.js"}}}"#,
+        r#"{"name":"Harbour","initial_page":"100","scripts":{"channel":"channel.js","pages":{"100":"p100.js","101":"other.js","201":"js201.js","300":"js300.js","400":"js400.js"}}}"#,
     ),
     ("100.tti", "text/x-teletext-tti", "PN,10000\nSC,0000\nPS,8000\nOL,1,PAGE ONE HUNDRED\n"),
     ("101.tti", "text/x-teletext-tti", "PN,10100\nSC,0000\nPS,8000\nJS,own.js\nOL,1,PAGE ONE OH ONE\n"),
@@ -54,6 +54,14 @@ const FILES: [(&str, &str, &str); 8] = [
     ("p100.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"1\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY P100');"),
     ("other.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"x\"]} */ nt.teletext.page.put(5, 0, 'OTHER');"),
     ("own.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"o\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY OWN');"),
+    // Three JavaScript pages (section 12.3): a script and no page file.
+    ("js201.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"j\"]} */ nt.teletext.page.put(5, 0, 'A JAVASCRIPT PAGE');"),
+    (
+        "js300.js",
+        "text/javascript",
+        "/*! nt {\"api\":1,\"renderer\":\"regis\",\"keys\":[\"r\"]} */ nt.regis.drawing({ x: 100, y: 100 }).draw((p) => p.ink(2).rect(0, 0, 50, 50));",
+    ),
+    ("js400.js", "text/javascript", include_str!("../../../../script/tests/naplps_page/harbour-hatched.js")),
     ("record.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"t\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY RECORD');"),
 ];
 
@@ -319,4 +327,41 @@ fn a_file_opened_from_disk_runs_the_script_its_page_names() {
     );
     shut_down(browser.core);
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// Section 12.3 (DEC-7246 item 2; TODO-7406): a page the channel file
+/// gives a script and that has no page file is a JavaScript page. It
+/// opens blank in the renderer its manifest names and its script runs,
+/// for teletext, ReGIS and NAPLPS; the 404 of its absent page file is not
+/// shown as a page that does not exist. A page with no page file and no
+/// script is still refused.
+#[test]
+fn a_javascript_page_opens_blank_in_its_renderer_and_its_script_runs() {
+    confine::raise_descriptor_limit().unwrap();
+    let mut browser = Browser::start();
+    for (page, keys) in [(0x201, ["c", "j"].as_slice()), (0x300, &["c", "r"]), (0x400, &["c", "l", "b"])] {
+        browser.open(page);
+        let ran = browser.until_claimed(keys);
+        let channel = &browser.core.session.tabs[0].channel;
+        assert!(
+            ran,
+            "page {page:03X}'s script never ran: claims {:?}, failed {:?}, asked {:?}",
+            browser.core.script_claims(browser.channel),
+            channel.failed,
+            browser.asked()
+        );
+        assert_eq!(browser.core.session.tabs[0].channel.failed, None, "page {page:03X} is shown as its script draws it, not as refused");
+        assert_eq!(browser.core.script_state(browser.channel), ScriptState::Running);
+    }
+    // A page with neither a file nor a script does not exist.
+    browser.open(0x555);
+    let deadline = Instant::now() + LIMIT;
+    while browser.core.session.tabs[0].channel.failed.is_none() && Instant::now() < deadline {
+        if let Ok(event) = browser.incoming.recv_timeout(Duration::from_millis(20)) {
+            assert_eq!(handle(&mut browser.core, event), Ok(true));
+        }
+        browser.core.tick().and_then(|()| browser.core.flush()).unwrap();
+    }
+    assert!(matches!(browser.core.session.tabs[0].channel.failed, Some((_, Some(0x555)))), "{:?}", browser.core.session.tabs[0].channel.failed);
+    shut_down(browser.core);
 }
