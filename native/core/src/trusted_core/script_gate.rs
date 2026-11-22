@@ -199,6 +199,12 @@ impl Core {
         Some(Held { claims, asks: keys::asks_of(claims).0 })
     }
 
+    /// Whether `key` is the open page and its scripts are given any of
+    /// the viewer's input.
+    pub(super) fn script_holds_input(&self, key: PageKey) -> bool {
+        self.script_held(key).is_some_and(|held| held.holds())
+    }
+
     /// The typing state the interface is told, with what the open page's
     /// scripts hold put in when the page is a script's (section 4.6): the
     /// keys their manifests name are then the page's, as a table's are
@@ -224,7 +230,14 @@ impl Core {
     /// What the trusted indications say of the program of the active
     /// tab's open page (sections 3.1 and 4.6).
     fn script_view(&self) -> Option<ScriptView> {
-        let key = self.typing.opened_page().filter(|key| self.active_channel() == Some(key.channel))?;
+        // The page open in the active tab; and while the trusted core is
+        // told of none (between a tab chosen and its page reported open
+        // again), the page the interface was last told of, so that a
+        // program that stops then is not left shown as running
+        // (TODO-7407).
+        let active = self.active_channel()?;
+        let told = self.script_gate.told.map(|view| PageKey { channel: view.channel, page: view.page });
+        let key = self.typing.opened_page().or(told).filter(|key| key.channel == active)?;
         let run = match self.script_state(key.channel) {
             ScriptState::None => ScriptRun::None,
             ScriptState::Running => ScriptRun::Running,
@@ -412,8 +425,12 @@ impl Core {
         at: &Point,
         which: (u8, PointerKind, bool),
     ) -> Result<(), String> {
-        let wanted = if action == PointerAction::Move { PointerClaim::Move } else { PointerClaim::Press };
-        let Some((x, y)) = dot(at, self.regis_pointing.at(key)).filter(|_| claim >= wanted) else { return Ok(()) };
+        // A claim of presses includes the pointer coming onto a thing and
+        // off it (section 3.1's manifest: "press, release, enter, leave
+        // and cancel events"), which the decoder tells from where the
+        // pointer is: so it is told the moves too, and gives a script a
+        // move event only when a manifest claims moves.
+        let Some((x, y)) = dot(at, self.regis_pointing.at(key)).filter(|_| claim >= PointerClaim::Press) else { return Ok(()) };
         let sequence = self.script_sequence();
         match action {
             PointerAction::Press => {

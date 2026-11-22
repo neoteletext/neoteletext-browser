@@ -861,3 +861,35 @@ fn a_repaint_sends_the_definitions_and_the_cast_again() {
     assert_type(&symbol_in(&mut host, PAGE, scoped, (8, 8), &RECT));
     assert_eq!(symbol_in(&mut host, PAGE, kept, (8, 8), &RECT), Reply::Int(kept));
 }
+
+// Components (work package U3) ---------------------------------------------------
+
+/// Section 8, "a page that runs out is told at the call", and the
+/// painter's rule that a drawing is all or nothing: on NAPLPS each part
+/// the pointer takes is an object of the cast, so a page has buttons for
+/// its 56 objects less the focus ring, and the next is refused by
+/// `MAX_OBJECTS` with nothing changed; a component that needs no object
+/// is still made.
+#[test]
+fn components_are_refused_by_the_casts_bound_and_change_nothing() {
+    let mut host = host();
+    // Kind 5 is a button, kind 1 a text (section 8's table, in order).
+    let make = |host: &mut Host, kind: i32, row: i32, column: i32, options: &str| {
+        host.call(PAGE, Op::UI_CREATE.number(), &[kind, row, column, 6, 1], Payload::Text(options.as_bytes()))
+    };
+    // The first button has the focus, and so the page's ring: 55 buttons and it are the page's 56 objects.
+    for index in 0..55 {
+        assert!(matches!(make(&mut host, 5, 1 + index % 23, 6 * (index / 23), r#"{"text":"Go"}"#), Reply::Int(_)), "button {index}");
+    }
+    let record = host.take_batch(0, &[]).naplps_objects.expect("the components' objects");
+    assert_eq!(record.objects.len(), 56);
+    let before = format!("{:?}", host.naplps);
+    assert_range(&make(&mut host, 5, 23, 30, r#"{"text":"Go"}"#), "MAX_OBJECTS");
+    assert_eq!(format!("{:?}", host.naplps), before, "a component refused changes nothing");
+    assert_eq!(host.take_batch(0, &[]).naplps, None);
+    assert!(matches!(make(&mut host, 1, 23, 30, r#"{"text":"Still"}"#), Reply::Int(_)), "a text needs no object");
+    // A colour that is no entry of the map, by the map's name.
+    assert_range(&make(&mut host, 1, 22, 30, r#"{"text":"x","ink":16}"#), "NAPLPS_COLOURS");
+    // The channel context has no backdrop to paint components on.
+    assert_type(&host.call(CHANNEL, Op::UI_CREATE.number(), &[1, 22, 30, 6, 1], Payload::Text(br#"{"text":"x"}"#)));
+}

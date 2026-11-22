@@ -86,7 +86,9 @@ fn get(host: &mut Host, handle: i32, field: i32) -> Reply {
 /// What a painter program writes as a drawing's contents, in English,
 /// with no macrograph to call.
 fn encode_plain(program: &[i32]) -> Result<Vec<u8>, Reply> {
-    painter::encode(program, &Setting { language: "en", letter: &|_| Err(type_error("not a macrograph")), macrograph: false })
+    let mut pen = Pen::new();
+    painter::encode(program, &Setting { language: "en", letter: &|_| Err(type_error("not a macrograph")), macrograph: false }, &mut pen)
+        .map(|(written, _)| written)
 }
 
 /// A filled rectangle as a painter program.
@@ -1000,4 +1002,198 @@ fn the_commit_errors_names_follow_the_renderers_codes() {
         assert_eq!(given, *name);
         assert!(prelude.contains(&format!("\"{bound}\"")), "{bound}");
     }
+}
+
+/// TODO-7373's measurement of the host's own part of a step that moves
+/// every drawing of a page at its bound: the operations' checking and
+/// staging, the commit through the renderer's validator, and the batch.
+/// Printed; it holds nothing, since the figures are a machine's.
+#[test]
+fn the_hosts_part_of_a_step_that_moves_every_drawing_is_measured() {
+    use std::time::{Duration, Instant};
+    /// The steps measured: a second of ticks.
+    const STEPS: u32 = 60;
+    let mut host = host();
+    let master = made(call(&mut host, Op::RG_DRAWING, &[0, 0, 1, 0, 0, 0, -1, 0]));
+    assert_eq!(call_ints(&mut host, Op::RG_DEFINE, &[master], &filled(0, 0, 6, 6, 3)), Reply::Undefined);
+    let mut handles = Vec::new();
+    for at in 0..REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS - 1 {
+        let at = i32::try_from(at).unwrap();
+        handles.push(made(call(&mut host, Op::RG_DRAWING, &[0, master, 2, (at * 13) % 790, (at * 7) % 470, 0, -1, 1])));
+        if at % 256 == 255 {
+            let _ = host.take_batch(1, &[]);
+            host.begin_step(u64::try_from(at).unwrap(), true);
+        }
+    }
+    let _ = host.take_batch(1, &[]);
+    let (mut reads, mut writes, mut commit, mut batch, mut bytes) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO, 0);
+    for step in 0..STEPS {
+        host.begin_step(10_000 + u64::from(step), true);
+        let began = Instant::now();
+        let mut xs = Vec::with_capacity(handles.len());
+        for handle in &handles {
+            let Reply::Int(x) = get(&mut host, *handle, Property::X.number()) else { panic!("no x") };
+            xs.push(x);
+        }
+        reads += began.elapsed();
+        let began = Instant::now();
+        for (handle, x) in handles.iter().zip(&xs) {
+            assert_eq!(set(&mut host, *handle, Property::X, (x + 1) % 790), Reply::Undefined);
+        }
+        writes += began.elapsed();
+        let began = Instant::now();
+        host.regis_commit();
+        commit += began.elapsed();
+        let began = Instant::now();
+        let taken = host.take_batch(2, &[]);
+        batch += began.elapsed();
+        bytes = taken.regis.map_or(0, |regis| regis.len());
+    }
+    println!(
+        "the host's part of a step that moves {} drawings: {:?} for the reads, {:?} for the writes with their staging, {:?} for the commit through the validator, {:?} for the batch; {bytes} bytes a commit",
+        handles.len(),
+        reads / STEPS,
+        writes / STEPS,
+        commit / STEPS,
+        batch / STEPS
+    );
+}
+
+/// Operation `RG_SET_MANY` (TODO-7373): one property of many drawings in
+/// one call stages exactly what an assignment to each would, a value a
+/// drawing already has staging nothing; every entry is held to what
+/// `RG_SET` holds it to and checked before any is taken, a refusal
+/// naming the entry and changing nothing.
+#[test]
+fn many_drawings_are_set_in_one_call_as_each_alone_would_be() {
+    let mut host = host();
+    let handles: Vec<i32> = (0..4).map(|_| drawing(&mut host)).collect();
+    let _ = host.take_batch(1, &[]);
+    host.begin_step(1, true);
+    let many = |host: &mut Host, property: Property, handles: &[i32], values: &[i32]| {
+        call_ints(host, Op::RG_SET_MANY, &[property.number()], &[handles, values].concat())
+    };
+    assert_eq!(many(&mut host, Property::X, &handles, &[10, 0, -5, 32_767]), Reply::Undefined);
+    assert_eq!(many(&mut host, Property::Y, &handles[..2], &[7, 8]), Reply::Undefined);
+    assert_eq!(many(&mut host, Property::DEPTH, &handles[3..], &[-2]), Reply::Undefined);
+    assert_eq!(many(&mut host, Property::VISIBLE, &handles[..2], &[0, 1]), Reply::Undefined);
+    assert_eq!(many(&mut host, Property::DETECTABLE, &handles[..2], &[0, 1]), Reply::Undefined);
+    assert_eq!(many(&mut host, Property::X, &[], &[]), Reply::Undefined);
+    assert_eq!(get(&mut host, handles[2], Property::X.number()), Reply::Int(-5));
+    assert_eq!(sent(&mut host), "D(S1(X10))D(S3(X-5))D(S4(X32767))D(S1(Y7))D(S2(Y8))D(S4(L-2))D(S1(V0))D(S2(I1))D(C)");
+    // With no property: a handle, a property and a value for each
+    // change, a drawing's changes together as one `D(S n(…))`; a later
+    // change of the same attribute in the call stands.
+    host.begin_step(5, true);
+    let (x, y) = (Property::X.number(), Property::Y.number());
+    let triples = [handles[0], x, 640, handles[0], y, 280, handles[1], x, 3, handles[1], x, 0, handles[2], x, -5];
+    assert_eq!(call_ints(&mut host, Op::RG_SET_MANY, &[0], &triples), Reply::Undefined);
+    assert_eq!(sent(&mut host), "D(S1(X640,Y280))D(S2(X3,X0))D(C)");
+    mistypes(&mut host, |host| call_ints(host, Op::RG_SET_MANY, &[0], &[handles[0], x]));
+    mistypes(&mut host, |host| call_ints(host, Op::RG_SET_MANY, &[0], &[handles[0], Property::LAYER.number(), 2]));
+    host.begin_step(2, true);
+    let theirs = made(host.call(CHANNEL, Op::RG_DRAWING.number(), &[0, 0, 3, 0, 0, 0, -1, 1], Payload::None));
+    // One bad entry refuses the whole call, by its place.
+    for (property, bad_handles, bad_values) in [
+        (Property::X, vec![handles[0], handles[1]], vec![1, 40_000]),
+        (Property::VISIBLE, vec![handles[0], handles[1]], vec![1, 2]),
+        (Property::X, vec![handles[0], 999], vec![1, 2]),
+        (Property::X, vec![handles[0], theirs], vec![1, 2]),
+        (Property::X, vec![handles[0], 0], vec![1, 2]),
+    ] {
+        let before = fingerprint(&mut host);
+        match many(&mut host, property, &bad_handles, &bad_values) {
+            Reply::Range(message) | Reply::Type(message) => assert!(message.contains("entry 1 of 2 changes"), "{message}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(fingerprint(&mut host), before, "a refused call changed the host");
+    }
+    assert_range(&many(&mut host, Property::Y, &handles[..1], &[-40_000]), "MAX_COORDINATE");
+    // Only the five a script moves things by; an odd count is no pairing.
+    mistypes(&mut host, |host| many(host, Property::LAYER, &handles[..1], &[2]));
+    mistypes(&mut host, |host| many(host, Property::PARENT, &handles[..1], &[0]));
+    mistypes(&mut host, |host| call_ints(host, Op::RG_SET_MANY, &[Property::X.number()], &[handles[0], 1, 2]));
+    mistypes(&mut host, |host| call_ints(host, Op::RG_SET_MANY, &[99], &[handles[0], 1]));
+    // And the step's output is held as for any operation.
+    host.set_limits_for_test(usize::MAX, host.batch_bytes() + 20);
+    refuses(&mut host, "MAX_BATCH_BYTES", |host| many(host, Property::X, &handles, &[100, 200, 300, 400]));
+}
+
+/// TODO-7389 item 6: what asking the renderer for the position costs
+/// where a drawing is defined. A drawing with a rectangle, an arc and a
+/// short string is defined a thousand times; printed with the time of
+/// the same drawing without the arc and the string, which ask nothing.
+#[test]
+fn defining_a_drawing_that_asks_the_renderer_for_the_position_is_measured() {
+    use std::time::Instant;
+    /// The definitions timed.
+    const DEFINITIONS: u32 = 1000;
+    use crate::ops::RegisPaint as P;
+    let mut host = host();
+    let one = drawing(&mut host);
+    assert_eq!(set(&mut host, one, Property::VISIBLE, 0), Reply::Undefined);
+    let plain = vec![P::INK.number(), 3, P::RECT.number(), 0, 0, 40, 20];
+    let mut asking = plain.clone();
+    asking.extend_from_slice(&[P::MOVE_TO.number(), 40, 0, P::ARC.number(), 0, 0, 90, P::TEXT.number()]);
+    asking.extend_from_slice(&[OPTION_NOT_GIVEN; 10]);
+    asking.extend_from_slice(&[0, 5, 0x53, 0x54, 0x41, 0x52, 0x54]);
+    let time = |host: &mut Host, program: &[i32]| {
+        let began = Instant::now();
+        for at in 0..DEFINITIONS {
+            assert_eq!(call_ints(host, Op::RG_DEFINE, &[one], program), Reply::Undefined);
+            if at % 100 == 99 {
+                let _ = host.take_batch(1, &[]);
+                host.begin_step(u64::from(at), true);
+            }
+        }
+        began.elapsed() / DEFINITIONS
+    };
+    let (without, with) = (time(&mut host, &plain), time(&mut host, &asking));
+    println!("defining a drawing: {without:?} with a rectangle alone, {with:?} with an arc and a string of five characters the renderer is asked about");
+}
+
+/// Sections 3.1 and 4.2 (rdm TODO-7424): when the viewer goes from one
+/// page with a script to another, the new page's context opens, and its
+/// script draws, before the channel context hears that the page before
+/// was left. That news ends nothing of the new page: its drawings are
+/// still the host's, with their handles, and the step's commit carries
+/// them. What the channel context drew on the page before went with that
+/// page when the new page's context opened.
+#[test]
+fn the_news_that_the_page_before_was_left_takes_nothing_of_the_new_pages_drawing() {
+    let mut host = host();
+    let channel = |host: &mut Host, op: Op, ints: &[i32]| host.call(CHANNEL, op.number(), ints, Payload::None);
+    let clock = made(channel(&mut host, Op::RG_DRAWING, &[0, 0, 3, 0, 0, 0, -1, 1]));
+    let before = drawing(&mut host);
+    assert!(host.take_batch(1, &[]).regis.is_some());
+    // The page changes: its context closes, and the next page's opens
+    // and draws.
+    host.close(ContextId::Page);
+    host.open(opening(ContextId::Page, Renderer::Regis), 200);
+    host.begin_step(1, true);
+    let square = drawing(&mut host);
+    assert_ne!(square, before, "a new page's handles are of its own generation");
+    assert!(matches!(channel(&mut host, Op::RG_SET, &[clock, Property::X.number(), 1]), Reply::Type(_)), "the channel's drawing went with the page before");
+    // The same step then tells the channel context of the page left.
+    host.regis_reports(&Step {
+        events: vec![Event { kind: Carried::PageHide, numbers: [0x1A0, 0, 0, 0], payload: Vec::new() }],
+        flags: StepFlags::default(),
+        ..Step::default()
+    });
+    assert_eq!(call(&mut host, Op::RG_SET, &[square, Property::X.number(), 40]), Reply::Undefined, "the new page's drawing is still its own");
+    let again = made(channel(&mut host, Op::RG_DRAWING, &[0, 0, 3, 0, 0, 0, -1, 1]));
+    let batch = host.take_batch(2, &[]);
+    let sent = String::from_utf8_lossy(batch.regis.as_deref().unwrap_or_default()).into_owned();
+    assert!(sent.contains("X40"), "the new page's drawing is sent: {sent}");
+    assert!(Receiver::new().take(&batch), "a receiver that begins the new page's stream commits its first step");
+    // A page left with no page context since is the channel's page: its
+    // stream ends with it.
+    host.begin_step(3, true);
+    host.close(ContextId::Page);
+    host.regis_reports(&Step {
+        events: vec![Event { kind: Carried::PageHide, numbers: [0x1A0, 0, 0, 0], payload: Vec::new() }],
+        flags: StepFlags::default(),
+        ..Step::default()
+    });
+    assert!(matches!(channel(&mut host, Op::RG_SET, &[again, Property::X.number(), 1]), Reply::Type(_)));
 }

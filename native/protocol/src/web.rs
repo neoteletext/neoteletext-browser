@@ -1147,6 +1147,17 @@ pub const fn is_request_kind(kind: u8) -> bool {
     matches!(kind, KIND_START | KIND_REQUEST_BODY | KIND_REQUEST_BODY_END | KIND_ABORT | KIND_MORE | KIND_SOCKET_SEND | KIND_SOCKET_CLOSE | KIND_CONTEXT_CLOSES)
 }
 
+/// Whether a request's kind starts something of the network: a fetch,
+/// an event stream or a socket (`Start`). Every other request kind goes
+/// on with, or ends, what a start began. The trusted core tells the two
+/// apart by the kind alone, as it reads no payload: a context that no
+/// longer has the network may still end what it began, and may start
+/// nothing (the script API's specification section 11.1; TODO-7420).
+#[must_use]
+pub const fn starts_request(kind: u8) -> bool {
+    kind == KIND_START
+}
+
 /// Whether the trusted core relays a web client's message of `kind` to a
 /// script host: the answers' kinds, and neither `Confined` nor `Jar`.
 #[must_use]

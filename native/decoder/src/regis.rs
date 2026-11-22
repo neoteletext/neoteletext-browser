@@ -939,6 +939,17 @@ impl RegisPages {
         self.shown(page, sub).and_then(|key| self.pages.get(&key)).map_or(0, |held| held.picture.pick(u32::from(x), u32::from(y)).drawing)
     }
 
+    /// The numbered drawing at a pixel of the picture of the sub-page of
+    /// `page` on screen, as [`Regis::drawing_at`] gives it, with the
+    /// pixel's place in that drawing's own space (the renderer's
+    /// "Picking": `Pick.x` and `Pick.y`); none when the sub-page has no
+    /// picture.
+    #[must_use]
+    pub fn picked_at(&self, page: u16, sub: Option<u16>, x: u16, y: u16) -> Option<(u16, (i32, i32))> {
+        let pick = self.shown(page, sub).and_then(|key| self.pages.get(&key))?.picture.pick(u32::from(x), u32::from(y));
+        Some((pick.drawing, (pick.x, pick.y)))
+    }
+
     /// The numbered drawing that drawing `number` of the sub-page of
     /// `page` on screen is a child of, as the stream committed it; 0 for
     /// a top-level drawing and for one that does not exist (RULE-12: a

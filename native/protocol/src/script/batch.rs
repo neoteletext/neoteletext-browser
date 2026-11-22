@@ -115,8 +115,32 @@ pub const MAX_SOUND_OPERATIONS: usize = 64;
 pub const MAX_WHEEL_THINGS: usize = MAX_POINTER_OBJECTS;
 /// The most labels of one batch.
 pub const MAX_LABELS: usize = 128;
+/// The level of a log line a script made with `console.debug`.
+pub const LOG_DEBUG: u8 = 0;
+/// With `console.log` and `nt.log`.
+pub const LOG_LOG: u8 = 1;
+/// With `console.info`.
+pub const LOG_INFO: u8 = 2;
+/// With `console.warn`, and a warning of the script host's own.
+pub const LOG_WARN: u8 = 3;
+/// With `console.error`, and an uncaught exception or an unhandled
+/// rejection.
+pub const LOG_ERROR: u8 = 4;
 /// The greatest level of a log line: 0 to 4.
-pub const MAX_LOG_LEVEL: u8 = 4;
+pub const MAX_LOG_LEVEL: u8 = LOG_ERROR;
+
+/// The level of the developer log a script's line of `level` is shown
+/// at (TODO-7414): the one mapping, for the script host that numbers a
+/// line and the trusted core that shows it. An error is an error, a
+/// warning a warning, and everything quieter is information.
+#[must_use]
+pub const fn console_level(level: u8) -> crate::console::Level {
+    match level {
+        LOG_ERROR => crate::console::Level::Error,
+        LOG_WARN => crate::console::Level::Warning,
+        _ => crate::console::Level::Info,
+    }
+}
 /// The MIDI statuses a script sends, each with a part for its low four
 /// bits: note off, note on, control change, program change, pitch bend.
 pub const MIDI_STATUSES: [u8; 5] = [0x80, 0x90, 0xB0, 0xC0, 0xE0];

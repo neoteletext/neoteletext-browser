@@ -52,6 +52,7 @@ pub use changes::Changed;
 #[cfg(feature = "links")]
 pub use engine::Found;
 pub use engine::script::{NotApplied, ScriptPage};
+pub use engine::script_reports::ScriptHit;
 pub use engine::{ChannelLog, Engine, Exported, Rendered};
 pub use flash::{FlashRates, Flashing};
 #[cfg(feature = "interaction")]

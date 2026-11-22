@@ -51,3 +51,15 @@ pub const FIRST_API: u16 = 1;
 /// The most pages whose own file's script name is remembered: every page
 /// a channel may name a script for (the engine's `MAX_SCRIPT_PAGES`).
 pub const MAX_NAMED_PAGES: usize = neoteletext_web::scripts::MAX_SCRIPT_PAGES;
+
+/// The raster lines above a NAPLPS canvas: row 0's, which a canvas dot's
+/// line is counted from (section 4.4: canvas dots, 0 to 459).
+pub const NAPLPS_TOP_LINE: i32 = 20;
+/// The code of the `fault` event for animation that was slowed, a
+/// repaint held back for a later tick (RULE-48's fault 8; ANIM-16), and
+/// the name a script is told with it.
+pub const FAULT_ANIMATION_SLOWED: (i32, &str) = (8, "ANIMATION_SLOWED");
+/// The code and name of the `fault` event for an animation operation
+/// that did nothing: on a target that does not exist, on one more object
+/// than may hold state, or a cycle more than may run (ANIM-16).
+pub const FAULT_ANIMATION_SKIPPED: (i32, &str) = (9, "ANIMATION_SKIPPED");

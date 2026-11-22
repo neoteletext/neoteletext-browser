@@ -127,17 +127,11 @@ fn ints(numbers: impl IntoIterator<Item = i32>) -> Vec<u8> {
 }
 
 /// The pointer's event (section 10.3, kind 5): what it did, where in the
-/// renderer's own units (section 4.4: a teletext page's cell, else the
-/// picture's pixel or dot), and the things under it by their handles,
-/// topmost first; the first is the thing hit.
+/// renderer's own units and where within the thing hit (section 4.4), and
+/// the things under it by their handles, topmost first; the first is the
+/// thing hit.
 #[must_use]
-pub fn pointer(action: PointerAction, button: u8, at: (u16, u16), teletext: bool, things: &[i32], which: Which) -> Event {
-    let (x, y) = if teletext {
-        let (column, row) = crate::engine::script::cell_at(at.0, at.1);
-        (i32::from(column), i32::from(row))
-    } else {
-        (i32::from(at.0), i32::from(at.1))
-    };
+pub fn pointer(action: PointerAction, button: u8, hit: &crate::ScriptHit, which: Which) -> Event {
     // On a press or a release `button` is the button; on a move, the
     // buttons held (the rule table's input says which).
     let (what, pressed, held) = match action {
@@ -147,17 +141,22 @@ pub fn pointer(action: PointerAction, button: u8, at: (u16, u16), teletext: bool
         PointerAction::Gone => (POINTER_CANCEL, 0, 0),
     };
     let packed = what | pressed.checked_shl(POINTER_BUTTON_SHIFT).unwrap_or(0) | which.packed();
-    let (hit, others) = things.split_first().map_or((0, &[][..]), |(hit, others)| (*hit, others));
-    // The place within the thing is not known to this process for a
-    // drawing or an actor: the pointer's own place stands in.
-    Event { kind: EventKind::Pointer, numbers: [packed, x, y, hit], payload: ints([which.id, held, x, y].into_iter().chain(others.iter().copied())) }
+    let (first, others) = hit.things.split_first().map_or((0, &[][..]), |(first, others)| (*first, others));
+    let ((x, y), (local_x, local_y)) = (hit.at, hit.local);
+    Event {
+        kind: EventKind::Pointer,
+        numbers: [packed, x, y, first],
+        payload: ints([which.id, held, local_x, local_y].into_iter().chain(others.iter().copied())),
+    }
 }
 
 /// The pointer came onto a thing or went off it (section 4.2:
-/// `pointerenter`, `pointerleave`), as the trusted core's picking of a
-/// ReGIS drawing says.
+/// `pointerenter`, `pointerleave`, which carry a press's fields), as the
+/// trusted core's picking of a ReGIS drawing says: `at` is the pointer's
+/// place in the renderer's own units and `local` its place within
+/// `thing` (section 4.4).
 #[must_use]
-pub fn hover(leave: bool, thing: i32) -> Event {
+pub fn hover(leave: bool, thing: i32, (x, y): (i32, i32), (local_x, local_y): (i32, i32)) -> Event {
     let what = if leave { POINTER_LEAVE } else { POINTER_ENTER };
-    Event { kind: EventKind::Pointer, numbers: [what | POINTER_PRIMARY, 0, 0, thing], payload: ints([POINTER_ID, 0, 0, 0]) }
+    Event { kind: EventKind::Pointer, numbers: [what | POINTER_PRIMARY, x, y, thing], payload: ints([POINTER_ID, 0, local_x, local_y]) }
 }

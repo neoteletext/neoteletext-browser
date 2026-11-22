@@ -96,11 +96,18 @@ impl Core {
         Some((key, sub, number))
     }
 
-    /// The page keys go to, if any, with the sub-page of it on screen.
+    /// The page keys go to, if any, with the sub-page of it on screen. A
+    /// page whose scripts hold the viewer's input is one too (TODO-7425):
+    /// its drawings' hover and pressed looks are the receiver's to draw
+    /// (REQ-6374), and it has no sub-page on screen as a channel that
+    /// takes input has, so no channel is told of the pointer for it.
     #[cfg(feature = "interaction")]
     fn page_taking_keys(&self) -> Option<(PageKey, Option<neoteletext_input::event::Stamp>)> {
-        let key = self.typing.opened_page().filter(|key| self.typing.takes_keys(*key))?;
-        Some((key, self.typing.on_screen(key.channel)))
+        let key = self.typing.opened_page()?;
+        if self.typing.takes_keys(key) {
+            return Some((key, self.typing.on_screen(key.channel)));
+        }
+        self.script_holds_input(key).then_some((key, None))
     }
 
     /// Without typing compiled in, keys go to no channel.

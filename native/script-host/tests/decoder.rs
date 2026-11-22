@@ -118,6 +118,18 @@ impl Browser {
         self.pass(&out);
     }
 
+    /// The trusted core says which page is open, or that none is.
+    fn page(&mut self, page: Option<PageSub>) {
+        let mut out = Vec::new();
+        self.scripts.page_opened(page, &mut self.engine, &mut out).unwrap();
+        self.pass(&out);
+    }
+
+    /// The trusted core says the tab is shown, or hidden.
+    fn shown(&mut self, shown: bool) {
+        self.order(ScriptOrder::TabShown(shown));
+    }
+
     fn key(&mut self, page: PageSub, sequence: u32, name: char) {
         let mut out = Vec::new();
         let input = RuleInput::Key { action: KeyAction::Press, named: false, code: u32::from(name), base: None, mods: 0 };
@@ -284,6 +296,172 @@ fn a_script_that_never_returns_is_stopped_and_the_page_file_stays() {
     assert_eq!((browser.row(0x100, 1), browser.row(0x100, 5)), ("FILE ROW ONE".into(), String::new()));
 }
 
+/// Section 3.1's table of lifetimes, end to end through the real script
+/// host (TODO-7405): a change of the open page inside the channel ends
+/// the page's context after its one handling of `close` and opens the
+/// new page's, while the channel context lives on and hears `pagehide`
+/// then `pageshow`; between the two pages the trusted core tells the
+/// decoder that no page is open, which pauses nothing; and a tab hidden
+/// and shown again pauses and resumes both contexts, each hearing
+/// `visibilitychange` before the pause and after it. Nothing of this
+/// stops a script.
+#[test]
+fn a_change_of_page_and_a_hidden_tab_stop_no_script() {
+    let (first, second) = (PageSub::new(0x100, 0), PageSub::new(0x101, 0));
+    let file = b"PN,10000\nSC,0000\nPS,8000\nOL,1,PAGE ONE\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,PAGE TWO\n";
+    let channel = br#"/*! nt {"api":1,"tick":6} */
+        nt.addEventListener("tick", () => console.log("channel tick"));
+        setInterval(() => console.log("channel timer"), 100);
+        nt.addEventListener("pageshow", (e) => console.log("channel pageshow " + e.page.number));
+        nt.addEventListener("pagehide", (e) => console.log("channel pagehide " + e.page.number));
+        nt.addEventListener("visibilitychange", () => console.log("channel hidden " + nt.hidden));"#;
+    let page_one = br#"/*! nt {"api":1} */
+        nt.addEventListener("close", () => console.log("one closed"));
+        console.log("one runs");"#;
+    let page_two = br#"/*! nt {"api":1,"tick":6} */
+        nt.addEventListener("tick", () => console.log("two tick"));
+        setInterval(() => console.log("two timer"), 100);
+        nt.addEventListener("visibilitychange", () => console.log("two hidden " + nt.hidden));
+        console.log("two runs");"#;
+    let source = |level: ContextId, page: PageSub, name: &str, bytes: &[u8]| {
+        ScriptOrder::Source(SourcePiece { level, page, name: name.into(), total: u32::try_from(bytes.len()).unwrap(), offset: 0, bytes: bytes.to_vec() })
+    };
+    let said = |browser: &Browser, line: &str| browser.logged().iter().any(|logged| logged == line);
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(file);
+        browser.order(source(ContextId::Channel, first, "channel.js", channel));
+        browser.order(source(ContextId::Page, second, "two.js", page_two));
+        browser.open(first, "one.js", page_one);
+        browser.run_until(|browser| (said(browser, "one runs") && said(browser, "channel pageshow 100")) || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(said(&browser, "one runs") && said(&browser, "channel pageshow 100"), "{:?}", browser.reports);
+    // The page changes: the trusted core says no page is open while the
+    // new one is fetched and drawn, then names it.
+    browser.page(None);
+    browser.page(Some(second));
+    browser.run_until(|browser| (said(browser, "two runs") && said(browser, "channel pageshow 101")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "a change of page stops no script: {:?}", browser.reports);
+    let logged = browser.logged();
+    let place = |line: &str| logged.iter().position(|logged| logged == line).unwrap_or_else(|| panic!("{line} was not logged: {logged:?}"));
+    assert!(place("one closed") < place("two runs"), "the old page's context closes before the new one opens: {logged:?}");
+    assert!(place("channel pagehide 100") < place("channel pageshow 101"), "{logged:?}");
+    assert!(!logged.iter().any(|line| line.contains("hidden")), "a change of page hides no tab: {logged:?}");
+    assert!(browser.scripts.running());
+    // Both contexts tick and their timers run (TODO-7423).
+    let count = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| logged.as_str() == line).count();
+    let lines = ["channel tick", "channel timer", "two tick", "two timer"];
+    let counts = |browser: &Browser| lines.map(|line| count(browser, line));
+    let run_for = |browser: &mut Browser, time: Duration| {
+        let began = Instant::now();
+        browser.run_until(|_| began.elapsed() >= time);
+    };
+    let more = |browser: &mut Browser, what: &str| {
+        let before = counts(browser);
+        run_for(browser, Duration::from_millis(600));
+        let after = counts(browser);
+        assert!(
+            before.iter().zip(after).all(|(before, after)| after > *before),
+            "{what}: every tick and timer of both contexts goes on: {before:?} then {after:?}"
+        );
+    };
+    more(&mut browser, "on the page");
+    // The trusted core names no page and the same page again, as when the
+    // tab already in front is chosen: nothing changes for the scripts.
+    browser.page(None);
+    more(&mut browser, "with no page named");
+    browser.page(Some(second));
+    more(&mut browser, "with the page named again");
+    assert!(!browser.logged().iter().any(|line| line.contains("hidden")), "and no tab was hidden");
+    // The tab is hidden, then shown again.
+    browser.shown(false);
+    browser.run_until(|browser| (said(browser, "channel hidden true") && said(browser, "two hidden true")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "a hidden tab pauses its scripts and stops none: {:?}", browser.reports);
+    assert!(said(&browser, "channel hidden true") && said(&browser, "two hidden true"), "{:?}", browser.logged());
+    // Hidden, both contexts are paused: no tick and no timer of either.
+    run_for(&mut browser, Duration::from_millis(100));
+    let hidden = counts(&browser);
+    run_for(&mut browser, Duration::from_millis(600));
+    assert_eq!(counts(&browser), hidden, "no tick and no timer while the tab is hidden");
+    browser.shown(true);
+    browser.run_until(|browser| (said(browser, "channel hidden false") && said(browser, "two hidden false")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
+    assert!(said(&browser, "channel hidden false") && said(&browser, "two hidden false"), "{:?}", browser.logged());
+    assert!(browser.scripts.running());
+    // Shown again, both tick on and their timers run on.
+    more(&mut browser, "shown again");
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
+}
+
+/// Section 3.5, end to end through the real script host (TODO-7379 item
+/// 3): once the viewer has acted, a script's `nt.synth.start` and a note
+/// reach the decoder's sound output as a local sound's start and its
+/// MIDI message, which the trusted core's reader takes; before the
+/// viewer has acted nothing sounds.
+#[test]
+fn a_scripts_synthesizer_starts_and_plays_once_the_viewer_has_acted() {
+    use protocol::audio::Audio;
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"tick":1} */
+        let told = false;
+        nt.addEventListener("tick", () => {
+            if (told) return;
+            nt.synth.start(0, FAMILY_NAME, { gain: 100 });
+            nt.synth.noteOn(0, 60, 100);
+            if (nt.sound.allowed) { told = true; console.log("played"); }
+        });
+        console.log("listening");"#;
+    let script = String::from_utf8(script.to_vec()).unwrap().replace("FAMILY_NAME", "\"dx7\"");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    // A few ticks with sound not allowed: nothing is sent to sound.
+    let began = Instant::now();
+    browser.run_until(|_| began.elapsed() > Duration::from_millis(100));
+    assert!(browser.engine.take_sounds().is_empty(), "no sound before the viewer has acted");
+    browser.order(ScriptOrder::SoundAllowed);
+    assert!(browser.run_until(|browser| browser.logged().iter().any(|line| line == "played") || browser.scripts.stopped().is_some()), "{:?}", browser.reports);
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let sounds = browser.engine.take_sounds();
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::Local { channel: 0, start } if start.gain == 100)), "the synthesizer's start: {sounds:?}");
+    assert!(sounds.iter().any(|sound| matches!(sound, Audio::LocalMidi { channel: 0, status: 0x90, data1: 60, data2: 100 })), "its note: {sounds:?}");
+}
+
+/// TODO-7414, end to end through the real script host: each of
+/// `console`'s methods, and an uncaught exception, reaches the decoder's
+/// report at the level the protocol crate names for it, which the
+/// trusted core shows by the same crate's one mapping.
+#[test]
+fn a_scripts_log_lines_keep_their_levels() {
+    use protocol::script::batch::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_LOG, LOG_WARN};
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"tick":1} */
+        console.debug("d"); console.log("l"); console.info("i"); console.warn("w"); console.error("e");
+        let thrown = false;
+        nt.addEventListener("tick", () => { if (!thrown) { thrown = true; throw new Error("x"); } console.log("after"); });"#;
+    let browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "after") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let level = |starts: &str| {
+        browser.reports.iter().find_map(|report| match report {
+            ScriptReport::Log { level, text, .. } if text.starts_with(starts) => Some(*level),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        [level("d"), level("l"), level("i"), level("w"), level("e"), level("uncaught")],
+        [Some(LOG_DEBUG), Some(LOG_LOG), Some(LOG_INFO), Some(LOG_WARN), Some(LOG_ERROR), Some(LOG_ERROR)]
+    );
+}
+
 /// Section 4.1 and principle 5 ("Fail open"), timed end to end through
 /// the real script host (work package F5, TODO-7294): a script that
 /// takes a key and never answers does not hold it. Its handler never
@@ -360,6 +538,92 @@ fn a_touch_and_the_browsers_navigation_reach_a_script_as_the_specification_says(
     assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 5, cancelled: false, handled: true }), "{:?}", browser.reports);
 }
 
+/// The mouse's pointer doing `action` at the pixel `x`, `y` of the page's
+/// picture, as the trusted core tells the decoder.
+fn mouse(sequence: u32, action: protocol::rules::PointerAction, x: u16, y: u16) -> ScriptOrder {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    ScriptOrder::Pointer(ScriptPointer { sequence, action, button: 0, x, y, pointer: 1, kind: PointerKind::Mouse, primary: true })
+}
+
+/// What a pointer test's script logs of each pointer event of `thing`:
+/// the pointer's place, its place within the thing, and the row and
+/// column a teletext page's events name.
+const LOG_POINTER_EVENTS: &str = r#"
+    for (const type of ["pointerenter", "pointerdown", "pointerup", "pointerleave"]) {
+      thing.addEventListener(type, (e) => console.log(type + " at " + e.x + "," + e.y + " local " + e.localX + "," + e.localY + " cell " + e.row + "," + e.column));
+    }
+    console.log("listening");"#;
+
+/// Section 4.2 and section 4.4's table (rdm TODO-7432): a teletext
+/// control's pointer events give the cell within the control as `localX`
+/// and `localY` and the page's cell as `row` and `column`, and its
+/// `pointerenter` and `pointerleave` carry a press's fields. A press at
+/// row 10, column 13 of a control that begins at column 2 gave 13,10 as
+/// its local place, no row or column, and 0,0 on coming and going.
+#[test]
+fn a_teletext_controls_pointer_events_say_the_cell_within_it_and_the_pages_row_and_column() {
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x100, 0);
+    let script = format!("/*! nt {{\"api\":1,\"pointer\":\"move\"}} */\nconst thing = nt.teletext.control(10, 2, 36);{LOG_POINTER_EVENTS}");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,10,  A ROW THAT IS A CONTROL\n");
+        browser.open(page, "100.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    // The engine's cell is 12 pixels by 20: column 13 of row 10, then
+    // column 20 of row 14, which is off the control.
+    browser.order(mouse(1, Told::Move, 162, 210));
+    browser.order(mouse(2, Told::Press, 162, 210));
+    browser.order(mouse(3, Told::Release, 162, 210));
+    browser.order(mouse(4, Told::Move, 246, 290));
+    let left = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("pointerleave")) || browser.scripts.stopped().is_some();
+    assert!(browser.run_until(left), "{:?} {:?}", browser.logged(), browser.reports);
+    let heard: Vec<String> = browser.logged().into_iter().filter(|line| line.starts_with("pointer")).collect();
+    let expected = [
+        "pointerenter at 13,10 local 11,0 cell 10,13",
+        "pointerdown at 13,10 local 11,0 cell 10,13",
+        "pointerup at 13,10 local 11,0 cell 10,13",
+        "pointerleave at 20,14 local 18,4 cell 14,20",
+    ];
+    assert_eq!(heard, expected);
+}
+
+/// Section 4.2 and section 4.4's table (rdm TODO-7432): a ReGIS drawing's
+/// `pointerenter` and `pointerleave` carry the pointer's place and its
+/// place within the drawing as a press does, where they carried 0,0; a
+/// ReGIS page's events name no row or column.
+#[test]
+fn a_regis_drawings_coming_and_going_say_where_the_pointer_is_as_its_presses_do() {
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x200, 0);
+    let script = format!(
+        "/*! nt {{\"api\":1,\"renderer\":\"regis\",\"pointer\":\"move\"}} */\nconst thing = nt.regis.drawing({{ x: 300, y: 200, detectable: true }});\nthing.draw((p) => p.ink(2).fill((q) => q.rect(0, 0, 200, 80)));{LOG_POINTER_EVENTS}"
+    );
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.open(page, "200.js", script.as_bytes());
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.run_until(|browser| regis_drawing_at(browser, 0x200, 350, 220) != 0), "{:?} {:?}", browser.logged(), browser.reports);
+    browser.order(mouse(1, Told::Move, 350, 220));
+    browser.order(mouse(2, Told::Press, 350, 220));
+    browser.order(mouse(3, Told::Release, 350, 220));
+    browser.order(mouse(4, Told::Move, 600, 400));
+    let left = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("pointerleave")) || browser.scripts.stopped().is_some();
+    assert!(browser.run_until(left), "{:?} {:?}", browser.logged(), browser.reports);
+    let heard: Vec<String> = browser.logged().into_iter().filter(|line| line.starts_with("pointer")).collect();
+    let expected = [
+        "pointerenter at 350,220 local 50,20 cell undefined,undefined",
+        "pointerdown at 350,220 local 50,20 cell undefined,undefined",
+        "pointerup at 350,220 local 50,20 cell undefined,undefined",
+        "pointerleave at 600,400 local 300,200 cell undefined,undefined",
+    ];
+    assert_eq!(heard, expected);
+}
+
 /// Sections 10.3, 10.5 and 10.6: the bounds the decoder holds as the
 /// authority and the packing of the events it makes are the script
 /// library's, which the decoder may not link.
@@ -381,4 +645,185 @@ fn the_decoders_bounds_and_event_packing_are_the_script_librarys() {
         [PointerAction::DOWN, PointerAction::UP, PointerAction::MOVE, PointerAction::ENTER, PointerAction::LEAVE, PointerAction::CANCEL]
             .map(PointerAction::number)
     );
+}
+
+/// The numbered drawing the decoder's ReGIS renderer picks at `x`, `y` of
+/// `page` as it now paints it; 0 for none.
+fn regis_drawing_at(browser: &mut Browser, page: u16, x: u16, y: u16) -> u16 {
+    let now = browser.engine.now_us();
+    // The pick is of the picture as last composed.
+    let _ = browser.engine.take_pictures(page, Some(0), now);
+    browser.engine.regis().drawing_at(page, Some(0), x, y)
+}
+
+/// A ReGIS JavaScript page that draws one detectable square at 100, 100
+/// and hides it when the key 1 is pressed.
+const REGIS_SQUARE_PAGE: &[u8] = br#"/*! nt {"api":1,"renderer":"regis","keys":["1"]} */
+    const square = nt.regis.drawing({ x: 100, y: 100, detectable: true });
+    square.draw((p) => p.ink(2).fill((q) => q.rect(0, 0, 50, 50)));
+    nt.addEventListener("keydown", () => { square.visible = false; console.log("hidden"); });
+    console.log("square drawn");"#;
+
+/// A channel-level script that draws a detectable mark in the corner of
+/// every ReGIS page shown, as a channel's clock is drawn.
+const REGIS_CHANNEL_MARK: &[u8] = br#"/*! nt {"api":1} */
+    nt.addEventListener("pageshow", (e) => {
+      if (e.page.renderer !== "regis") return;
+      nt.regis.drawing({ x: 700, y: 0, detectable: true }).draw((p) => p.ink(3).fill((q) => q.rect(0, 0, 40, 20)));
+      console.log("mark on " + e.page.number);
+    });"#;
+
+/// Section 12.3 and section 3.1 (rdm TODO-7424): a ReGIS JavaScript page
+/// reached from another page draws as it does opened by its address. The
+/// page's one ReGIS stream begins when its page context opens, and what
+/// the channel context drew on the page before goes with that page: the
+/// news that the page before was left, which the channel context hears
+/// after the new page's context has opened, takes nothing of the new
+/// page's drawing with it. And a page come back to begins its stream
+/// again, so that nothing of its earlier visit shows: here a square the
+/// first visit hid.
+#[test]
+fn a_regis_script_page_reached_from_another_page_draws_and_a_page_come_back_to_begins_again() {
+    let (first, second) = (PageSub::new(0x200, 0), PageSub::new(0x210, 0));
+    let source = |level: ContextId, page: PageSub, name: &str, bytes: &[u8]| {
+        ScriptOrder::Source(SourcePiece { level, page, name: name.into(), total: u32::try_from(bytes.len()).unwrap(), offset: 0, bytes: bytes.to_vec() })
+    };
+    let said = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| *logged == line).count();
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.order(source(ContextId::Channel, first, "channel.js", REGIS_CHANNEL_MARK));
+        browser.order(source(ContextId::Page, second, "210.js", REGIS_SQUARE_PAGE));
+        browser.open(first, "200.js", REGIS_SQUARE_PAGE);
+        browser.run_until(|browser| (said(browser, "square drawn") == 1 && said(browser, "mark on 200") == 1) || browser.scripts.stopped().is_some());
+        browser
+    });
+    // Opened by its address: the page's square and the channel's mark.
+    assert!(
+        browser.run_until(|browser| regis_drawing_at(browser, 0x200, 120, 120) != 0 && regis_drawing_at(browser, 0x200, 710, 10) != 0),
+        "{:?}",
+        browser.reports
+    );
+    let (square, mark) = (regis_drawing_at(&mut browser, 0x200, 120, 120), regis_drawing_at(&mut browser, 0x200, 710, 10));
+    // The first visit hides its square.
+    browser.key(first, 7, '1');
+    assert!(browser.run_until(|browser| said(browser, "hidden") == 1 && regis_drawing_at(browser, 0x200, 120, 120) == 0), "{:?}", browser.reports);
+
+    // The second page is reached from the first.
+    browser.page(None);
+    browser.page(Some(second));
+    browser.run_until(|browser| (said(browser, "square drawn") == 2 && said(browser, "mark on 210") == 1) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
+    let drew = browser.run_until(|browser| regis_drawing_at(browser, 0x210, 120, 120) != 0 && regis_drawing_at(browser, 0x210, 710, 10) != 0);
+    let found = (regis_drawing_at(&mut browser, 0x210, 120, 120), regis_drawing_at(&mut browser, 0x210, 710, 10));
+    assert!(drew, "the page reached from another shows drawings {found:?} at its square and at the channel's mark: {:?}", browser.logged());
+    assert_eq!(found, (square, mark), "the page's drawings and the channel's are numbered as on a page opened by its address");
+
+    // Back to the first page: its stream begins again, and the square
+    // its first visit hid is drawn.
+    browser.page(None);
+    browser.page(Some(first));
+    browser.run_until(|browser| (said(browser, "square drawn") == 3 && said(browser, "mark on 200") == 2) || browser.scripts.stopped().is_some());
+    let drew = browser.run_until(|browser| regis_drawing_at(browser, 0x200, 120, 120) != 0 && regis_drawing_at(browser, 0x200, 710, 10) != 0);
+    assert!(drew, "the page come back to shows what its earlier visit left: {:?}", browser.logged());
+    let faults: Vec<String> = browser.logged().into_iter().filter(|line| line.contains("Error") || line.contains("commit")).collect();
+    assert_eq!(faults, Vec::<String>::new());
+    assert!(browser.scripts.stopped().is_none());
+}
+
+/// TODO-7425, the NAPLPS part, and section 4.4: on a NAPLPS page of
+/// components the decoder picks the region under the pointer from the
+/// page's cast and names it in the pointer event by the script host's
+/// handle for it, kind 5 and the object's number
+/// (`protocol::script::naplps::object_handle`), so that a press and a
+/// release on a button reach the button. The page is the script
+/// library's own page of thirteen kinds; the press is on its Refresh
+/// button, at raster dot (20, 305), and then on the first row of its
+/// menu, at (40, 190).
+#[test]
+fn a_press_on_a_naplps_component_reaches_it_through_the_decoders_pick() {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x330, 0);
+    let script = include_bytes!("../../script/tests/naplps_page/thirteen.js");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        browser.open(page, "330.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line.starts_with("made 13 components")) || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let pointer = |sequence, action, x, y| ScriptPointer { sequence, action, button: 0, x, y, pointer: 1, kind: PointerKind::Mouse, primary: true };
+    for (sequence, (x, y)) in [(5, (20, 305)), (7, (40, 190))] {
+        browser.order(ScriptOrder::Pointer(pointer(sequence, Told::Press, x, y)));
+        browser.order(ScriptOrder::Pointer(pointer(sequence + 1, Told::Release, x, y)));
+    }
+    let heard = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("activate menu")) || browser.scripts.stopped().is_some();
+    let reached = browser.run_until(heard);
+    let logged = browser.logged();
+    assert!(reached, "the presses reached no component: {logged:?} {:?}", browser.reports);
+    assert!(logged.contains(&"activate refresh null".to_owned()), "{logged:?}");
+    assert!(logged.contains(&"activate menu \"ship\"".to_owned()), "{logged:?}");
+}
+
+/// Section 7.2 and TODO-7383's decoder part: a NAPLPS script page's
+/// backdrop is reported painted, by its handle
+/// (`protocol::script::naplps::BACKDROP_HANDLE`), once everything its
+/// script appended is drawn and its WAIT has passed; and a NAPLPS script
+/// page reached by a change of page, and the one gone back to, each
+/// begin a generation of their own and draw (TODO-7424 saw ReGIS script
+/// pages come up blank when reached so).
+#[test]
+fn a_naplps_script_page_reached_by_a_page_change_draws_and_hears_its_backdrop_painted() {
+    let (first, second) = (PageSub::new(0x300, 0), PageSub::new(0x301, 0));
+    let one = br#"/*! nt {"api":1,"renderer":"naplps"} */
+        nt.naplps.backdrop.addEventListener("painted", () => console.log("one painted"));
+        nt.naplps.backdrop.paint((p) => p.ink("red").fillRect(0, 0, 240, 460).wait(2).ink("green").fillRect(240, 0, 240, 460));
+        console.log("one runs");"#;
+    let two = br#"/*! nt {"api":1,"renderer":"naplps"} */
+        nt.naplps.backdrop.addEventListener("painted", () => console.log("two painted"));
+        nt.naplps.backdrop.paint((p) => p.ink("blue").fillRect(0, 0, 480, 460));
+        console.log("two runs");"#;
+    let count = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| *logged == line).count();
+    // The decoder's loop brings the picture to the clock at every wake:
+    // the player's WAIT passes there.
+    let heard = |page: u16, line: &'static str, times: usize| {
+        move |browser: &mut Browser| {
+            let now = browser.engine.now_us();
+            let _ = browser.engine.animation_step(&[page], now);
+            browser.logged().iter().filter(|logged| *logged == line).count() == times || browser.scripts.stopped().is_some()
+        }
+    };
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"");
+        let piece = SourcePiece {
+            level: ContextId::Page,
+            page: second,
+            name: "301.js".into(),
+            total: u32::try_from(two.len()).unwrap(),
+            offset: 0,
+            bytes: two.to_vec(),
+        };
+        browser.order(ScriptOrder::Source(piece));
+        browser.open(first, "300.js", one);
+        browser.run_until(heard(0x300, "one painted", 1));
+        browser
+    });
+    assert_eq!((count(&browser, "one runs"), count(&browser, "one painted")), (1, 1), "{:?}", browser.reports);
+    let drew = |browser: &mut Browser, page: u16| {
+        let now = browser.engine.now_us();
+        browser.engine.naplps().stream_end(page, 0).is_some() && browser.engine.take_pictures(page, Some(0), now).1.is_some()
+    };
+    assert!(drew(&mut browser, 0x300));
+    // The page changes: the trusted core says no page is open, then names the next.
+    browser.page(None);
+    browser.page(Some(second));
+    assert!(browser.run_until(heard(0x301, "two painted", 1)), "{:?}", browser.reports);
+    assert!(drew(&mut browser, 0x301), "the page reached by a change of page drew: {:?}", browser.reports);
+    // And back.
+    browser.page(None);
+    browser.page(Some(first));
+    assert!(browser.run_until(heard(0x300, "one painted", 2)), "{:?}", browser.reports);
+    assert_eq!(count(&browser, "one runs"), 2);
+    assert!(drew(&mut browser, 0x300), "the page gone back to drew again: {:?}", browser.reports);
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
 }

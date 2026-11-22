@@ -1,0 +1,9 @@
+# The kept pictures of tests/ui_regis.rs: each a name and the SHA-256 of
+# the picture's 800 by 480 colour-map addresses followed by its sixteen
+# colours, three bytes each, as tests/golden/regis.txt keeps its own. The
+# format's version is raised with any change to what is painted.
+format 1
+thirteen-as-made 68e334f20667e14a374aa8c02c862666ca5fc662ebf27aa8485ea52ca007b0bb
+thirteen-after-the-menus-keys 21d196f2a19739ed611947e8b224d830e673cdf885a129eb6b06dc888d5c47b6
+thirteen-after-every-key-the-text-and-the-pointer 16b9c5e9297a31d45bfbc8b2b081ce187e5f726bed99fe298a22c4373b40e659
+thirteen-a-second-later 86f59d23b72d0671271f221d49c784e1a410a2e5bced02015f76186a2dbe7706

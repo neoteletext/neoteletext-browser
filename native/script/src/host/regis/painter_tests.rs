@@ -222,15 +222,33 @@ fn circles_arcs_and_curves_are_regiss_own() {
     assert_eq!(contents(&arcs), "P[140,80]C(C,A+90)[100,80]C(C,A+45)[100,80]");
     draws_as(&arcs, "P[140,80]C(A90,C)[100,80]C(A45,C)[100,80]");
     draws_as(&[P::MOVE_TO.number(), 140, 80, P::ARC.number(), 100, 80, -90], "P[140,80]C(A-90,C)[100,80]");
-    // After an arc the position is the renderer's to know: a line to a
-    // negative coordinate needs a moveTo first, and a moveTo to one is
-    // written from the origin.
-    let after_arc = |then: &[i32]| [&[P::MOVE_TO.number(), 40, 0, P::ARC.number(), 0, 0, 90][..], then].concat();
-    assert!(matches!(refused(&after_arc(&[P::LINE_TO.number(), -5, 5])), Reply::Type(_)));
-    assert_eq!(contents(&after_arc(&[P::MOVE_TO.number(), -5, 5, P::LINE_TO.number(), -10, 5])), "P[40,0]C(C,A+90)[0,0]P[0,0]P[-5,+5]V[-5,+0]");
-    draws_as(&after_arc(&[P::MOVE_TO.number(), -5, 5, P::LINE_TO.number(), -10, 5]), "P[40,0]C(A90,C)[0,0]P[0,0]P[-5,+5]V[-5]");
+    // After an arc the position is its end, by the renderer's own
+    // arithmetic (TODO-7389): a line to a place with a negative
+    // coordinate, which can only be written as a move from there, lands
+    // where a line the renderer itself draws to that place lands. The
+    // reference keeps the place on ReGIS's position stack and draws to it
+    // with `V(E)`, so it needs no knowledge of the arc's end. Every
+    // quadrant, each way, small and whole turns, a centre off the
+    // drawing's origin and the longest arc a screen holds.
+    for (start, centre) in [((90, 40), (60, 40)), ((60, 10), (60, 40)), ((30, 40), (60, 40)), ((60, 70), (60, 40)), ((10, -20), (-20, -20)), ((560, 0), (0, 0))]
+    {
+        for degrees in [1, -1, 33, 45, -45, 90, -90, 135, 180, -180, 270, -270, 359, 360, -360] {
+            let program = [P::MOVE_TO.number(), start.0, start.1, P::ARC.number(), centre.0, centre.1, degrees, P::LINE_TO.number(), -7, -9];
+            let centre_written =
+                if centre.0 < 0 { format!("[{:+},{:+}]", centre.0 - start.0, centre.1 - start.1) } else { format!("[{},{}]", centre.0, centre.1) };
+            let start_written = if start.1 < 0 { format!("P[0,0]P[{:+},{:+}]", start.0, start.1) } else { format!("P[{},{}]", start.0, start.1) };
+            draws_as(&program, &format!("P[0,0]P[-7,-9]P(B){start_written}C(C,A{degrees:+}){centre_written}V(E)"));
+        }
+    }
+    // A quarter turn anticlockwise from 40,0 about the origin ends at
+    // 0,-40: the line to -5,5 is written from there.
+    assert_eq!(contents(&[P::MOVE_TO.number(), 40, 0, P::ARC.number(), 0, 0, 90, P::LINE_TO.number(), -5, 5]), "P[40,0]C(C,A+90)[0,0]V[-5,+45]");
     // A whole circle about a centre leaves the position where it was.
     assert_eq!(contents(&[P::MOVE_TO.number(), 40, 0, P::ARC.number(), 0, 0, 360, P::LINE_TO.number(), -5, 0]), "P[40,0]C(C,A+360)[0,0]V[-45,+0]");
+    // A fill puts the position back where it began (chapter 11).
+    let after_fill = [P::MOVE_TO.number(), 50, 50, P::FILL.number(), 5, P::RECT.number(), 0, 0, 10, 10, P::LINE_TO.number(), -5, -5];
+    assert_eq!(contents(&after_fill), "P[50,50]F(P[0,0]V[+9][,+9][-9][,-9])V[-55,-55]");
+    draws_as(&after_fill, "P[0,0]P[-5,-5]P(B)P[50,50]F(P[0,0]V[9,0][9,9][0,9][0,0])V(E)");
     assert!(matches!(refused(&[P::ARC.number(), 0, 0, 361]), Reply::Type(_)));
     assert!(matches!(refused(&[P::ARC.number(), 0, 0, 0]), Reply::Type(_)));
     assert_range(&refused(&[P::CIRCLE.number(), -1]), "MAX_COORDINATE");
@@ -433,6 +451,7 @@ fn text_is_the_provided_sets_and_regiss_text_controls() {
 /// stood at the step's commit; the bytes of all are held to the
 /// renderer's cap and counted; each context has its share.
 #[test]
+#[expect(clippy::too_many_lines, reason = "one page's macrographs followed through their whole life")]
 fn macrographs_are_the_receivers_and_held_to_their_bounds() {
     let mut host = host();
     // A square from wherever the position is: a macrograph is drawn where
@@ -486,11 +505,50 @@ fn macrographs_are_the_receivers_and_held_to_their_bounds() {
     assert_eq!(String::from_utf8_lossy(batch.regis.as_ref().unwrap()), "@:AW(I3)F(V[+14,+0]V[+0,+14]V[-14,+0]V[+0,-14])@;D(C)");
     assert!(receiver.take(&batch), "a step that only defined a macrograph again commits");
     assert_eq!([receiver.pixel(105, 105), receiver.pixel(112, 112), receiver.pixel(125, 105), receiver.pixel(133, 112)], [3, 3, 3, 3]);
-    // After a macrograph's call the position is the macrograph's to have
-    // left, and a body starts with the position unknown.
+    // After a macrograph's call the position is where its body left it,
+    // by the renderer's own running of the body (TODO-7389): the second
+    // macrograph moves twenty right, and a line to -5,3 after it, and
+    // after text that follows it, lands where a line the renderer draws
+    // to that place lands. A body itself has no position of its own.
     host.begin_step(2, true);
-    assert!(matches!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[drawing], &[P::CALL.number(), first, P::LINE_TO.number(), -5, 0]), Reply::Type(_)));
+    let mut after_call = vec![P::CALL.number(), second, P::LINE_TO.number(), -5, 3];
+    after_call.extend(plain("ab"));
+    after_call.extend_from_slice(&[P::LINE_TO.number(), -6, -4]);
+    assert_eq!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[drawing], &after_call), Reply::Undefined);
+    let batch = host.take_batch(9, &[]);
+    let sent = String::from_utf8_lossy(batch.regis.as_ref().unwrap()).into_owned();
+    assert_eq!(sent, "D(B1)@BV[-25,+3]T(A101)\"ab\"T(A0)V[-19,-7]D(E)D(C)");
+    assert!(receiver.take(&batch));
+    let definitions = "@:AW(I3)F(V[+14,+0]V[+0,+14]V[-14,+0]V[+0,-14])@;@:BP[+20,+0]@A@;";
+    let ours = sent.trim_start_matches("D(B1)").trim_end_matches("D(E)D(C)");
+    // The places are kept on ReGIS's position stack, the last first.
+    let reference = "P[0,0]P[-6,-4]P(B)P[0,0]P[-5,+3]P(B)P[0,0]@BV(E)T(A101)'ab'V(E)";
+    let differing =
+        painted(definitions, ours.as_bytes()).iter().zip(&painted(definitions, reference.as_bytes())).filter(|(ours, theirs)| ours != theirs).count();
+    assert_eq!(differing, 0, "{ours} and {reference} differ in {differing} pixels");
     assert!(matches!(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[0], &[P::LINE_TO.number(), -5, 0]), Reply::Type(_)));
+    // A macrograph that anything calls may be defined again only to
+    // leave the position as it did: the drawing above was written from
+    // where it left it. Defined again to end elsewhere it is refused,
+    // naming the caller, and nothing changes; to look different and end
+    // the same, it is taken.
+    host.begin_step(3, true);
+    let budget = host.budget(ContextId::Page);
+    match call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[second], &[P::MOVE_BY.number(), 30, 0]) {
+        Reply::Type(message) => assert!(message.starts_with("drawing 1 calls this macrograph"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    match call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[first], &[P::MOVE_BY.number(), 1, 0]) {
+        Reply::Type(message) => assert!(message.starts_with("another macrograph calls this macrograph"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+    // (The bytes the host holds are the pen's too, whose own count of a
+    // body put back may differ by an allocation's rounding.)
+    assert_eq!(macrograph_bytes(&host.budget(ContextId::Page)), macrograph_bytes(&budget), "a refused definition changes nothing");
+    assert_eq!(handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[second], &[P::MOVE_BY.number(), 20, 0, P::DOT.number()])), second);
+    assert_eq!(handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[second], &[P::MOVE_BY.number(), 20, 0, P::CALL.number(), first])), second);
+    assert!(receiver.take(&host.take_batch(10, &[])));
+    host.begin_step(4, true);
     // A handle is the context's own macrograph of this page, or a TypeError.
     for forged in [0, 5, -1, MACROGRAPH_HANDLE_BASE - 2, MACROGRAPH_HANDLE_BASE - 26, i32::MIN, drawing] {
         assert!(matches!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[drawing], &[P::CALL.number(), forged]), Reply::Type(_)), "{forged}");
@@ -502,8 +560,14 @@ fn macrographs_are_the_receivers_and_held_to_their_bounds() {
     // Text that would end the definition is refused in a macrograph, and
     // taken in a drawing, where nothing reads it so.
     assert!(matches!(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[0], &plain("mail @; home")), Reply::Type(_)));
-    assert_eq!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[drawing], &plain("mail @; home")), Reply::Undefined);
+    let other = handle(host.call(PAGE, Op::RG_DRAWING.number(), &[0, 0, 1, 0, 0, 0, -1, 1], Payload::None));
+    assert_eq!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[other], &plain("mail @; home")), Reply::Undefined);
     assert!(receiver.take(&host.take_batch(3, &[])));
+    // With nothing calling them any more, the two may be defined to
+    // leave the position anywhere.
+    assert_eq!(call_ints(&mut host, PAGE, Op::RG_DEFINE, &[drawing], &[P::DOT.number()]), Reply::Undefined);
+    assert_eq!(handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[second], &[P::MOVE_BY.number(), 30, 0])), second);
+    assert_eq!(handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[first], &[P::MOVE_TO.number(), 5, 5])), first);
     // The bounds: 24 macrographs for the page and 2 for the channel
     // context; the bytes of each context's share.
     host.begin_step(3, true);
@@ -550,11 +614,13 @@ fn a_refused_commit_puts_the_macrographs_back() {
     let mut receiver = Receiver::new();
     assert!(receiver.take(&host.take_batch(1, &[])));
     let budget_before = host.budget(ContextId::Page);
-    // The step: the macrograph defined again as 300 lines of 30,000
+    // The step: the macrograph defined again as 320 lines of 29,000
     // pixels, nine million work units for each of the twelve drawings
     // that call it, which is more than one repaint may cost.
     host.begin_step(1, true);
-    let dear: Vec<i32> = (0..300).flat_map(|_| [P::MOVE_TO.number(), 0, 0, P::LINE_TO.number(), 30_000, 0]).collect();
+    // It ends where it began, as the small one does, so it may stand in
+    // for it under the drawings that call it.
+    let dear: Vec<i32> = (0..160).flat_map(|_| [P::LINE_BY.number(), 29_000, 0, P::LINE_BY.number(), -29_000, 0]).collect();
     assert_eq!(handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[macrograph], &dear)), macrograph);
     let made: Vec<i32> = (0..11).map(|_| handle(host.call(PAGE, Op::RG_DRAWING.number(), &[0, first, 1, 0, 0, 0, -1, 1], Payload::None))).collect();
     let extra = handle(call_ints(&mut host, PAGE, Op::RG_MACROGRAPH, &[0], &[P::DOT.number()]));

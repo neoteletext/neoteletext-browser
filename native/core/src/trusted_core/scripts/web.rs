@@ -88,6 +88,12 @@ pub(super) struct WebClients {
 
 impl WebClients {
     /// The web client that serves `channel` and the channel's tab in it.
+    /// Whether a web client serves `channel`'s scripts in a tab of its own.
+    #[cfg(test)]
+    pub(super) fn serves(&mut self, channel: u32) -> bool {
+        self.place(channel).is_some()
+    }
+
     fn place(&mut self, channel: u32) -> Option<(&mut WebClient, u32)> {
         self.clients.iter_mut().find_map(|client| {
             let tab = client.tabs.iter().find(|(_, served)| **served == channel).map(|(&tab, _)| tab)?;

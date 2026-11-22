@@ -815,6 +815,7 @@ fn script_sees(
             let outcome = scripts.page_opened(*page, engine, output)?;
             script_outcome(engine, &outcome, drawing, output)
         }
+        Some(Ok(Some(ToDecoder::CueHeard { audio_channel, number }))) => scripts.cue(*audio_channel, *number, engine, output),
         Some(Ok(Some(ToDecoder::RuleInput { page, sequence, input }))) => {
             scripts.input(*page, *sequence, input, engine, output)?;
             // A step for input leaves at once, as a rule's sound does

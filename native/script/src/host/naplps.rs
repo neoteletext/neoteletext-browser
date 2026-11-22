@@ -21,6 +21,7 @@
 mod cast;
 pub mod limits;
 pub mod program;
+mod ui;
 pub mod writer;
 
 use std::collections::VecDeque;
@@ -58,23 +59,12 @@ impl From<Fault> for Reply {
     }
 }
 
-/// The bits of a handle that say what kind of thing it names; the rest
-/// are the thing's place in its table (section 10.1 rule 4).
-pub const HANDLE_KIND_SHIFT: u32 = 24;
-/// The kinds of NAPLPS things. The backdrop is the one thing of this
-/// work package; the others are named here so that the two packages'
-/// handles cannot meet.
-pub const KIND_BACKDROP: i32 = 1;
-/// A symbol (work package N2).
-pub const KIND_SYMBOL: i32 = 2;
-/// A DRCS character (work package N2).
-pub const KIND_DRCS: i32 = 3;
-/// A texture (work package N2).
-pub const KIND_TEXTURE: i32 = 4;
-/// An actor or a region (work package N2).
-pub const KIND_ACTOR: i32 = 5;
-/// The backdrop's handle: what `painted` is listened for on and reported by.
-pub const BACKDROP_HANDLE: i32 = KIND_BACKDROP << HANDLE_KIND_SHIFT;
+/// The handles of NAPLPS things: a kind in the bits from
+/// [`HANDLE_KIND_SHIFT`] up, and the thing's place in its table below
+/// (section 10.1 rule 4). The protocol crate's are the one definition,
+/// since the decoder names the thing under the pointer and the backdrop
+/// it reports painted by the same handles (section 4.4).
+pub use protocol::script::naplps::{BACKDROP_HANDLE, HANDLE_KIND_SHIFT, KIND_ACTOR, KIND_BACKDROP, KIND_DRCS, KIND_SYMBOL, KIND_TEXTURE};
 
 /// The colours a script defines: entries 8 to 15.
 const DEFINABLE: usize = (NAPLPS_COLOURS - FIRST_DEFINABLE_COLOUR) as usize;
@@ -139,6 +129,8 @@ pub struct Naplps {
     tick: u64,
     /// The definitions and the cast (work package N2).
     cast: cast::Cast,
+    /// The page's components as NAPLPS draws them (work package U3).
+    components: ui::Components,
 }
 
 impl Default for Naplps {
@@ -158,6 +150,7 @@ impl Default for Naplps {
             wait_tenths: 0,
             tick: 0,
             cast: cast::Cast::default(),
+            components: ui::Components::default(),
         }
     }
 }
@@ -221,6 +214,7 @@ impl Naplps {
             .saturating_add(self.blinks.len().saturating_mul(size_of::<Blink>()))
             .saturating_add(self.second.len().saturating_mul(size_of::<(u64, usize)>()))
             .saturating_add(self.cast.state_bytes())
+            .saturating_add(self.components.state_bytes())
     }
 
     /// The bytes staged for the step's output.
@@ -663,6 +657,15 @@ impl Host {
         let (room, bound) = if own < callback { (own, "NAPLPS_MAX_BYTES_PER_SECOND") } else { (callback, "NAPLPS_MAX_BYTES_PER_CALLBACK") };
         let outcome =
             painter.run(program, &self.naplps.language, &cast::Defined(&self.naplps.cast, ContextId::Page), &mut out, opening.saturating_add(room), bound)?;
+        if fresh {
+            // A new generation paints from nothing: the components, which
+            // are painted on the backdrop, are painted again over the
+            // script's new one, each by the program the host kept.
+            for (program, named) in self.naplps.components.programs() {
+                let language = if named.is_empty() { self.naplps.language.as_str() } else { named };
+                let _ = painter.run(program, language, &cast::Defined(&self.naplps.cast, ContextId::Page), &mut out, usize::MAX, "NAPLPS_MAX_BYTES_PER_SECOND");
+            }
+        }
         // What a repaint replaces is no longer part of the step's output.
         let replaced = if fresh { self.naplps.staged.len() } else { 0 };
         if self.batch_bytes().saturating_sub(replaced).saturating_add(out.len()) > self.batch_limit {

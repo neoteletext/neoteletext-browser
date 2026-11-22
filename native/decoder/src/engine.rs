@@ -40,6 +40,7 @@ mod painting_tests;
 mod render;
 mod rules;
 pub mod script;
+pub mod script_reports;
 #[cfg(test)]
 mod script_tests;
 mod snapshot;
