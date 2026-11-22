@@ -791,7 +791,8 @@ function dispatch(kind, a, b, c, d, payload) {
       event = withFields(new Event("fault"), { code: a, bound: payload || "" });
       break;
     default:
-      return 0;
+      // The network's events, 30 to 41 (work package W2, web/sockets.js).
+      return webDispatch(kind, a, b, c, d, payload);
   }
   // The channel context is given the page's input with the same fields
   // and a target of null (section 4.5): things are the page context's.

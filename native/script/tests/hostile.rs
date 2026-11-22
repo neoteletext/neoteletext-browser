@@ -234,24 +234,17 @@ fn sound_stops_are_held_to_the_callbacks_rate() {
 /// stopped for their failures.
 const FAILING_STEPS: u32 = 120;
 
-/// S-06 (TODO-7272) and the review's request floods: the scripts that
-/// made the spike's host hold 130 MB through ReGIS drawings, and make
-/// 1,240 requests in a step, use parts of the API the shared core does
-/// not have (work packages R1 and W2, which owe their own regression
-/// tests with these same scripts). Here they find nothing to call: no
+/// S-06 (TODO-7272): the scripts that made the spike's host hold 130 MB
+/// through ReGIS drawings use a part of the API the shared core does
+/// not have (work package R1, which owes its own regression tests with
+/// these same scripts; the review's request floods are work package
+/// W2's, in `web_hostile.rs`). Here they find nothing to call: no
 /// request is made, nothing is drawn, the host holds no more than its
 /// bound, and thirty-one failing timers a tick stop the context after
 /// sixteen failures in a row.
 #[test]
 fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
-    for (name, source) in [
-        ("regismem.js", hostile!("regismem")),
-        ("regisstage.js", hostile!("regisstage")),
-        ("fetchabort.js", hostile!("fetchabort")),
-        ("fetchabort2.js", hostile!("fetchabort2")),
-        ("sse.js", hostile!("sse")),
-        ("sse2.js", hostile!("sse2")),
-    ] {
+    for (name, source) in [("regismem.js", hostile!("regismem")), ("regisstage.js", hostile!("regisstage"))] {
         let mut container = opened(name, source);
         // Thirty-one timers that each fail, sixteen failures to stop the
         // context: a few steps on a quiet machine, more where the step's

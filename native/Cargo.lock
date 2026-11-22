@@ -682,6 +682,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1874,11 +1883,13 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev
 name = "neoteletext-script"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "neoteletext-audio",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
  "ring",
+ "url",
  "wasmi",
 ]
 

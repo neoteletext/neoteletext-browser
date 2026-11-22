@@ -300,6 +300,9 @@ readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
+    # The streams library bundled into the prelude is the pinned bytes
+    # (neoteletext-common's DEC-7261; native/script/src/web/streams/NOTICE.txt).
+    (cd native/script/src/web/streams && sha256sum --check --quiet SHA256SUMS) || fail "the bundled web-streams-polyfill is not the bytes native/script/src/web/streams/SHA256SUMS records"
     local target
     for target in "${SCRIPT_FUZZ_TARGETS[@]}"; do
         [[ -f "native/fuzz/fuzz_targets/$target.rs" ]] && grep -q "^name = \"$target\"$" native/fuzz/Cargo.toml ||

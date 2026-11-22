@@ -43,6 +43,7 @@ pub mod ops;
 pub mod probe;
 pub mod random;
 pub mod watchdog;
+pub mod web;
 
 /// The API's version: a whole number, raised by every change, never
 /// withdrawn (DEC-7208 item 3).

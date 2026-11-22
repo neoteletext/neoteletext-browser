@@ -96,6 +96,28 @@ numbered! {
     SYNTH_NOTE = 34,
     /// All notes off and the instrument released.
     SYNTH_STOP = 35,
+    /// Parses an address against a base: the serialised address and where its components lie, or undefined.
+    URL_PARSE = 40,
+    /// Starts a fetch or an event stream: its flags and its body's length; its head. Gives its number.
+    FETCH = 41,
+    /// The next bytes of a request's body.
+    FETCH_BODY = 42,
+    /// Gives up a fetch or an event stream.
+    FETCH_ABORT = 43,
+    /// Makes room for more of an answer's body.
+    FETCH_CREDIT = 44,
+    /// Opens a socket: its address and subprotocols. Gives its number.
+    WS_OPEN = 45,
+    /// A piece of a message for a socket.
+    WS_SEND = 46,
+    /// Closes a socket: its code; its reason.
+    WS_CLOSE = 47,
+    /// Sets a component of an address, as the URL standard's setter of
+    /// that name does (work package W2's number: section 10.2 has none
+    /// for the setters, and 48 was free between the web's operations).
+    URL_SET = 48,
+    /// Decodes bytes in an encoding of the Encoding standard, names a label's encoding, or encodes a string as UTF-8.
+    DECODE = 49,
 }
 
 numbered! {
@@ -147,9 +169,40 @@ numbered! {
     UI = 21,
     /// The viewer has pressed a key or the pointer in this tab, so sound is allowed.
     SOUND_ALLOWED = 22,
+    /// An answer's head: the request, the status, the response type and whether redirected; the address, status text and headers.
+    FETCH_HEAD = 30,
+    /// A piece of an answer's body.
+    FETCH_CHUNK = 31,
+    /// An answer's body is complete.
+    FETCH_END = 32,
+    /// A request, an event stream or a socket failed: which error the script is given.
+    FETCH_FAILED = 33,
+    /// Bytes of a request's body were written; with no bytes, the request may send more of its body.
+    FETCH_SENT = 34,
+    /// A socket is open: its subprotocol.
+    WS_OPENED = 35,
+    /// A piece of a socket's message: binary or text, and whether the last.
+    WS_MESSAGE = 36,
+    /// A socket closed: its code and whether cleanly; its reason.
+    WS_CLOSED = 37,
+    /// Bytes of a socket's messages were written.
+    WS_SENT = 38,
+    /// An event stream is open: its final address, or empty.
+    SSE_OPENED = 39,
+    /// An event of an event stream: the lengths of its type and of its last event ID; the type, the ID and the data.
+    SSE_EVENT = 40,
+    /// An event stream was lost and is being reconnected.
+    SSE_RETRYING = 41,
 }
 
 impl EventKind {
+    /// Whether the kind is one of the network's (30 to 41), which the
+    /// host makes from the web client's answers and no step carries.
+    #[must_use]
+    pub const fn is_network(self) -> bool {
+        self.number() >= Self::FETCH_HEAD.number() && self.number() <= Self::SSE_RETRYING.number()
+    }
+
     /// The kind a step's event names. Every kind a step can carry has its
     /// number here, the same number (the crate's tests compare them);
     /// event 22 is the host's own and no step carries it.
@@ -198,7 +251,9 @@ mod tests {
         }
         let own: Vec<EventKind> =
             EventKind::ALL.iter().map(|(_, kind)| *kind).filter(|kind| !Carried::ALL.iter().any(|carried| EventKind::of(*carried) == *kind)).collect();
-        assert_eq!(own, vec![EventKind::SOUND_ALLOWED]);
+        // The network's events are the host's own too: it makes them from the web client's answers.
+        assert_eq!(own.iter().copied().filter(|kind| !kind.is_network()).collect::<Vec<_>>(), vec![EventKind::SOUND_ALLOWED]);
+        assert!(own.iter().filter(|kind| kind.is_network()).all(|kind| Carried::of(u8::try_from(kind.number()).unwrap()).is_err()));
         assert!(Carried::of(u8::try_from(EventKind::SOUND_ALLOWED.number()).unwrap()).is_err());
     }
 
@@ -408,6 +463,8 @@ pub fn prelude() -> String {
     ];
     table("BOUND", &mut bounds.iter().copied());
     out.push_str(include_str!("prelude.js"));
+    // The web APIs (work package W2), inside the same function.
+    crate::web::write_prelude(&mut out);
     out.push_str("\n})();\n");
     out
 }
