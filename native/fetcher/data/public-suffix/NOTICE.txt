@@ -1,0 +1,37 @@
+What public_suffix_list.dat is, and under what licence
+
+public_suffix_list.dat is the Public Suffix List as its publisher serves
+it, unchanged: the names under which anyone may register a name of their
+own (`com`, `co.uk`, `github.io` and about ten thousand more). The web
+client's cookie jars read it (../../src/web/cookies.rs) so that no cookie
+is set for a public suffix and so that a site is a registrable domain
+(RFC 6265bis sections 5.2 and 5.7).
+
+https://publicsuffix.org/list/public_suffix_list.dat
+Fetched on 22 November 2026. The file names its own version,
+2026-11-21_04-33-45_UTC, and the commit of the publisher's repository it
+was made from, 87a2c1b8de5886a133ff4da21b2aa6fec88d8739
+(https://github.com/publicsuffix/list).
+342,871 bytes; SHA-256
+017501d3fa7911c60ac7e0f68df4122b07216c585c15dc30e0f0c74b8d13a2b9.
+
+Mozilla Public License 2.0: LICENSE, beside this file, as
+https://www.mozilla.org/media/MPL/2.0/index.txt serves it. The owner
+accepted the list under that licence, as data kept unmodified (DEC-7340).
+The file is never edited: MPL-2.0 section 3.2 asks that whoever has the
+browser can have this file's source, which the file itself is, and a
+changed copy would be a modification to publish. A rule the browser
+wants otherwise is written in the browser's code, not here.
+
+Refreshing it. fetch.py --refresh downloads the list with Python's
+standard library, replaces the file whole and writes SHA256SUMS; the
+version, commit, date, size and SHA-256 above are then rewritten by hand
+from what it prints, and the change is a commit of its own. fetch.py
+--check compares the kept file with the publisher's of the same commit
+when the publisher still serves it, and otherwise says the list has
+moved on. The commit gate holds the two files to SHA256SUMS
+(scripts/check.sh), and the fetcher's own test holds the bytes compiled
+in to it, so a changed file fails both. The list is refreshed before
+each release and whenever it is more than 90 days old: the publisher
+asks that a copy not be left to go stale, and a suffix missing from an
+old copy lets a site under it set a cookie for its neighbours.

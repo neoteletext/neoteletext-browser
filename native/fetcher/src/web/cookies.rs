@@ -27,13 +27,39 @@ use cookie_store::{Cookie, CookieDomain, CookieStore};
 use publicsuffix::{List, Psl};
 use url::Url;
 
-use super::limits::{MAX_COOKIE_ATTRIBUTE, MAX_COOKIE_BYTES, MAX_COOKIE_LIFETIME_SECONDS, MAX_COOKIES_PER_DOMAIN, MAX_COOKIES_PER_JAR};
+use super::limits::{
+    MAX_COOKIE_ATTRIBUTE, MAX_COOKIE_BYTES, MAX_COOKIE_LIFETIME_SECONDS, MAX_COOKIES_PER_DOMAIN, MAX_COOKIES_PER_JAR, MAX_SUFFIX_LIST_BYTES, MAX_SUFFIX_RULES,
+};
 
-/// The public suffix list, when the browser has one. Without it a cookie
+/// The public suffix list, when the jar has one. Without it a cookie
 /// is kept for the host that set it alone, whatever its `Domain`
 /// attribute, and a site is a host: narrower than the standard, never
-/// wider.
+/// wider. The browser's jars always have one ([`bundled_suffixes`]); a
+/// test may leave it out.
 pub(crate) type Suffixes = Option<Rc<List>>;
+
+/// The Public Suffix List built in, unchanged from its publisher
+/// (`native/fetcher/data/public-suffix/NOTICE.txt`; DEC-7340).
+const BUNDLED_SUFFIXES: &str = include_str!("../../data/public-suffix/public_suffix_list.dat");
+const _: () = assert!(BUNDLED_SUFFIXES.len() <= MAX_SUFFIX_LIST_BYTES);
+
+/// The list built in, read.
+///
+/// # Errors
+/// When the list has more rules than [`MAX_SUFFIX_RULES`], none, or does
+/// not read as a list: the process then does not start, since a jar
+/// without its list would keep cookies by another rule than the one the
+/// browser states.
+pub(crate) fn bundled_suffixes() -> Result<Suffixes, String> {
+    // A rule is a line that is neither empty nor a comment (the list's
+    // own format, https://publicsuffix.org/list/).
+    let rules = BUNDLED_SUFFIXES.lines().filter(|line| !line.trim().is_empty() && !line.starts_with("//")).count();
+    if rules == 0 || rules > MAX_SUFFIX_RULES {
+        return Err(format!("the public suffix list has {rules} rules, outside 1 to {MAX_SUFFIX_RULES}"));
+    }
+    let list = BUNDLED_SUFFIXES.parse::<List>().map_err(|error| format!("the public suffix list does not read: {error}"))?;
+    Ok(Some(Rc::new(list)))
+}
 
 /// What a jar needs to know of the request a cookie comes with or goes
 /// with (RFC 6265bis section 5.2, "same-site and cross-site requests").

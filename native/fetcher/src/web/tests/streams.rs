@@ -181,6 +181,7 @@ fn an_event_stream_is_read_and_made_again() {
             ("/a/events", _) => {
                 stream.body(format!("data: again after {}\n\n", asked.header("last-event-id").unwrap_or_default()).as_bytes()).then(Piece::Hang)
             }
+            ("/a/moved", _) => Reply::to(302, "/a/events"),
             ("/a/page", _) => Reply::ok("<html>"),
             ("/a/gone", _) => Reply::new(204),
             _ => Reply::new(404).header("content-type", "text/event-stream"),
@@ -189,12 +190,12 @@ fn an_event_stream_is_read_and_made_again() {
     let mut client = Client::new(&server.url("/a/"));
     let source = |start: &mut protocol::web::Start| start.kind = RequestKind::EventSource;
     let id = client.start(&server.url("/a/events"), source);
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: server.url("/a/events") });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "tick".into(), data: "one".into(), last_id: "7".into() });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "message".into(), data: "two".into(), last_id: "7".into() });
     let lost = Instant::now();
     assert_eq!(client.next_event(), FromWebClient::Retrying(id));
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: server.url("/a/events") });
     assert!(lost.elapsed() >= MIN_RETRY.checked_sub(Duration::from_millis(50)).unwrap(), "a stream cannot ask to be made again at once");
     assert_eq!(
         client.next_event(),
@@ -208,6 +209,12 @@ fn an_event_stream_is_read_and_made_again() {
     // The script closes it by aborting.
     client.send(&ToWebClient::Abort(id));
     assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
+    // A stream a redirect led to says the address that answered, whose
+    // origin is its events' (TODO-7371 step 1).
+    let moved = client.start(&server.url("/a/moved#part"), source);
+    assert_eq!(client.next_event(), FromWebClient::Opened { id: moved, protocol: String::new(), url: server.url("/a/events") });
+    client.send(&ToWebClient::Abort(moved));
+    while client.next_event() != (FromWebClient::Failed { id: moved, error: ErrorKind::Abort, reason: Reason::Aborted }) {}
     // What is not an event stream fails for good, with no retrying.
     for path in ["/a/page", "/a/gone", "/a/missing"] {
         assert_eq!(client.fetch(&server.url(path), source).reason(), Reason::NotEventStream, "{path}");
@@ -228,5 +235,54 @@ fn an_event_stream_that_cannot_connect_is_tried_again() {
     assert_eq!(client.next_event(), FromWebClient::Retrying(id));
     client.send(&ToWebClient::Abort(id));
     assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
+    client.finish().unwrap();
+}
+
+/// The Fetch standard's keepalive flag (the script API's departure D9,
+/// TODO-7371 step 4): a request a page starts as it closes goes on when
+/// its context closes, its answer told to no one; a request without the
+/// flag ends with its context. The bodies of the keepalive requests under
+/// way are held to the standard's 64 kibibytes together.
+#[test]
+fn a_keepalive_request_outlives_its_context() {
+    let server = serve(|asked| match asked.target.as_str() {
+        // Each answers late, so the context has closed by then.
+        "/a/beacon" | "/a/plain" => {
+            std::thread::sleep(Duration::from_millis(250));
+            Reply::to(302, &format!("{}-landed", asked.target))
+        }
+        "/a/slow" => {
+            std::thread::sleep(Duration::from_millis(600));
+            Reply::ok("slow")
+        }
+        _ => Reply::ok("landed"),
+    });
+    let mut client = Client::new(&server.url("/a/"));
+    client.start(&server.url("/a/beacon"), |start| start.keepalive = true);
+    client.start(&server.url("/a/plain"), |_| {});
+    client.send(&ToWebClient::ContextCloses(protocol::script::ContextId::Page));
+    assert_eq!(client.next_within(Duration::from_millis(1200)), None, "neither says anything more");
+    assert_eq!((server.count("GET", "/a/beacon-landed"), server.count("GET", "/a/plain-landed")), (1, 0), "the keepalive request went on, the other ended");
+    // The quota: 60 kibibytes under way, and 8 more are too many; once
+    // the first has ended there is room again.
+    let post = |bytes: u32| {
+        move |start: &mut protocol::web::Start| (start.method, start.keepalive, start.body) = ("POST".into(), true, protocol::web::BodySource::Bytes(bytes))
+    };
+    let send = |client: &mut Client, id: u32, bytes: usize| {
+        for piece in vec![0_u8; bytes].chunks(MAX_CHUNK_BYTES) {
+            client.send(&ToWebClient::RequestBody { id, bytes: piece.to_vec() });
+        }
+        client.send(&ToWebClient::RequestBodyEnd(id));
+    };
+    let first = client.start(&server.url("/a/slow"), post(60 * 1024));
+    send(&mut client, first, 60 * 1024);
+    let second = client.start(&server.url("/a/over"), post(8 * 1024));
+    send(&mut client, second, 8 * 1024);
+    assert_eq!(client.next_event(), FromWebClient::Failed { id: second, error: ErrorKind::Network, reason: Reason::TooLarge });
+    assert_eq!(client.outcome(first).text(), "slow");
+    let third = client.start(&server.url("/a/after"), post(8 * 1024));
+    send(&mut client, third, 8 * 1024);
+    assert_eq!(client.outcome(third).text(), "landed");
+    assert_eq!(server.count("POST", "/a/over"), 0);
     client.finish().unwrap();
 }

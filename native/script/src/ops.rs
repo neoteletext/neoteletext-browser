@@ -142,6 +142,8 @@ numbered! {
     TT_COLOUR_DEFINE = 110,
     /// Teletext: redefines a Colour Map entry.
     TT_COLOUR_SET = 111,
+    /// Teletext: makes a sprite of frames given as blocks' cells; gives its handle.
+    TT_SPRITE = 112,
     /// Teletext: labels a sprite or a control.
     TT_LABEL = 113,
     /// Teletext: an animation operation on a sprite or a control.
@@ -156,6 +158,8 @@ numbered! {
     TT_LANGUAGES = 118,
     /// Teletext: the receiver's presentation level.
     TT_LEVEL = 119,
+    /// Teletext: a text as the cells of a block, three bytes a cell.
+    TT_BLOCK_TEXT = 120,
     /// The teletext sixel bitmap: the rows it owns.
     BM_ROWS = 130,
     /// The sixel bitmap: fills the back buffer and frees its text cells.
@@ -214,6 +218,20 @@ numbered! {
     NP_PAINT = 303,
     /// NAPLPS: starts a new generation with a painter program.
     NP_REPAINT = 304,
+    /// NAPLPS: defines or redefines a symbol from a painter program; gives its handle.
+    NP_SYMBOL = 305,
+    /// NAPLPS: defines a DRCS character from a painter program; gives its handle.
+    NP_DRCS = 306,
+    /// NAPLPS: defines a texture from a painter program; gives its handle.
+    NP_TEXTURE = 307,
+    /// NAPLPS: makes or redefines an actor or a region; gives its handle.
+    NP_ACTOR = 308,
+    /// NAPLPS: labels an actor or a region.
+    NP_LABEL = 309,
+    /// NAPLPS: an animation operation on an actor or a region.
+    NP_ANIMATE = 310,
+    /// NAPLPS: removes an actor, a region or a symbol.
+    NP_REMOVE = 311,
     /// NAPLPS: measures text; gives `width,height` in dots.
     NP_MEASURE = 312,
 }

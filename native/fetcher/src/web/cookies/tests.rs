@@ -423,3 +423,81 @@ fn a_cookie_date_is_read_by_the_standards_algorithm() {
     assert_eq!(life("a=1; Expires=never"), None);
     assert_eq!(life("a=1; Expires=01 Jan 1970 00:00:01; Max-Age=60"), Some(Duration::seconds(60)), "Max-Age goes before Expires");
 }
+
+fn bundled_jar() -> Jar {
+    Jar::new(bundled_suffixes().unwrap())
+}
+
+/// TODO-7341 with RFC 6265bis section 5.7 (the storage model's step on a
+/// domain attribute that is a public suffix), against the Public Suffix
+/// List built in: no cookie is set for a suffix of one label, of two, or
+/// of the list's private part; a registrable domain under a two-label
+/// suffix is kept and sent to its other hosts; a suffix that is the host
+/// itself keeps the cookie for that host alone.
+#[test]
+fn the_built_in_list_refuses_a_cookie_for_a_public_suffix() {
+    let mut jar = bundled_jar();
+    let shop = url("https://www.example.co.uk/");
+    for domain in ["uk", "co.uk", "CO.UK", ".co.uk"] {
+        assert!(!jar.store(&shop, format!("a=1; Domain={domain}").as_bytes(), SAME), "{domain}");
+    }
+    assert!(!jar.store(&url("https://www.example.com/"), b"a=1; Domain=com", SAME));
+    assert!(!jar.store(&url("https://someone.github.io/"), b"a=1; Domain=github.io", SAME), "the list's private part counts");
+    assert_eq!(jar.count(), 0);
+    assert!(jar.store(&shop, b"a=1; Domain=example.co.uk", SAME));
+    assert_eq!(sent(&jar, "https://shop.example.co.uk/").as_deref(), Some("a=1"));
+    assert_eq!(sent(&jar, "https://other.co.uk/"), None);
+    // A host that is itself a suffix sets a cookie for itself alone.
+    assert!(jar.store(&url("https://github.io/"), b"own=1; Domain=github.io", SAME));
+    assert_eq!(sent(&jar, "https://github.io/").as_deref(), Some("own=1"));
+    assert_eq!(sent(&jar, "https://someone.github.io/"), None);
+}
+
+/// The list's wildcard and exception rules (`*.ck` and `!www.ck`, the
+/// publisher's own test vectors at
+/// <https://github.com/publicsuffix/list/blob/main/tests/test_psl.txt>),
+/// and a suffix of other than ASCII letters (`公司.cn`) in the ASCII form
+/// an address's host has.
+#[test]
+fn the_built_in_list_keeps_its_wildcard_exception_and_international_rules() {
+    let mut jar = bundled_jar();
+    // Every name directly under `ck` is a suffix, so `test.ck` is one.
+    assert!(!jar.store(&url("https://b.test.ck/"), b"a=1; Domain=test.ck", SAME));
+    assert!(jar.store(&url("https://a.b.test.ck/"), b"a=1; Domain=b.test.ck", SAME));
+    // But `www.ck` is excepted: it is a registrable domain.
+    assert!(jar.store(&url("https://shop.www.ck/"), b"w=1; Domain=www.ck", SAME));
+    assert_eq!(sent(&jar, "https://www.ck/").as_deref(), Some("w=1"));
+    assert!(!jar.store(&url("https://www.xn--55qx5d.cn/"), b"a=1; Domain=xn--55qx5d.cn", SAME), "公司.cn is a suffix");
+    assert!(jar.store(&url("https://www.shop.xn--55qx5d.cn/"), b"i=1; Domain=shop.xn--55qx5d.cn", SAME));
+    assert_eq!(sent(&jar, "https://shop.xn--55qx5d.cn/").as_deref(), Some("i=1"));
+}
+
+/// RFC 6265bis section 5.2: a site is a registrable domain by the list,
+/// so two hosts of one are same-site and two names under one public
+/// suffix are not.
+#[test]
+fn a_site_is_a_registrable_domain_by_the_built_in_list() {
+    let list = bundled_suffixes().unwrap();
+    let same = |one: &str, other: &str| same_site(&list, &url(one), &url(other));
+    assert!(same("https://www.example.co.uk/", "https://shop.example.co.uk/"));
+    assert!(!same("https://one.co.uk/", "https://other.co.uk/"));
+    assert!(!same("https://one.github.io/", "https://other.github.io/"));
+    assert!(!same("https://a.test.ck/", "https://b.test.ck/"));
+    assert!(same("https://a.www.ck/", "https://b.www.ck/"));
+    assert!(same("https://a.shop.xn--55qx5d.cn/", "https://shop.xn--55qx5d.cn/"));
+    assert!(!same("https://a.xn--55qx5d.cn/", "https://b.xn--55qx5d.cn/"));
+    assert!(!same("http://www.example.com/", "https://www.example.com/"), "schemes count");
+}
+
+/// The list compiled in is the bytes `SHA256SUMS` records beside it
+/// (TODO-7341 step 5), within its bounds.
+#[test]
+fn the_built_in_list_is_the_recorded_bytes() {
+    let digest = ring::digest::digest(&ring::digest::SHA256, BUNDLED_SUFFIXES.as_bytes());
+    let hex = digest.as_ref().iter().fold(String::new(), |hex, byte| hex + &format!("{byte:02x}"));
+    let sums = include_str!("../../../data/public-suffix/SHA256SUMS");
+    assert!(sums.lines().any(|line| line == format!("{hex}  public_suffix_list.dat")), "{hex}");
+    let started = std::time::Instant::now();
+    assert!(bundled_suffixes().unwrap().is_some());
+    println!("the list read in {:?}", started.elapsed());
+}

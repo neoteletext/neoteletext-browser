@@ -163,3 +163,73 @@ fn a_pointer_is_a_cell_on_a_teletext_page() {
     assert_eq!(script::cell_at(u16::MAX, u16::MAX), (39, 24), "a pixel past the picture is its last cell");
     assert!(engine().script_pick(page(Renderer::Teletext), 10, 10).is_empty(), "a page with no control");
 }
+
+/// Section 5.3 and TODO-7382 step 2 (DEC-7380): a batch's objects are
+/// written on the script's Object page, which the open page's packet
+/// X/27/4 names before the Object page's own packets reach the engine; a
+/// sprite's frame is an object of that page, drawn at the sprite's place;
+/// the sprites are applied before the same batch's operations on them;
+/// declaring them again forgets every sprite's animation state; and a
+/// pointer on a detectable sprite is told the sprite's number, topmost
+/// first.
+#[test]
+fn a_batchs_objects_and_sprites_are_drawn_from_the_scripts_object_page() {
+    use neoteletext_rules::animate::{Operation, OperationKind};
+    use neoteletext_rules::table::Target;
+    use protocol::script::batch::{Sprite, TeletextObject};
+    let mut engine = engine();
+    let at = page(Renderer::Teletext);
+    // The frame: the character X at the object's origin (EN 300 706
+    // clause 12.3.4: a column triplet's address is its column within the
+    // object).
+    let character = neoteletext_core::packet::TripletFunction::G0Character { column: 0, code: b'X' }.to_triplet();
+    let body = vec![Triplet { address: character.address, mode: character.mode, data: character.data }];
+    let sprite = |number: u16, column: i8, order: i8| Sprite {
+        number,
+        shown: true,
+        detectable: true,
+        layer: 2,
+        order,
+        column,
+        row: 7,
+        width: 1,
+        height: 1,
+        objects: vec![0],
+    };
+    let moved = Operation { target: Target::object(1), kind: OperationKind::Move { relative: false, x: 20, y: 9 } };
+    let batch = Batch {
+        teletext_objects: Some(vec![TeletextObject { number: 0, triplets: body }]),
+        sprites: Some(vec![sprite(1, 10, 0), sprite(2, 10, 1)]),
+        animate: Some(vec![moved]),
+        ..Batch::new(0)
+    };
+    engine.apply_script(at, &batch, true).unwrap();
+    let held = *engine.decoder.store().get(PageAddress::from_mpp(0x100).unwrap(), SubCode::new(0)).unwrap();
+    assert!(held.compositional_links[0].is_some(), "the open page's packet X/27/4");
+    // Sprite 2 stayed at column 10, row 7; sprite 1 was moved by the same
+    // batch's operation, after it was declared.
+    let pixel = |column: u16, row: u16| (column * 12 + 1, row * 20 + 1);
+    let (x, y) = pixel(10, 7);
+    assert_eq!(engine.script_pick(at, x, y), vec![2]);
+    let (x, y) = pixel(20, 9);
+    assert_eq!(engine.script_pick(at, x, y), vec![1]);
+    let stored = *engine.decoder.store().get(PageAddress::from_mpp(0x100).unwrap(), SubCode::new(0)).unwrap();
+    let grid = engine.compose(0x100, &stored, View::default());
+    let glyph = |row: usize, column: usize| match grid.cells[row][column].glyph {
+        Glyph::Char(character) => to_unicode(character).base,
+        _ => ' ',
+    };
+    assert_eq!((glyph(7, 10), glyph(9, 20)), ('X', 'X'), "each sprite's frame is drawn at its place");
+
+    // Declared again: the move is forgotten, and both are under one cell,
+    // the higher order on top.
+    engine.apply_script(at, &Batch { sprites: Some(vec![sprite(1, 10, 0), sprite(2, 10, 1)]), ..Batch::new(1) }, false).unwrap();
+    let (x, y) = pixel(10, 7);
+    assert_eq!(engine.script_pick(at, x, y), vec![2, 1]);
+    assert_eq!(cells(&engine, 0x101)[5], cells(&self::engine(), 0x101)[5], "another page is untouched");
+
+    // A sprite with no frame is no sprite: the batch is refused whole.
+    let none = Sprite { objects: Vec::new(), ..sprite(3, 1, 0) };
+    assert!(engine.apply_script(at, &Batch { sprites: Some(vec![none]), teletext_rows: Some(vec![row(1, "NOT DRAWN")]), ..Batch::new(2) }, false).is_err());
+    assert_eq!(shown(&engine, 0x100, 1), "FILE ROW ONE");
+}

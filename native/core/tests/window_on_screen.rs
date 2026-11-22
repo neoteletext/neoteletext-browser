@@ -137,6 +137,7 @@ fn the_interface_s_window_reaches_the_screen() {
         };
         let handlers = Handlers {
             read_source: &refuse_read,
+            read_script: &|_, _| Err(String::from("this test reads nothing")),
             open_web: &refuse_web,
             environment: &environment,
             viewer_keys_key: &refuse_key,

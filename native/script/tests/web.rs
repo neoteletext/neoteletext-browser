@@ -83,6 +83,7 @@ fn url_and_url_search_params_are_the_url_standards() {
         equal("dot segments", new URL("https://example.test/a/./b/../c").pathname, "/a/c");
         equal("a NUL in the input is the input's", new URL("https://example.test/a\0b").pathname, "/a%00b");
         equal("lone surrogate", new URL("https://example.test/?\ud800").search, "?%EF%BF%BD");
+        equal("an address that ends at an empty authority", new URL("foo://").href + "|" + new URL("foo://").host + "|" + new URL("foo://").origin, "foo://||null");
         throws("relative with no base", TypeError, "", () => new URL("/x"));
         throws("bad base", TypeError, "", () => new URL("/x", "nonsense"));
         throws("no argument", TypeError, "", () => new URL());
@@ -129,7 +130,7 @@ fn url_and_url_search_params_are_the_url_standards() {
         "##,
         silent(),
         1,
-        55,
+        56,
     );
 }
 
@@ -804,6 +805,37 @@ fn without_the_manifests_network_everything_fails_at_once() {
     let log = run(&mut container, &mut mock, 3);
     assert_checks(&log, 3);
     assert_eq!(mock.seen(), Vec::new());
+}
+
+/// HTML section 9.2.6: each event of a stream has the origin of the
+/// stream's final address, which the web client says as it opens
+/// (TODO-7371 step 1); a stream a redirect led to another origin gives
+/// its events that origin, and one the web client names no address for
+/// keeps the origin it was asked at.
+#[test]
+fn an_event_streams_events_have_its_final_origin() {
+    let event = || vec![Item::Event { event: String::new(), data: "x".into(), last_id: String::new() }];
+    let mock = MockWebClient::new(move |requested| match path(requested).as_str() {
+        "/chan/moved" => Answer::EventStreamAt("https://other.test:8443/stream".into(), event()),
+        _ => Answer::EventStream(event()),
+    });
+    let body = format!(
+        "{WAIT}{}",
+        r#"
+        (async () => {
+          const seen = [];
+          for (const name of ["moved", "stayed"]) {
+            const stream = new EventSource(name);
+            stream.onmessage = (event) => seen.push(name + " " + event.origin + " " + stream.url);
+          }
+          await wait(4);
+          equal("each event's origin", seen.sort().join("\n"), ["moved https://other.test:8443 https://example.test/chan/moved",
+            "stayed https://example.test https://example.test/chan/stayed"].join("\n"));
+          done();
+        })();
+        "#
+    );
+    checked(&body, mock, 10, 1);
 }
 
 /// What each test script that waits starts with: `wait(ticks)`.

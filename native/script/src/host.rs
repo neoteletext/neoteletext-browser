@@ -677,9 +677,27 @@ impl Host {
                 let renderer = renderer_name(u8::try_from(third).ok().and_then(|code| Renderer::of(code).ok()).unwrap_or(Renderer::Teletext));
                 let subcode = u16::try_from(second).ok().filter(|subcode| *subcode != NO_SUBCODE);
                 held.shown = Some(PageShown { page: u16::try_from(first).unwrap_or(0), subcode, renderer, url });
+                // The channel context may draw its sprites on the teletext
+                // page it is shown (section 3.1; work package T2).
+                let shown = u8::try_from(third).ok().and_then(|code| Renderer::of(code).ok()).unwrap_or(Renderer::Teletext);
+                let open = held.open.clone();
+                let removed = self.teletext.page_shown(shown, u16::try_from(first).unwrap_or(0), u16::try_from(second).unwrap_or(NO_SUBCODE), &open);
+                if let Some(held) = self.context_mut(context) {
+                    held.listens.retain(|(handle, _)| !removed.contains(handle));
+                }
                 true
             }
-            EventKind::PAGE_HIDE => context == ContextId::Channel,
+            EventKind::PAGE_HIDE => {
+                if context != ContextId::Channel {
+                    return false;
+                }
+                // Everything the channel context drew goes with the page.
+                let removed = self.teletext.page_hidden();
+                if let Some(held) = self.context_mut(context) {
+                    held.listens.retain(|(handle, _)| !removed.contains(handle));
+                }
+                true
+            }
             EventKind::FOCUS
             | EventKind::BLUR
             | EventKind::VISIBILITY
@@ -907,7 +925,7 @@ impl Host {
                 batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
             }
         }
-        self.naplps.take_batch(&mut batch);
+        self.naplps_take(&mut batch);
         self.regis_take(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
@@ -1099,9 +1117,19 @@ impl Host {
             | Op::WS_CLOSE
             | Op::URL_SET
             | Op::DECODE => self.web_operation(context, op, ints, payload),
-            Op::NP_COLOUR_DEFINE | Op::NP_COLOUR_SET | Op::NP_BLINK | Op::NP_PAINT | Op::NP_REPAINT | Op::NP_MEASURE => {
-                self.naplps_operation(context, op, ints, payload)
-            }
+            Op::NP_COLOUR_DEFINE
+            | Op::NP_COLOUR_SET
+            | Op::NP_BLINK
+            | Op::NP_PAINT
+            | Op::NP_REPAINT
+            | Op::NP_SYMBOL
+            | Op::NP_DRCS
+            | Op::NP_TEXTURE
+            | Op::NP_ACTOR
+            | Op::NP_LABEL
+            | Op::NP_ANIMATE
+            | Op::NP_REMOVE
+            | Op::NP_MEASURE => self.naplps_operation(context, op, ints, payload),
             Op::TT_PUT
             | Op::TT_CODES
             | Op::TT_BLIT
@@ -1114,6 +1142,8 @@ impl Host {
             | Op::TT_OVERLAY_CLEAR
             | Op::TT_COLOUR_DEFINE
             | Op::TT_COLOUR_SET
+            | Op::TT_SPRITE
+            | Op::TT_BLOCK_TEXT
             | Op::TT_LABEL
             | Op::TT_ANIMATE
             | Op::TT_REMOVE
@@ -1130,9 +1160,15 @@ impl Host {
             | Op::BM_BLIT
             | Op::BM_TEXT
             | Op::BM_PRESENT => {
-                // A label waiting to leave is the one thing teletext stages
-                // whose size a script chooses.
-                self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;
+                // A label waiting to leave, and the sections a sprite's
+                // making puts in the step's output, are what teletext
+                // stages whose size a script chooses.
+                let output = match op {
+                    Op::TT_LABEL => MAX_LABEL_BYTES,
+                    Op::TT_SPRITE => crate::teletext::sprites::limits::SPRITE_OUTPUT_BYTES,
+                    _ => 0,
+                };
+                self.room(MAX_LABEL_BYTES, output)?;
                 let scope = self.context(context).and_then(|held| held.scope_stack.last().copied()).unwrap_or(0);
                 let reply = self.teletext.call(context, op, ints.ints, payload, scope, self.tick)?;
                 // A thing removed has no listeners left to count.
@@ -1313,7 +1349,8 @@ impl Host {
             held.scopes.retain(|scope| *scope != id);
             held.scope_stack.retain(|scope| *scope != id);
             held.timers.retain(|timer| timer.scope != id);
-            let removed = self.teletext.scope_end(context, id);
+            let mut removed = self.teletext.scope_end(context, id);
+            removed.extend(self.naplps_scope_end(context, id));
             if let Some(held) = self.context_mut(context) {
                 held.listens.retain(|(handle, _)| !removed.contains(handle));
             }
@@ -1569,7 +1606,7 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
-        self.naplps.budget(&mut out);
+        self.naplps.budget(context, &mut out);
         self.teletext.budget(&mut out);
         self.regis_budget(context, &mut out);
         out.push('}');
@@ -1595,6 +1632,7 @@ fn is_page_target(target: &str) -> bool {
 }
 
 mod regis;
+pub use regis::painter_contents as regis_painter_contents;
 pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
 
 #[cfg(test)]

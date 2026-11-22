@@ -47,6 +47,7 @@ const REPORT_TITLE: u8 = 4;
 const REPORT_LOG: u8 = 5;
 const REPORT_STOPPED: u8 = 6;
 const REPORT_LABEL: u8 = 7;
+const REPORT_WANTED: u8 = 8;
 
 /// What only the trusted core knows of a channel, which every context of
 /// its scripts is told (section 3.3 and the fields of `CONTEXT_OPEN`).
@@ -435,6 +436,52 @@ pub enum ScriptReport {
         /// any more.
         label: String,
     },
+    /// A page file names a script the decoder does not hold, by a TTI
+    /// `JS` line or a `SCRIPT_REF` record (section 12.5 step 2): the
+    /// script's name and never an address. The trusted core has it
+    /// fetched from the channel's own folder, or read from the folder of
+    /// a file opened from disk.
+    Wanted {
+        /// The page and sub-code the script is for.
+        page: PageSub,
+        /// The script's name (section 12.2).
+        name: String,
+    },
+}
+
+/// Writes a piece of a script: the same fields wherever one travels, from
+/// a fetcher to the trusted core and from the core to a decoder.
+pub(crate) fn push_piece(payload: &mut Vec<u8>, piece: &SourcePiece) -> Result<(), ProtocolError> {
+    piece.check()?;
+    payload.push(piece.level.code());
+    push_named(payload, piece.page, &piece.name)?;
+    payload.extend_from_slice(&piece.total.to_be_bytes());
+    payload.extend_from_slice(&piece.offset.to_be_bytes());
+    push_bytes(payload, &piece.bytes)
+}
+
+/// Reads a piece of a script, within its bounds.
+pub(crate) fn read_piece(fields: &mut Fields<'_>) -> Result<SourcePiece, ProtocolError> {
+    let level = ContextId::of(fields.u8()?)?;
+    let (page, name) = read_named(fields)?;
+    let piece =
+        SourcePiece { level, page, name, total: fields.u32()?, offset: fields.u32()?, bytes: fields.bytes(MAX_SOURCE_PIECE_BYTES, "script piece")?.to_vec() };
+    piece.check()?;
+    Ok(piece)
+}
+
+/// Writes a page and the name of a script for it.
+pub(crate) fn push_named(payload: &mut Vec<u8>, page: PageSub, name: &str) -> Result<(), ProtocolError> {
+    check_name(name)?;
+    crate::rules::push_page_sub(payload, page)?;
+    push_bytes(payload, name.as_bytes())
+}
+
+/// Reads a page and the name of a script for it.
+pub(crate) fn read_named(fields: &mut Fields<'_>) -> Result<(PageSub, String), ProtocolError> {
+    let (page, name) = (crate::rules::read_page_sub(fields)?, fields.string(MAX_SCRIPT_NAME, "script name")?);
+    check_name(&name)?;
+    Ok((page, name))
 }
 
 pub(super) fn push_order(payload: &mut Vec<u8>, order: &ScriptOrder) -> Result<(), ProtocolError> {
@@ -449,14 +496,8 @@ pub(super) fn push_order(payload: &mut Vec<u8>, order: &ScriptOrder) -> Result<(
             payload.extend_from_slice(&facts.zone_minutes.to_be_bytes());
         }
         ScriptOrder::Source(piece) => {
-            piece.check()?;
             payload.push(ORDER_SOURCE);
-            payload.push(piece.level.code());
-            crate::rules::push_page_sub(payload, piece.page)?;
-            push_bytes(payload, piece.name.as_bytes())?;
-            payload.extend_from_slice(&piece.total.to_be_bytes());
-            payload.extend_from_slice(&piece.offset.to_be_bytes());
-            push_bytes(payload, &piece.bytes)?;
+            push_piece(payload, piece)?;
         }
         ScriptOrder::NoScript(page) => {
             payload.push(ORDER_NO_SCRIPT);
@@ -509,18 +550,7 @@ pub(super) fn read_order(fields: &mut Fields<'_>) -> Result<ScriptOrder, Protoco
             facts.check()?;
             ScriptOrder::Channel(facts)
         }
-        ORDER_SOURCE => {
-            let piece = SourcePiece {
-                level: ContextId::of(fields.u8()?)?,
-                page: crate::rules::read_page_sub(fields)?,
-                name: fields.string(MAX_SCRIPT_NAME, "script name")?,
-                total: fields.u32()?,
-                offset: fields.u32()?,
-                bytes: fields.bytes(MAX_SOURCE_PIECE_BYTES, "script piece")?.to_vec(),
-            };
-            piece.check()?;
-            ScriptOrder::Source(piece)
-        }
+        ORDER_SOURCE => ScriptOrder::Source(read_piece(fields)?),
         ORDER_NO_SCRIPT => ScriptOrder::NoScript(crate::rules::read_page_sub(fields)?),
         ORDER_SOUND_ALLOWED => ScriptOrder::SoundAllowed,
         ORDER_TEXT => ScriptOrder::Text { sequence: fields.u32()?, text: fields.string(MAX_EVENT_PAYLOAD_BYTES, "text")? },
@@ -600,6 +630,10 @@ pub(super) fn push_report(payload: &mut Vec<u8>, report: &ScriptReport) -> Resul
             payload.extend_from_slice(&[REPORT_STOPPED, reason.code()]);
             push_bytes(payload, text.as_bytes())?;
         }
+        ScriptReport::Wanted { page, name } => {
+            payload.push(REPORT_WANTED);
+            push_named(payload, *page, name)?;
+        }
         ScriptReport::Label { page, handle, label } => {
             check_plain(label, MAX_LABEL_BYTES, "label")?;
             payload.push(REPORT_LABEL);
@@ -651,6 +685,10 @@ pub(super) fn read_report(fields: &mut Fields<'_>) -> Result<ScriptReport, Proto
             let (page, handle, label) = (crate::rules::read_page_sub(fields)?, fields.i32()?, fields.string(MAX_LABEL_BYTES, "label")?);
             check_plain(&label, MAX_LABEL_BYTES, "label")?;
             ScriptReport::Label { page, handle, label }
+        }
+        REPORT_WANTED => {
+            let (page, name) = read_named(fields)?;
+            ScriptReport::Wanted { page, name }
         }
         _ => return Err(ProtocolError::BadValue("script report")),
     })
@@ -710,6 +748,7 @@ mod tests {
             ScriptReport::Log { level: 2, context: ContextId::Channel, text: "a line".into() },
             ScriptReport::Stopped { reason: FailReason::Link, text: "MAX_SCRIPT_OUTPUT_BYTES_PER_SECOND".into() },
             ScriptReport::Label { page: page(), handle: -5, label: "Forecast".into() },
+            ScriptReport::Wanted { page: page(), name: "boat.js".into() },
         ]
     }
 
@@ -727,6 +766,33 @@ mod tests {
             write_to_core(&mut wire, &FromDecoder::Script(report.clone())).unwrap();
             assert_eq!(read_from_decoder(&mut wire.as_slice()).unwrap(), Some(FromDecoder::Script(report)));
         }
+    }
+
+    /// Section 12.5 (TODO-7304): a script's pieces and its failure from a
+    /// fetcher, and the request for a script by its name, are read back
+    /// as written; a name that could leave the channel's folder is
+    /// refused both ways.
+    #[test]
+    fn a_fetchers_script_messages_round_trip_and_a_name_is_never_a_path() {
+        use crate::fetcher::{FromFetcher, ToFetcher, read_from_fetcher, read_to_fetcher, write_to_core as write_from_fetcher, write_to_fetcher};
+        let piece = SourcePiece { level: ContextId::Channel, page: page(), name: "channel.js".into(), total: 5, offset: 0, bytes: b"hello".to_vec() };
+        for message in [FromFetcher::Script(piece), FromFetcher::ScriptFailed { level: ContextId::Page, page: page(), name: "boat.js".into() }] {
+            let mut wire = Vec::new();
+            write_from_fetcher(&mut wire, &message).unwrap();
+            assert_eq!(read_from_fetcher(&mut wire.as_slice()).unwrap(), Some(message));
+        }
+        let fetch = ToFetcher::FetchScript { page: page(), name: "boat.js".into() };
+        let mut wire = Vec::new();
+        write_to_fetcher(&mut wire, &fetch).unwrap();
+        assert_eq!(read_to_fetcher(&mut wire.as_slice()).unwrap(), Some(fetch));
+        for name in ["../boat.js", "a/boat.js", "https://example.test/boat.js", "", "boat.js?x"] {
+            assert!(write_to_fetcher(&mut Vec::new(), &ToFetcher::FetchScript { page: page(), name: name.into() }).is_err(), "{name}");
+            assert!(write_to_core(&mut Vec::new(), &FromDecoder::Script(ScriptReport::Wanted { page: page(), name: name.into() })).is_err(), "{name}");
+        }
+        // A reader refuses what a writer would not write.
+        let at = wire.iter().rposition(|byte| *byte == b'.').unwrap();
+        wire[at] = b'/';
+        assert!(read_to_fetcher(&mut wire.as_slice()).is_err());
     }
 
     /// Section 11.2: a field past its bound is refused by the writer and

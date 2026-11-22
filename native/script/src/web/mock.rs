@@ -136,6 +136,9 @@ pub enum Answer {
     Fail(ErrorKind, Reason),
     /// An event stream opens and does these, in order.
     EventStream(Vec<Item>),
+    /// An event stream that a redirect led to this address opens there
+    /// and does these, in order.
+    EventStreamAt(String, Vec<Item>),
     /// A socket opens with this subprotocol and does these, in order;
     /// when `echo`, each message sent to it is sent back.
     Socket {
@@ -166,6 +169,8 @@ struct Live {
     items: VecDeque<Item>,
     wait: u32,
     echo: bool,
+    /// The address an event stream said it opened at; empty for none.
+    url: String,
     /// The message a socket is being sent, piece by piece.
     incoming: Vec<u8>,
 }
@@ -244,6 +249,7 @@ impl MockWebClient {
                     items: VecDeque::new(),
                     wait: 0,
                     echo: false,
+                    url: String::new(),
                     incoming: Vec::new(),
                 });
                 if body == BodySource::None {
@@ -321,11 +327,16 @@ impl MockWebClient {
                 live.ending = true;
             }
             Answer::EventStream(items) if live.kind == RequestKind::EventSource => {
-                self.out.push(FromWebClient::Opened { id, protocol: String::new() });
+                self.out.push(FromWebClient::Opened { id, protocol: String::new(), url: String::new() });
+                live.items = items.into();
+            }
+            Answer::EventStreamAt(url, items) if live.kind == RequestKind::EventSource => {
+                self.out.push(FromWebClient::Opened { id, protocol: String::new(), url: url.clone() });
+                live.url = url;
                 live.items = items.into();
             }
             Answer::Socket { protocol, echo, items } if live.kind == RequestKind::WebSocket => {
-                self.out.push(FromWebClient::Opened { id, protocol });
+                self.out.push(FromWebClient::Opened { id, protocol, url: String::new() });
                 live.items = items.into();
                 live.echo = echo;
             }
@@ -336,7 +347,7 @@ impl MockWebClient {
             }
             // An answer of the wrong kind for the request: the request
             // fails as one the web client could not make.
-            Answer::Response(_) | Answer::EventStream(_) | Answer::Socket { .. } => {
+            Answer::Response(_) | Answer::EventStream(_) | Answer::EventStreamAt(..) | Answer::Socket { .. } => {
                 self.live.remove(place);
                 self.out.push(FromWebClient::Failed { id, error: ErrorKind::Network, reason: Reason::Unsupported });
             }
@@ -376,7 +387,7 @@ impl MockWebClient {
                         Item::Event { event, data, last_id } => self.out.push(FromWebClient::Event { id, event, data, last_id }),
                         Item::Reconnect => {
                             self.out.push(FromWebClient::Retrying(id));
-                            self.out.push(FromWebClient::Opened { id, protocol: String::new() });
+                            self.out.push(FromWebClient::Opened { id, protocol: String::new(), url: live.url.clone() });
                         }
                         Item::Message { binary, bytes } => {
                             // In the pipe's pieces; an empty message is one empty last piece.

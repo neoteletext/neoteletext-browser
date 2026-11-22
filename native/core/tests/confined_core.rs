@@ -34,6 +34,7 @@ fn the_trusted_core_starts_confined_and_reaches_its_own_code() {
     let refuse_updater = |_: &[String]| Err(String::from("this test has no launcher"));
     let handlers = Handlers {
         read_source: &refuse_read,
+        read_script: &|_, _| Err(String::from("this test reads nothing")),
         open_web: &refuse_web,
         environment: &confine::environment,
         viewer_keys_key: &refuse_key,

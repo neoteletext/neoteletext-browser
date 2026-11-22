@@ -10,15 +10,15 @@
 //! NAPLPS: a painter's calls arrive as a painter program ([`program`])
 //! and the bytes are the host's.
 //!
-//! Operations 300 to 304 and 312 are here. Definitions (symbols, DRCS,
-//! textures) and the cast, operations 305 to 311, are work package N2's,
-//! which builds on [`writer::Painter`], [`writer::Definitions`] and
-//! [`Naplps::append`].
+//! Operations 300 to 304 and 312 are here. Definitions (symbols, DRCS
+//! characters, textures) and the cast, operations 305 to 311 (work
+//! package N2), are in the module `cast`, on the same painter and stream.
 //!
 //! Every bound is in [`limits`]; every byte held is counted against the
 //! container's host state (section 10.1 rule 7, TODO-7272) and every
 //! byte staged against one step's output.
 
+mod cast;
 pub mod limits;
 pub mod program;
 pub mod writer;
@@ -26,6 +26,7 @@ pub mod writer;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
+use neoteletext_rules::animate;
 use protocol::script::batch::NaplpsAppend;
 use protocol::script::{Batch, ContextId, ContextOpen, Renderer};
 
@@ -33,7 +34,7 @@ use self::limits::{
     FIRST_DEFINABLE_COLOUR, MAX_BLINK_TENTHS, MAX_BLINKS, MAX_COLOUR_NAME_BYTES, MAX_COLOUR_SETS_PER_SECOND, MAX_PAINTER_WORDS, MAX_TEXT_CHARS, NAPLPS_COLOURS,
     NAPLPS_MAX_BYTES_PER_CALLBACK, NAPLPS_MAX_BYTES_PER_SECOND, NAPLPS_REPAINT_TICKS, WAIT_BUDGET,
 };
-use self::writer::{Definitions, NoDefinitions, Painter};
+use self::writer::Painter;
 use super::{Host, Ints, Payload, Reply, has_control, no_payload, range, text_of, type_error};
 use crate::limits::{MAX_LANGUAGE_BYTES, TICKS_PER_SECOND};
 use crate::ops::Op;
@@ -136,6 +137,8 @@ pub struct Naplps {
     /// The tenths of a second of WAIT written in this generation.
     wait_tenths: u32,
     tick: u64,
+    /// The definitions and the cast (work package N2).
+    cast: cast::Cast,
 }
 
 impl Default for Naplps {
@@ -154,6 +157,7 @@ impl Default for Naplps {
             generation_tick: None,
             wait_tenths: 0,
             tick: 0,
+            cast: cast::Cast::default(),
         }
     }
 }
@@ -190,6 +194,9 @@ impl Naplps {
     pub(super) fn close(&mut self, context: ContextId) {
         if context == ContextId::Page {
             *self = Self { tick: self.tick, ..Self::default() };
+        } else {
+            // The channel context's actors and symbols go with it.
+            self.cast.drop_context(context);
         }
     }
 
@@ -200,7 +207,7 @@ impl Naplps {
 
     /// Whether `handle` names a thing of the page's NAPLPS.
     pub(super) fn is_thing(&self, context: ContextId, handle: i32) -> bool {
-        self.active && context == ContextId::Page && handle == BACKDROP_HANDLE
+        self.active && ((context == ContextId::Page && handle == BACKDROP_HANDLE) || self.cast.is_thing(context, handle))
     }
 
     /// The bytes held, beside those staged.
@@ -213,18 +220,45 @@ impl Naplps {
             .saturating_add(colours)
             .saturating_add(self.blinks.len().saturating_mul(size_of::<Blink>()))
             .saturating_add(self.second.len().saturating_mul(size_of::<(u64, usize)>()))
+            .saturating_add(self.cast.state_bytes())
     }
 
     /// The bytes staged for the step's output.
-    pub(super) const fn staged_bytes(&self) -> usize {
-        self.staged.len()
+    pub(super) fn staged_bytes(&self) -> usize {
+        self.staged.len().saturating_add(self.cast.staged_bytes())
     }
 
     /// Moves what is staged into the step's batch.
-    pub(super) fn take_batch(&mut self, batch: &mut Batch) {
+    /// `title` is the page's, which the objects' record carries.
+    fn take_batch(&mut self, batch: &mut Batch, title: &str) {
         if !self.staged.is_empty() {
             batch.naplps = Some(NaplpsAppend { new_generation: core::mem::take(&mut self.new_generation), bytes: core::mem::take(&mut self.staged) });
         }
+        if self.active {
+            self.cast.take_batch(batch, title);
+        }
+    }
+
+    /// The bytes that may still be appended in this callback, and in this second.
+    fn rooms(&mut self) -> (usize, usize) {
+        (NAPLPS_MAX_BYTES_PER_CALLBACK.saturating_sub(self.callback_bytes), NAPLPS_MAX_BYTES_PER_SECOND.saturating_sub(self.second_bytes()))
+    }
+
+    /// Stages bytes the host owes the stream for something a script did
+    /// that is bounded on its own account (a generation's opening, held
+    /// to its rate; a definition, held to its table): they count against
+    /// the second's bytes and the step's output, and not against the
+    /// callback's allowance, which is the painter programs' own.
+    fn stage_owed(&mut self, bytes: &[u8]) {
+        let callback = self.callback_bytes;
+        self.stage(bytes);
+        self.callback_bytes = callback;
+    }
+
+    /// As [`Naplps::append`], for bytes the host owes.
+    fn append_owed(&mut self, painter: Painter, bytes: &[u8]) {
+        self.painter = painter;
+        self.stage_owed(bytes);
     }
 
     /// The bytes appended in the second ending now.
@@ -272,6 +306,7 @@ impl Naplps {
         for blink in &self.blinks {
             painter.blink(blink.from, blink.to, blink.times, out);
         }
+        self.cast.resend(&mut painter, out);
         painter.end(out);
         painter
     }
@@ -298,7 +333,7 @@ impl Naplps {
             self.generation_tick = Some(self.tick);
             self.wait_tenths = 0;
             self.staged.clear();
-            self.stage(&out);
+            self.stage_owed(&out);
         }
         self.painter.clone()
     }
@@ -359,10 +394,11 @@ impl Naplps {
 
     /// The NAPLPS entries of the budget report (section 3.7), appended to
     /// the report's JSON object.
-    pub(super) fn budget(&self, out: &mut String) {
+    pub(super) fn budget(&self, context: ContextId, out: &mut String) {
         if !self.active {
             return;
         }
+        self.cast.budget(context, out);
         let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
         let second =
             self.second.iter().filter(|(at, _)| at.saturating_add(TICKS_PER_SECOND) > self.tick).fold(0_usize, |sum, (_, bytes)| sum.saturating_add(*bytes));
@@ -381,7 +417,7 @@ impl Naplps {
 /// The numbers the prelude's NAPLPS part needs, written in front of it
 /// as `NP_BOUND` so that the two halves cannot disagree.
 #[must_use]
-pub fn prelude_bounds() -> [(&'static str, i64); 6] {
+pub fn prelude_bounds() -> [(&'static str, i64); 15] {
     [
         ("BACKDROP_HANDLE", i64::from(BACKDROP_HANDLE)),
         ("MAX_PAINTER_WORDS", i64::try_from(MAX_PAINTER_WORDS).unwrap_or(i64::MAX)),
@@ -389,6 +425,16 @@ pub fn prelude_bounds() -> [(&'static str, i64); 6] {
         ("CELL_LINES", i64::from(limits::CELL_LINES)),
         ("FILL_TEXTURE", i64::from(writer::FIRST_PROGRAMMABLE_FILL)),
         ("STEADY", i64::from(NO_ENTRY)),
+        // The `ANIMATE` operations' codes (animation.md ANIM-6), by the rule table's names.
+        ("ANIMATE_SHOW", i64::from(animate::code::SHOW)),
+        ("ANIMATE_HIDE", i64::from(animate::code::HIDE)),
+        ("ANIMATE_LOOK", i64::from(animate::code::LOOK)),
+        ("ANIMATE_MOVE", i64::from(animate::code::MOVE)),
+        ("ANIMATE_ORDER", i64::from(animate::code::ORDER)),
+        ("ANIMATE_FRAME", i64::from(animate::code::FRAME)),
+        ("ANIMATE_CYCLE", i64::from(animate::code::CYCLE)),
+        ("ANIMATE_STOP_CYCLE", i64::from(animate::code::STOP_CYCLE)),
+        ("KEEP_LAYER", i64::from(cast::KEEP_LAYER)),
     ]
 }
 
@@ -404,13 +450,18 @@ fn program_of(payload: Payload<'_>) -> Result<Vec<i32>, Reply> {
 impl Host {
     /// The NAPLPS operations (section 10.2, 300 to 304 and 312).
     pub(super) fn naplps_operation(&mut self, context: ContextId, op: Op, ints: &Ints<'_>, payload: Payload<'_>) -> Result<Reply, Reply> {
+        if !self.naplps.active {
+            return Err(type_error("the page is not drawn in NAPLPS by a script of its own"));
+        }
+        // Definitions and the cast: the page context's, and the channel
+        // context's share of symbols and overlay objects (section 3.1).
+        if matches!(op, Op::NP_SYMBOL | Op::NP_DRCS | Op::NP_TEXTURE | Op::NP_ACTOR | Op::NP_LABEL | Op::NP_ANIMATE | Op::NP_REMOVE) {
+            return self.naplps_cast_operation(context, op, ints, payload);
+        }
         // The backdrop and the colour map are the page's (section 3.1:
-        // renderer state belongs to the page), and only a NAPLPS page has them.
+        // renderer state belongs to the page).
         if context != ContextId::Page {
             return Err(type_error("the backdrop and the colour map are the page context's"));
-        }
-        if !self.naplps.active {
-            return Err(type_error("the page is not drawn in NAPLPS"));
         }
         match op {
             Op::NP_COLOUR_DEFINE => {
@@ -434,7 +485,7 @@ impl Host {
             Op::NP_PAINT | Op::NP_REPAINT => {
                 let [] = ints.exactly()?;
                 let program = program_of(payload)?;
-                self.naplps_paint(op == Op::NP_REPAINT, &program, &NoDefinitions)
+                self.naplps_paint(op == Op::NP_REPAINT, &program)
             }
             _ => {
                 let [width, height, spacing, language_bytes] = ints.exactly()?;
@@ -575,9 +626,16 @@ impl Host {
         Ok(Reply::Undefined)
     }
 
-    /// `paint` and `repaint` (section 7.2), with the definitions a
-    /// program's handles name.
-    pub(super) fn naplps_paint(&mut self, repaint: bool, program: &[i32], definitions: &dyn Definitions) -> Result<Reply, Reply> {
+    /// Moves the step's NAPLPS into its batch.
+    pub(super) fn naplps_take(&mut self, batch: &mut Batch) {
+        let title = self.context(ContextId::Page).map(|page| page.title.clone()).unwrap_or_default();
+        self.naplps.take_batch(batch, &title);
+    }
+
+    /// `paint` and `repaint` (section 7.2). A painter program's bytes are
+    /// held to the callback's and the second's allowances; a generation's
+    /// opening, which the host owes, to the second's.
+    fn naplps_paint(&mut self, repaint: bool, program: &[i32]) -> Result<Reply, Reply> {
         let tick = self.naplps.tick;
         let fresh = repaint || !self.naplps.started;
         if repaint {
@@ -588,13 +646,23 @@ impl Host {
             }
             self.naplps.generation_tick = Some(tick);
         }
-        let (room, bound) = self.naplps.room();
+        let (callback, second) = self.naplps.rooms();
         let mut out = Vec::new();
-        // A program that fails changes nothing: it is run on a copy.
-        let mut next = self.naplps.clone();
-        let mut painter = if fresh { next.opening(&mut out) } else { next.painter.clone() };
-        let language = next.language.clone();
-        let outcome = painter.run(program, &language, definitions, &mut out, room, bound)?;
+        // A program that fails changes nothing: a new generation is
+        // opened on a copy, and the painter is a copy.
+        let mut next = fresh.then(|| self.naplps.clone());
+        let mut painter = match next.as_mut() {
+            Some(next) => next.opening(&mut out),
+            None => self.naplps.painter.clone(),
+        };
+        let opening = out.len();
+        if opening > second {
+            return Err(range("NAPLPS_MAX_BYTES_PER_SECOND", "no more NAPLPS may be appended now"));
+        }
+        let own = second.saturating_sub(opening);
+        let (room, bound) = if own < callback { (own, "NAPLPS_MAX_BYTES_PER_SECOND") } else { (callback, "NAPLPS_MAX_BYTES_PER_CALLBACK") };
+        let outcome =
+            painter.run(program, &self.naplps.language, &cast::Defined(&self.naplps.cast, ContextId::Page), &mut out, opening.saturating_add(room), bound)?;
         // What a repaint replaces is no longer part of the step's output.
         let replaced = if fresh { self.naplps.staged.len() } else { 0 };
         if self.batch_bytes().saturating_sub(replaced).saturating_add(out.len()) > self.batch_limit {
@@ -603,16 +671,18 @@ impl Host {
         if self.state_bytes().saturating_sub(replaced).saturating_add(out.len()) > self.state_limit {
             return Err(range("MAX_HOST_STATE_BYTES", "the host holds as much for this container as it may"));
         }
-        if fresh {
+        if let Some(mut next) = next {
             next.staged.clear();
             next.started = true;
             next.new_generation = true;
             next.generation_tick = Some(tick);
             next.wait_tenths = 0;
+            self.naplps = next;
         }
-        next.wait_tenths = next.wait_tenths.saturating_add(outcome.wait_tenths);
-        next.append(painter, &out);
-        self.naplps = next;
+        self.naplps.wait_tenths = self.naplps.wait_tenths.saturating_add(outcome.wait_tenths);
+        let (owed, own) = out.split_at_checked(opening).unwrap_or((&[], &out));
+        self.naplps.stage_owed(owed);
+        self.naplps.append(painter, own);
         Ok(Reply::Undefined)
     }
 

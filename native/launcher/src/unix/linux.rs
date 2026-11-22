@@ -330,7 +330,7 @@ mod tests {
     }
 
     /// Decision 95 (finding F-23): the profile the launcher writes names
-    /// the four programs that make namespaces under the installation's
+    /// the five programs that make namespaces under the installation's
     /// real root, however it was reached.
     #[test]
     fn the_profile_names_the_real_root() {
@@ -342,7 +342,10 @@ mod tests {
         let real = folder.join("real").canonicalize().unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
         assert!(
-            text.contains(&format!("\"{}/versions/*/{{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}}\"", real.display())),
+            text.contains(&format!(
+                "\"{}/versions/*/{{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound,neoteletext-script-host}}\"",
+                real.display()
+            )),
             "{text}"
         );
         files::remove_tree(&folder).unwrap();

@@ -20,15 +20,18 @@
 
 use neoteletext_audio::record::{Control, Operation as ControlOperation};
 use neoteletext_core::consts::{
-    C4_ERASE, CELL_HEIGHT, CELL_WIDTH, COLOUR_MAP_DEFAULTS, COLUMNS, DATA_BYTES, DESIGNATION_CODES, HEADER_DISPLAY_BYTES, NO_SECOND_G0, PACKET_ENHANCEMENT,
-    ROWS, SPACE, TRIPLETS_PER_PACKET,
+    C4_ERASE, CELL_HEIGHT, CELL_WIDTH, COLOUR_MAP_DEFAULTS, COLUMNS, COMPOSITIONAL_LINKS, DATA_BYTES, DESIGNATION_CODES, HEADER_DISPLAY_BYTES,
+    LINK_FUNCTION_GPOP, LINK_FUNCTION_POP, NO_SECOND_G0, PACKET_ENHANCEMENT, PAGE_TIME_FILLING, ROWS, SPACE, TRIPLETS_PER_PACKET,
 };
 use neoteletext_core::ecc::with_odd_parity;
-use neoteletext_core::packet::{Packet, PacketMeta, PageFormat, Triplet, TripletFunction, encode};
-use neoteletext_core::types::{ControlBits, DefaultColourFields, Designations, PageAddress, PresentationFields, Rgb12, SubCode};
+use neoteletext_core::packet::{
+    CompositionalLink, ObjectKind, ObjectNumber, ObjectSource, ObjectUsage, Packet, PacketMeta, PageFormat, Triplet, TripletFunction, encode,
+};
+use neoteletext_core::types::{ControlBits, DefaultColourFields, Designations, PageAddress, PageNumber, PresentationFields, Rgb12, SubCode};
 use protocol::audio::Audio;
 use protocol::decoder::FromDecoder;
 use protocol::script::batch::{FIRST_DEFINABLE_ENTRY, NaplpsObject, NaplpsObjectKind, SoundOperation, TeletextSettings};
+use protocol::script::sprites::{SCRIPT_OBJECT_PAGE, object_place};
 use protocol::script::{Batch, Renderer};
 
 use super::Engine;
@@ -73,6 +76,72 @@ pub struct ScriptPage {
 /// passed a bound, and is treated as stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NotApplied(pub &'static str);
+
+/// The usage of an object a sprite's frame is: at Level 2.5 and at Level
+/// 3.5 (EN 300 706 Table 28).
+const BOTH_LEVELS: u8 = 0b11;
+/// The designation code of the packet X/27 that carries a page's links
+/// to its Object pages and DRCS pages for Levels 2.5 and 3.5 (clause
+/// 9.6.3).
+const COMPOSITIONAL_LINKS_DESIGNATION: u8 = 4;
+
+/// The packets of the script's Object page (section 5.3; DEC-7380,
+/// TODO-7382 step 2(a)): each of a batch's objects a Passive object for
+/// both levels, defined at the sub-page and index its number names, its
+/// body between the Object Definition triplet and the Termination Marker
+/// the engine's authoring code writes, with the pointer tables of clause
+/// 10.5.1.2. None when an object has no place or a sub-page's
+/// definitions do not fit it: the batch is then refused.
+fn object_page_packets(objects: &[protocol::script::batch::TeletextObject]) -> Option<Vec<Packet>> {
+    use neoteletext_formats::author::{ObjectPage, Stream, Triplets};
+    let mut page = ObjectPage::new(PageAddress::from_mpp(SCRIPT_OBJECT_PAGE)?, false);
+    for object in objects {
+        let (subpage, index) = object_place(object.number)?;
+        let mut body = Triplets::new();
+        for triplet in &object.triplets {
+            body.raw(Triplet { address: triplet.address, mode: triplet.mode, data: triplet.data });
+        }
+        page.define_at(u8::try_from(subpage).ok()?, ObjectKind::Passive, ObjectUsage(BOTH_LEVELS), index, body).ok()?;
+    }
+    let mut stream = Stream::new();
+    stream.extend(page.build().ok()?);
+    Some(stream.packets())
+}
+
+/// The packet X/27/4 that names the script's Object page as the open
+/// page's Public Object Page, every sub-page of it, for both levels
+/// (TODO-7382 step 2(b)). The other links name no page.
+fn object_page_link(magazine: neoteletext_core::types::Magazine) -> Option<Packet> {
+    let pop = PageAddress::from_mpp(SCRIPT_OBJECT_PAGE)?;
+    let link = |function: u8, page: PageNumber| CompositionalLink {
+        function,
+        validity: BOTH_LEVELS,
+        magazine: pop.magazine,
+        page,
+        subpages: u16::MAX,
+        marker_first: true,
+        marker_second: false,
+    };
+    let none = PageNumber(PAGE_TIME_FILLING);
+    // The link functions in the standard's order (Table 7): GPOP, POP,
+    // GDRCS, DRCS; the last two links are unused.
+    let links: [CompositionalLink; COMPOSITIONAL_LINKS] =
+        [link(LINK_FUNCTION_GPOP, none), link(LINK_FUNCTION_POP, pop.page), link(0b10, none), link(0b11, none), link(0, none), link(0, none)];
+    Some(encode::compositional_links(magazine, COMPOSITIONAL_LINKS_DESIGNATION, &links))
+}
+
+/// A sprite of the engine from a batch's (TODO-7382 step 2(d)): each
+/// frame an object of the script's Object page, a Passive object.
+fn sprite_of(declared: &protocol::script::batch::Sprite) -> Option<neoteletext_core::sprites::Sprite> {
+    use neoteletext_core::sprites::{FrameRef, Sprite};
+    let frame = |number: u16| FrameRef { source: ObjectSource::Public, kind: ObjectKind::Passive, number: ObjectNumber(number) };
+    let (first, rest) = declared.objects.split_first()?;
+    let mut sprite = Sprite::new(declared.number, (declared.row, declared.column), (declared.height, declared.width), frame(*first));
+    for object in rest {
+        sprite.frames.push(frame(*object)).then_some(())?;
+    }
+    Some(Sprite { shown: declared.shown, detectable: declared.detectable, layer: declared.layer, order: declared.order, ..sprite })
+}
 
 /// An object of the NAPLPS renderer from a batch's.
 fn naplps_object(object: &NaplpsObject) -> naplps::Object {
@@ -159,6 +228,15 @@ impl Engine {
         }
     }
 
+    /// What each fetched page file read since the last call says of its
+    /// script (script-api.md section 12.4): its page and sub-code, and
+    /// the name its `JS` line or `SCRIPT_REF` record gives, or none for a
+    /// TTI page with no such line. Page bytes of a push connection are
+    /// never among them (DEC-7282 item 10).
+    pub fn take_script_names(&mut self) -> Vec<(u16, u16, Option<String>)> {
+        core::mem::take(&mut self.script_names)
+    }
+
     /// The header packet that addresses the sub-page for a script's
     /// packets: the page's own control bits without erasure, and the
     /// display bytes its row 0 holds, so that row 0 is as it was. For a
@@ -215,6 +293,12 @@ impl Engine {
         let mut packets = Vec::new();
         let Some(header) = self.script_header(address, at.sub) else { return packets };
         packets.push(header);
+        // The link to the script's Object page, before that page's own
+        // packets: the engine keeps a page of a reserved number only once
+        // a page has named it.
+        if batch.teletext_objects.is_some() {
+            packets.extend(object_page_link(address.magazine));
+        }
         if designate || batch.teletext_settings.is_some() {
             packets.push(self.script_page_data(at, address, batch.teletext_settings.as_ref()));
         }
@@ -288,9 +372,20 @@ impl Engine {
         // The teletext packets first, whole into the store, so that an
         // ANIMATE operation of the same batch finds the controls the new
         // enhancement data gives (TODO-7362 item 2(d)).
-        if batch.teletext_rows.is_some() || batch.teletext_enhancement.is_some() || batch.teletext_settings.is_some() {
+        if batch.teletext_rows.is_some() || batch.teletext_enhancement.is_some() || batch.teletext_settings.is_some() || batch.teletext_objects.is_some() {
+            // The Object page's packets after the open page's, which name
+            // it; a batch whose objects do not fit it is refused whole,
+            // before anything of it is applied.
+            let objects = match &batch.teletext_objects {
+                Some(objects) => object_page_packets(objects).ok_or(NotApplied("a batch's objects do not fit the script's Object page"))?,
+                None => Vec::new(),
+            };
+            let sprites_fit = batch.sprites.iter().flatten().all(|sprite| sprite_of(sprite).is_some());
+            if !sprites_fit {
+                return Err(NotApplied("a batch's sprite has no frame, or more than a sprite has"));
+            }
             let packets: Vec<(Packet, PacketMeta)> =
-                self.script_packets(at, address, batch, designate).into_iter().map(|packet| (packet, PacketMeta::default())).collect();
+                self.script_packets(at, address, batch, designate).into_iter().chain(objects).map(|packet| (packet, PacketMeta::default())).collect();
             self.push_all(&packets);
             self.complete();
         }
@@ -315,6 +410,13 @@ impl Engine {
                 title: (!cast.one && !cast.title.is_empty()).then(|| cast.title.clone()),
                 objects: cast.objects.iter().map(naplps_object).collect(),
             });
+        }
+        // The sprites after their objects and before the operations on
+        // them (TODO-7382 step 2(e)): declaring them forgets every
+        // sprite's animation state, as the engine's record does, since
+        // the script host says each sprite's state again after it.
+        if let Some(sprites) = &batch.sprites {
+            items.push(Held::Sprites { page, sub, sprites: sprites.iter().filter_map(sprite_of).collect() });
         }
         if let Some(operations) = &batch.animate {
             items.push(Held::Animate { page, sub, operations: operations.clone() });
@@ -421,9 +523,20 @@ impl Engine {
             }
             Renderer::Teletext => {
                 let (column, row) = cell_at(x, y);
+                // The detectable sprites whose rectangle holds the cell,
+                // topmost first: the last drawn of the placements, which
+                // are in drawing order (section 4.4; ANIM-8, ANIM-13).
+                let inside = |placement: &&neoteletext_core::sprites::Placement| {
+                    let (left, top) = (placement.column, placement.row);
+                    let (across, down) = (i16::from(column).saturating_sub(left), i16::from(row).saturating_sub(top));
+                    placement.detectable && (0..i16::from(placement.width)).contains(&across) && (0..i16::from(placement.height)).contains(&down)
+                };
+                let placements = self.animation.teletext.get(at.page, at.sub).map(crate::animation::teletext::SubPage::placements).unwrap_or_default();
+                let mut things: Vec<i32> = placements.as_slice().iter().rev().filter(inside).map(|placement| i32::from(placement.number)).collect();
                 let controls = self.stored(at.page, Some(at.sub)).map_or(neoteletext_core::controls::Controls::NONE, neoteletext_core::controls::controls);
                 let hit = controls.list.as_slice().iter().find(|control| control.contains(row, column));
-                hit.and_then(|control| protocol::script::teletext::control_handle(control.row, control.column)).into_iter().collect()
+                things.extend(hit.and_then(|control| protocol::script::teletext::control_handle(control.row, control.column)));
+                things
             }
         }
     }

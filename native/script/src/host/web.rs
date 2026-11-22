@@ -240,7 +240,7 @@ fn answer_bytes(answer: &FromWebClient) -> usize {
             })
         }
         FromWebClient::Body { bytes, .. } | FromWebClient::SocketMessage { bytes, .. } => bytes.len(),
-        FromWebClient::Opened { protocol, .. } => protocol.len(),
+        FromWebClient::Opened { protocol, url, .. } => protocol.len().saturating_add(url.len()),
         FromWebClient::Event { event, data, last_id, .. } => event.len().saturating_add(data.len()).saturating_add(last_id.len()),
         FromWebClient::SocketClosed { reason, .. } => reason.len(),
         FromWebClient::Jar(piece) => piece.bytes.len(),
@@ -552,12 +552,12 @@ impl Web {
                 event(EventKind::WS_OPENED, [number, 0, 0, 0], InputPayload::Text(protocol))
             }
             // The payload is the stream's final address, for the origin
-            // of its events (HTML section 9.2.6). The message does not
-            // carry one yet, so it is empty, and the prelude then uses
-            // the address the stream was asked for.
-            FromWebClient::Opened { protocol, .. } if kind == RequestKind::EventSource && !record.open && protocol.is_empty() => {
+            // of its events (HTML section 9.2.6). When the web client
+            // gives none, the prelude uses the address the stream was
+            // asked for.
+            FromWebClient::Opened { url, .. } if kind == RequestKind::EventSource && !record.open => {
                 record.open = true;
-                event(EventKind::SSE_OPENED, [number, 0, 0, 0], InputPayload::Text(String::new()))
+                event(EventKind::SSE_OPENED, [number, 0, 0, 0], InputPayload::Text(url))
             }
             FromWebClient::Event { event: name, data, last_id, .. } if kind == RequestKind::EventSource && record.open => {
                 let lengths = [number, utf16_length(&name), utf16_length(&last_id), 0];
@@ -1056,7 +1056,7 @@ pub(crate) fn prelude_tables() -> Vec<(&'static str, Vec<(&'static str, i64)>)> 
                 ("WS_NO_CODE", i64::from(WS_NO_CODE)),
                 ("WS_TOO_BIG", i64::from(WS_TOO_BIG)),
                 ("WS_ABNORMAL", i64::from(WS_ABNORMAL)),
-                ("URL_PLACES", wide(url::PLACE_COUNT)),
+                ("URL_FIELDS", wide(url::FIELDS)),
                 ("HEAD_REDIRECTED", i64::from(HEAD_REDIRECTED)),
                 ("RESPONSE_BASIC", i64::from(ResponseType::Basic.code())),
                 ("RESPONSE_CORS", i64::from(ResponseType::Cors.code())),
