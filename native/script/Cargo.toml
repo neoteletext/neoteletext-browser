@@ -84,6 +84,9 @@ neoteletext-picture = { workspace = true, default-features = false }
 # the browser's decoder builds it, so that a kept picture is what the
 # browser would show.
 neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
+# The sprite tests write the Object page with the engine's own authoring
+# code, which needs the page writers (work package T2).
+neoteletext-formats = { workspace = true, features = ["write-text", "std"] }
 # The receiver's stroke font for the primary set, as the browser's decoder
 # gives it to the NAPLPS renderer (MIT, the project's own, pinned by
 # revision): the tests draw what the painter writes.

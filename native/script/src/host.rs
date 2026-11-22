@@ -677,9 +677,27 @@ impl Host {
                 let renderer = renderer_name(u8::try_from(third).ok().and_then(|code| Renderer::of(code).ok()).unwrap_or(Renderer::Teletext));
                 let subcode = u16::try_from(second).ok().filter(|subcode| *subcode != NO_SUBCODE);
                 held.shown = Some(PageShown { page: u16::try_from(first).unwrap_or(0), subcode, renderer, url });
+                // The channel context may draw its sprites on the teletext
+                // page it is shown (section 3.1; work package T2).
+                let shown = u8::try_from(third).ok().and_then(|code| Renderer::of(code).ok()).unwrap_or(Renderer::Teletext);
+                let open = held.open.clone();
+                let removed = self.teletext.page_shown(shown, u16::try_from(first).unwrap_or(0), u16::try_from(second).unwrap_or(NO_SUBCODE), &open);
+                if let Some(held) = self.context_mut(context) {
+                    held.listens.retain(|(handle, _)| !removed.contains(handle));
+                }
                 true
             }
-            EventKind::PAGE_HIDE => context == ContextId::Channel,
+            EventKind::PAGE_HIDE => {
+                if context != ContextId::Channel {
+                    return false;
+                }
+                // Everything the channel context drew goes with the page.
+                let removed = self.teletext.page_hidden();
+                if let Some(held) = self.context_mut(context) {
+                    held.listens.retain(|(handle, _)| !removed.contains(handle));
+                }
+                true
+            }
             EventKind::FOCUS
             | EventKind::BLUR
             | EventKind::VISIBILITY
@@ -1114,6 +1132,8 @@ impl Host {
             | Op::TT_OVERLAY_CLEAR
             | Op::TT_COLOUR_DEFINE
             | Op::TT_COLOUR_SET
+            | Op::TT_SPRITE
+            | Op::TT_BLOCK_TEXT
             | Op::TT_LABEL
             | Op::TT_ANIMATE
             | Op::TT_REMOVE
@@ -1130,9 +1150,15 @@ impl Host {
             | Op::BM_BLIT
             | Op::BM_TEXT
             | Op::BM_PRESENT => {
-                // A label waiting to leave is the one thing teletext stages
-                // whose size a script chooses.
-                self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;
+                // A label waiting to leave, and the sections a sprite's
+                // making puts in the step's output, are what teletext
+                // stages whose size a script chooses.
+                let output = match op {
+                    Op::TT_LABEL => MAX_LABEL_BYTES,
+                    Op::TT_SPRITE => crate::teletext::sprites::limits::SPRITE_OUTPUT_BYTES,
+                    _ => 0,
+                };
+                self.room(MAX_LABEL_BYTES, output)?;
                 let scope = self.context(context).and_then(|held| held.scope_stack.last().copied()).unwrap_or(0);
                 let reply = self.teletext.call(context, op, ints.ints, payload, scope, self.tick)?;
                 // A thing removed has no listeners left to count.
