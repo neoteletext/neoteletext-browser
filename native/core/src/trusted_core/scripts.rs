@@ -128,6 +128,10 @@ pub(super) struct Scripts {
     stopped: BTreeMap<u32, FailReason>,
     /// What each channel's scripts claim, as its decoder last reported.
     claims: BTreeMap<u32, protocol::decoder::script::ScriptClaims>,
+    /// The decoder of each channel that was told what its scripts'
+    /// contexts are told, by its generation: a decoder that replaces it
+    /// is told again before its first script.
+    told: BTreeMap<u32, u64>,
     web: web::WebClients,
 }
 
@@ -414,5 +418,7 @@ impl Core {
     }
 }
 
+#[cfg(all(test, unix, feature = "interaction"))]
+mod loading_tests;
 #[cfg(all(test, unix))]
 mod tests;

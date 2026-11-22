@@ -379,6 +379,21 @@ pub enum FromFetcher {
         /// Microseconds.
         microseconds: u64,
     },
+    /// A piece of a script the channel's file or a page file names, as
+    /// fetched (the engine's `Event::Script`; the script API's
+    /// specification section 12.5 step 1). Untrusted: the trusted core
+    /// passes it to the channel's decoder unread.
+    Script(crate::decoder::script::SourcePiece),
+    /// A script could not be fetched (the engine's `Event::ScriptFailed`):
+    /// its page runs without it.
+    ScriptFailed {
+        /// The channel's script, or a page's.
+        level: crate::script::ContextId,
+        /// The page and sub-code it was for.
+        page: crate::rules::PageSub,
+        /// Its name.
+        name: String,
+    },
 }
 
 /// The byte of [`ToFetcher::Send`]'s `move_of` when the message is not a
@@ -468,6 +483,16 @@ pub enum ToFetcher {
     /// The tab the message is written for leaves the process: what it was
     /// last told is sent, and its connections close (REQ-6980).
     TabLeaves,
+    /// Fetch the script a page file names, from the file of that name
+    /// directly in the channel's folder (the engine's `Input::FetchScript`;
+    /// the script API's specification section 12.5 step 2). A script's
+    /// name and never an address (REQ-2948 holds in that sense).
+    FetchScript {
+        /// The page and sub-code the script is for.
+        page: crate::rules::PageSub,
+        /// The script's name (section 12.2).
+        name: String,
+    },
 }
 
 /// The most tabs one fetcher process serves (REQ-6980): the most tabs the
@@ -559,6 +584,28 @@ pub fn name_tab(tab: u32, written: &mut Vec<u8>, out: &mut Vec<u8>) {
     written.drain(..taken);
 }
 
+/// Writes a message about a channel's script, and gives its kind.
+fn push_script_message(payload: &mut Vec<u8>, message: &FromFetcher) -> Result<u8, ProtocolError> {
+    match message {
+        FromFetcher::Script(piece) => crate::decoder::script::push_piece(payload, piece).map(|()| kinds::KIND_SCRIPT),
+        FromFetcher::ScriptFailed { level, page, name } => {
+            payload.push(level.code());
+            crate::decoder::script::push_named(payload, *page, name).map(|()| kinds::KIND_SCRIPT_FAILED)
+        }
+        _ => Err(ProtocolError::BadValue("not a script message")),
+    }
+}
+
+/// Reads a message about a channel's script.
+fn read_script_message(kind: u8, fields: &mut Fields<'_>) -> Result<FromFetcher, ProtocolError> {
+    if kind == kinds::KIND_SCRIPT {
+        return crate::decoder::script::read_piece(fields).map(FromFetcher::Script);
+    }
+    let level = crate::script::ContextId::of(fields.u8()?)?;
+    let (page, name) = crate::decoder::script::read_named(fields)?;
+    Ok(FromFetcher::ScriptFailed { level, page, name })
+}
+
 /// # Errors
 /// When writing fails or the message breaks a bound.
 pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), ProtocolError> {
@@ -602,6 +649,11 @@ pub fn write_to_fetcher(out: &mut dyn Write, message: &ToFetcher) -> Result<(), 
             payload.extend_from_slice(&subcode.to_be_bytes());
             write_frame(out, KIND_FETCH_SUBPAGE, &payload)
         }
+        ToFetcher::FetchScript { page, name } => {
+            let mut payload = Vec::new();
+            crate::decoder::script::push_named(&mut payload, *page, name)?;
+            write_frame(out, kinds::KIND_FETCH_SCRIPT, &payload)
+        }
     }
 }
 
@@ -642,6 +694,10 @@ pub fn read_to_fetcher(input: &mut dyn Read) -> Result<Option<ToFetcher>, Protoc
                 return Err(ProtocolError::BadValue("sub-code"));
             }
             ToFetcher::FetchSubPage { page, subcode }
+        }
+        kinds::KIND_FETCH_SCRIPT => {
+            let (page, name) = crate::decoder::script::read_named(&mut fields)?;
+            ToFetcher::FetchScript { page, name }
         }
         other => return Err(ProtocolError::UnknownKind(other)),
     };
@@ -926,6 +982,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromFetcher) -> Result<(), P
             state::push_from_fetcher(&mut payload, message)?
         }
         FromFetcher::SubPages { page, version, part } => push_list_part(&mut payload, *page, version, part)?,
+        FromFetcher::Script(_) | FromFetcher::ScriptFailed { .. } => push_script_message(&mut payload, message)?,
         FromFetcher::SubPagesMissing { .. }
         | FromFetcher::SubPagesFailed { .. }
         | FromFetcher::Refused { .. }
@@ -1036,6 +1093,7 @@ pub fn read_from_fetcher(input: &mut dyn Read) -> Result<Option<FromFetcher>, Pr
         KIND_SUBPAGES_MISSING | KIND_SUBPAGES_FAILED | KIND_REFUSED | KIND_NO_CONTENTS | KIND_BUNDLE_SETTLED | KIND_REFRESH => {
             read_static_message(kind, &mut fields)?
         }
+        kinds::KIND_SCRIPT | kinds::KIND_SCRIPT_FAILED => read_script_message(kind, &mut fields)?,
         #[cfg(feature = "interaction")]
         KIND_ROUND_TRIP => FromFetcher::RoundTrip { microseconds: u64::from_be_bytes(fields.array()?) },
         KIND_CHANNEL_LOG

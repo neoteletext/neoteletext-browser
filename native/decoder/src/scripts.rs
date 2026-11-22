@@ -43,7 +43,7 @@ use protocol::script::{
 use crate::Engine;
 use crate::animation::{due_after, tick_at};
 use crate::engine::script::ScriptPage;
-use limits::{MAX_QUEUED_EVENTS, MAX_SCRIPTS_HELD};
+use limits::{MAX_NAMED_PAGES, MAX_QUEUED_EVENTS, MAX_SCRIPTS_HELD};
 use manifest::Manifest;
 
 pub mod events;
@@ -154,6 +154,11 @@ pub struct Scripts {
     pages: BTreeMap<PageSub, Script>,
     /// The order the page scripts arrived in, oldest first.
     arrived: VecDeque<PageSub>,
+    /// The script each page's own file names (section 12.4), which wins
+    /// over the channel file's for that page (section 12.6).
+    named: BTreeMap<PageSub, String>,
+    /// The scripts asked of the trusted core and not yet given.
+    wanted: BTreeMap<PageSub, String>,
     arriving: Option<Arriving>,
     link: HostLink,
     /// The highest API version the script host has, once it said so.
@@ -226,6 +231,8 @@ impl Scripts {
             channel_script: None,
             pages: BTreeMap::new(),
             arrived: VecDeque::new(),
+            named: BTreeMap::new(),
+            wanted: BTreeMap::new(),
             arriving: None,
             link: HostLink::new(),
             api_max: None,
@@ -283,10 +290,21 @@ impl Scripts {
             }
             ScriptOrder::Source(piece) => {
                 if let Some((level, page, script)) = self.piece(&piece) {
-                    self.keep(level, page, script);
+                    // Section 12.6: when a page's own file names a script,
+                    // the channel file's script for that page is not used,
+                    // and the difference is said for the channel's
+                    // developer. Only one page-level script runs for a page.
+                    let other = self.named.get(&page).filter(|named| level == ContextId::Page && **named != script.name);
+                    if let Some(named) = other {
+                        let text = format!("page {:03X}: its page file names the script {named}, so {} is not run for it", page.page, script.name);
+                        report(out, ScriptReport::Log { level: 1, context: ContextId::Page, text: log_line(&text) })?;
+                    } else {
+                        self.keep(level, page, script);
+                    }
                 }
             }
             ScriptOrder::NoScript(page) => {
+                self.wanted.remove(&page);
                 self.pages.remove(&page);
                 self.arrived.retain(|held| *held != page);
             }
@@ -347,6 +365,7 @@ impl Scripts {
                 }
             }
             ContextId::Page => {
+                self.wanted.remove(&page);
                 // The same bytes again, as each refresh of the page brings
                 // them (TODO-7331), leave a running script running.
                 if self.pages.get(&page) == Some(&script) {
@@ -365,6 +384,47 @@ impl Scripts {
                 self.pages.insert(page, script);
             }
         }
+    }
+
+    /// A fetched page file was read: `name` is the script its `JS` line or
+    /// `SCRIPT_REF` record names for `page`, or none (sections 12.4 to
+    /// 12.6). The page file's reference wins: a script held for the page
+    /// under another name is dropped, and one the decoder does not hold
+    /// is asked of the trusted core by its name, once.
+    ///
+    /// # Errors
+    /// When the decoder's output cannot be written.
+    pub fn page_file_names(&mut self, page: PageSub, name: Option<String>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
+        match name {
+            Some(name) => {
+                if self.pages.get(&page).is_some_and(|held| held.name != name) {
+                    self.pages.remove(&page);
+                    self.arrived.retain(|held| *held != page);
+                }
+                if !self.pages.contains_key(&page) && self.wanted.get(&page) != Some(&name) && self.link.stopped().is_none() {
+                    report(out, ScriptReport::Wanted { page, name: name.clone() })?;
+                    while self.wanted.len() >= MAX_NAMED_PAGES {
+                        self.wanted.pop_first();
+                    }
+                    self.wanted.insert(page, name.clone());
+                }
+                while self.named.len() >= MAX_NAMED_PAGES && !self.named.contains_key(&page) {
+                    self.named.pop_first();
+                }
+                self.named.insert(page, name);
+            }
+            // The file names none any more: the script it named goes, and
+            // the channel file's, if it names one, comes with the page's
+            // next fetch.
+            None => {
+                if self.named.remove(&page).is_some() {
+                    self.wanted.remove(&page);
+                    self.pages.remove(&page);
+                    self.arrived.retain(|held| *held != page);
+                }
+            }
+        }
+        self.settle(engine, out)
     }
 
     /// The page and sub-code of the active tab that is open, or none
@@ -549,8 +609,12 @@ impl Scripts {
                 pointer_move: manifest.pointer >= PointerClaim::Move,
                 wheel: manifest.wheel,
                 text: manifest.text,
-                // Section 12.7: a file opened from disk has no network.
-                network: manifest.network && !self.facts.from_disk,
+                // A file opened from disk has the network, by the owner's ruling
+                // on local files (DEC-7315 version 2): its origin is `null` and its
+                // requests leave through a web client started in the
+                // loopback address space, which is the trusted core's to
+                // arrange; the decoder only says what the page is.
+                network: manifest.network,
                 from_disk: self.facts.from_disk,
                 sound_allowed: self.sound_allowed,
             },
@@ -623,7 +687,7 @@ impl Scripts {
         for context in self.channel.iter().chain(self.page.iter().map(|page| &page.context)).filter(|context| !context.stopped) {
             let manifest = &context.manifest;
             claims.running = true;
-            claims.network |= manifest.network && !self.facts.from_disk;
+            claims.network |= manifest.network;
             claims.text |= manifest.text;
             claims.wheel |= manifest.wheel;
             claims.pointer = claims.pointer.max(manifest.pointer);

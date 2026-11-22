@@ -1621,6 +1621,7 @@ fn is_page_target(target: &str) -> bool {
 }
 
 mod regis;
+pub use regis::painter_contents as regis_painter_contents;
 pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
 
 #[cfg(test)]

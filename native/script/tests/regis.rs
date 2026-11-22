@@ -11,6 +11,8 @@
 //! `tests/golden/regis.txt` and written as PNG files to the test's
 //! temporary folder for a person to look at.
 mod common;
+#[path = "regis_page/fonts.rs"]
+mod fonts;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -65,7 +67,10 @@ struct Receiver {
 
 impl Receiver {
     fn new() -> Self {
-        Self { terminal: Terminal::new(), screen: Screen::new(), commits: 0, bytes: 0 }
+        // The fonts are the receiver's, given as the decoder gives them.
+        let mut terminal = Terminal::new();
+        fonts::give(&mut terminal);
+        Self { terminal, screen: Screen::new(), commits: 0, bytes: 0 }
     }
 
     /// Takes a batch as the decoder does: its ReGIS appended to the
@@ -550,8 +555,18 @@ struct Cost {
 /// script host runs with, or `unhurried`, with no clock to stop it
 /// first, so that the bounds on what the host holds are what holds it.
 fn run_hostile(source: &str, ticks: u32, unhurried: bool) -> (Cost, Vec<String>) {
-    let mut container = if unhurried { container() } else { limited() };
-    container.open_with(regis_opening(ContextId::Page), source.as_bytes()).expect("the script opens");
+    // The start limit is on the wall clock: on a machine with no
+    // processor free the prelude alone can wait past it, so an opening
+    // stopped for time is tried again, as tests/hostile.rs does.
+    let mut opened = None;
+    for _ in 0..STARVED_TRIES {
+        let mut container = if unhurried { container() } else { limited() };
+        if container.open_with(regis_opening(ContextId::Page), source.as_bytes()).is_ok() {
+            opened = Some(container);
+            break;
+        }
+    }
+    let mut container = opened.expect("the script opens");
     let mut receiver = Receiver::new();
     let mut cost = Cost::default();
     let mut log = Vec::new();
@@ -580,6 +595,9 @@ fn run_hostile(source: &str, ticks: u32, unhurried: bool) -> (Cost, Vec<String>)
     (cost, log)
 }
 
+/// How often a script that should open is tried again when this machine
+/// had no processor for it.
+const STARVED_TRIES: usize = 5;
 /// A frame's kind byte and length (`native/protocol/src/framing.rs`).
 const FRAME_HEADER_BYTES: usize = 5;
 /// The review measured the spike's host at 130 MB and one frame at 160 MB
@@ -709,4 +727,163 @@ nt.addEventListener("tick", (e) => {
         compose / TICKS
     );
     assert!(longest < STEP_DEADLINE, "a step took {longest:?}");
+}
+
+/// Section 6.4's first worked example, as the specification has it: a
+/// painted background with a title, a caption painted gradually, and a
+/// button with receiver-run looks. Its text is drawn by the receiver in
+/// the engine's provided character sets; the caption's `painted` plays a
+/// sound; the button's release navigates.
+#[test]
+fn the_specifications_page_example_runs_and_matches_its_kept_pictures() {
+    let mut open = regis_opening(ContextId::Page);
+    open.keys = vec!["Enter".to_owned()];
+    open.flags.pointer_move = false;
+    let mut container = container();
+    container.open_with(open, include_bytes!("regis_page/example-page.js")).expect("the page opens");
+    let mut receiver = Receiver::new();
+    let mut wrong = Vec::new();
+    let first = container.step(&tick(0, 0)).unwrap();
+    assert_eq!(lines(&first), Vec::<String>::new());
+    receiver.take(&first);
+    assert_eq!(receiver.commits, 1);
+    // The caption is drawing 2; the button is drawing 6, after its three faces.
+    assert_eq!(first.watch.as_ref().and_then(|watch| watch.painted.clone()), Some(vec![2]));
+    assert_eq!(receiver.terminal.label(6).as_deref(), Some("Start"));
+    keep("example-page-at-first", &mut receiver, &mut wrong);
+    let mut painted_at = None;
+    for at in 1..200_u32 {
+        let _ = receiver.terminal.advance_ticks(1);
+        let painted: Vec<i32> = receiver.terminal.take_painted().into_iter().map(i32::from).collect();
+        let batch = container.step(&Step { painted: painted.clone(), ..tick(at, u64::from(at)) }).unwrap();
+        receiver.take(&batch);
+        if !painted.is_empty() {
+            assert_eq!(
+                view(&batch).sound,
+                vec![protocol::script::batch::SoundOperation::Play { voice: 0, sound: 1, gain: 100 }],
+                "the caption's painted plays sound 1"
+            );
+            painted_at = Some(at);
+            break;
+        }
+    }
+    // Twenty-six character cells of 9 by 20 at 2,000 work units a second.
+    let painted_at = painted_at.expect("the caption was reported painted");
+    assert!((100..180).contains(&painted_at), "painted at tick {painted_at}");
+    keep("example-page-painted", &mut receiver, &mut wrong);
+    // The pointer over the button: the receiver shows its hover look.
+    let picture = receiver.picture();
+    let pick = picture.pick(400, 320);
+    assert_eq!(pick.drawing, 6);
+    assert!(receiver.terminal.set_viewer_state(ViewerState { hovered: 6, ..ViewerState::default() }));
+    keep("example-page-hovered", &mut receiver, &mut wrong);
+    let at = painted_at + 1;
+    let release = pointer(PointerAction::UP, 400, 320, 6, (pick.x, pick.y), &[]);
+    let batch = container.step(&with_events(at, u64::from(at), vec![release])).unwrap();
+    assert_eq!(batch.navigate.as_deref(), Some("106"), "the button's release starts");
+    assert!(wrong.is_empty(), "pictures differ from tests/golden/regis.txt (format {GOLDEN_FORMAT}):\n{}", wrong.join("\n"));
+}
+
+/// Section 6.4's second worked example, as the specification has it: a
+/// game of drawings moved by their properties, one commit a step, its
+/// score drawn as text again whenever it changes.
+#[test]
+fn the_specifications_game_example_runs_and_matches_its_kept_picture() {
+    let mut open = regis_opening(ContextId::Page);
+    open.keys = vec!["ArrowLeft".to_owned(), "ArrowRight".to_owned()];
+    open.tick_divisor = 2;
+    let mut container = container();
+    container.open_with(open, include_bytes!("regis_page/example-game.js")).expect("the game opens");
+    let mut receiver = Receiver::new();
+    let mut wrong = Vec::new();
+    let mut log = Vec::new();
+    let mut notes = 0;
+    for at in 0..400_u32 {
+        // The right arrow is held from the second step: the boat sails
+        // right to its stop, under the crates that fall there.
+        let events = if at == 1 { vec![common::key(EventKind::KeyDown, "ArrowRight", 0)] } else { Vec::new() };
+        let bounds = receiver.bounds(&[4]);
+        let batch = container.step(&Step { bounds, ..with_events(at, u64::from(at), events) }).unwrap();
+        log.extend(lines(&batch));
+        notes += view(&batch).sound.iter().filter(|operation| matches!(operation, protocol::script::batch::SoundOperation::Midi { status: 0x90, .. })).count();
+        if at > 0 && at % 2 == 0 {
+            assert!(batch.regis.as_ref().is_some_and(|bytes| bytes.ends_with(b"D(C)")), "a tick's moves are one commit (step {at})");
+        }
+        receiver.take(&batch);
+    }
+    assert_eq!(log, Vec::<String>::new());
+    // The boat is drawing 4, tracked, and at its stop.
+    assert_eq!(receiver.terminal.drawing_position(4), Some((720, 380)));
+    assert_eq!(receiver.bounds(&[4]), vec![Bounds { handle: 4, x: 720, y: 380, width: 80, height: 21 }]);
+    println!("the game: {} commits, {} bytes of ReGIS, {notes} crates caught in 400 steps", receiver.commits, receiver.bytes);
+    keep("example-game-after-400-steps", &mut receiver, &mut wrong);
+    assert!(wrong.is_empty(), "pictures differ from tests/golden/regis.txt (format {GOLDEN_FORMAT}):\n{}", wrong.join("\n"));
+}
+
+/// Section 6.3 as JavaScript: the painter's calls, each ReGIS's own;
+/// macrographs; measuring; and the kinds of error section 3.8 gives.
+#[test]
+fn the_painter_macrographs_and_measure_as_a_script_sees_them() {
+    let body = r##"
+const g = nt.regis;
+const d = g.drawing({ x: 100, y: 100 });
+const star = g.macrograph((p) => p.ink(3).vector("0246", { multiplier: 8 }));
+check("a macrograph", star instanceof Macrograph && Object.isFrozen(star));
+d.draw((p) => {
+  const same = p.moveTo(0, 0).lineBy(5, 5).vector("7").circle(20).circleThrough(30, 0).arc(0, 0, 90).moveTo(0, 0)
+    .curve([[0, 0], [10, 20], [20, 0]]).curve([[0, 0], [10, 20], [20, 0]], { closed: true })
+    .mode("complement").mode("overlay").negative(true).negative(false).pattern(4).pattern("11110000", { multiplier: 3 }).pattern(1)
+    .planes(15).shade(true).shade({ toY: 50 }).shade({ toX: 50 }).shade({ char: "#" }).shade(false)
+    .text("Score 12").text("Grüße", { size: 2, language: "de" }).text("up", { cell: [12, 24], unit: [8, 20], height: 3, tilt: 90, italic: 22, spacing: [0, -14] })
+    .call(star);
+  check("each call returns the painter", same === p);
+});
+star.redefine((p) => p.ink(2).circle(6));
+equal("measure", JSON.stringify(g.measure("HELLO")), '{"width":45,"height":20}');
+equal("measure at a size", JSON.stringify(g.measure("HELLO", { size: 3 })), '{"width":135,"height":45}');
+equal("measure a cell", JSON.stringify(g.measure("ab", { cell: [12, 30], height: 4 })), '{"width":24,"height":40}');
+equal("measure in a language", g.measure("Grüße", { language: "de" }).width, 45);
+const used = nt.budget().macrographBytes;
+check("the macrographs' bytes are counted", used.used > 0 && used.limit === 14336);
+const paint = (fn) => () => d.draw(fn);
+throws("a vector's digits", TypeError, "a pixel vector is a string", paint((p) => p.vector("089")));
+throws("a mode", TypeError, "a writing mode is", paint((p) => p.mode("xor")));
+throws("a pattern", TypeError, "a pattern is 0 to 9", paint((p) => p.pattern("101")));
+throws("a pattern's multiplier", RangeError, "MAX_PATTERN_MULTIPLIER", paint((p) => p.pattern(1, { multiplier: 17 })));
+throws("planes", RangeError, "MAX_PLANES", paint((p) => p.planes(16)));
+throws("shade", TypeError, "shade takes", paint((p) => p.shade("yes")));
+throws("an arc", TypeError, "an arc is", paint((p) => p.arc(0, 0, 400)));
+throws("text is a string", TypeError, "text takes a string", paint((p) => p.text(5)));
+throws("a text option", TypeError, "'colour' is not an option of text", paint((p) => p.text("x", { colour: 1 })));
+throws("a text size", RangeError, "MAX_TEXT_SIZE", paint((p) => p.text("x", { size: 17 })));
+throws("a text cell", TypeError, "cell is [width, height]", paint((p) => p.text("x", { cell: 12 })));
+throws("a tilt", TypeError, "a text tilt is", paint((p) => p.text("x", { tilt: 30 })));
+throws("a character no set shows", TypeError, "no provided character set", paint((p) => p.text("☃")));
+throws("a language", TypeError, "'xx' is not a language", paint((p) => p.text("x", { language: "xx" })));
+throws("a long string", RangeError, "MAX_TEXT_CHARS", paint((p) => p.text("x".repeat(1001))));
+throws("call takes a macrograph", TypeError, "call takes a Macrograph", paint((p) => p.call(d)));
+throws("a Macrograph is not constructed", TypeError, "a Macrograph is made by", () => new Macrograph());
+throws("after an arc", TypeError, "the position is where an arc", paint((p) => p.moveTo(40, 0).arc(0, 0, 90).lineTo(-5, 0)));
+throws("a macrograph's text", TypeError, "a macrograph's text does not hold", () => g.macrograph((p) => p.text("a@;b")));
+throws("measure", TypeError, "measure takes a string", () => g.measure(5));
+equal("a refused draw leaves the contents", nt.budget().contentBytes.used > 100, true);
+done();
+"##;
+    let mut container = regis_page(&script(body));
+    let batch = container.step(&tick(0, 0)).unwrap();
+    assert_checks(&lines(&batch), 28);
+    let mut receiver = Receiver::new();
+    receiver.take(&batch);
+    assert_eq!(receiver.commits, 1);
+    let sent = String::from_utf8_lossy(batch.regis.as_ref().unwrap()).into_owned();
+    assert!(sent.starts_with("D(S1(X100,Y100))@:AW(I3)V(W(M8))0246@;D(B1)P[0,0]V[+5,+5]V(W(M1))7C[+20]C[30,0]C(C,A+90)[0,0]P[0,0]"), "{sent}");
+    assert!(sent.ends_with("@AD(E)@:AW(I2)C[+6]@;D(C)"), "{sent}");
+    for written in [
+        "W(C)W(V)W(N1)W(N0)W(P4(M1))W(P11110000(M3))W(P1(M1))W(F15)W(S1)W(S[,50])W(S(X)[50])W(S'#')W(S0)",
+        "T(A101)\"Score 12\"T(A0)",
+        "T(S2)T(A102)\"Gr",
+        "T(S[12,24],U[8,20],H3,D90,I22)[+0,-14]T(A101)\"up\"T(A0)",
+    ] {
+        assert!(sent.contains(written), "{written} is not in {sent}");
+    }
 }

@@ -99,8 +99,8 @@
 
   // The painter (section 6.3). It records the calls as whole numbers, the
   // painter program the host checks and encodes; nothing is drawn and no
-  // ReGIS is written here. Work package R1 has the calls a drawing needs
-  // to have any contents; work package R2 adds the rest to this class.
+  // ReGIS is written here. Each method is one call of section 6.3's
+  // table, ReGIS's own.
   class RegisPainter {
     #words = [];
     #open = true;
@@ -129,6 +129,67 @@
     polygon(points) { return this.#points(RG_PAINT.POLYGON, points); }
     rect(x, y, width, height) { return this.#push(RG_PAINT.RECT, x, y, width, height); }
     ink(entry) { return this.#push(RG_PAINT.INK, entry); }
+    // Pixel vectors: a string of digits 0 to 7, each a move of
+    // `multiplier` pixels; 0 is east and they go anticlockwise.
+    vector(digits, options) {
+      if (typeof digits !== "string" || !/^[0-7]+$/.test(digits)) throw new TypeError("a pixel vector is a string of the digits 0 to 7");
+      const multiplier = options && options.multiplier !== undefined ? options.multiplier : 1;
+      return this.#push(RG_PAINT.VECTOR, multiplier, digits.length, ...Array.from(digits, Number));
+    }
+    circle(radius) { return this.#push(RG_PAINT.CIRCLE, radius); }
+    circleThrough(x, y) { return this.#push(RG_PAINT.CIRCLE_THROUGH, x, y); }
+    arc(cx, cy, degrees) { return this.#push(RG_PAINT.ARC, cx, cy, degrees); }
+    curve(points, options) {
+      const closed = options && options.closed !== undefined ? truth(options.closed, "closed") : 0;
+      if (!Array.isArray(points)) throw new TypeError("points is an array of [x, y]");
+      const flat = [];
+      for (const point of points) {
+        if (!Array.isArray(point) || point.length !== 2) throw new TypeError("a point is [x, y]");
+        flat.push(point[0], point[1]);
+      }
+      return this.#push(RG_PAINT.CURVE, closed, points.length, ...flat);
+    }
+    // ReGIS's writing modes, applied to the pixels beneath in depth order.
+    mode(name) {
+      const mode = MODES.indexOf(name);
+      if (mode < 0) throw new TypeError("a writing mode is \"overlay\", \"replace\", \"complement\" or \"erase\"");
+      return this.#push(RG_PAINT.MODE, mode);
+    }
+    negative(on) { return this.#push(RG_PAINT.NEGATIVE, truth(on, "negative")); }
+    // A standard pattern 0 to 9, or eight bits as a string of "0" and "1".
+    pattern(pattern, options) {
+      const multiplier = options && options.multiplier !== undefined ? options.multiplier : 1;
+      if (typeof pattern === "string") {
+        if (!/^[01]{8}$/.test(pattern)) throw new TypeError("a pattern is 0 to 9, or eight bits as a string of \"0\" and \"1\"");
+        return this.#push(RG_PAINT.PATTERN, 1, parseInt(pattern, 2), multiplier);
+      }
+      return this.#push(RG_PAINT.PATTERN, 0, pattern, multiplier);
+    }
+    planes(mask) { return this.#push(RG_PAINT.PLANES, mask); }
+    // ReGIS's shading: on to the position's own line, off, to a line at
+    // a y or at an x, or with a character.
+    shade(how) {
+      if (how === true) return this.#push(RG_PAINT.SHADE, 1, 0);
+      if (how === false) return this.#push(RG_PAINT.SHADE, 0, 0);
+      if (how && typeof how === "object") {
+        if (how.toY !== undefined) return this.#push(RG_PAINT.SHADE, 2, how.toY);
+        if (how.toX !== undefined) return this.#push(RG_PAINT.SHADE, 3, how.toX);
+        if (typeof how.char === "string" && how.char.length === 1) return this.#push(RG_PAINT.SHADE, 4, how.char.charCodeAt(0));
+      }
+      throw new TypeError("shade takes true, false, { toY }, { toX } or { char }");
+    }
+    // Text at the position, in the provided character sets. The options
+    // are ReGIS's text controls and stay in force for later text of the
+    // drawing, as they do in ReGIS.
+    text(string, options) {
+      if (typeof string !== "string") throw new TypeError("text takes a string");
+      return this.#push(RG_PAINT.TEXT, ...textOptions(options), ...stringWords(textLanguage(options)), ...stringWords(string));
+    }
+    call(macrograph) {
+      const handle = macrographHandle.get(macrograph);
+      if (handle === undefined) throw new TypeError("call takes a Macrograph");
+      return this.#push(RG_PAINT.CALL, handle);
+    }
     fill(fn) {
       if (typeof fn !== "function") throw new TypeError("fill takes a function");
       if (this.#filling !== null) throw new TypeError("a fill is not traced inside another fill");
@@ -145,11 +206,59 @@
     }
     // The program, and the painter closed: for the functions below only.
     static #finish(painter) { painter.#open = false; return new Int32Array(painter.#words); }
-    // What work package R2's calls record with.
-    static #record(painter, values) { return painter.#push(...values); }
-    static { painterInternals = { finish: RegisPainter.#finish, record: RegisPainter.#record }; }
+    static { painterInternals = { finish: RegisPainter.#finish }; }
   }
   var painterInternals;
+
+  const MODES = ["overlay", "replace", "complement", "erase"];
+  const NOT_GIVEN = RG_BOUND.OPTION_NOT_GIVEN;
+  const TEXT_OPTIONS = new Set(["size", "cell", "unit", "height", "tilt", "italic", "spacing", "language"]);
+  const macrographHandle = new WeakMap();
+  const MAKE_MACROGRAPH = Symbol("macrograph");
+
+  // A string as a painter program holds it: its length, then its code points.
+  function stringWords(text) {
+    const points = Array.from(text, (character) => character.codePointAt(0));
+    return [points.length, ...points];
+  }
+  function optionPair(value, name) {
+    if (value === undefined || value === null) return [NOT_GIVEN, NOT_GIVEN];
+    if (!Array.isArray(value) || value.length !== 2) throw new TypeError(name + " is [width, height]");
+    return [whole(value[0], undefined, name), whole(value[1], undefined, name)];
+  }
+  function optionNumber(value, name) {
+    return value === undefined || value === null ? NOT_GIVEN : whole(value, undefined, name);
+  }
+  // The text controls a call gives, in the program's order: size, cell,
+  // unit, height, tilt, italic, spacing.
+  function textOptions(options) {
+    const o = options === undefined || options === null ? {} : options;
+    if (typeof o !== "object") throw new TypeError("text's options are an object");
+    for (const name of Object.keys(o)) if (!TEXT_OPTIONS.has(name)) throw new TypeError("'" + name + "' is not an option of text");
+    return [
+      optionNumber(o.size, "size"), ...optionPair(o.cell, "cell"), ...optionPair(o.unit, "unit"), optionNumber(o.height, "height"),
+      optionNumber(o.tilt, "tilt"), optionNumber(o.italic, "italic"), ...optionPair(o.spacing, "spacing"),
+    ];
+  }
+  function textLanguage(options) {
+    const language = options && options.language;
+    if (language === undefined || language === null) return "";
+    if (typeof language !== "string") throw new TypeError("language is a language tag");
+    return language;
+  }
+
+  // One of the 26 macrographs (`@:x … @;`): a painter's calls kept by the
+  // receiver and drawn wherever a painter calls it. The host allocates
+  // its letter.
+  class Macrograph {
+    constructor(token, handle) {
+      if (token !== MAKE_MACROGRAPH) throw new TypeError("a Macrograph is made by nt.regis.macrograph");
+      macrographHandle.set(this, handle);
+      Object.freeze(this);
+    }
+    redefine(fn) { host(OP.RG_MACROGRAPH, macrographHandle.get(this), programOf(fn)); }
+  }
+  Object.freeze(Macrograph.prototype);
 
   // Runs `fn` with a painter and gives the program it recorded.
   function programOf(fn) {
@@ -371,16 +480,24 @@
     symbol(fn) { return drawing({ visible: false }).draw(fn); },
     group(options) { return drawing(options); },
     clear() { settleRemoved(host(OP.RG_CLEAR)); },
+    macrograph(fn) { return new Macrograph(MAKE_MACROGRAPH, host(OP.RG_MACROGRAPH, 0, programOf(fn))); },
+    // The pixels a string takes at the cell the options select: the
+    // renderer has no measuring call, so the host computes it.
+    measure(string, options) {
+      if (typeof string !== "string") throw new TypeError("measure takes a string");
+      const o = options === undefined || options === null ? {} : options;
+      const [width, height] = optionPair(o.cell, "cell");
+      const packed = host(OP.RG_MEASURE, optionNumber(o.size, "size"), width, height, optionNumber(o.height, "height"), optionNumber(o.tilt, "tilt"), textLanguage(o) + "\0" + string);
+      return { width: packed % RG_BOUND.HANDLE_NUMBERS, height: Math.floor(packed / RG_BOUND.HANDLE_NUMBERS) };
+    },
   });
   // A page context has the API of its own page's renderer and no other;
   // the channel context has it for whatever page is shown, and the host
   // refuses its calls while that page is not a ReGIS page (section 3.1).
   if (!isPage || host(OP.INFO, INFO.PAGE_RENDERER) === "regis") core.regis = api;
-  // What work package R2 builds on: the painter's class and the way its
-  // further calls record their whole numbers, and the program of a
-  // function that paints (for macrographs).
-  core.regisInternals = { RegisPainter, record: painterInternals.record, programOf, Drawing };
-  for (const [name, value] of Object.entries({ Drawing, RegisPainter })) {
+  // What the components on ReGIS (work package U2) build on.
+  core.regisInternals = { RegisPainter, programOf, Drawing, Macrograph };
+  for (const [name, value] of Object.entries({ Drawing, RegisPainter, Macrograph })) {
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true, enumerable: false });
   }
 })();
