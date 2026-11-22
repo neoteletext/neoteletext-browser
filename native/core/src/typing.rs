@@ -421,6 +421,18 @@ impl Typing {
         if let Some(state) = self.channels.get_mut(&channel) {
             state.tell_select(channel, now_us, sends);
         }
+        // A table taken before the welcome was said to a gate that refused
+        // it, the session not being welcomed (`rules_page_open`), and a
+        // decoder says what a table asks for only when that changes: the
+        // channel's answer to the SELECT above is the same table, at which
+        // it says nothing. Pausing the open page and opening it again makes
+        // it say so now (RULE-111 case 4: the page goes on as it was, with
+        // no `open`), or the page's input would never reach its channel
+        // (TODO-7233).
+        if let Some(page) = self.rules_open(channel) {
+            sends.push(Send::RulesPage { channel, page: None });
+            sends.push(Send::RulesPage { channel, page: Some(page) });
+        }
     }
 
     /// What the tab of `channel` selects, as `select` or `opened` set it.

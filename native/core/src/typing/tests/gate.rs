@@ -332,6 +332,47 @@ fn a_page_the_selection_leaves_is_closed_for_its_table_at_once() {
     assert_eq!(typing.rules_open(PAGE.channel), Some(OPEN));
 }
 
+/// RULE-52 item 1, RULE-58 (REQ-6534), TODO-7233: a table taken before
+/// the session is welcomed is said again once it is. A channel may send a
+/// page and its table before WELCOME (the NeoTeletext server does to a
+/// connection whose HELLO is later than the first selection's bound), and
+/// the gate refuses what a decoder says while the session is not welcomed.
+/// The decoder says what a table asks for only when that changes, so
+/// before, nothing made it say so again: the page was shown with its table
+/// running and no input reached its channel. The session's start now
+/// pauses the open page and opens it again, in that order, at which its
+/// decoder says what the table asks for.
+#[test]
+fn a_table_taken_before_the_welcome_is_said_again_at_the_sessions_start() {
+    let mut typing = Typing::default();
+    typing.input(PAGE.channel, true, false, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    let drawn = typing.drawn(PAGE, 0);
+    assert!(drawn.contains(&Send::RulesPage { channel: PAGE.channel, page: Some(OPEN) }), "the page is open for its table before the welcome: {drawn:?}");
+    let (early, open) = typing.rules_told(PAGE.channel, &send_all(), MS);
+    assert!(!open, "the gate refuses a table said before the welcome");
+    assert_ne!(told_input(&early), Some((true, true)), "{early:?}");
+    assert_eq!(went(&typing.input_intent(&key('a'), 2 * MS)), (0, 0), "nothing goes before the welcome");
+
+    let started = typing.control(PAGE.channel, &welcome(SELECT_CAP), 3 * MS);
+    let pages: Vec<&Send> = started.iter().filter(|send| matches!(send, Send::RulesPage { .. })).collect();
+    let (paused, opened) = (Send::RulesPage { channel: PAGE.channel, page: None }, Send::RulesPage { channel: PAGE.channel, page: Some(OPEN) });
+    assert_eq!(pages, [&paused, &opened], "the open page is paused and opened again: {started:?}");
+    // What the decoder says at each: nothing asked, then the table's asks.
+    typing.rules_told(PAGE.channel, &RulesOpen { generation: 0, interest: 0, wheel: Vec::new(), keys: Vec::new(), ..send_all() }, 3 * MS);
+    let (taken, open) = typing.rules_told(PAGE.channel, &send_all(), 3 * MS);
+    assert!(open, "the table is taken once the session is welcomed");
+    assert_eq!(told_input(&taken), Some((true, true)), "{taken:?}");
+    assert_eq!(went(&typing.input_intent(&key('a'), 4 * MS)), (0, 1), "the key is given to the table, which reports it");
+
+    // A page not yet open for its table at the welcome gets no pause.
+    let mut typing = Typing::default();
+    typing.input(PAGE.channel, true, false, 0);
+    typing.opened(Some(PAGE.channel), Some(PAGE), 0);
+    let started = typing.control(PAGE.channel, &welcome(SELECT_CAP), MS);
+    assert!(!started.iter().any(|send| matches!(send, Send::RulesPage { .. })), "{started:?}");
+}
+
 /// RULE-52 item 6, RULE-47 (REQ-6534): a `PAGE_STATE` is passed only in
 /// answer to a query the channel's fetcher received for that page, once,
 /// and only when it begins with that query's identifier.
