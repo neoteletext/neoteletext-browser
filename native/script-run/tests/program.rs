@@ -205,7 +205,7 @@ fn watch_runs_again_when_the_script_changes() {
 
 /// "It reads untrusted scripts like the browser does and so confines
 /// itself the same way": with no `--unconfined` the run is made in a
-/// worker confined as a decoder is, and gives the same kept files. On a
+/// worker confined as the script host is, and gives the same kept files. On a
 /// Linux that restricts user namespaces this needs the build folder to
 /// be one the system lets make them (`scripts/apparmor-development.sh`
 /// covers the main checkout's `native/target`).
@@ -213,7 +213,7 @@ fn watch_runs_again_when_the_script_changes() {
 fn the_confined_worker_gives_the_same_run() {
     let output = Command::new(PROGRAM).arg("run").args(beacon_arguments()).output().unwrap();
     assert_eq!(output.status.code(), Some(0), "{}", said(&output));
-    assert!(said(&output).contains("confined as a decoder is"), "{}", said(&output));
+    assert!(said(&output).contains("confined as the script host is"), "{}", said(&output));
     assert!(said(&output).contains("matched the 5 kept files"), "{}", said(&output));
 }
 
@@ -244,4 +244,34 @@ fn the_hostile_scripts_each_end_as_a_run_or_a_stop() {
         assert!(stopped.iter().any(|name| name == never_returns), "{never_returns} was not told as stopped; stopped: {stopped:?}");
     }
     println!("stopped under the browser's limits: {stopped:?}");
+}
+
+/// The teletext API's worked example (script-api.md section 5.8; work
+/// package T1's `native/script/tests/teletext/101.js`) run against its
+/// kept results: the page plane it writes is drawn by the decoder's
+/// engine. Until the decoder's side of a step exists (work package F4)
+/// the runner's stand-in does not draw the example's overlay band or its
+/// defined colour, and the report must say so, never pass silently.
+#[test]
+fn the_teletext_worked_example_matches_its_kept_run() {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let kept = manifest.join("tests/pages/harbour");
+    let output = runner(&[
+        manifest.join("../script/tests/teletext/101.js").to_str().unwrap(),
+        "--page",
+        "101",
+        "--ticks",
+        "61",
+        "--input",
+        kept.join("input.txt").to_str().unwrap(),
+        "--png-at",
+        "0,60",
+        "--expect",
+        kept.join("expect").to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    let all = said(&output);
+    assert!(all.contains("matched the 5 kept files"), "{all}");
+    assert!(all.contains("runner note navigate 103") && all.contains("runner note navigate 102"), "the keys 2 and 1 navigate: {all}");
+    assert!(all.contains("NOT DRAWN") && all.contains("teletext enhancement, teletext settings"), "{all}");
 }

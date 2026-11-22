@@ -1,7 +1,7 @@
 //! Named files passed between the runner's two processes. The process
 //! that reads and writes the disk is not confined and runs no script; the
 //! worker that runs the script, the decoder's engine and the mixer is
-//! confined as a decoder is and touches no file (section 16: "It reads
+//! confined as the script host is and touches no file (section 16: "It reads
 //! untrusted scripts like the browser does and so confines itself the
 //! same way"). Everything one gives the other is a list of named byte
 //! strings in this one form:

@@ -25,7 +25,7 @@ protocol.workspace = true
 decoder = { workspace = true, features = ["stepped-clock"] }
 # The sound helper's own mixer, which the WAV file is rendered by.
 sound = { path = "../sound", package = "neoteletext-sound" }
-# The worker process is started confined, as a decoder is.
+# The worker process is started confined, as the script host is.
 confine.workspace = true
 # The engine's packet and record writers, and its channel file reader and
 # bounded JSON reader.

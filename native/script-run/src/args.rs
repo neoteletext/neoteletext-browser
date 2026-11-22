@@ -42,7 +42,7 @@ pub enum NetworkMode {
 
 impl NetworkMode {
     /// Whether the mode reaches the real network, and so cannot run
-    /// confined as a decoder is.
+    /// confined as the script host is.
     #[must_use]
     pub const fn is_live(&self) -> bool {
         matches!(self, Self::Live | Self::Record(_))

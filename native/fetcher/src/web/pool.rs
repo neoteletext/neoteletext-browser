@@ -187,11 +187,26 @@ pub(crate) struct Answer {
     pub(crate) body: Body,
 }
 
+/// Whether hyper failed on bytes that are not what their framing says,
+/// a chunk's size that is no number among them (RFC 9112 section 7.1):
+/// hyper reports such a body as an error of reading whose cause is
+/// invalid data or input, where a socket's own failure has another kind.
+fn is_malformed(error: &hyper::Error) -> bool {
+    let mut cause = std::error::Error::source(error);
+    while let Some(inner) = cause {
+        if inner.downcast_ref::<io::Error>().is_some_and(|failed| matches!(failed.kind(), io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput)) {
+            return true;
+        }
+        cause = inner.source();
+    }
+    false
+}
+
 /// Why hyper failed, as the pipe says it.
 fn reason_of(error: &hyper::Error) -> Reason {
     if error.is_timeout() {
         Reason::Timeout
-    } else if error.is_parse() || error.is_parse_status() || error.is_incomplete_message() || error.is_body_write_aborted() {
+    } else if error.is_parse() || error.is_parse_status() || error.is_incomplete_message() || error.is_body_write_aborted() || is_malformed(error) {
         Reason::Protocol
     } else if error.is_user() {
         Reason::Request

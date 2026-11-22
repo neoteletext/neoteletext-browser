@@ -1,14 +1,17 @@
 {
   "page": {
     "scriptBytes": {"used": 909, "limit": 1048576, "most": 909},
-    "heapBytes": {"used": 298280, "limit": 50331648, "most": 298280},
+    "heapBytes": {"used": 354596, "limit": 50331648, "most": 354596},
     "timers": {"used": 0, "limit": 32, "most": 1},
     "listeners": {"used": 3, "limit": 256, "most": 3},
     "requests": {"used": 0, "limit": 0, "most": 0},
     "sockets": {"used": 0, "limit": 0, "most": 0},
     "soundOperations": {"used": 4, "limit": 256, "most": 4},
     "batchBytes": {"used": 0, "limit": 262144, "most": 0},
-    "hostBytes": {"used": 3980, "limit": 8388608, "most": 4065},
-    "failures": {"used": 0, "limit": 16, "most": 0}
+    "hostBytes": {"used": 26053, "limit": 8388608, "most": 26138},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "triplets": {"used": 0, "limit": 208, "most": 0},
+    "colours": {"used": 0, "limit": 16, "most": 0},
+    "controls": {"used": 0, "limit": 32, "most": 0}
   }
 }

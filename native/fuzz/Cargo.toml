@@ -28,6 +28,8 @@ icon = { path = "../icon", package = "neoteletext-icon" }
 # built with debug assertions by compiler flags, which the interpreter's
 # build script cannot see (native/script/Cargo.toml).
 neoteletext-script = { path = "../script", features = ["portable-dispatch"] }
+# The script-host program's serving, on the same build of the library.
+script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
 # its manifest reader, expect.json and the files between its two processes.
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
@@ -411,6 +413,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "script_teletext_ops"
+path = "fuzz_targets/script_teletext_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "script_imports"
 path = "fuzz_targets/script_imports.rs"
 test = false
@@ -420,6 +429,34 @@ bench = false
 [[bin]]
 name = "script_js"
 path = "fuzz_targets/script_js.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cors_response"
+path = "fuzz_targets/cors_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_relay_pipes"
+path = "fuzz_targets/script_relay_pipes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "integrity_metadata"
+path = "fuzz_targets/integrity_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_host_serve"
+path = "fuzz_targets/script_host_serve.rs"
 test = false
 doc = false
 bench = false

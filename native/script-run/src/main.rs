@@ -3,7 +3,7 @@
 //!
 //! Two processes. This one reads the command line and every file, writes
 //! every file, and runs no script. It starts itself again as the worker,
-//! confined as a decoder is (its pipes and nothing else), gives it the
+//! confined as the script host is (its pipes and nothing else), gives it the
 //! files as bytes, and is given the run's files back. The worker runs the
 //! scripts, the decoder's engine, the mixer and the PNG writer: everything
 //! that reads untrusted bytes. With the live network the run cannot be
@@ -43,8 +43,8 @@ const WORKER: &str = "--worker";
 /// The worker: confined first, before any thread exists and before a
 /// byte of anything untrusted is read.
 fn worker() -> ExitCode {
-    match confine::apply(confine::Role::Decoder, None) {
-        Ok(report) => eprintln!("neoteletext-script-run: the run is confined as a decoder is: {report}"),
+    match confine::apply(confine::Role::Script, None) {
+        Ok(report) => eprintln!("neoteletext-script-run: the run is confined as the script host is: {report}"),
         Err(why) => {
             eprintln!(
                 "neoteletext-script-run: the worker could not be confined, so nothing was run: {why}\n\
@@ -80,7 +80,7 @@ fn in_worker(given: &[Blob]) -> Result<Vec<Blob>, Failure> {
     let mut process = confine::spawn(&confine::Spawn {
         program: &program,
         arguments: &arguments,
-        role: confine::Role::Decoder,
+        role: confine::Role::Script,
         environment: &[],
         local_network: false,
         udp_port: None,

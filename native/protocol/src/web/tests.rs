@@ -699,3 +699,172 @@ fn the_local_network_reasons_and_spaces_are_told_apart() {
     assert_eq!(AddressSpace::named("Public"), None);
     assert_eq!(AddressSpace::named(""), None);
 }
+
+/// A start's payload written field by field with no check, in the order
+/// `Start::write` writes it, so that bytes no writer would make can be
+/// read: the reader is the bound a script host that has been subverted
+/// meets.
+fn raw_start(start: &Start) -> Vec<u8> {
+    let mut payload = start.id.to_be_bytes().to_vec();
+    payload.extend_from_slice(&[
+        start.context.code(),
+        start.kind.code(),
+        start.mode.code(),
+        start.credentials.code(),
+        start.cache.code(),
+        start.redirect.code(),
+        start.referrer_policy.code(),
+        u8::from(start.keepalive),
+    ]);
+    match start.body {
+        BodySource::None => payload.push(BODY_NONE),
+        BodySource::Bytes(length) => {
+            payload.push(BODY_BYTES);
+            payload.extend_from_slice(&length.to_be_bytes());
+        }
+        BodySource::Stream => payload.push(BODY_STREAM),
+    }
+    for text in [&start.method, &start.url, &start.client] {
+        payload.extend(field(text.as_bytes()));
+    }
+    match &start.referrer {
+        Referrer::None => payload.push(REFERRER_NONE),
+        Referrer::Client => payload.push(REFERRER_CLIENT),
+        Referrer::Url(url) => {
+            payload.push(REFERRER_URL);
+            payload.extend(field(url.as_bytes()));
+        }
+    }
+    payload.extend(field(start.integrity.as_bytes()));
+    payload.extend_from_slice(&u16::try_from(start.headers.len()).unwrap().to_be_bytes());
+    for (name, value) in &start.headers {
+        payload.extend(field(name.as_bytes()));
+        payload.extend(field(value));
+    }
+    payload.extend_from_slice(&u16::try_from(start.protocols.len()).unwrap().to_be_bytes());
+    for protocol in &start.protocols {
+        payload.extend(field(protocol.as_bytes()));
+    }
+    payload.extend(field(start.last_event_id.as_bytes()));
+    payload
+}
+
+/// The writer of `raw_start` is the protocol's own, byte for byte, for
+/// every start the writer accepts.
+#[test]
+fn the_raw_start_is_the_writers() {
+    for start in [start(), socket(), stream()] {
+        let mut written = Vec::new();
+        write_request(&mut written, &ToWebClient::Start(Box::new(start.clone()))).unwrap();
+        assert_eq!(written, frame(KIND_START, &raw_start(&start)));
+    }
+}
+
+/// `docs/script-api.md` section 11.3: a start one past each bound, or
+/// malformed, written by hand as a subverted script host would write it,
+/// is refused by the script host's reader and by the web client's, each
+/// time naming the field that broke its bound.
+#[test]
+fn a_start_one_past_a_bound_is_refused_when_read_by_name() {
+    let cases: Vec<(&str, Start)> = vec![
+        ("method", Start { method: "M".repeat(MAX_METHOD_BYTES + 1), ..start() }),
+        ("method", Start { method: String::new(), ..start() }),
+        ("method", Start { method: "GE T".into(), ..start() }),
+        ("method", Start { method: "Track".into(), ..start() }),
+        ("address", Start { url: format!("https://a.example/{}", "a".repeat(MAX_URL_BYTES - 17)), ..start() }),
+        ("address", Start { url: "file:///etc/passwd".into(), ..start() }),
+        ("address", Start { url: "wss://a.example/".into(), ..start() }),
+        ("address", Start { url: "https://a.example/\n".into(), ..start() }),
+        ("address", Start { url: "https://a.example/live".into(), ..socket() }),
+        ("client address", Start { client: "a".repeat(MAX_URL_BYTES + 1), ..start() }),
+        ("client address", Start { client: "https://a.example/\u{7f}".into(), ..start() }),
+        ("referrer", Start { referrer: Referrer::Url("a".repeat(MAX_URL_BYTES + 1)), ..start() }),
+        ("referrer", Start { referrer: Referrer::Url("https://a.example/ x".into()), ..start() }),
+        ("integrity", Start { integrity: "a".repeat(MAX_INTEGRITY_BYTES + 1), ..start() }),
+        ("integrity", Start { integrity: "sha256-\t".into(), ..start() }),
+        ("too many headers", Start { headers: vec![("a".into(), Vec::new()); MAX_REQUEST_HEADERS + 1], ..start() }),
+        ("header name", Start { headers: vec![("n".repeat(MAX_HEADER_NAME_BYTES + 1), Vec::new())], ..start() }),
+        ("header name", Start { headers: vec![(String::new(), Vec::new())], ..start() }),
+        ("header name", Start { headers: vec![("a:b".into(), Vec::new())], ..start() }),
+        ("header value", Start { headers: vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES + 1])], ..start() }),
+        ("header value", Start { headers: vec![("a".into(), b"x\r\nInjected: 1".to_vec())], ..start() }),
+        ("header value", Start { headers: vec![("a".into(), b"x ".to_vec())], ..start() }),
+        (
+            "headers too long",
+            Start {
+                headers: [
+                    vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES - 1]); MAX_HEADER_BYTES / MAX_HEADER_VALUE_BYTES],
+                    vec![("b".into(), Vec::new())],
+                ]
+                .concat(),
+                ..start()
+            },
+        ),
+        ("body length", Start { body: BodySource::Bytes(u32::try_from(MAX_REQUEST_BODY_BYTES + 1).unwrap()), ..start() }),
+        ("subprotocols", Start { protocols: (0..=MAX_WS_PROTOCOLS).map(|number| format!("p{number}")).collect(), ..socket() }),
+        ("subprotocols", Start { protocols: vec!["chat".into()], ..start() }),
+        ("subprotocols", Start { protocols: vec!["chat".into(), "chat".into()], ..socket() }),
+        ("subprotocol", Start { protocols: vec!["p".repeat(MAX_SUBPROTOCOL_BYTES + 1)], ..socket() }),
+        ("subprotocol", Start { protocols: vec!["a b".into()], ..socket() }),
+        ("last event ID", Start { last_event_id: "i".repeat(MAX_EVENT_ID_BYTES + 1), ..stream() }),
+        ("last event ID", Start { last_event_id: "1\r\nCookie: a=b".into(), ..stream() }),
+        ("last event ID", Start { last_event_id: "1".into(), ..start() }),
+    ];
+    for (name, start) in cases {
+        let payload = raw_start(&start);
+        let host = read_request(&mut frame(KIND_START, &payload).as_slice());
+        assert!(matches!(host, Err(ProtocolError::BadValue(what)) if what == name), "{name}: the script host's reader gave {host:?}");
+        let relayed = [token().bytes().as_slice(), &payload].concat();
+        let client = read_to_client(&mut tabbed(TAB, KIND_START, &relayed).as_slice(), &token());
+        assert!(matches!(client, Err(ProtocolError::BadValue(what)) if what == name), "{name}: the web client's reader gave {client:?}");
+    }
+}
+
+/// A head's header bounds, the name, the value and all of them together,
+/// at the bound and one past, written and read; the reader names each.
+#[test]
+fn a_head_one_past_a_header_bound_is_refused_by_name() {
+    let headers = |headers: Vec<(String, Vec<u8>)>| Head { headers, ..head() };
+    let at = [
+        headers(vec![("n".repeat(MAX_HEADER_NAME_BYTES), Vec::new())]),
+        headers(vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES])]),
+        headers(vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES - 1]); MAX_HEADER_BYTES / MAX_HEADER_VALUE_BYTES]),
+    ];
+    for head in at {
+        let message = FromWebClient::Head(Box::new(head));
+        let mut pipe = Vec::new();
+        write_answer(&mut pipe, &message).unwrap();
+        assert_eq!(read_answer(&mut pipe.as_slice()).unwrap(), Some(message));
+    }
+    let past = [
+        ("header name", headers(vec![("n".repeat(MAX_HEADER_NAME_BYTES + 1), Vec::new())])),
+        ("header value", headers(vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES + 1])])),
+        (
+            "headers too long",
+            headers(
+                [vec![("a".into(), vec![b'x'; MAX_HEADER_VALUE_BYTES - 1]); MAX_HEADER_BYTES / MAX_HEADER_VALUE_BYTES], vec![("b".into(), Vec::new())]]
+                    .concat(),
+            ),
+        ),
+    ];
+    for (name, head) in past {
+        assert!(matches!(head.check(), Err(ProtocolError::BadValue(what)) if what == name), "{name}");
+        assert!(write_answer(&mut Vec::new(), &FromWebClient::Head(Box::new(head.clone()))).is_err(), "{name}");
+        // Written by hand, as a web client that has been subverted would.
+        let mut payload = head.id.to_be_bytes().to_vec();
+        payload.push(head.response_type.code());
+        payload.extend_from_slice(&head.status.to_be_bytes());
+        payload.push(u8::from(head.redirected));
+        payload.extend(field(head.status_text.as_bytes()));
+        payload.extend(field(head.url.as_bytes()));
+        payload.extend_from_slice(&u16::try_from(head.headers.len()).unwrap().to_be_bytes());
+        for (header, value) in &head.headers {
+            payload.extend(field(header.as_bytes()));
+            payload.extend(field(value));
+        }
+        let read = read_answer(&mut frame(KIND_HEAD, &payload).as_slice());
+        assert!(matches!(read, Err(ProtocolError::BadValue(what)) if what == name), "{name}: {read:?}");
+        let read = read_from_client(&mut tabbed(TAB, KIND_HEAD, &payload).as_slice());
+        assert!(matches!(read, Err(ProtocolError::BadValue(what)) if what == name), "{name}: {read:?}");
+    }
+}

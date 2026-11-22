@@ -69,12 +69,14 @@ pub(crate) fn referer(policy: ReferrerPolicy, referrer: &Url, target: &Url, same
 }
 
 /// The policy the answer's `Referrer-Policy` headers set: the last token
-/// that names one (the standard's section 8.1), or none.
+/// that is a referrer policy (the standard's section 8.1), or none. A
+/// policy is one of the standard's strings as it writes them, in lower
+/// case: a token in other case is none.
 pub(crate) fn policy_of(headers: &[Header]) -> Option<ReferrerPolicy> {
     let mut policy = None;
     for (_, value) in headers.iter().filter(|(name, _)| name == "referrer-policy") {
         for token in value.split(|&byte| byte == b',') {
-            let named = match token.trim_ascii().to_ascii_lowercase().as_slice() {
+            let named = match token.trim_ascii() {
                 b"no-referrer" => ReferrerPolicy::NoReferrer,
                 b"no-referrer-when-downgrade" => ReferrerPolicy::NoReferrerWhenDowngrade,
                 b"same-origin" => ReferrerPolicy::SameOrigin,
@@ -144,7 +146,8 @@ mod tests {
     fn an_answers_policy_is_its_last_known_token() {
         let headers = |values: &[&str]| values.iter().map(|value| ("referrer-policy".to_owned(), value.as_bytes().to_vec())).collect::<Vec<_>>();
         assert_eq!(policy_of(&headers(&["no-referrer"])), Some(ReferrerPolicy::NoReferrer));
-        assert_eq!(policy_of(&headers(&["no-referrer, Strict-Origin , future-policy"])), Some(ReferrerPolicy::StrictOrigin));
+        assert_eq!(policy_of(&headers(&["no-referrer, strict-origin , future-policy"])), Some(ReferrerPolicy::StrictOrigin));
+        assert_eq!(policy_of(&headers(&["no-referrer, Strict-Origin"])), Some(ReferrerPolicy::NoReferrer), "a token in other case is no policy");
         assert_eq!(policy_of(&headers(&["origin", "unsafe-url"])), Some(ReferrerPolicy::UnsafeUrl));
         assert_eq!(policy_of(&headers(&["never"])), None);
         assert_eq!(policy_of(&[]), None);

@@ -73,7 +73,7 @@ const CONSOLE_TYPIST: &str = "NEOTELETEXT_CONFINE_CONSOLE_TYPIST";
 /// reached a shell. Each character is a key's press and its release.
 const TYPED: &str = "rem";
 /// Every role a helper is started in.
-const ROLES: [Role; 6] = [Role::Decoder, Role::Network, Role::Interface, Role::Core, Role::Sound, Role::Updater { port: 443 }];
+const ROLES: [Role; 7] = [Role::Decoder, Role::Script, Role::Network, Role::Interface, Role::Core, Role::Sound, Role::Updater { port: 443 }];
 
 /// The console's input, as a helper or its owner opens it, if it can.
 fn console_input() -> Option<Owned> {

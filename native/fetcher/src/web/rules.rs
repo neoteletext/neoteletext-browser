@@ -52,6 +52,40 @@ const FORBIDDEN_REQUEST_HEADERS: [&str; 21] = [
 /// section).
 const METHOD_OVERRIDE_HEADERS: [&str; 3] = ["x-http-method", "x-http-method-override", "x-method-override"];
 
+/// A header's value split into its values as the Fetch standard splits
+/// one (its section 2.2.2, "get, decode, and split"): at each comma that
+/// is not inside an HTTP quoted string, each value without the spaces and
+/// tabs at its ends. A quoted string keeps its quotes, as the standard's
+/// own example has it (`"1,2", 3` is `"1,2"` and `3`), so a quoted method
+/// is no method.
+fn split_values(value: &[u8]) -> Vec<&[u8]> {
+    let mut values = Vec::new();
+    let (mut start, mut position, mut quoted) = (0_usize, 0_usize, false);
+    while let Some(&byte) = value.get(position) {
+        match byte {
+            // Inside a quoted string a backslash takes the byte after it.
+            b'\\' if quoted => position = position.saturating_add(1),
+            b'"' => quoted = !quoted,
+            b',' if !quoted => {
+                values.push(value.get(start..position).unwrap_or_default());
+                start = position.saturating_add(1);
+            }
+            _ => {}
+        }
+        position = position.saturating_add(1);
+    }
+    values.push(value.get(start..).unwrap_or_default());
+    values.into_iter().map(trim_tab_or_space).collect()
+}
+
+/// `value` without HTTP tabs or spaces at its ends.
+fn trim_tab_or_space(value: &[u8]) -> &[u8] {
+    let is_edge = |byte: &u8| matches!(byte, b' ' | b'\t');
+    let start = value.iter().position(|byte| !is_edge(byte)).unwrap_or(value.len());
+    let end = value.iter().rposition(|byte| !is_edge(byte)).map_or(start, |last| last.saturating_add(1));
+    value.get(start..end).unwrap_or_default()
+}
+
 /// Whether a script may not set the header `name` (in lower case) to
 /// `value`. The script side's `Headers` drops such a header silently, as
 /// the standard says; the web client drops it again, trusting no script.
@@ -59,8 +93,7 @@ pub(crate) fn is_forbidden_request_header(name: &str, value: &[u8]) -> bool {
     if FORBIDDEN_REQUEST_HEADERS.contains(&name) || name.starts_with("proxy-") || name.starts_with("sec-") {
         return true;
     }
-    METHOD_OVERRIDE_HEADERS.contains(&name)
-        && value.split(|&byte| byte == b',').any(|method| std::str::from_utf8(method.trim_ascii()).is_ok_and(is_forbidden_method))
+    METHOD_OVERRIDE_HEADERS.contains(&name) && split_values(value).iter().any(|method| std::str::from_utf8(method).is_ok_and(is_forbidden_method))
 }
 
 /// Whether a script may never read the answer's header `name` (in lower
@@ -84,6 +117,21 @@ mod tests {
             assert!(!is_bad_port(port), "{port}");
         }
         assert!(BAD_PORTS.is_sorted(), "the list is in the standard's order");
+    }
+
+    /// The Fetch standard's own examples of "get, decode, and split"
+    /// (section 2.2.2), and a quoted string's backslash and missing end.
+    #[test]
+    fn a_value_is_split_as_the_standard_splits_it() {
+        let split = |value: &str| split_values(value.as_bytes()).into_iter().map(|part| String::from_utf8_lossy(part).into_owned()).collect::<Vec<_>>();
+        assert_eq!(split("nosniff,"), ["nosniff", ""]);
+        assert_eq!(split(""), [""]);
+        assert_eq!(split("text/html;\", x/x"), ["text/html;\", x/x"]);
+        assert_eq!(split("x / x,,,1"), ["x / x", "", "", "1"]);
+        assert_eq!(split("\"1,2\", 3"), ["\"1,2\"", "3"]);
+        assert_eq!(split(" \tPUT\t , TRACE "), ["PUT", "TRACE"]);
+        assert_eq!(split("\"a\\\",b\", c"), ["\"a\\\",b\"", "c"], "a backslash takes the quote after it");
+        assert_eq!(split("\"a,b"), ["\"a,b"], "a quoted string with no end runs to the value's");
     }
 
     #[test]

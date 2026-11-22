@@ -94,7 +94,7 @@ pub fn environment(role: Role) -> Vec<(OsString, OsString)> {
         Role::Sound => ENVIRONMENT_SOUND,
         Role::Core => ENVIRONMENT_CORE,
         Role::Updater { .. } => ENVIRONMENT_UPDATER,
-        Role::Decoder | Role::Network => &[],
+        Role::Decoder | Role::Script | Role::Network => &[],
     };
     let debug: &[&str] = if role == Role::Interface { ENVIRONMENT_WINDOW_DEBUG } else { &[] };
     let mut names: Vec<&str> = ENVIRONMENT_NEEDED.iter().chain(extra).chain(debug).copied().collect();
