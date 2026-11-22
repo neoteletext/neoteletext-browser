@@ -123,6 +123,42 @@ fn without_long_attributes(text: &str) -> String {
     kept
 }
 
+/// The life of a cookie whose `Max-Age` is zero or less: already over.
+const ENDED: Duration = Duration::seconds(-1);
+
+/// The seconds a `Max-Age` attribute's value asks for, read as the
+/// standard reads it (RFC 6265bis-22 section 5.6.2): a `-` or a digit,
+/// then digits alone. An empty value, or any other, is no `Max-Age` at
+/// all. A number past what fits is the longest or the shortest there is.
+fn max_age(value: &str) -> Option<i64> {
+    let digits = value.strip_prefix('-').unwrap_or(value);
+    if value.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    // A `-` alone is zero, as the standard's "remainder" of no digits is.
+    Some(value.parse::<i64>().unwrap_or(if value.starts_with('-') || digits.is_empty() { 0 } else { i64::MAX }))
+}
+
+/// `text` without its `Max-Age` attributes, and the seconds the last of
+/// them that the standard reads asks for. The `cookie` crate reads the
+/// attribute otherwise than the standard (an empty value as the longest
+/// life), so it is read here and the crate never sees it.
+fn lifetime_attributes(text: &str) -> (String, Option<i64>) {
+    let mut parts = text.split(';');
+    let mut kept = parts.next().unwrap_or_default().to_owned();
+    let mut asked = None;
+    for attribute in parts {
+        let (name, value) = attribute.split_once('=').unwrap_or((attribute, ""));
+        if name.trim().eq_ignore_ascii_case("max-age") {
+            asked = max_age(value.trim()).or(asked);
+        } else {
+            kept.push(';');
+            kept.push_str(attribute);
+        }
+    }
+    (kept, asked)
+}
+
 /// Where a cookie is kept: its domain, path and name.
 type Place = (String, String, String);
 
@@ -214,12 +250,17 @@ impl Jar {
         if name.trim().len().saturating_add(value.trim().len()) > MAX_COOKIE_BYTES {
             return None;
         }
-        let mut raw = RawCookie::parse(without_long_attributes(text)).ok()?.into_owned();
-        // No cookie outlives the cap, whichever attribute asked.
+        let (text, max_age) = lifetime_attributes(&without_long_attributes(text));
+        let mut raw = RawCookie::parse(text).ok()?.into_owned();
+        // `Max-Age` goes before `Expires` (RFC 6265bis-22 section 5.7 step
+        // 4), and no cookie outlives the cap, whichever attribute asked.
+        // Zero or less has already ended.
+        let asked = max_age.map(|seconds| if seconds > 0 { Duration::seconds(seconds.min(MAX_COOKIE_LIFETIME_SECONDS)) } else { ENDED });
         let cap = Duration::seconds(MAX_COOKIE_LIFETIME_SECONDS);
-        let asked = raw.max_age().or_else(|| raw.expires_datetime().map(lifetime_until));
-        if asked.is_some_and(|asked| asked > cap) {
-            raw.set_max_age(cap);
+        match asked.or_else(|| raw.expires_datetime().map(lifetime_until)) {
+            Some(asked) if asked > cap => raw.set_max_age(cap),
+            Some(asked) if max_age.is_some() => raw.set_max_age(asked),
+            _ => {}
         }
         let secure_origin = url.scheme() == "https";
         let secure = raw.secure().unwrap_or(false);

@@ -319,7 +319,6 @@ fn a_cookie_date_in_each_form_the_standard_reads_removes_the_cookie() {
 /// cookie is a session cookie; a value past what a number holds is
 /// reduced to the cap; zero or less has already ended.
 #[test]
-#[ignore = "fault TODO-7346 item 3: an empty Max-Age is read as the 400-day cap, where the standard ignores it"]
 fn max_age_is_read_as_the_standard_reads_it() {
     let jar = jar();
     let shop = url("https://www.shop.com/");
