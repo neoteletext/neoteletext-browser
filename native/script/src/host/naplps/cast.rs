@@ -560,8 +560,7 @@ impl Cast {
 
     /// The number of the object `handle` names, when it names one.
     pub(super) fn object_number(handle: i32) -> Option<u16> {
-        let (kind, number) = parts(handle);
-        (kind == KIND_ACTOR).then(|| u16::try_from(number).ok()).flatten()
+        protocol::script::naplps::object_number(handle)
     }
 }
 
