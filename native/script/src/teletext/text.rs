@@ -80,6 +80,22 @@ impl Languages {
             .ok_or_else(|| Reply::Type("the language is not one of nt.teletext.languages()".to_owned()))
     }
 
+    /// The place in [`Self::json`]'s list of the language `tag` names, as
+    /// a call names a language; −1, the page's, for no tag.
+    ///
+    /// # Errors
+    /// A `TypeError` for a tag the engine has no language for.
+    pub fn index_of(&self, tag: &str) -> Result<i32, Reply> {
+        if tag.is_empty() {
+            return Ok(-1);
+        }
+        self.list
+            .iter()
+            .position(|language| language.tag == tag)
+            .and_then(|at| i32::try_from(at).ok())
+            .ok_or_else(|| Reply::Type("the language is not one of nt.teletext.languages()".to_owned()))
+    }
+
     /// `nt.teletext.languages()`: each language's tag, English name and
     /// direction, as JSON text.
     #[must_use]

@@ -33,6 +33,8 @@ mod redirects;
 mod regis_pointer;
 mod rules;
 mod run;
+#[cfg(feature = "interaction")]
+mod script_gate;
 mod scripts;
 mod selection;
 mod settings;
@@ -344,6 +346,9 @@ struct Core {
     thumbnails: thumbnails::Thumbnails,
     /// The channels' script hosts and their web clients (`scripts.rs`).
     scripts: scripts::Scripts,
+    /// The gate between the viewer and a page's program (`script_gate.rs`).
+    #[cfg(feature = "interaction")]
+    script_gate: script_gate::Gate,
 }
 
 impl Core {
@@ -483,6 +488,8 @@ impl Core {
             fonts: fonts::PictureFonts::default(),
             thumbnails,
             scripts: scripts::Scripts::default(),
+            #[cfg(feature = "interaction")]
+            script_gate: script_gate::Gate::default(),
         }
     }
 }

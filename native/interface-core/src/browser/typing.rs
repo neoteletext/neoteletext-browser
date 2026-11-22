@@ -210,7 +210,9 @@ impl Browser {
     pub fn key_target(&self, action: Action, key: KeyCode, mods: u8, text: Option<&str>, base: Option<char>) -> Option<PageKey> {
         let state = &self.typing;
         let held = action != Action::Press && state.page_keys.contains(&key);
-        self.keyboard_target().filter(|_| held || state.asked.takes(key, mods, text, base))
+        // A key no script is ever given stays the browser's on a script's
+        // page, whatever the page asks for (script-api.md section 4.6).
+        self.keyboard_target().filter(|_| held || (state.asked.takes(key, mods, text, base) && !self.kept_from_script(key, mods)))
     }
 
     /// Whether Escape, pressed alone, is the page's key and not the

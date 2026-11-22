@@ -284,6 +284,82 @@ fn a_script_that_never_returns_is_stopped_and_the_page_file_stays() {
     assert_eq!((browser.row(0x100, 1), browser.row(0x100, 5)), ("FILE ROW ONE".into(), String::new()));
 }
 
+/// Section 4.1 and principle 5 ("Fail open"), timed end to end through
+/// the real script host (work package F5, TODO-7294): a script that
+/// takes a key and never answers does not hold it. Its handler never
+/// returns; the script host is ended for time, and the decoder reports
+/// the key as not cancelled, so the trusted core takes its default. From
+/// the key to that report is less than the trusted core's own deadline
+/// for an answer, twice [`STEP_DEADLINE`] (`script_gate::VERDICT_DEADLINE`,
+/// which holds whatever a decoder does), and the page file stays.
+#[test]
+fn a_key_a_script_takes_and_never_answers_keeps_its_default_in_time() {
+    use protocol::script::relay::STEP_DEADLINE;
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"keys":["1"]} */
+        nt.addEventListener("keydown", () => { for (;;) {} });
+        console.log("listening");"#;
+    let mut waits = Vec::new();
+    for _ in 0..STARVED_TRIES {
+        let mut browser = drawn(|| {
+            let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+            browser.open(page, "100.js", script);
+            browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+            browser
+        });
+        assert!(browser.scripts.stopped().is_none(), "the script never started: {:?}", browser.reports);
+        let pressed = Instant::now();
+        browser.key(page, 77, '1');
+        let answered = |browser: &mut Browser| browser.reports.iter().any(|report| matches!(report, ScriptReport::Verdict { sequence: 77, .. }));
+        assert!(browser.run_until(answered), "the key was never answered: {:?}", browser.reports);
+        let waited = pressed.elapsed();
+        assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 77, cancelled: false, handled: false }), "{:?}", browser.reports);
+        assert!(browser.run_until(|browser| browser.scripts.stopped().is_some()));
+        assert_eq!(browser.scripts.stopped(), Some(FailReason::Time));
+        assert_eq!(browser.row(0x100, 1), "FILE ROW ONE");
+        // A key after it is answered at once: nothing is the script's.
+        browser.key(page, 78, '1');
+        assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 78, cancelled: false, handled: false }));
+        println!("from the key to its default: {waited:?}");
+        waits.push(waited);
+        if waited < 2 * STEP_DEADLINE {
+            return;
+        }
+    }
+    panic!("a key waited past the trusted core's deadline in every try, on a machine with no processor free: {waits:?}");
+}
+
+/// Sections 4.2 and 4.4 (TODO-7294), through the real script host: a
+/// contact of a touch screen reaches a script as a pointer of its own
+/// number and kind, and a navigation of the browser's own as a
+/// `navigate` event that cannot be cancelled.
+#[test]
+fn a_touch_and_the_browsers_navigation_reach_a_script_as_the_specification_says() {
+    use protocol::decoder::script::{NavigationCause, PointerKind, ScriptPointer};
+    use protocol::rules::PointerAction as Told;
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"pointer":"press"} */
+        nt.addEventListener("pointerdown", (e) => console.log("down " + e.pointerType + " " + e.pointerId + " " + e.isPrimary));
+        nt.addEventListener("navigate", (e) => { e.preventDefault(); console.log("navigate " + e.cause + " " + e.cancelable + " " + e.defaultPrevented); });
+        console.log("listening");"#;
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let touch = ScriptPointer { sequence: 5, action: Told::Press, button: 0, x: 24, y: 40, pointer: 3, kind: PointerKind::Touch, primary: false };
+    browser.order(ScriptOrder::Pointer(touch));
+    browser.order(ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "101".into() });
+    let heard = |browser: &mut Browser| browser.logged().iter().any(|line| line.starts_with("navigate")) || browser.scripts.stopped().is_some();
+    assert!(browser.run_until(heard), "{:?}", browser.reports);
+    let logged = browser.logged();
+    assert!(logged.contains(&"down touch 3 false".to_owned()), "{logged:?}");
+    assert!(logged.contains(&"navigate browser false false".to_owned()), "{logged:?}");
+    assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 5, cancelled: false, handled: true }), "{:?}", browser.reports);
+}
+
 /// Sections 10.3, 10.5 and 10.6: the bounds the decoder holds as the
 /// authority and the packing of the events it makes are the script
 /// library's, which the decoder may not link.

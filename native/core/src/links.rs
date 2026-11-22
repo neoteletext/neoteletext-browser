@@ -21,6 +21,7 @@ mod destination;
 mod drawings;
 mod follow;
 mod prompt;
+mod script;
 mod target;
 
 use destination::Descriptor;
@@ -124,6 +125,9 @@ pub enum Refusal {
     Unfocused,
     /// A web page was handed over less than two seconds ago.
     TooOften,
+    /// A script asked to leave its channel while no key press or pointer
+    /// release of the viewer's was being handled (script-api.md section 3.3).
+    Unasked,
 }
 
 /// The links of every page on screen, and what the trusted strip is

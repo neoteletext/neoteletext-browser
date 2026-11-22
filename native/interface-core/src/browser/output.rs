@@ -92,6 +92,10 @@ pub enum Output {
     Home,
     /// Strip input: open the tab's channel afresh (requirement 11.2).
     Reload,
+    /// Stop the program of the active tab's page: the browser's own key
+    /// for it was pressed (script-api.md section 4.6).
+    #[cfg(feature = "interaction")]
+    StopScripts,
     /// Strip input: a key of the open page's controls (decision 67).
     PageControl(crate::controls::PageControl),
     /// The sub-page list asks for the rows of `page` from place `first`,

@@ -16,6 +16,8 @@
     "blinks": {"used": 1, "limit": 32, "most": 1},
     "appendedBytesThisSecond": {"used": 0, "limit": 262144, "most": 321},
     "waitTicks": {"used": 60, "limit": 3600, "most": 60},
-    "colours": {"used": 4, "limit": 8, "most": 4}
+    "colours": {"used": 4, "limit": 8, "most": 4},
+    "components": {"used": 0, "limit": 64, "most": 0},
+    "uiNodes": {"used": 0, "limit": 16384, "most": 0}
   }
 }

@@ -37,9 +37,9 @@ pub const MAX_SOUND_OPERATIONS_PER_SECOND: usize = 256;
 pub const MAX_NAVIGATIONS_PER_SECOND: usize = 2;
 /// The ticks a rate's second holds.
 pub const SECOND_TICKS: u64 = TICKS_PER_SECOND as u64;
-/// The most pointers followed at once (`MAX_POINTERS`); the trusted core
-/// gives one today, the mouse or the first contact.
-pub const MAX_POINTERS: usize = 4;
+/// The most pointers followed at once (`MAX_POINTERS`, section 4.4): the
+/// bound of the trusted core's pointer order, by its name.
+pub const MAX_POINTERS: usize = protocol::decoder::script::MAX_POINTERS as usize;
 /// The most input events that wait for a step (`MAX_QUEUED_EVENTS`,
 /// section 4.7): the rule table's bound, by its name.
 pub const MAX_QUEUED_EVENTS: usize = neoteletext_rules::limits::MAX_QUEUED_EVENTS;
