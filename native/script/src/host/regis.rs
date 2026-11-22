@@ -43,8 +43,11 @@ use crate::ops::{EventKind, Op, Property, RegisField};
 
 mod colour;
 pub(super) mod painter;
+mod ui;
 
-use painter::{Setting, TextOptions};
+pub(super) use ui::Components;
+
+use painter::{Pen, Setting, TextOptions};
 #[cfg(test)]
 mod painter_tests;
 #[cfg(test)]
@@ -60,6 +63,12 @@ const HANDLE_NUMBERS: i32 = 65_536;
 const GENERATIONS: u16 = 0x8000;
 /// The text that commits a step's operations (`regis-v2.md`, "D operations").
 const COMMIT: &[u8] = b"D(C)";
+/// The whole numbers of one change given to operation `RG_SET_MANY` with
+/// no property: a handle, a property and a value.
+const SET_MANY_ENTRY: usize = 3;
+/// The most bytes one such change stages: its wrapper and the longest
+/// attribute, `X-32768`.
+const SET_MANY_CHANGE_BYTES: usize = SET_WRAPPER_BYTES + 7;
 /// ReGIS's resynchronisation character (the manual's chapter 1), and a
 /// commit.
 const RESYNCHRONISE_AND_COMMIT: &[u8] = b";D(C)";
@@ -120,6 +129,8 @@ pub(crate) fn prelude_bounds() -> Vec<(&'static str, i64)> {
         ("ANIMATE_CYCLE", i64::from(code::CYCLE)),
         ("ANIMATE_STOP_CYCLE", i64::from(code::STOP_CYCLE)),
         ("OPTION_NOT_GIVEN", i64::from(OPTION_NOT_GIVEN)),
+        ("MIN_COORDINATE", i64::from(MIN_COORDINATE)),
+        ("MAX_COORDINATE", i64::from(MAX_COORDINATE)),
     ]
 }
 
@@ -169,8 +180,13 @@ struct Drawing {
     clip: Option<[i16; 4]>,
     /// The bytes of its contents.
     contents: usize,
+    /// The macrographs its contents call: bit 0 for A.
+    calls: u32,
     label: Option<Box<str>>,
     frames: Option<Box<[u16]>>,
+    /// Whether it is a part of a component (section 8), which a script
+    /// changes only through `nt.ui`.
+    component: bool,
 }
 
 /// One entry of the colour map as the host holds it.
@@ -191,6 +207,8 @@ struct Colour {
 struct Macrograph {
     owner: ContextId,
     body: Vec<u8>,
+    /// The macrographs its body calls: bit 0 for A.
+    calls: u32,
 }
 
 /// The tables as a step began, to put back if its commit fails.
@@ -202,6 +220,8 @@ struct Snapshot {
     colours: [Colour; REGIS_COLOURS],
     /// The drawings each context listened to, and for what.
     listens: Vec<(ContextId, i32, EventKind)>,
+    /// The components' drawings as the step began.
+    components: Vec<ui::Node>,
 }
 
 /// A failed commit, for one context to be told of.
@@ -236,6 +256,9 @@ pub(super) struct Regis {
     colours: [Colour; REGIS_COLOURS],
     /// The macrographs, by letter from A.
     macrographs: [Option<Macrograph>; MACROGRAPHS],
+    /// The renderer's own interpreter, asked where a drawing's position
+    /// is while its contents are written; made when first needed.
+    pen: Option<Box<Pen>>,
     /// The tracked drawings' rectangles as of the last step.
     bounds: Vec<Bounds>,
     snapshot: Option<Box<Snapshot>>,
@@ -254,6 +277,8 @@ pub(super) struct Regis {
     lists_changed: bool,
     tracked_told: Vec<i32>,
     wheel_told: Vec<i32>,
+    /// What the components of the page are drawn as (section 8).
+    ui: ui::Held,
 }
 
 /// Writes text to a vector, which cannot fail.
@@ -281,6 +306,7 @@ impl Regis {
             animate: Vec::new(),
             colours: Default::default(),
             macrographs: Default::default(),
+            pen: None,
             bounds: Vec::new(),
             snapshot: None,
             validator,
@@ -292,6 +318,7 @@ impl Regis {
             lists_changed: false,
             tracked_told: Vec::new(),
             wheel_told: Vec::new(),
+            ui: ui::Held::default(),
         }
     }
 
@@ -344,6 +371,11 @@ impl Regis {
             return Err(type_error("not a drawing"));
         }
         match self.get(number) {
+            // A component's drawings are the host's to change: a script
+            // that came by one's number changes it through `nt.ui`.
+            Some(drawing) if generation == self.generation && drawing.component != self.ui.painting => {
+                Err(type_error("the drawing is a part of a component: it is changed through nt.ui"))
+            }
             Some(drawing) if generation == self.generation && drawing.owner == context => Ok(number),
             Some(_) if generation == self.generation => Err(type_error("the drawing belongs to the other context")),
             _ => Err(type_error("the drawing was removed: its handle is stale")),
@@ -508,7 +540,8 @@ impl Regis {
                     .listens
                     .len()
                     .saturating_mul(size_of::<(ContextId, i32, EventKind)>())
-                    .saturating_add(REGIS_COLOURS.saturating_mul(size_of::<Colour>())),
+                    .saturating_add(REGIS_COLOURS.saturating_mul(size_of::<Colour>()))
+                    .saturating_add(snapshot.components.len().saturating_mul(size_of::<ui::Node>())),
             )
         }));
         bytes = bytes.saturating_add(self.validator_held).saturating_add(self.pending);
@@ -521,6 +554,8 @@ impl Regis {
             .iter()
             .flatten()
             .fold(bytes, |sum, held| sum.saturating_add(held.body.len().saturating_mul(2)).saturating_add(size_of::<Macrograph>()));
+        bytes = bytes.saturating_add(self.pen.as_ref().map_or(0, |pen| pen.held_bytes()));
+        bytes = bytes.saturating_add(self.ui.held_bytes());
         bytes = bytes.saturating_add(self.bounds.len().saturating_mul(size_of::<Bounds>()));
         bytes = self
             .failures
@@ -660,7 +695,14 @@ impl Host {
         let until_commit = output.saturating_mul(HELD_FOR_STAGED_BYTE).saturating_add(drawings.saturating_mul(HELD_FOR_NEW_DRAWING));
         let table = drawings.saturating_mul(TABLE_BYTES_A_DRAWING);
         // Before the snapshot, its cost is the cost of what it would hold.
-        let snapshot = if self.regis.snapshot.is_none() { self.regis_listens().len().saturating_mul(size_of::<(ContextId, i32, EventKind)>()) } else { 0 };
+        let snapshot = if self.regis.snapshot.is_none() {
+            self.regis_listens()
+                .len()
+                .saturating_mul(size_of::<(ContextId, i32, EventKind)>())
+                .saturating_add(self.regis.ui.nodes.len().saturating_mul(size_of::<ui::Node>()))
+        } else {
+            0
+        };
         // The first operation staged brings the step's commit with it.
         let output = if output > 0 && self.regis.out.is_empty() { output.saturating_add(COMMIT.len()) } else { output };
         self.room(until_commit.saturating_add(output).saturating_add(table).saturating_add(snapshot), output)?;
@@ -690,6 +732,7 @@ impl Host {
                 contents: regis.contents,
                 colours: regis.colours.clone(),
                 listens,
+                components: regis.ui.nodes.clone(),
             };
             self.regis.snapshot = Some(Box::new(snapshot));
         }
@@ -858,16 +901,7 @@ impl Host {
                 } else {
                     None
                 };
-                let mut text = Vec::new();
-                match clip {
-                    Some([x, y, width, height]) => put(&mut text, format_args!("C(X{x},Y{y},W{width},H{height})")),
-                    None => text.extend_from_slice(b"C0"),
-                }
-                self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
-                if let Some(drawing) = self.regis.get_mut(number) {
-                    drawing.clip = clip;
-                }
-                self.regis.stage_set(number, &text);
+                self.regis_clip(number, clip)?;
                 Ok(Reply::Undefined)
             }
             Op::RG_FRAMES => {
@@ -878,108 +912,44 @@ impl Host {
                     return Err(range("MAX_OBJECT_FRAMES", "a frame list has at most 16 frames"));
                 }
                 let frames = handles.iter().map(|frame| self.regis.resolve(context, *frame)).collect::<Result<Vec<u16>, Reply>>()?;
-                let mut text = Vec::new();
-                if frames.is_empty() {
-                    text.extend_from_slice(b"F0");
-                } else {
-                    text.extend_from_slice(b"F(");
-                    for (index, frame) in frames.iter().enumerate() {
-                        put(&mut text, format_args!("{}{frame}", if index > 0 { "," } else { "" }));
-                    }
-                    text.push(b')');
-                }
-                self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
-                if let Some(drawing) = self.regis.get_mut(number) {
-                    drawing.frames = (!frames.is_empty()).then(|| frames.into_boxed_slice());
-                }
-                self.regis.stage_set(number, &text);
+                self.regis_frames(number, frames)?;
                 Ok(Reply::Undefined)
             }
             Op::RG_LABEL => {
                 let [handle] = ints.exactly()?;
                 let number = self.regis.resolve(context, handle)?;
                 let label = if payload == Payload::None { "" } else { text_of(op, payload)? };
-                // Plain text as a v1 quoted string keeps it: ISO 8859-1's
-                // printable characters (`regis-v2.md`, "Attributes").
-                let mut text = Vec::from(*b"U'");
-                let mut length = 0_usize;
-                for character in label.chars() {
-                    let byte = u8::try_from(u32::from(character)).ok().filter(|byte| matches!(byte, 0x20..=0x7E | 0xA0..=0xFF));
-                    let byte = byte.ok_or_else(|| type_error("a label holds only ISO 8859-1's printable characters"))?;
-                    length = length.saturating_add(1);
-                    if length > MAX_LABEL_BYTES {
-                        return Err(range("MAX_LABEL_BYTES", "a label is at most 64 bytes"));
-                    }
-                    // A quote is doubled inside a quoted string (chapter 7).
-                    if byte == b'\'' {
-                        text.push(byte);
-                    }
-                    text.push(byte);
-                }
-                text.push(b'\'');
-                self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
-                if let Some(drawing) = self.regis.get_mut(number) {
-                    drawing.label = (!label.is_empty()).then(|| label.into());
-                }
-                self.regis.stage_set(number, &text);
+                self.regis_label(number, label)?;
                 Ok(Reply::Undefined)
             }
             Op::RG_DEFINE => {
                 let [handle] = ints.exactly()?;
                 let number = self.regis.resolve(context, handle)?;
                 let program = ints_of(op, payload)?;
-                if program.len() > MAX_PAINTER_WORDS {
-                    return Err(range("MAX_PAINTER_WORDS", "a painter program is at most 65,536 whole numbers"));
-                }
-                let language = self.context(context).map_or("", |held| held.open.language.as_str());
-                let regis = &self.regis;
-                let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: false };
-                let contents = painter::encode(&program, &setting)?;
-                let before = self.regis.get(number).map_or(0, |drawing| drawing.contents);
-                let held = self.regis.contents.get(slot(context)).copied().unwrap_or(0);
-                let after = held.saturating_sub(before).saturating_add(contents.len());
-                if after > Regis::share(context).1 {
-                    return Err(range("REGIS_MAX_TOTAL_CONTENTS_BYTES", "the page's drawings hold as many bytes of contents as they may"));
-                }
-                self.regis_room(contents.len().saturating_add(DEFINE_WRAPPER_BYTES), 0)?;
-                if let Some(drawing) = self.regis.get_mut(number) {
-                    drawing.contents = contents.len();
-                }
-                if let Some(held) = self.regis.contents.get_mut(slot(context)) {
-                    *held = after;
-                }
-                let mut begin = Vec::new();
-                put(&mut begin, format_args!("D(B{number})"));
-                self.regis.stage(&begin);
-                self.regis.stage(&contents);
-                self.regis.stage(b"D(E)");
+                self.regis_define(context, number, &program)?;
                 Ok(Reply::Undefined)
             }
             Op::RG_REMOVE => {
                 let [handle] = ints.exactly()?;
                 no_payload(op, payload)?;
                 let number = self.regis.resolve(context, handle)?;
-                let mut text = Vec::new();
-                put(&mut text, format_args!("D(K{number})"));
-                self.regis_room(text.len(), 0)?;
-                let removed = self.regis.with_descendants(number);
-                self.regis.stage(&text);
-                Ok(self.regis_removed(&removed))
+                self.regis_remove(number)
             }
             Op::RG_CLEAR => {
                 let [] = ints.exactly()?;
                 no_payload(op, payload)?;
                 let regis = &self.regis;
-                let own: Vec<u16> = regis.drawings.iter().filter(|drawing| drawing.owner == context).map(|drawing| drawing.number).collect();
+                let own: Vec<u16> =
+                    regis.drawings.iter().filter(|drawing| drawing.owner == context && !drawing.component).map(|drawing| drawing.number).collect();
                 // `D(Z)` deletes every numbered drawing: it is written
-                // when the other context has none, and otherwise each of
-                // this context's top-level drawings is deleted, with its
-                // children.
+                // when the other context and the page's components have
+                // none, and otherwise each of this context's top-level
+                // drawings is deleted, with its children.
                 let mut text = Vec::new();
                 if own.len() == regis.drawings.len() {
                     text.extend_from_slice(b"D(Z)");
                 } else {
-                    for drawing in regis.drawings.iter().filter(|drawing| drawing.owner == context && drawing.parent == 0) {
+                    for drawing in regis.drawings.iter().filter(|drawing| drawing.owner == context && drawing.parent == 0 && !drawing.component) {
                         put(&mut text, format_args!("D(K{})", drawing.number));
                     }
                 }
@@ -1033,6 +1003,12 @@ impl Host {
                 let bounds = self.regis.bounds.iter().find(|bounds| bounds.handle == i32::from(number));
                 Ok(bounds.map_or(Reply::Undefined, |bounds| Reply::Text(format!("{},{},{},{}", bounds.x, bounds.y, bounds.width, bounds.height))))
             }
+            Op::RG_SET_MANY => {
+                let [property] = ints.exactly()?;
+                let numbers = ints_of(op, payload)?;
+                self.regis_set_many(context, property, &numbers)?;
+                Ok(Reply::Undefined)
+            }
             Op::RG_GET => {
                 let [handle, field] = ints.exactly()?;
                 no_payload(op, payload)?;
@@ -1041,6 +1017,123 @@ impl Host {
             }
             _ => Err(type_error("not a ReGIS operation")),
         }
+    }
+
+    /// Sets or lifts the clip rectangle of drawing `number` (`clip`).
+    fn regis_clip(&mut self, number: u16, clip: Option<[i16; 4]>) -> Result<(), Reply> {
+        let mut text = Vec::new();
+        match clip {
+            Some([x, y, width, height]) => put(&mut text, format_args!("C(X{x},Y{y},W{width},H{height})")),
+            None => text.extend_from_slice(b"C0"),
+        }
+        self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
+        if let Some(drawing) = self.regis.get_mut(number) {
+            drawing.clip = clip;
+        }
+        self.regis.stage_set(number, &text);
+        Ok(())
+    }
+
+    /// Sets the frame list of drawing `number`, or with none lifts it
+    /// (`frames`).
+    fn regis_frames(&mut self, number: u16, frames: Vec<u16>) -> Result<(), Reply> {
+        let mut text = Vec::new();
+        if frames.is_empty() {
+            text.extend_from_slice(b"F0");
+        } else {
+            text.extend_from_slice(b"F(");
+            for (index, frame) in frames.iter().enumerate() {
+                put(&mut text, format_args!("{}{frame}", if index > 0 { "," } else { "" }));
+            }
+            text.push(b')');
+        }
+        self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
+        if let Some(drawing) = self.regis.get_mut(number) {
+            drawing.frames = (!frames.is_empty()).then(|| frames.into_boxed_slice());
+        }
+        self.regis.stage_set(number, &text);
+        Ok(())
+    }
+
+    /// Sets what a screen reader speaks for drawing `number` (`label`).
+    fn regis_label(&mut self, number: u16, label: &str) -> Result<(), Reply> {
+        // Plain text as a v1 quoted string keeps it: ISO 8859-1's
+        // printable characters (`regis-v2.md`, "Attributes").
+        let mut text = Vec::from(*b"U'");
+        let mut length = 0_usize;
+        for character in label.chars() {
+            let byte = u8::try_from(u32::from(character)).ok().filter(|byte| matches!(byte, 0x20..=0x7E | 0xA0..=0xFF));
+            let byte = byte.ok_or_else(|| type_error("a label holds only ISO 8859-1's printable characters"))?;
+            length = length.saturating_add(1);
+            if length > MAX_LABEL_BYTES {
+                return Err(range("MAX_LABEL_BYTES", "a label is at most 64 bytes"));
+            }
+            // A quote is doubled inside a quoted string (chapter 7).
+            if byte == b'\'' {
+                text.push(byte);
+            }
+            text.push(byte);
+        }
+        text.push(b'\'');
+        self.regis_room(text.len().saturating_add(SET_WRAPPER_BYTES), 0)?;
+        if let Some(drawing) = self.regis.get_mut(number) {
+            drawing.label = (!label.is_empty()).then(|| label.into());
+        }
+        self.regis.stage_set(number, &text);
+        Ok(())
+    }
+
+    /// Gives drawing `number` of `context` the contents the painter
+    /// program `program` writes (`define`).
+    fn regis_define(&mut self, context: ContextId, number: u16, program: &[i32]) -> Result<(), Reply> {
+        if program.len() > MAX_PAINTER_WORDS {
+            return Err(range("MAX_PAINTER_WORDS", "a painter program is at most 65,536 whole numbers"));
+        }
+        let (contents, calls) = self.regis_encode(context, program, false)?;
+        let before = self.regis.get(number).map_or(0, |drawing| drawing.contents);
+        let held = self.regis.contents.get(slot(context)).copied().unwrap_or(0);
+        let after = held.saturating_sub(before).saturating_add(contents.len());
+        if after > Regis::share(context).1 {
+            return Err(range("REGIS_MAX_TOTAL_CONTENTS_BYTES", "the page's drawings hold as many bytes of contents as they may"));
+        }
+        self.regis_room(contents.len().saturating_add(DEFINE_WRAPPER_BYTES), 0)?;
+        if let Some(drawing) = self.regis.get_mut(number) {
+            drawing.contents = contents.len();
+            drawing.calls = calls;
+        }
+        if let Some(held) = self.regis.contents.get_mut(slot(context)) {
+            *held = after;
+        }
+        let mut begin = Vec::new();
+        put(&mut begin, format_args!("D(B{number})"));
+        self.regis.stage(&begin);
+        self.regis.stage(&contents);
+        self.regis.stage(b"D(E)");
+        Ok(())
+    }
+
+    /// Deletes drawing `number` and every drawing below it (`remove`).
+    fn regis_remove(&mut self, number: u16) -> Result<Reply, Reply> {
+        let mut text = Vec::new();
+        put(&mut text, format_args!("D(K{number})"));
+        self.regis_room(text.len(), 0)?;
+        let removed = self.regis.with_descendants(number);
+        self.regis.stage(&text);
+        Ok(self.regis_removed(&removed))
+    }
+
+    /// A painter program as a drawing's contents, or a macrograph's body,
+    /// with the macrographs it calls: written by the encoder, which asks
+    /// the page's pen where the position is.
+    fn regis_encode(&mut self, context: ContextId, program: &[i32], macrograph: bool) -> Result<(Vec<u8>, u32), Reply> {
+        // The pen is the page's, taken while the tables are read.
+        let mut pen = self.regis.pen.take().unwrap_or_else(|| Box::new(Pen::new()));
+        let language = self.context(context).map_or("", |held| held.open.language.as_str());
+        let regis = &self.regis;
+        let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph };
+        let written = painter::encode(program, &setting, &mut pen);
+        self.regis.pen = Some(pen);
+        written
     }
 
     /// Defines a macrograph, or defines one again (section 6.2,
@@ -1066,21 +1159,52 @@ impl Host {
         } else {
             regis.macrograph_index(context, existing)?
         };
-        let language = self.context(context).map_or("", |held| held.open.language.as_str());
-        let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: true };
-        let body = painter::encode(program, &setting)?;
+        let (body, calls) = self.regis_encode(context, program, true)?;
+        let regis = &self.regis;
         let before = regis.macrographs.get(index).and_then(Option::as_ref).map_or(0, |held| held.body.len());
         if held_bytes.saturating_sub(before).saturating_add(body.len()) > most_bytes {
             return Err(range("MAX_MACROGRAPH_BYTES", "the macrographs hold as many bytes as they may"));
         }
-        self.regis_room(body.len().saturating_add(MACROGRAPH_WRAPPER_BYTES), 0)?;
+        // A drawing's contents are written from where the macrographs it
+        // calls leave the position, and the host keeps no drawing's
+        // program to write it again. So a macrograph that anything calls
+        // may be defined again only if it leaves the position, and the
+        // text's advance, as it did: the renderer is asked both ways
+        // (TODO-7389 item 3).
+        let letter = Regis::macrograph_letter(index);
+        let bit = 1_u32.checked_shl(u32::try_from(index).unwrap_or(0)).unwrap_or(0);
+        let caller = regis
+            .drawings
+            .iter()
+            .find(|drawing| drawing.calls & bit != 0)
+            .map(|drawing| format!("drawing {}", drawing.number))
+            .or_else(|| regis.macrographs.iter().flatten().any(|held| held.calls & bit != 0).then(|| "another macrograph".to_owned()));
+        let old_body = regis.macrographs.get(index).and_then(Option::as_ref).map(|held| held.body.clone()).unwrap_or_default();
+        let pen = self.regis.pen.get_or_insert_with(|| Box::new(Pen::new()));
+        let left = caller.as_ref().map(|_| pen.leave(letter));
+        pen.define(letter, &body);
+        if let (Some(caller), Some(left)) = (caller, left)
+            && pen.leave(letter) != left
+        {
+            pen.define(letter, &old_body);
+            return Err(Reply::Type(format!(
+                "{caller} calls this macrograph and was written from where it left the position: it may be defined again only to leave the position and the text's advance as it did"
+            )));
+        }
+        if let Err(refused) = self.regis_room(body.len().saturating_add(MACROGRAPH_WRAPPER_BYTES), 0) {
+            // Refused for room: the pen keeps the definition that stands.
+            if let Some(pen) = self.regis.pen.as_mut() {
+                pen.define(letter, &old_body);
+            }
+            return Err(refused);
+        }
         let regis = &mut self.regis;
-        let mut text = vec![b'@', b':', Regis::macrograph_letter(index)];
+        let mut text = vec![b'@', b':', letter];
         text.extend_from_slice(&body);
         text.extend_from_slice(b"@;");
         regis.stage(&text);
         if let Some(slot) = regis.macrographs.get_mut(index) {
-            *slot = Some(Macrograph { owner: context, body });
+            *slot = Some(Macrograph { owner: context, body, calls });
         }
         Ok(Reply::Int(regis.macrograph_handle(index)))
     }
@@ -1231,8 +1355,10 @@ impl Host {
             look: 0,
             clip: None,
             contents: 0,
+            calls: 0,
             label: None,
             frames: None,
+            component: self.regis.ui.painting,
         };
         let regis = &mut self.regis;
         let at = regis.drawings.binary_search_by_key(&number, |drawing| drawing.number).unwrap_or_else(|at| at);
@@ -1371,6 +1497,94 @@ impl Host {
             change(drawing);
         }
         self.regis.stage_set(number, &text);
+        Ok(())
+    }
+
+    /// Sets properties of many drawings in one call (operation
+    /// `RG_SET_MANY`; TODO-7373). With a property, `numbers` holds the
+    /// drawings' handles and then as many values of it: a `DrawingList`'s
+    /// `set`. With no property (0), `numbers` holds a handle, a property
+    /// and a value for each change: what the prelude gives a callback's
+    /// assignments to `x`, `y`, `depth`, `visible` and `detectable` as.
+    /// Each entry is held to exactly what operation `RG_SET` holds it to,
+    /// every entry is checked before any is taken, and a refusal names
+    /// the entry.
+    fn regis_set_many(&mut self, context: ContextId, property: i32, numbers: &[i32]) -> Result<(), Reply> {
+        let one_of_the_five = |number: i32| match Property::from_number(number) {
+            Some(property @ (Property::X | Property::Y | Property::DEPTH | Property::VISIBLE | Property::DETECTABLE)) => Ok(property),
+            _ => Err(type_error("many drawings at once take x, y, depth, visible or detectable")),
+        };
+        // The entries: a handle, a property and a value each.
+        let entries: Vec<(i32, i32, i32)> = if property == 0 {
+            if numbers.len().checked_rem(SET_MANY_ENTRY) != Some(0) {
+                return Err(type_error("a handle, a property and a value for each change"));
+            }
+            numbers.as_chunks::<SET_MANY_ENTRY>().0.iter().map(|[handle, property, value]| (*handle, *property, *value)).collect()
+        } else {
+            one_of_the_five(property)?;
+            if numbers.len().checked_rem(2) != Some(0) {
+                return Err(type_error("as many values as drawings"));
+            }
+            let (handles, values) = numbers.split_at(numbers.len().checked_div(2).unwrap_or(0));
+            handles.iter().zip(values).map(|(handle, value)| (*handle, property, *value)).collect()
+        };
+        let count = entries.len();
+        let named = |entry: usize, reply: Reply| match reply {
+            Reply::Range(text) => Reply::Range(format!("{text} (entry {entry} of {count} changes)")),
+            Reply::Type(text) => Reply::Type(format!("{text} (entry {entry} of {count} changes)")),
+            other => other,
+        };
+        // Checked, each as its own assignment would be. A value the
+        // drawing already has, by the entries before it too, changes
+        // nothing.
+        let regis = &self.regis;
+        let mut changes: Vec<(u16, Property, i16)> = Vec::with_capacity(count);
+        for (entry, (handle, property, value)) in entries.into_iter().enumerate() {
+            let property = one_of_the_five(property).map_err(|reply| named(entry, reply))?;
+            let number = regis.resolve(context, handle).map_err(|reply| named(entry, reply))?;
+            let value = match property {
+                Property::VISIBLE | Property::DETECTABLE => i16::from(flag(value, "a flag").map_err(|reply| named(entry, reply))?),
+                _ => attribute(value, "a drawing's x, y or depth").map_err(|reply| named(entry, reply))?,
+            };
+            let held = regis.get(number).map_or(0, |drawing| match property {
+                Property::X => drawing.x,
+                Property::Y => drawing.y,
+                Property::DEPTH => drawing.depth,
+                Property::VISIBLE => i16::from(drawing.visible),
+                _ => i16::from(drawing.detectable),
+            });
+            if value != held || changes.iter().rev().any(|(earlier, of, _)| *earlier == number && *of == property) {
+                changes.push((number, property, value));
+            }
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
+        // Room for every change at its longest, before any is taken.
+        self.regis_room(changes.len().saturating_mul(SET_MANY_CHANGE_BYTES), 0)?;
+        let regis = &mut self.regis;
+        let mut text = Vec::new();
+        for (number, property, value) in changes {
+            let letter = match property {
+                Property::X => 'X',
+                Property::Y => 'Y',
+                Property::DEPTH => 'L',
+                Property::VISIBLE => 'V',
+                _ => 'I',
+            };
+            if let Some(drawing) = regis.get_mut(number) {
+                match property {
+                    Property::X => drawing.x = value,
+                    Property::Y => drawing.y = value,
+                    Property::DEPTH => drawing.depth = value,
+                    Property::VISIBLE => drawing.visible = value != 0,
+                    _ => drawing.detectable = value != 0,
+                }
+            }
+            text.clear();
+            put(&mut text, format_args!("{letter}{value}"));
+            regis.stage_set(number, &text);
+        }
         Ok(())
     }
 
@@ -1547,7 +1761,10 @@ impl Host {
         regis.epoch = regis.epoch.wrapping_add(1);
         let snapshot = regis.snapshot.take();
         match failure {
-            None => regis.ready = (!bytes.is_empty()).then_some(bytes),
+            None => {
+                regis.ui.committed();
+                regis.ready = (!bytes.is_empty()).then_some(bytes);
+            }
             Some((error, drawing)) => {
                 if let Some(snapshot) = snapshot {
                     // A macrograph is the renderer's at once, commit or
@@ -1560,6 +1777,9 @@ impl Host {
                             text.extend_from_slice(before.as_ref().map_or(&[][..], |held| &held.body));
                             text.extend_from_slice(b"@;");
                             let _ = regis.validator.feed_regis(&text);
+                            if let Some(pen) = regis.pen.as_mut() {
+                                pen.define(Regis::macrograph_letter(index), before.as_ref().map_or(&[][..], |held| &held.body));
+                            }
                         }
                     }
                     self.regis_put_back(*snapshot, error, drawing);
@@ -1606,6 +1826,7 @@ impl Host {
         regis.colours = snapshot.colours;
         regis.macrographs = snapshot.macrographs;
         regis.animate.clear();
+        regis.ui.put_back(snapshot.components);
         regis.bounds.retain(|bounds| u16::try_from(bounds.handle).is_ok_and(|number| had(&regis.drawings, number)));
         regis.lists_changed = true;
         let _ = snapshot.next;
@@ -1669,5 +1890,6 @@ impl Host {
 /// # Errors
 /// The `RangeError` or `TypeError` that refuses the program whole.
 pub fn painter_contents(program: &[i32], language: &str, macrograph: bool) -> Result<Vec<u8>, Reply> {
-    painter::encode(program, &Setting { language, letter: &|_| Ok(FIRST_MACROGRAPH_LETTER), macrograph })
+    let mut pen = Pen::new();
+    painter::encode(program, &Setting { language, letter: &|_| Ok(FIRST_MACROGRAPH_LETTER), macrograph }, &mut pen).map(|(written, _)| written)
 }

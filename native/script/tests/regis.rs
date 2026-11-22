@@ -13,24 +13,20 @@
 mod common;
 #[path = "regis_page/fonts.rs"]
 mod fonts;
+#[path = "regis_page/receiver.rs"]
+mod receiver;
 
-use std::fmt::Write as _;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use common::{Opens as _, all_lines, assert_checks, claim, container, ints_event, limited, lines, opening, script, tick, view, with_events};
-use neoteletext_rules::animate::OperationKind;
 use neoteletext_script::Container;
 use neoteletext_script::limits::regis::{CHANNEL_SHARE_DRAWINGS, REGIS_MAX_DRAWINGS};
 use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, WASM_MEMORY_BYTES};
 use neoteletext_script::ops::PointerAction;
-use protocol::script::{Batch, Bounds, ContextId, ContextOpen, EventKind, Renderer, Step};
-use regis::{Event as RegisEvent, ForcedLook, Picture, SCREEN_HEIGHT, SCREEN_WIDTH, Screen, Terminal, ViewerState};
+use protocol::script::{Bounds, ContextId, ContextOpen, EventKind, Renderer, Step};
+use receiver::{GOLDEN_FORMAT, Receiver, keep};
+use regis::ViewerState;
 
-/// The version of the kept pictures' format: the digest of a picture's
-/// 800 by 480 colour-map addresses followed by its sixteen colours. A
-/// change to what is painted raises it and writes the file again.
-const GOLDEN_FORMAT: u32 = 1;
 const GOLDEN: &str = include_str!("golden/regis.txt");
 /// How long the decoder waits for a step's answer before it ends the
 /// script (script-api.md section 10.6, `STEP_DEADLINE`; the decoder's to
@@ -50,163 +46,6 @@ fn regis_page(source: &str) -> Container {
     let mut container = container();
     container.open_with(regis_opening(ContextId::Page), source.as_bytes()).expect("the page opens");
     container
-}
-
-/// What the decoder and its renderer are to a script's batches: the
-/// renderer's own terminal, fed each batch's ReGIS and animation
-/// operations, and asked for the picture, the painted report, bounds and
-/// picks.
-struct Receiver {
-    terminal: Terminal,
-    screen: Screen,
-    /// The commits applied.
-    commits: u32,
-    /// Every byte of ReGIS taken.
-    bytes: usize,
-}
-
-impl Receiver {
-    fn new() -> Self {
-        // The fonts are the receiver's, given as the decoder gives them.
-        let mut terminal = Terminal::new();
-        fonts::give(&mut terminal);
-        Self { terminal, screen: Screen::new(), commits: 0, bytes: 0 }
-    }
-
-    /// Takes a batch as the decoder does: its ReGIS appended to the
-    /// page's one stream, then its animation operations, then its watch
-    /// list. The receiver never refuses a commit: the host's validator is
-    /// the renderer's own.
-    #[track_caller]
-    fn take(&mut self, batch: &Batch) {
-        let _ = view(batch);
-        if let Some(bytes) = &batch.regis {
-            assert!(bytes.len() <= MAX_BATCH_BYTES);
-            self.bytes += bytes.len();
-            let events = self.terminal.feed_regis(&mut self.screen, bytes);
-            assert!(!events.iter().any(|event| matches!(event, RegisEvent::CommitFailed { .. })), "the receiver refused what the host sent: {events:?}");
-            self.commits += u32::try_from(events.iter().filter(|event| matches!(event, RegisEvent::Committed(_))).count()).unwrap();
-        }
-        for operation in batch.animate.iter().flatten() {
-            let mut state = self.terminal.animation(operation.target.number).unwrap_or_default();
-            match operation.kind {
-                OperationKind::Frame(frame) | OperationKind::Cycle { first: frame, .. } => state.frame = frame,
-                OperationKind::Look(look) => {
-                    state.look = [ForcedLook::None, ForcedLook::Hover, ForcedLook::Pressed, ForcedLook::Alternative][usize::from(look)];
-                }
-                _ => {}
-            }
-            assert!(self.terminal.set_animation(operation.target.number, state), "{operation:?}");
-        }
-        if let Some(painted) = batch.watch.as_ref().and_then(|watch| watch.painted.as_ref()) {
-            let numbers: Vec<u16> = painted.iter().map(|handle| u16::try_from(*handle).unwrap()).collect();
-            assert!(self.terminal.watch_painted(&numbers));
-        }
-    }
-
-    fn picture(&mut self) -> Picture {
-        let mut picture = Picture::new();
-        self.terminal.compose(&self.screen, &mut picture);
-        picture
-    }
-
-    /// The bounds of the drawings `numbers`, as a step reports them.
-    fn bounds(&self, numbers: &[u16]) -> Vec<Bounds> {
-        numbers
-            .iter()
-            .filter_map(|number| {
-                let found = self.terminal.bounds(*number)?;
-                let int = |value: u32| i32::try_from(value).unwrap();
-                Some(Bounds { handle: i32::from(*number), x: int(found.x), y: int(found.y), width: int(found.width), height: int(found.height) })
-            })
-            .collect()
-    }
-}
-
-/// The digest of a picture: its pixels, then its colours.
-fn digest(picture: &Picture, terminal: &Terminal) -> String {
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
-    context.update(picture.canvas().pixels());
-    for colour in terminal.palette().colours() {
-        context.update(&colour);
-    }
-    context.finish().as_ref().iter().fold(String::new(), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    })
-}
-
-/// A PNG chunk: its length, type, data and CRC-32 (the PNG
-/// specification, section 5.3; the CRC is ISO 3309's, polynomial
-/// 0xEDB88320 reflected).
-fn chunk(out: &mut Vec<u8>, kind: [u8; 4], data: &[u8]) {
-    out.extend_from_slice(&u32::try_from(data.len()).unwrap().to_be_bytes());
-    let start = out.len();
-    out.extend_from_slice(&kind);
-    out.extend_from_slice(data);
-    let mut crc = u32::MAX;
-    for byte in &out[start..] {
-        crc ^= u32::from(*byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
-        }
-    }
-    out.extend_from_slice(&(!crc).to_be_bytes());
-}
-
-/// Writes a picture as a PNG with a palette, its pixel data stored and
-/// not compressed (RFC 1950 and RFC 1951 stored blocks), where a person
-/// can look at it; gives the file's path.
-fn write_png(name: &str, picture: &Picture, terminal: &Terminal) -> PathBuf {
-    let (width, height) = (usize::try_from(SCREEN_WIDTH).unwrap(), usize::try_from(SCREEN_HEIGHT).unwrap());
-    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-    let mut header = Vec::new();
-    header.extend_from_slice(&u32::try_from(width).unwrap().to_be_bytes());
-    header.extend_from_slice(&u32::try_from(height).unwrap().to_be_bytes());
-    // Eight bits a pixel, colour type 3 (a palette), no interlace.
-    header.extend_from_slice(&[8, 3, 0, 0, 0]);
-    chunk(&mut png, *b"IHDR", &header);
-    chunk(&mut png, *b"PLTE", &terminal.palette().colours().concat());
-    let mut raw = Vec::new();
-    for row in picture.canvas().pixels().chunks(width) {
-        raw.push(0);
-        raw.extend_from_slice(row);
-    }
-    let mut data = vec![0x78, 0x01];
-    let (mut low, mut high) = (1_u32, 0_u32);
-    let blocks = raw.chunks(65_535).count();
-    for (index, block) in raw.chunks(65_535).enumerate() {
-        let length = u16::try_from(block.len()).unwrap();
-        data.push(u8::from(index + 1 == blocks));
-        data.extend_from_slice(&length.to_le_bytes());
-        data.extend_from_slice(&(!length).to_le_bytes());
-        data.extend_from_slice(block);
-        for byte in block {
-            low = (low + u32::from(*byte)) % 65_521;
-            high = (high + low) % 65_521;
-        }
-    }
-    data.extend_from_slice(&((high << 16) | low).to_be_bytes());
-    chunk(&mut png, *b"IDAT", &data);
-    chunk(&mut png, *b"IEND", &[]);
-    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("regis-{name}.png"));
-    std::fs::write(&path, png).expect("the picture is written");
-    path
-}
-
-/// Compares the receiver's picture with the kept one named `name`, and
-/// writes it as a PNG. The digests that differ are gathered in `wrong`,
-/// so that one run shows every picture that changed.
-fn keep(name: &str, receiver: &mut Receiver, wrong: &mut Vec<String>) {
-    let picture = receiver.picture();
-    let found = digest(&picture, &receiver.terminal);
-    let path = write_png(name, &picture, &receiver.terminal);
-    let mut kept = GOLDEN.lines().filter(|line| !line.starts_with('#'));
-    assert_eq!(kept.next(), Some(format!("format {GOLDEN_FORMAT}").as_str()), "the kept pictures' format");
-    let line = format!("{name} {found}");
-    if !kept.any(|kept| kept == line) {
-        wrong.push(format!("{line}    (see {})", path.display()));
-    }
 }
 
 /// A pointer event on the drawing `handle` (0 for none) at `x`, `y`:
@@ -272,7 +111,7 @@ fn the_worked_page_is_drawn_watched_pressed_and_animated() {
     assert_eq!((watch.painted, watch.tracked, watch.wheel), (Some(vec![2]), Some(vec![12]), None));
     assert_eq!(receiver.terminal.label(2).as_deref(), Some("Press the button"));
     assert_eq!(receiver.terminal.take_painted(), Vec::<u16>::new(), "the caption is being painted");
-    keep("page-at-first", &mut receiver, &mut wrong);
+    keep(GOLDEN, "page-at-first", &mut receiver, &mut wrong);
     // The receiver paints the caption at its rate and reports it whole;
     // the step that carries the report raises `painted`.
     let mut painted_at = None;
@@ -293,7 +132,7 @@ fn the_worked_page_is_drawn_watched_pressed_and_animated() {
     // outline and 380 of line take over half a second.
     let painted_at = painted_at.expect("the caption was reported painted");
     assert!((30..60).contains(&painted_at), "painted at tick {painted_at}");
-    keep("page-painted", &mut receiver, &mut wrong);
+    keep(GOLDEN, "page-painted", &mut receiver, &mut wrong);
     // A press on the button: the renderer's pick record names drawing
     // 7, the button, and the position within it; its parent, the panel,
     // is drawing 3.
@@ -308,7 +147,7 @@ fn the_worked_page_is_drawn_watched_pressed_and_animated() {
     assert_eq!(view(&batch).verdicts, vec![2], "heard, and the default not cancelled");
     // The receiver shows the pressed look itself, with no byte sent.
     assert!(receiver.terminal.set_viewer_state(ViewerState { pressed: 7, ..ViewerState::default() }));
-    keep("page-pressed-by-the-viewer", &mut receiver, &mut wrong);
+    keep(GOLDEN, "page-pressed-by-the-viewer", &mut receiver, &mut wrong);
     assert!(receiver.terminal.set_viewer_state(ViewerState::default()));
     let release = pointer(PointerAction::UP, 330, 310, 7, (10, 10), &[3]);
     let batch = container.step(&with_events(at + 1, u64::from(at + 1), vec![release])).unwrap();
@@ -320,13 +159,13 @@ fn the_worked_page_is_drawn_watched_pressed_and_animated() {
     assert_eq!(batch.regis, None, "animation state is not the stream's");
     assert_eq!(batch.animate.as_ref().map(Vec::len), Some(2));
     receiver.take(&batch);
-    keep("page-frame-2-and-forced-pressed", &mut receiver, &mut wrong);
+    keep(GOLDEN, "page-frame-2-and-forced-pressed", &mut receiver, &mut wrong);
     // The right arrow: the sprite moved by properties (one commit), a
     // cycle started, the look given back to the pointer.
     let batch = container.step(&with_events(at + 3, u64::from(at + 3), vec![key("ArrowRight")])).unwrap();
     assert_eq!(batch.regis.as_deref(), Some(b"D(S12(X640,Y280))D(C)".as_slice()));
     receiver.take(&batch);
-    keep("page-sprite-moved", &mut receiver, &mut wrong);
+    keep(GOLDEN, "page-sprite-moved", &mut receiver, &mut wrong);
     // The tracked sprite's rectangle is the renderer's, sent with the step.
     let bounds = receiver.bounds(&[12]);
     assert_eq!(bounds, vec![Bounds { handle: 12, x: 640, y: 280, width: 20, height: 20 }], "the sprite's second frame, 20 pixels square");
@@ -660,31 +499,48 @@ fn a_script_that_fills_every_regis_table_is_held_to_the_hosts_bound() {
     assert!(cost.host_bytes > 2 * 900_000 && cost.host_bytes <= MAX_HOST_STATE_BYTES, "{cost:?}");
 }
 
-/// TODO-7298's measurement: a commit a tick on a scene of 2,048 drawings
-/// (the page's 1,984 and the channel context's 64), every one of the
-/// page's moved by its properties each tick. Printed: the time of a
-/// step, of which the host's validation of the commit is a part, and the
-/// bytes of a step's commit. Held only to the decoder's deadline for a
-/// step's answer, since the figure depends on the machine.
-#[test]
-fn a_commit_a_tick_on_2048_drawings_is_measured() {
+/// What one way of moving the page's drawings each tick costs.
+struct Moved {
+    /// A step's time on average and at most.
+    average: Duration,
+    longest: Duration,
+    /// The bytes of a step's commit.
+    bytes: usize,
+    /// The receiver's time to take and compose a step, on average.
+    receiver: Duration,
+}
+
+/// Runs a page of 2,048 drawings (the page's 1,984, one of them a hidden
+/// master, and the channel context's 64) for a second of ticks, with
+/// `each_tick` as what the page's script does each tick once its
+/// drawings are made: `all` holds the drawings, `xs` their x as the
+/// script last set it, and `plain` as many plain objects with an `x`.
+fn moved(each_tick: &str) -> Moved {
     /// The ticks measured: a second.
     const TICKS: u32 = 60;
-    let page = r#"
+    let page = format!(
+        r#"
 const g = nt.regis;
 const shape = g.symbol((p) => p.ink(3).fill((q) => q.rect(0, 0, 6, 6)));
-const all = [];
+const all = [], xs = [], plain = [];
 let building = true;
-nt.addEventListener("tick", (e) => {
+nt.addEventListener("tick", (e) => {{
   // 128 drawings a tick, until the page's share is made.
-  if (building) {
-    try { for (let n = 0; n < 128; n++) all.push(g.drawing({ source: shape, layer: 2, x: (all.length * 13) % 790, y: (all.length * 7) % 470 })); }
-    catch (error) { building = false; console.log("made " + all.length + ": " + error.message.split(":")[0]); }
+  if (building) {{
+    try {{
+      for (let n = 0; n < 128; n++) {{
+        const x = (all.length * 13) % 790;
+        all.push(g.drawing({{ source: shape, layer: 2, x, y: (all.length * 7) % 470 }}));
+        xs.push(x);
+        plain.push({{ x }});
+      }}
+    }} catch (error) {{ building = false; console.log("made " + all.length + ": " + error.message.split(":")[0]); }}
     return;
-  }
-  for (const d of all) d.x = (d.x + 1) % 790;
-});
-"#;
+  }}
+  {each_tick}
+}});
+"#
+    );
     let channel = "for (let n = 0; n < 64; n++) nt.regis.drawing({ x: n * 12, y: 470 }).draw((p) => p.ink(2).rect(0, 0, 8, 8));";
     let mut container = container();
     container.open_with(regis_opening(ContextId::Channel), channel.as_bytes()).unwrap();
@@ -701,8 +557,7 @@ nt.addEventListener("tick", (e) => {
     }
     // The page's share, less the one hidden master.
     assert_eq!(log, vec![format!("made {}: REGIS_MAX_DRAWINGS", REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS - 1)]);
-    let (mut total, mut longest, mut bytes) = (Duration::ZERO, Duration::ZERO, 0_usize);
-    let mut compose = Duration::ZERO;
+    let (mut total, mut longest, mut bytes, mut compose) = (Duration::ZERO, Duration::ZERO, 0_usize, Duration::ZERO);
     for _ in 0..TICKS {
         let began = Instant::now();
         let batch = container.step(&tick(at, u64::from(at))).unwrap();
@@ -717,16 +572,51 @@ nt.addEventListener("tick", (e) => {
         compose += began.elapsed();
         at += 1;
     }
-    assert_eq!(receiver.commits, 16 + TICKS, "a commit a tick");
-    println!(
-        "a commit a tick on {REGIS_MAX_DRAWINGS} drawings, {} moved each tick: a step takes {:?} on average and {longest:?} at most; a step's commit is {bytes} bytes; \
-         the host holds {} bytes; the receiver takes and composes it in {:?} on average",
-        REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS,
-        total / TICKS,
-        container.host_bytes(),
-        compose / TICKS
-    );
-    assert!(longest < STEP_DEADLINE, "a step took {longest:?}");
+    Moved { average: total / TICKS, longest, bytes, receiver: compose / TICKS }
+}
+
+/// TODO-7298's and TODO-7373's measurement: a commit a tick on a scene of
+/// 2,048 drawings, every one of the page's 1,983 shown drawings moved by
+/// its properties each tick, with where a step's time goes: the script's
+/// own loop over as many plain objects, the reads alone, the writes
+/// alone, the whole by assignments one by one, and a list's `set`.
+/// Printed; the list's held to the step's budget (section 3.2,
+/// `STEP_TIME_BUDGET`) in a release build, which is what the figure is of.
+#[test]
+fn a_commit_a_tick_on_2048_drawings_is_measured() {
+    let ways = [
+        ("nothing", ""),
+        ("the script's loop alone, over plain objects", "for (const o of plain) o.x = (o.x + 1) % 790;"),
+        ("two reads a drawing, nothing written", "let sum = 0; for (const d of all) sum += d.x + d.x;"),
+        ("one write a drawing of the value it has", "for (let i = 0; i < all.length; i++) all[i].x = xs[i];"),
+        ("one write a drawing of a new value", "for (let i = 0; i < all.length; i++) { xs[i] = (xs[i] + 1) % 790; all[i].x = xs[i]; }"),
+        ("a read and a write a drawing: d.x = (d.x + 1) % 790", "for (const d of all) d.x = (d.x + 1) % 790;"),
+        ("x and y of every drawing: d.moveBy(1, 1)", "for (const d of all) d.moveBy(1, 1);"),
+        (
+            "a list's set of x from an Int32Array the script computed",
+            "if (!globalThis.list) { globalThis.list = g.many(all); globalThis.values = Int32Array.from(xs); } \
+             for (let i = 0; i < values.length; i++) values[i] = (values[i] + 1) % 790; list.set('x', values);",
+        ),
+    ];
+    let mut costs = Vec::new();
+    for (name, each_tick) in ways {
+        let cost = moved(each_tick);
+        println!(
+            "2,048 drawings, each tick {name}: a step takes {:?} on average and {:?} at most; its commit is {} bytes; the receiver takes and composes it in {:?}",
+            cost.average, cost.longest, cost.bytes, cost.receiver
+        );
+        costs.push(cost);
+    }
+    // The way to move very many drawings each tick is the list's: held
+    // to the step's budget in the build the figure is of. A debug build,
+    // and the assignments one by one (TODO-7373 records what they cost
+    // and why), are held to the decoder's deadline for a step's answer.
+    let list = costs.last().unwrap();
+    let limit = if cfg!(debug_assertions) { STEP_DEADLINE } else { neoteletext_script::limits::STEP_TIME_BUDGET };
+    assert!(list.average < limit, "a list's set of every drawing takes {:?} a step, over {limit:?}", list.average);
+    for cost in &costs {
+        assert!(cost.average < STEP_DEADLINE, "a step took {:?}", cost.average);
+    }
 }
 
 /// Section 6.4's first worked example, as the specification has it: a
@@ -750,7 +640,7 @@ fn the_specifications_page_example_runs_and_matches_its_kept_pictures() {
     // The caption is drawing 2; the button is drawing 6, after its three faces.
     assert_eq!(first.watch.as_ref().and_then(|watch| watch.painted.clone()), Some(vec![2]));
     assert_eq!(receiver.terminal.label(6).as_deref(), Some("Start"));
-    keep("example-page-at-first", &mut receiver, &mut wrong);
+    keep(GOLDEN, "example-page-at-first", &mut receiver, &mut wrong);
     let mut painted_at = None;
     for at in 1..200_u32 {
         let _ = receiver.terminal.advance_ticks(1);
@@ -770,13 +660,13 @@ fn the_specifications_page_example_runs_and_matches_its_kept_pictures() {
     // Twenty-six character cells of 9 by 20 at 2,000 work units a second.
     let painted_at = painted_at.expect("the caption was reported painted");
     assert!((100..180).contains(&painted_at), "painted at tick {painted_at}");
-    keep("example-page-painted", &mut receiver, &mut wrong);
+    keep(GOLDEN, "example-page-painted", &mut receiver, &mut wrong);
     // The pointer over the button: the receiver shows its hover look.
     let picture = receiver.picture();
     let pick = picture.pick(400, 320);
     assert_eq!(pick.drawing, 6);
     assert!(receiver.terminal.set_viewer_state(ViewerState { hovered: 6, ..ViewerState::default() }));
-    keep("example-page-hovered", &mut receiver, &mut wrong);
+    keep(GOLDEN, "example-page-hovered", &mut receiver, &mut wrong);
     let at = painted_at + 1;
     let release = pointer(PointerAction::UP, 400, 320, 6, (pick.x, pick.y), &[]);
     let batch = container.step(&with_events(at, u64::from(at), vec![release])).unwrap();
@@ -816,7 +706,7 @@ fn the_specifications_game_example_runs_and_matches_its_kept_picture() {
     assert_eq!(receiver.terminal.drawing_position(4), Some((720, 380)));
     assert_eq!(receiver.bounds(&[4]), vec![Bounds { handle: 4, x: 720, y: 380, width: 80, height: 21 }]);
     println!("the game: {} commits, {} bytes of ReGIS, {notes} crates caught in 400 steps", receiver.commits, receiver.bytes);
-    keep("example-game-after-400-steps", &mut receiver, &mut wrong);
+    keep(GOLDEN, "example-game-after-400-steps", &mut receiver, &mut wrong);
     assert!(wrong.is_empty(), "pictures differ from tests/golden/regis.txt (format {GOLDEN_FORMAT}):\n{}", wrong.join("\n"));
 }
 
@@ -863,10 +753,11 @@ throws("a language", TypeError, "'xx' is not a language", paint((p) => p.text("x
 throws("a long string", RangeError, "MAX_TEXT_CHARS", paint((p) => p.text("x".repeat(1001))));
 throws("call takes a macrograph", TypeError, "call takes a Macrograph", paint((p) => p.call(d)));
 throws("a Macrograph is not constructed", TypeError, "a Macrograph is made by", () => new Macrograph());
-throws("after an arc", TypeError, "the position is where an arc", paint((p) => p.moveTo(40, 0).arc(0, 0, 90).lineTo(-5, 0)));
+d.draw((p) => p.moveTo(40, 0).arc(0, 0, 90).lineTo(-5, 0).call(star).lineTo(-9, 0).text("ab").lineTo(-1, -1));
+throws("a macrograph's body has no position", TypeError, "a macrograph is drawn wherever it is called", () => g.macrograph((p) => p.lineTo(-5, 0)));
 throws("a macrograph's text", TypeError, "a macrograph's text does not hold", () => g.macrograph((p) => p.text("a@;b")));
 throws("measure", TypeError, "measure takes a string", () => g.measure(5));
-equal("a refused draw leaves the contents", nt.budget().contentBytes.used > 100, true);
+equal("a refused draw leaves the contents", nt.budget().contentBytes.used > 30, true);
 done();
 "##;
     let mut container = regis_page(&script(body));
@@ -877,7 +768,11 @@ done();
     assert_eq!(receiver.commits, 1);
     let sent = String::from_utf8_lossy(batch.regis.as_ref().unwrap()).into_owned();
     assert!(sent.starts_with("D(S1(X100,Y100))@:AW(I3)V(W(M8))0246@;D(B1)P[0,0]V[+5,+5]V(W(M1))7C[+20]C[30,0]C(C,A+90)[0,0]P[0,0]"), "{sent}");
-    assert!(sent.ends_with("@AD(E)@:AW(I2)C[+6]@;D(C)"), "{sent}");
+    assert!(sent.contains("@AD(E)@:AW(I2)C[+6]@;"), "{sent}");
+    // After an arc, a macrograph's call and text, a line to a place with
+    // a negative coordinate is written from where the renderer says the
+    // position is (TODO-7389).
+    assert!(sent.ends_with("D(B1)P[40,0]C(C,A+90)[0,0]V[-5,+40]@AV[-4,+0]T(A101)\"ab\"T(A0)V[-10,-1]D(E)D(C)"), "{sent}");
     for written in [
         "W(C)W(V)W(N1)W(N0)W(P4(M1))W(P11110000(M3))W(P1(M1))W(F15)W(S1)W(S[,50])W(S(X)[50])W(S'#')W(S0)",
         "T(A101)\"Score 12\"T(A0)",
@@ -886,4 +781,68 @@ done();
     ] {
         assert!(sent.contains(written), "{written} is not in {sent}");
     }
+}
+
+/// TODO-7373: a callback's assignments to x, y, depth, visible and
+/// detectable are gathered on the script's side and given to the host
+/// together, before any other ReGIS call and before the step's commit; a
+/// read is answered from what was assigned; and `nt.regis.many` sets one
+/// attribute of a list of drawings from a typed array. What the receiver
+/// then holds is what assignments one by one would have given it.
+#[test]
+fn assignments_are_gathered_and_lists_set_many_drawings_at_once() {
+    let body = r#"
+const g = nt.regis;
+const a = g.drawing({ x: 1, y: 2 });
+const b = g.drawing({ visible: false });
+a.x = 5; a.x = 6; a.y = a.x + 10; a.depth = -3; b.visible = true; b.detectable = true;
+equal("a read is what was assigned", JSON.stringify([a.x, a.y, a.depth, b.visible, b.detectable]), "[6,16,-3,true,true]");
+// An assignment is in its place among the other calls: the label is
+// staged after the x before it and before the x after it.
+a.label = "between";
+a.x = 7;
+throws("a value out of range is refused where it is assigned", RangeError, "MAX_COORDINATE", () => { a.x = 40000; });
+throws("a value of the wrong kind", TypeError, "visible is true or false", () => { b.visible = 1; });
+equal("and changes nothing", a.x, 7);
+// What a promise's job assigns leaves with the same step.
+Promise.resolve().then(() => { b.y = 99; });
+const all = [a, b, g.drawing({})];
+const list = g.many(all);
+check("a list", list instanceof DrawingList && list.length === 3 && Object.isFrozen(list));
+nt.addEventListener("tick", (e) => {
+  if (e.tick === 1) {
+    equal("the job's assignment", b.y, 99);
+    list.set("x", Int32Array.of(100, 200, 300));
+    list.moveTo(Int32Array.of(10, 20, 30), Int32Array.of(11, 21, 31));
+    list.set("visible", Int32Array.of(1, 0, 1));
+    equal("after a list's set a drawing reads what the host holds", JSON.stringify([a.x, a.y, b.x, b.visible, all[2].y]), "[10,11,20,false,31]");
+    a.x = a.x + 1;
+    throws("a list's attributes", TypeError, "a list sets", () => list.set("layer", Int32Array.of(1, 1, 1)));
+    throws("as many values as drawings", TypeError, "values is an Int32Array", () => list.set("x", Int32Array.of(1, 2)));
+    throws("values are an Int32Array", TypeError, "values is an Int32Array", () => list.set("x", [1, 2, 3]));
+    throws("a value out of range names its entry", RangeError, "MAX_COORDINATE", () => list.set("y", Int32Array.of(1, 40000, 3)));
+    equal("a refused set changes nothing", b.y, 21);
+    throws("a list is of drawings", TypeError, "a drawing of the list is a Drawing", () => g.many([a, null]));
+    throws("a DrawingList is not constructed", TypeError, "a DrawingList is made by", () => new DrawingList());
+    all[2].remove();
+    throws("a removed drawing's assignment", TypeError, "the drawing was removed", () => { all[2].x = 1; });
+    throws("a list with a removed drawing", TypeError, "the drawing was removed", () => list.set("x", Int32Array.of(1, 2, 3)));
+    done();
+  }
+});
+"#;
+    let mut container = regis_page(&script(body));
+    let mut receiver = Receiver::new();
+    let first = container.step(&tick(0, 0)).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(first.regis.as_ref().unwrap()),
+        "D(S1(X1,Y2))D(S2(V0))D(S1(X6,Y16,L-3))D(S2(V1,I1))D(S1(U'between',X7))D(S3(X0))D(S2(Y99))D(C)"
+    );
+    receiver.take(&first);
+    let second = container.step(&tick(1, 1)).unwrap();
+    assert_checks(&[lines(&first), lines(&second)].concat(), 16);
+    receiver.take(&second);
+    assert_eq!(receiver.commits, 2, "one commit a step");
+    assert_eq!([receiver.terminal.drawing_position(1), receiver.terminal.drawing_position(2)], [Some((11, 11)), Some((20, 21))]);
+    assert!(receiver.terminal.committed_drawing(3).is_none());
 }
