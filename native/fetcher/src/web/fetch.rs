@@ -10,12 +10,12 @@
 //! nothing; `no-cache`, `no-store` and `reload` send the headers the
 //! standard gives them).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Instant;
 
 use hyper::body::Bytes;
-use protocol::web::{BodySource, CacheMode, Credentials, Header, Mode, Reason, RedirectMode, Referrer, ReferrerPolicy, RequestKind, ResponseType, Start};
+use protocol::web::{BodySource, CacheMode, Credentials, Header, Mode, Reason, RedirectMode, Referrer, ReferrerPolicy, ResponseType, Start};
 use url::Url;
 
 use super::coding::{ACCEPT_ENCODING, Decoder};
@@ -28,11 +28,8 @@ use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
 use super::referrer::{DEFAULT_POLICY, policy_of, referer};
 use super::rules::{is_bad_port, is_forbidden_method, is_forbidden_request_header, is_forbidden_response_header};
+use protocol::web::AddressSpace;
 
-/// The headers the browser's own load of a page may carry of its caller's:
-/// what it accepts and its validators. Nothing else, so a page load says
-/// nothing of the viewer beyond its cookies for the channel.
-const PAGE_HEADERS: [&str; 3] = ["accept", "if-none-match", "if-modified-since"];
 /// The headers of a request's body, which go when a redirect makes it a
 /// `GET` (the Fetch standard, "request-body-header name").
 const BODY_HEADERS: [&str; 4] = ["content-encoding", "content-language", "content-location", "content-type"];
@@ -65,6 +62,9 @@ pub(crate) struct Engine {
     pub(crate) jar: RefCell<Jar>,
     /// Its remembered preflights.
     pub(crate) preflights: RefCell<PreflightCache>,
+    /// The address space its channel was loaded from, as the trusted core
+    /// told the process at its start.
+    pub(crate) space: AddressSpace,
 }
 
 /// An answer, filtered for the script.
@@ -83,6 +83,8 @@ pub(crate) struct Fetched {
     pub(crate) headers: Vec<Header>,
     /// The body, if the script may read one.
     pub(crate) body: Option<Reader>,
+    /// The bytes of the request's body written to the network.
+    pub(crate) sent: usize,
 }
 
 /// An answer's body as the script is given it: decoded, in pieces of at
@@ -159,14 +161,14 @@ impl Reader {
 struct Request<'a> {
     start: &'a Start,
     policy: &'a ChannelPolicy,
-    /// Whether it is the browser's own load of a page.
-    page: bool,
+    /// The address space the channel was loaded from.
+    space: AddressSpace,
     method: String,
     url: Url,
     headers: Vec<Header>,
     body: Option<Bytes>,
-    /// The page asking; for a script's request with no page address, its
-    /// channel's folder.
+    /// The page asking, when the script host named one of the channel's
+    /// own; else the channel's folder.
     client: Option<Url>,
     referrer: Option<Url>,
     referrer_policy: ReferrerPolicy,
@@ -175,6 +177,9 @@ struct Request<'a> {
     /// written `null`.
     tainted_origin: bool,
     redirects: usize,
+    /// The bytes of the body written to the network, the first time it
+    /// was sent.
+    sent: Cell<usize>,
     /// Whether every address so far was of the asking page's site.
     same_site: bool,
 }
@@ -213,37 +218,21 @@ fn set_if_absent(headers: &mut Vec<Header>, name: &str, value: impl Into<Vec<u8>
 impl<'a> Request<'a> {
     /// The request `start` asks for, checked and with only the headers it
     /// may carry.
-    fn new(start: &'a Start, policy: &'a ChannelPolicy, body: Option<Bytes>, jar: &Jar) -> Result<Self, Reason> {
-        let page = start.kind == RequestKind::Page;
+    fn new(start: &'a Start, engine: &'a Engine, body: Option<Bytes>) -> Result<Self, Reason> {
+        let policy = &engine.policy;
         if is_forbidden_method(&start.method) {
             return Err(Reason::Method);
         }
-        // A navigation is the browser's own and nothing else's.
-        if page != (start.mode == Mode::Navigate) {
-            return Err(Reason::Request);
-        }
-        // The mode `no-cors` is refused (`docs/script-api.md` departure D5):
-        // its unreadable answer exists to feed elements a page here does
-        // not have, and without them it only sends requests blind.
-        if start.mode == Mode::NoCors {
-            return Err(Reason::Unsupported);
-        }
         let url = Url::parse(&start.url).map_err(|_| Reason::Address)?;
-        let named = Url::parse(&start.client).ok().filter(is_web);
-        // A page the viewer asked for by hand has no page asking.
-        let client = if page { named } else { named.or_else(|| policy.folder().cloned()) };
+        // The page asking is the script host's word: it is taken only when
+        // it is a page of the process's own channel, and the channel's
+        // folder stands in for anything else.
+        let client = Url::parse(&start.client).ok().filter(|client| policy.is_same_origin(client)).or_else(|| policy.folder().cloned());
         let mut headers: Vec<Header> = start.headers.iter().map(|(name, value)| (name.to_ascii_lowercase(), value.clone())).collect();
-        headers.retain(|(name, value)| {
-            if page {
-                PAGE_HEADERS.contains(&name.as_str())
-            } else {
-                // The standard's `Headers` guard, held again here: a
-                // script's forbidden headers are dropped.
-                !is_forbidden_request_header(name, value)
-            }
-        });
+        // The standard's `Headers` guard, held again here: a script's
+        // forbidden headers are dropped.
+        headers.retain(|(name, value)| !is_forbidden_request_header(name, value));
         let referrer = match &start.referrer {
-            _ if page => None,
             Referrer::None => None,
             Referrer::Client => client.clone(),
             // A referrer the script names is of its own channel, or the
@@ -251,12 +240,12 @@ impl<'a> Request<'a> {
             // constructor, with the channel for the origin).
             Referrer::Url(url) => Url::parse(url).ok().filter(|url| policy.is_same_origin(url)).or_else(|| client.clone()),
         };
-        let same_site = client.as_ref().map_or(page, |client| cookies::same_site(jar.suffixes(), client, &url));
+        let same_site = client.as_ref().is_some_and(|client| cookies::same_site(engine.jar.borrow().suffixes(), client, &url));
         let referrer_policy = if start.referrer_policy == ReferrerPolicy::Unset { DEFAULT_POLICY } else { start.referrer_policy };
         Ok(Self {
             start,
             policy,
-            page,
+            space: engine.space,
             method: start.method.clone(),
             url,
             headers,
@@ -267,6 +256,7 @@ impl<'a> Request<'a> {
             tainting: ResponseType::Basic,
             tainted_origin: false,
             redirects: 0,
+            sent: Cell::new(0),
             same_site,
         })
     }
@@ -286,12 +276,12 @@ impl<'a> Request<'a> {
         }
     }
 
-    /// The page asking, for the rule on this computer and the local
-    /// network: its address space as the trusted core gave it, and
-    /// whether it is a secure context, loaded over `https` or from this
-    /// computer itself.
+    /// The channel asking, for the rule on this computer and the local
+    /// network: its address space as the trusted core told the process,
+    /// and whether it is a secure context, loaded over `https` or from
+    /// this computer itself. Nothing of it is a script host's word.
     fn asker(&self) -> Asker {
-        Asker { space: self.start.client_space, secure: self.client.as_ref().is_some_and(|client| client.scheme() == "https" || is_loopback(client)) }
+        Asker { space: self.space, secure: self.policy.folder().is_some_and(|folder| folder.scheme() == "https" || is_loopback(folder)) }
     }
 
     /// Whether the request carries and keeps cookies (the standard's
@@ -301,7 +291,7 @@ impl<'a> Request<'a> {
     }
 
     fn cookie_context(&self) -> cookies::Context {
-        cookies::Context { same_site: self.same_site, navigation: self.page, safe_method: matches!(self.method.as_str(), "GET" | "HEAD" | "OPTIONS" | "TRACE") }
+        cookies::Context { same_site: self.same_site, navigation: false, safe_method: matches!(self.method.as_str(), "GET" | "HEAD" | "OPTIONS" | "TRACE") }
     }
 
     /// The `Origin` header's value, if the request carries one (the
@@ -351,9 +341,8 @@ impl<'a> Request<'a> {
         }
         self.common_headers(&mut headers);
         // A script's conditional request under `default` is `no-store` (the
-        // standard's step 8.14); the browser's own page load keeps its
-        // validators as its own cache's.
-        let conditional = !self.page && CONDITIONAL_HEADERS.iter().any(|name| has(&headers, name));
+        // standard's step 8.14).
+        let conditional = CONDITIONAL_HEADERS.iter().any(|name| has(&headers, name));
         match self.start.cache {
             CacheMode::OnlyIfCached => return Err(Reason::NotCached),
             CacheMode::NoCache => set_if_absent(&mut headers, "cache-control", "max-age=0"),
@@ -372,6 +361,9 @@ impl<'a> Request<'a> {
             .pool
             .send(&Outgoing { method: &self.method, url: &self.url, headers: &headers, body: self.body.clone(), page: self.asker(), credentials })
             .await?;
+        if self.redirects == 0 {
+            self.sent.set(self.body.as_ref().map_or(0, Bytes::len));
+        }
         if answer.status == PROXY_AUTHENTICATION_REQUIRED {
             return Err(Reason::Proxy);
         }
@@ -480,6 +472,7 @@ impl<'a> Request<'a> {
                 redirected: false,
                 headers: Vec::new(),
                 body: None,
+                sent: self.sent.get(),
             });
         }
         let reader = if self.method == "HEAD" || NULL_BODY_STATUSES.contains(&status) {
@@ -516,7 +509,7 @@ impl<'a> Request<'a> {
         } else {
             headers.into_iter().filter(|(name, _)| !is_forbidden_response_header(name)).collect()
         };
-        Ok(Fetched { response_type, status, status_text, url: url.into(), redirected: self.redirects > 0, headers, body: reader })
+        Ok(Fetched { response_type, status, status_text, url: url.into(), redirected: self.redirects > 0, headers, body: reader, sent: self.sent.get() })
     }
 }
 
@@ -524,7 +517,7 @@ impl<'a> Request<'a> {
 /// standard's main fetch, to the answer's head. The body is then read
 /// from the answer's [`Reader`].
 pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -> Result<Fetched, Reason> {
-    let mut request = Request::new(start, &engine.policy, body, &engine.jar.borrow())?;
+    let mut request = Request::new(start, engine, body)?;
     loop {
         if !is_web(&request.url) {
             return Err(Reason::Address);
@@ -532,14 +525,13 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         if request.url.port_or_known_default().is_none_or(is_bad_port) {
             return Err(Reason::BadPort);
         }
-        // A page loaded securely asks nothing of an address that is not,
-        // but a navigation may go anywhere the viewer follows it.
+        // A page loaded securely asks nothing of an address that is not.
         let secure_client = request.client.as_ref().is_some_and(|client| client.scheme() == "https");
-        if !request.page && secure_client && request.url.scheme() != "https" && !is_loopback(&request.url) {
+        if secure_client && request.url.scheme() != "https" && !is_loopback(&request.url) {
             return Err(Reason::MixedContent);
         }
         // Main fetch, step 12: which kind of answer the script may have.
-        if request.page || (request.tainting == ResponseType::Basic && request.is_own(&request.url)) {
+        if request.tainting == ResponseType::Basic && request.is_own(&request.url) {
             request.tainting = ResponseType::Basic;
         } else if start.mode == Mode::SameOrigin {
             return Err(Reason::SameOriginMode);
@@ -557,9 +549,7 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         if REDIRECT_STATUSES.contains(&answer.status) {
             match start.redirect {
                 RedirectMode::Error => return Err(Reason::Redirect),
-                // The browser's own loader is given the redirect itself to
-                // follow; a script an answer it cannot read.
-                RedirectMode::Manual if request.page => return request.filtered(answer, ResponseType::Basic).await,
+                // A script is given an answer it cannot read.
                 RedirectMode::Manual => return request.filtered(answer, ResponseType::OpaqueRedirect).await,
                 RedirectMode::Follow => {
                     let redirected = request.redirect(&answer, &engine.jar.borrow())?;

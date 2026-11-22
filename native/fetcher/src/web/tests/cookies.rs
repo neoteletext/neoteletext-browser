@@ -2,7 +2,7 @@
 //! credentials mode, never given to a script, kept apart by partition,
 //! and written out for the trusted core to keep.
 
-use protocol::web::{Credentials, JarPiece, MAX_BODY_PIECE, ToWebClient};
+use protocol::web::{Credentials, JarPiece, MAX_CHUNK_BYTES, ToWebClient};
 
 use super::support::{Client, Reply, Server, serve};
 
@@ -32,7 +32,6 @@ fn cookies_are_kept_and_returned_by_the_credentials_mode() {
     let login = client.get(&server.url("/a/login"));
     assert!(login.ok().headers.iter().all(|(name, _)| name != "set-cookie"), "no Set-Cookie is a script's to read");
     assert_eq!(client.get(&server.url("/a/x")).text(), "sid=secret; theme=dark");
-    assert_eq!(client.load(&server.url("/a/100.tti")).text(), "sid=secret; theme=dark", "a page load carries the channel's cookies");
     assert_eq!(client.fetch(&server.url("/a/x"), |start| start.credentials = Credentials::Omit).text(), "");
     // `omit` keeps none either.
     client.fetch(&server.url("/a/strict"), |start| start.credentials = Credentials::Omit);
@@ -67,9 +66,10 @@ fn each_partitions_process_keeps_its_own_cookies() {
     let mut home = Client::new(&server.url("/home/"));
     let mut demo = Client::new(&server.url("/demosite/"));
     let mut inner = Client::new(&server.url("/home/inner/"));
-    let mut private = Client::with(&server.url("/home/"), 9, |_| {});
+    // A private window's partition of the same channel is another process.
+    let mut private = Client::new(&server.url("/home/"));
     // The viewer logs in to /home/.
-    home.load(&server.url("/home/login"));
+    home.get(&server.url("/home/login"));
     assert_eq!(home.get(&server.url("/home/x")).text(), "sid=secret; theme=dark");
     // (a), (d), (e): no other partition's request to /home/ carries it,
     // even with credentials asked for and leave given.
@@ -124,11 +124,21 @@ fn the_jar_is_written_out_and_given_back() {
     assert!(!again.jar[0].is_empty() && again.jar[1].is_empty(), "the session's part, written out empty");
     again.finish().unwrap();
 
+    // The trusted core has the process forget its jar: every cookie goes,
+    // and the jar is written out empty.
+    let mut forgetful = Client::new(&server.url("/a/"));
+    forgetful.get(&server.url("/a/login"));
+    assert!(!forgetful.jar[0].is_empty() && !forgetful.jar[1].is_empty());
+    forgetful.send(&ToWebClient::ForgetJar);
+    assert_eq!(forgetful.get(&server.url("/a/x")).text(), "");
+    assert_eq!(forgetful.jar, [Vec::new(), Vec::new()]);
+    forgetful.finish().unwrap();
+
     // A kept jar past its bound is not the trusted core's doing, and ends
     // the process.
     let mut flooded = Client::new(&server.url("/a/"));
-    for _ in 0..=protocol::web::MAX_JAR_BYTES / MAX_BODY_PIECE {
-        flooded.send(&ToWebClient::JarKept(JarPiece { session: false, last: false, bytes: vec![0; MAX_BODY_PIECE] }));
+    for _ in 0..=protocol::web::MAX_JAR_BYTES / MAX_CHUNK_BYTES {
+        flooded.send(&ToWebClient::JarKept(JarPiece { session: false, last: false, bytes: vec![0; MAX_CHUNK_BYTES] }));
     }
     assert!(flooded.ended().is_err());
 }

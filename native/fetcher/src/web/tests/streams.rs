@@ -5,13 +5,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use protocol::web::{ErrorKind, FromWebClient, INITIAL_ROOM, MAX_BODY_PIECE, MAX_ROOM, Reason, RequestKind, ToWebClient};
+use protocol::web::{ErrorKind, FETCH_WINDOW_BYTES, FromWebClient, MAX_CHUNK_BYTES, MAX_NETWORK_BUFFER_BYTES, Reason, RequestKind, ToWebClient};
 
 use super::support::{Client, Piece, Reply, serve, serve_tls};
 use crate::web::coding::tests::gzip;
 use crate::web::limits::{MAX_DECODED_BODY, MIN_RETRY};
 
-/// An answer's body comes in pieces of at most `MAX_BODY_PIECE` bytes,
+/// An answer's body comes in pieces of at most `MAX_CHUNK_BYTES` bytes,
 /// and only as far as the trusted core has made room: a server that sends
 /// without end fills no memory here or there.
 #[test]
@@ -28,7 +28,7 @@ fn a_body_is_sent_only_as_far_as_there_is_room() {
         while let Some(event) = client.next_within(wait) {
             match event {
                 FromWebClient::Body { id: of, bytes } => {
-                    assert!(of == id && !bytes.is_empty() && bytes.len() <= MAX_BODY_PIECE);
+                    assert!(of == id && !bytes.is_empty() && bytes.len() <= MAX_CHUNK_BYTES);
                     received += bytes.len();
                 }
                 FromWebClient::End(of) => {
@@ -41,20 +41,14 @@ fn a_body_is_sent_only_as_far_as_there_is_room() {
         }
         (received, ended)
     };
-    let initial = usize::try_from(INITIAL_ROOM).unwrap();
+    let initial = usize::try_from(FETCH_WINDOW_BYTES).unwrap();
     let (so_far, ended) = take(&mut client, Duration::from_millis(500));
-    assert!(!ended && so_far <= initial && so_far > initial - MAX_BODY_PIECE, "{so_far} bytes came into room for {initial}");
+    assert!(!ended && so_far <= initial && so_far > initial - MAX_CHUNK_BYTES, "{so_far} bytes came into room for {initial}");
     client.send(&ToWebClient::More { id, bytes: 100_000 });
     let (so_far, ended) = take(&mut client, Duration::from_millis(500));
-    assert!(!ended && so_far <= initial + 100_000 && so_far > initial + 100_000 - MAX_BODY_PIECE, "{so_far}");
-    // Room is never more than its bound at once, however much is given.
-    for _ in 0..4 {
-        client.send(&ToWebClient::More { id, bytes: MAX_ROOM });
-    }
-    let (so_far, ended) = take(&mut client, Duration::from_millis(500));
-    assert!(!ended && so_far <= initial + 100_000 + usize::try_from(MAX_ROOM).unwrap(), "{so_far}");
+    assert!(!ended && so_far <= initial + 100_000 && so_far > initial + 100_000 - MAX_CHUNK_BYTES, "{so_far}");
     client.makes_room = true;
-    client.send(&ToWebClient::More { id, bytes: MAX_ROOM });
+    client.send(&ToWebClient::More { id, bytes: MAX_NETWORK_BUFFER_BYTES });
     assert_eq!(client.outcome(id).body.len() + so_far, BODY);
     client.finish().unwrap();
 }
@@ -71,7 +65,7 @@ fn a_coded_body_decodes_to_no_more_than_its_bound() {
     let outcome = client.get(&server.url("/a/bomb"));
     assert_eq!(outcome.failed, Some((ErrorKind::Network, Reason::TooLarge)));
     assert!(outcome.body.len() <= usize::try_from(MAX_DECODED_BODY).unwrap());
-    assert!(outcome.pieces.iter().all(|&piece| piece <= MAX_BODY_PIECE));
+    assert!(outcome.pieces.iter().all(|&piece| piece <= MAX_CHUNK_BYTES));
     client.finish().unwrap();
 }
 
@@ -139,7 +133,7 @@ fn an_abort_ends_a_request_once() {
     client.send(&ToWebClient::Abort(id));
     assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
     // While its body is still being given.
-    let uploading = client.start(&server.url("/a/upload"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Bytes));
+    let uploading = client.start(&server.url("/a/upload"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Bytes(8)));
     client.send(&ToWebClient::RequestBody { id: uploading, bytes: b"part".to_vec() });
     client.send(&ToWebClient::Abort(uploading));
     assert_eq!(client.next_event(), FromWebClient::Failed { id: uploading, error: ErrorKind::Abort, reason: Reason::Aborted });
@@ -153,10 +147,19 @@ fn an_abort_ends_a_request_once() {
     client.send(&ToWebClient::Abort(9999));
     client.send(&ToWebClient::More { id: 9999, bytes: 1 });
     assert_eq!(client.next_within(Duration::from_millis(200)), None);
-    // A request body past its bound fails as too large.
-    let large = client.start(&server.url("/a/large"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Bytes));
-    for _ in 0..=protocol::web::MAX_REQUEST_BODY / MAX_BODY_PIECE {
-        client.send(&ToWebClient::RequestBody { id: large, bytes: vec![0; MAX_BODY_PIECE] });
+    // A request body past its stated length fails as too large, a stream
+    // past the bound on any body likewise, and one that ends short of its
+    // stated length is no request.
+    let large = client.start(&server.url("/a/large"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Bytes(4)));
+    client.send(&ToWebClient::RequestBody { id: large, bytes: b"12345".to_vec() });
+    assert_eq!(client.next_event(), FromWebClient::Failed { id: large, error: ErrorKind::Network, reason: Reason::TooLarge });
+    let short = client.start(&server.url("/a/large"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Bytes(4)));
+    client.send(&ToWebClient::RequestBody { id: short, bytes: b"123".to_vec() });
+    client.send(&ToWebClient::RequestBodyEnd(short));
+    assert_eq!(client.next_event(), FromWebClient::Failed { id: short, error: ErrorKind::Network, reason: Reason::Request });
+    let large = client.start(&server.url("/a/large"), |start| (start.method, start.body) = ("POST".into(), protocol::web::BodySource::Stream));
+    for _ in 0..=protocol::web::MAX_REQUEST_BODY_BYTES / MAX_CHUNK_BYTES {
+        client.send(&ToWebClient::RequestBody { id: large, bytes: vec![0; MAX_CHUNK_BYTES] });
     }
     assert_eq!(client.next_event(), FromWebClient::Failed { id: large, error: ErrorKind::Network, reason: Reason::TooLarge });
     client.finish().unwrap();
@@ -186,12 +189,12 @@ fn an_event_stream_is_read_and_made_again() {
     let mut client = Client::new(&server.url("/a/"));
     let source = |start: &mut protocol::web::Start| start.kind = RequestKind::EventSource;
     let id = client.start(&server.url("/a/events"), source);
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, text: server.url("/a/events") });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "tick".into(), data: "one".into(), last_id: "7".into() });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "message".into(), data: "two".into(), last_id: "7".into() });
     let lost = Instant::now();
     assert_eq!(client.next_event(), FromWebClient::Retrying(id));
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, text: server.url("/a/events") });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
     assert!(lost.elapsed() >= MIN_RETRY.checked_sub(Duration::from_millis(50)).unwrap(), "a stream cannot ask to be made again at once");
     assert_eq!(
         client.next_event(),

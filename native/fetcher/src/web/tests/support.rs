@@ -13,12 +13,14 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use hyper::body::{Body as _, Bytes, Frame, Incoming};
+use protocol::fetcher::PROCESS_TAB;
+use protocol::script::ContextId;
 use protocol::web::{
-    AddressSpace, BodySource, CacheMode, Credentials, ErrorKind, FromWebClient, Head, Mode, Reason, RedirectMode, Referrer, ReferrerPolicy, RequestKind, Start,
-    ToWebClient, read_from_client, write_to_client,
+    AddressSpace, BodySource, CacheMode, Credentials, ErrorKind, FromWebClient, Head, Mode, PartitionToken, Reason, RedirectMode, Referrer, ReferrerPolicy,
+    RequestKind, Start, ToWebClient, read_from_client, write_to_client,
 };
 
-use crate::web::client::run_with;
+use crate::web::client::{Partition, run_with};
 use crate::web::connect::Settings;
 use crate::web::pool::{Io, Spawner};
 
@@ -302,6 +304,8 @@ pub(super) struct Outcome {
     /// The size of each piece of the body.
     pub(super) pieces: Vec<usize>,
     pub(super) failed: Option<(ErrorKind, Reason)>,
+    /// The bytes of the request's body the client said it wrote.
+    pub(super) sent: u32,
 }
 
 impl Outcome {
@@ -311,11 +315,12 @@ impl Outcome {
         self.head.as_ref().expect("a head")
     }
 
-    /// Why a request failed as a network error, having given no head.
+    /// Why a request failed, having given no head: as a network error,
+    /// or for a time limit as the standard's `TimeoutError`.
     pub(super) fn reason(&self) -> Reason {
         assert!(self.head.is_none(), "a head came: {:?}", self.head);
         let (error, reason) = self.failed.expect("a failure");
-        assert_eq!(error, ErrorKind::Network);
+        assert_eq!(error, if reason == Reason::Timeout { ErrorKind::Timeout } else { ErrorKind::Network });
         reason
     }
 
@@ -332,11 +337,12 @@ impl Outcome {
 /// A web client on a thread, and its pipes.
 pub(super) struct Client {
     to: Option<std::io::PipeWriter>,
-    from: mpsc::Receiver<FromWebClient>,
+    from: mpsc::Receiver<(u32, FromWebClient)>,
     ran: Option<std::thread::JoinHandle<Result<(), String>>>,
     next: u32,
     channel: String,
-    windows: u32,
+    /// The tab of the last event read.
+    pub(super) tab: u32,
     /// Whether room is made for each piece of a body as it comes.
     pub(super) makes_room: bool,
     /// The jar as last written out whole: the lasting part, then the
@@ -350,17 +356,26 @@ pub(super) struct Setup {
     pub(super) settings: Settings,
     /// Whether the client has a public suffix list: `test` and `co.test`.
     pub(super) suffixes: bool,
+    /// The address space the trusted core says the channel was loaded
+    /// from: this computer, where every test's server is, unless a test
+    /// says otherwise.
+    pub(super) space: AddressSpace,
 }
 
+/// The token of every test's partition, and one that is another's.
+pub(super) const TOKEN: PartitionToken = PartitionToken::new([7; 16]);
+pub(super) const OTHER_TOKEN: PartitionToken = PartitionToken::new([8; 16]);
+/// The tab a test's requests are of unless it says otherwise.
+pub(super) const TAB: u32 = 1;
+
 impl Client {
-    /// A web client for the partition of `channel` in the ordinary
-    /// windows, resolving every name to this computer, from which its
-    /// page was loaded.
+    /// A web client for the partition of `channel`, resolving every name
+    /// to this computer, from which its channel was loaded.
     pub(super) fn new(channel: &str) -> Self {
-        Self::with(channel, 0, |_| {})
+        Self::with(channel, |_| {})
     }
 
-    pub(super) fn with(channel: &str, windows: u32, change: impl FnOnce(&mut Setup) + Send + 'static) -> Self {
+    pub(super) fn with(channel: &str, change: impl FnOnce(&mut Setup) + Send + 'static) -> Self {
         let (client_input, to_client) = std::io::pipe().unwrap();
         let (mut from_client, client_output) = std::io::pipe().unwrap();
         let (found, from) = mpsc::channel();
@@ -375,10 +390,11 @@ impl Client {
         let ran = std::thread::spawn(move || {
             let mut settings = Settings::new(&[], None, test_roots());
             settings.names = Some(Rc::new(|_: &str, port: u16| vec![SocketAddr::new(HERE, port)]));
-            let mut setup = Setup { settings, suffixes: true };
+            let mut setup = Setup { settings, suffixes: true, space: AddressSpace::Loopback };
             change(&mut setup);
             let suffixes = setup.suffixes.then(|| Rc::new("// ===BEGIN ICANN DOMAINS===\ntest\nco.test\n".parse::<publicsuffix::List>().unwrap()));
-            run_with(setup.settings, windows, &identity, suffixes, Box::new(client_input), Box::new(client_output))
+            let partition = Partition { channel: &identity, token: TOKEN, space: setup.space };
+            run_with(setup.settings, &partition, suffixes, Box::new(client_input), Box::new(client_output))
         });
         let mut client = Self {
             to: Some(to_client),
@@ -386,38 +402,65 @@ impl Client {
             ran: Some(ran),
             next: 1,
             channel: channel.to_owned(),
-            windows,
+            tab: PROCESS_TAB,
             makes_room: true,
             jar: [Vec::new(), Vec::new()],
             writing: [Vec::new(), Vec::new()],
         };
         if Url::parse(channel).is_ok_and(|url| url.path().ends_with('/')) {
             assert_eq!(client.next_event(), FromWebClient::Confined);
+            assert_eq!(client.tab, PROCESS_TAB);
         }
         client
     }
 
+    /// Sends `message` as the trusted core relays or writes it: for the
+    /// tab [`TAB`], or for the process when it is the process's.
     pub(super) fn send(&mut self, message: &ToWebClient) {
+        let tab = if matches!(message, ToWebClient::JarKept(_) | ToWebClient::ForgetJar) { PROCESS_TAB } else { TAB };
+        self.send_as(tab, &TOKEN, message);
+    }
+
+    /// Sends `message` for the tab `tab`, a start with `token`.
+    pub(super) fn send_as(&mut self, tab: u32, token: &PartitionToken, message: &ToWebClient) {
         let to = self.to.as_mut().unwrap();
-        write_to_client(to, message).unwrap();
+        write_to_client(to, tab, token, message).unwrap();
         to.flush().unwrap();
     }
 
     /// A script's `GET` of `url` from the channel's page `page`, as
     /// `fetch(url)` asks it, before `change`.
     pub(super) fn start(&mut self, url: &str, change: impl FnOnce(&mut Start)) -> u32 {
+        self.start_in(TAB, url, change)
+    }
+
+    /// Whether the start of `url` with `change` is one the pipe's
+    /// definition refuses to write.
+    pub(super) fn unwritable(&self, url: &str, change: impl FnOnce(&mut Start)) -> bool {
+        let mut start = self.request(0, url);
+        change(&mut start);
+        write_to_client(&mut Vec::new(), TAB, &TOKEN, &ToWebClient::Start(Box::new(start))).is_err()
+    }
+
+    /// [`Client::start`] for the tab `tab`.
+    pub(super) fn start_in(&mut self, tab: u32, url: &str, change: impl FnOnce(&mut Start)) -> u32 {
         let id = self.next;
         self.next += 1;
-        let mut start = Start {
+        let mut start = self.request(id, url);
+        change(&mut start);
+        self.send_as(tab, &TOKEN, &ToWebClient::Start(Box::new(start)));
+        id
+    }
+
+    /// A script's `GET` of `url` as the request `id`.
+    fn request(&self, id: u32, url: &str) -> Start {
+        Start {
             id,
-            tab: 1,
-            jar: self.windows,
-            channel: self.channel.clone(),
+            context: ContextId::Page,
             kind: RequestKind::Fetch,
             method: "GET".into(),
             url: url.to_owned(),
             client: format!("{}page", self.channel),
-            client_space: AddressSpace::Loopback,
             headers: Vec::new(),
             mode: Mode::Cors,
             credentials: Credentials::SameOrigin,
@@ -428,17 +471,19 @@ impl Client {
             integrity: String::new(),
             keepalive: false,
             body: BodySource::None,
-        };
-        change(&mut start);
-        self.send(&ToWebClient::Start(Box::new(start)));
-        id
+            protocols: Vec::new(),
+            last_event_id: String::new(),
+        }
     }
 
     /// The next event, a jar's pieces put together on the way.
     pub(super) fn next_within(&mut self, wait: Duration) -> Option<FromWebClient> {
         loop {
-            match self.from.recv_timeout(wait).ok()? {
+            let (tab, message) = self.from.recv_timeout(wait).ok()?;
+            self.tab = tab;
+            match message {
                 FromWebClient::Jar(piece) => {
+                    assert_eq!(tab, PROCESS_TAB, "the jar is the process's");
                     let part = usize::from(piece.session);
                     self.writing[part].extend_from_slice(&piece.bytes);
                     if piece.last {
@@ -460,6 +505,7 @@ impl Client {
         loop {
             match self.next_event() {
                 FromWebClient::Head(head) if head.id == id => outcome.head = Some(*head),
+                FromWebClient::Sent { id: of, bytes } if of == id => outcome.sent += bytes,
                 FromWebClient::Body { id: of, bytes } if of == id => {
                     if self.makes_room {
                         self.send(&ToWebClient::More { id, bytes: u32::try_from(bytes.len()).unwrap() });
@@ -487,11 +533,6 @@ impl Client {
         self.fetch(url, |_| {})
     }
 
-    /// The browser's own load of the page at `url`, asked for by hand.
-    pub(super) fn load(&mut self, url: &str) -> Outcome {
-        self.fetch(url, as_page)
-    }
-
     /// Closes the pipe to the client and waits for it to end.
     pub(super) fn finish(mut self) -> Result<(), String> {
         self.to = None;
@@ -505,12 +546,6 @@ impl Client {
 }
 
 use url::Url;
-
-/// Makes a start the browser's own load of a page asked for by hand.
-pub(super) fn as_page(start: &mut Start) {
-    (start.kind, start.mode, start.credentials, start.client, start.referrer) =
-        (RequestKind::Page, Mode::Navigate, Credentials::Include, String::new(), Referrer::None);
-}
 
 /// A header a script set.
 pub(super) fn header(name: &str, value: &str) -> (String, Vec<u8>) {

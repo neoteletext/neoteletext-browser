@@ -9,8 +9,10 @@ use std::net::TcpListener;
 use std::path::Path;
 
 use confine::{Role, Spawn};
+use protocol::fetcher::PROCESS_TAB;
+use protocol::script::ContextId;
 use protocol::web::{
-    AddressSpace, BodySource, CacheMode, Credentials, FromWebClient, Mode, RedirectMode, Referrer, ReferrerPolicy, RequestKind, ResponseType, Start,
+    BodySource, CacheMode, Credentials, FromWebClient, Mode, PartitionToken, RedirectMode, Referrer, ReferrerPolicy, RequestKind, ResponseType, Start,
     ToWebClient, read_from_client, write_to_client,
 };
 
@@ -36,9 +38,15 @@ fn serve() -> (u16, std::sync::mpsc::Receiver<String>) {
 }
 
 const BODY: &str = "PN,10000";
+/// The partition's token, as the trusted core would make and give it, and
+/// as the process's argument writes it.
+const TOKEN: PartitionToken = PartitionToken::new([0xA5; 16]);
+const TOKEN_ARGUMENT: &str = "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5";
+/// The tab the test's request is of.
+const TAB: u32 = 1;
 
 /// A confined web client fetches a file of its channel from a server on
-/// this computer, as a page loaded from this computer may, and says what the pipe's
+/// this computer, as a channel loaded from this computer may, and says what the pipe's
 /// messages say: that it is confined, the answer's head without its
 /// cookie, the body, the jar written out, and the end.
 #[test]
@@ -50,8 +58,8 @@ fn a_confined_web_client_fetches_through_its_pipes() {
     let (port, asked) = serve();
     let channel = format!("http://127.0.0.1:{port}/a/");
     let program = Path::new(env!("CARGO_BIN_EXE_neoteletext-fetcher"));
-    let arguments =
-        [OsString::from(&channel), OsString::from("--web-client"), OsString::from("0"), OsString::from("--allow-local"), OsString::from("127.0.0.1")];
+    // Its channel was loaded from this computer, so it may ask it.
+    let arguments = [channel.as_str(), "--web-client", TOKEN_ARGUMENT, "--page-space", "loopback"].map(OsString::from);
     let environment = confine::environment(Role::Network);
     let mut process = confine::spawn(&Spawn {
         program,
@@ -66,17 +74,14 @@ fn a_confined_web_client_fetches_through_its_pipes() {
     let mut input = process.stdin.take().unwrap();
     let mut output = BufReader::new(process.stdout.take().unwrap());
     let mut next = || read_from_client(&mut output).map_err(|error| error.to_string());
-    assert_eq!(next(), Ok(Some(FromWebClient::Confined)));
+    assert_eq!(next(), Ok(Some((PROCESS_TAB, FromWebClient::Confined))));
     let start = Start {
         id: 1,
-        tab: 1,
-        jar: 0,
-        channel: channel.clone(),
+        context: ContextId::Page,
         kind: RequestKind::Fetch,
         method: "GET".into(),
         url: format!("{channel}100.tti"),
         client: format!("{channel}page"),
-        client_space: AddressSpace::Loopback,
         headers: Vec::new(),
         mode: Mode::Cors,
         credentials: Credentials::SameOrigin,
@@ -87,16 +92,18 @@ fn a_confined_web_client_fetches_through_its_pipes() {
         integrity: String::new(),
         keepalive: false,
         body: BodySource::None,
+        protocols: Vec::new(),
+        last_event_id: String::new(),
     };
-    write_to_client(&mut input, &ToWebClient::Start(Box::new(start))).unwrap();
+    write_to_client(&mut input, TAB, &TOKEN, &ToWebClient::Start(Box::new(start))).unwrap();
     input.flush().unwrap();
     let mut jar = 0;
     let mut said = Vec::new();
     loop {
         match next() {
-            Ok(Some(FromWebClient::Jar(_))) => jar += 1,
-            Ok(Some(FromWebClient::End(1))) => break,
-            Ok(Some(other)) => said.push(other),
+            Ok(Some((PROCESS_TAB, FromWebClient::Jar(_)))) => jar += 1,
+            Ok(Some((TAB, FromWebClient::End(1)))) => break,
+            Ok(Some((TAB, other))) => said.push(other),
             other => panic!("the web client ended early: {other:?}, having said {said:?}"),
         }
     }

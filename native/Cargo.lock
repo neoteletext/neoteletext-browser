@@ -2544,6 +2544,8 @@ dependencies = [
  "neoteletext-core",
  "neoteletext-input",
  "neoteletext-rules",
+ "neoteletext-web",
+ "regis",
  "unicode-normalization",
 ]
 

@@ -33,7 +33,7 @@ mod referrer;
 mod rules;
 mod sse;
 
-pub use client::run;
+pub use client::{Partition, run};
 
 #[cfg(test)]
 mod tests;

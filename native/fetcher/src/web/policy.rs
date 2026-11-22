@@ -93,27 +93,24 @@ fn same_channel(channel: &Channel, url: &Url) -> bool {
         && !escapes
 }
 
-/// The policy of the one partition a web client process serves: a jar of
-/// windows (the ordinary windows' or one private window's) and a channel
-/// identity (DEC-7264 item 2, the browser's DEC-7268). The process's
+/// The policy of the one partition a web client process serves: one
+/// channel identity in one jar of windows (DEC-7264 item 2, the browser's
+/// DEC-7268). The process is started for its partition and knows a start
+/// meant for another by its token (`protocol::web::PartitionToken`); its
 /// cookies, connections and remembered preflights are that partition's
 /// alone, so a fault in it reaches no other channel's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChannelPolicy {
-    /// The jar of windows: 0 the ordinary windows', another a private
-    /// window's.
-    windows: u32,
     /// The channel.
     channel: Channel,
 }
 
 impl ChannelPolicy {
-    /// The policy of the channel whose identity is written `channel`, in
-    /// the jar of windows `windows`; `None` when the text is no channel
-    /// identity.
-    pub(crate) fn new(windows: u32, channel: &str) -> Option<Self> {
+    /// The policy of the channel whose identity is written `channel`;
+    /// `None` when the text is no channel identity.
+    pub(crate) fn new(channel: &str) -> Option<Self> {
         let channel = Channel::read(channel);
-        channel.folder().is_some().then_some(Self { windows, channel })
+        channel.folder().is_some().then_some(Self { channel })
     }
 
     /// The channel's folder, whose origin is its scripts' origin.
@@ -139,13 +136,6 @@ impl ChannelPolicy {
     /// 3).
     pub(crate) fn is_same_origin(&self, url: &Url) -> bool {
         self.relation(url) == Relation::InChannel
-    }
-
-    /// Whether a request naming the jar of windows `windows` and the
-    /// channel identity `channel` is this partition's. One that is not
-    /// ends the process.
-    pub(crate) fn holds(&self, windows: u32, channel: &str) -> bool {
-        self.windows == windows && self.channel == Channel::read(channel)
     }
 }
 
@@ -218,17 +208,11 @@ mod tests {
         }
     }
 
-    /// DEC-7268: a process serves the one partition it was started for.
+    /// What is no channel identity has no policy, and so no web client.
     #[test]
-    fn a_policy_holds_only_its_own_partitions_requests() {
-        let policy = ChannelPolicy::new(0, "https://host.example/home/").unwrap();
-        assert!(policy.holds(0, "https://host.example/home/"));
-        assert!(policy.holds(0, "https://host.example:443/home/"), "the same identity, written with its default port");
-        assert!(!policy.holds(1, "https://host.example/home/"), "another jar of windows");
-        assert!(!policy.holds(0, "https://host.example/demosite/"));
-        assert!(!policy.holds(0, "https://host.example/home/inner/"));
-        assert!(!policy.holds(0, ""));
-        assert!(ChannelPolicy::new(0, "").is_none() && ChannelPolicy::new(0, "https://host.example/home").is_none(), "no channel is no partition");
+    fn only_a_channel_identity_has_a_policy() {
+        assert!(ChannelPolicy::new("https://host.example/home/").is_some());
+        assert!(ChannelPolicy::new("").is_none() && ChannelPolicy::new("https://host.example/home").is_none() && ChannelPolicy::new("file:///home/").is_none());
     }
 
     /// Rules P1 and P2: an address is inside the channel, of its origin
@@ -236,7 +220,7 @@ mod tests {
     /// same-origin.
     #[test]
     fn an_address_stands_to_the_channel_in_one_of_three_ways() {
-        let policy = ChannelPolicy::new(0, "https://host.example/home/").unwrap();
+        let policy = ChannelPolicy::new("https://host.example/home/").unwrap();
         for (url, relation) in [
             ("https://host.example/home/100.tti", Relation::InChannel),
             ("https://host.example/demosite/100.tti", Relation::SameOriginOutside),

@@ -16,7 +16,7 @@ use super::sse::EventStream;
 #[must_use]
 pub fn channel_holds(channel: &str, url: &str) -> Option<(bool, String)> {
     let url = Url::parse(url).ok()?;
-    let policy = ChannelPolicy::new(0, channel)?;
+    let policy = ChannelPolicy::new(channel)?;
     Some((policy.is_same_origin(&url), url.path().to_owned()))
 }
 

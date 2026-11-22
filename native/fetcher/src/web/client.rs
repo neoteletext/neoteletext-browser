@@ -1,7 +1,10 @@
 //! The web client process's loop: the trusted core's messages in, each
-//! request a task of its own on the one thread, and the events out. A
-//! process serves one partition (the browser's DEC-7268): a request for
-//! another ends it, as a message that is no message does.
+//! request a task of its own on the one thread, and the events out, each
+//! with its tab before it as on a channel fetcher's pipe (REQ-6980). A
+//! process serves one partition (the browser's DEC-7268): a start with
+//! another partition's token ends it, as a message that is no message
+//! does. The messages are `protocol::web`'s, the one definition the
+//! script host, the trusted core and this process share (DEC-7317).
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -12,9 +15,12 @@ use std::time::{Duration, Instant};
 
 use hyper::body::Bytes;
 use neoteletext_web::proxy::Proxy;
+use protocol::fetcher::PROCESS_TAB;
+use protocol::script::ContextId;
 use protocol::web::{
-    BodySource, CacheMode, ErrorKind, FromWebClient, Head, INITIAL_ROOM, JarPiece, MAX_BODY_PIECE, MAX_JAR_BYTES, MAX_REQUEST_BODY, MAX_ROOM, Mode, Reason,
-    RedirectMode, RequestKind, Start, ToWebClient, is_header_value, read_to_client, write_to_core,
+    AddressSpace, BodySource, CacheMode, ErrorKind, FETCH_WINDOW_BYTES, FromWebClient, Head, JarPiece, MAX_CHUNK_BYTES, MAX_JAR_BYTES,
+    MAX_NETWORK_BUFFER_BYTES, MAX_REQUEST_BODY_BYTES, Mode, PartitionToken, Reason, RedirectMode, RequestKind, Start, ToWebClient, is_header_value,
+    read_to_client, write_from_client,
 };
 use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
@@ -32,7 +38,8 @@ use super::sse::EventStream;
 
 /// What the reader thread found on the pipe.
 enum FromCore {
-    Message(ToWebClient),
+    /// A message, and the tab it is for.
+    Message(u32, ToWebClient),
     /// The pipe ended.
     End,
     /// The pipe broke, or carried what is no message.
@@ -48,7 +55,7 @@ struct Room {
 impl Room {
     /// Waits for room for `count` bytes, and takes it.
     async fn take(&self, count: usize) {
-        let count = u32::try_from(count).unwrap_or(u32::MAX).clamp(1, INITIAL_ROOM);
+        let count = u32::try_from(count).unwrap_or(u32::MAX).clamp(1, FETCH_WINDOW_BYTES);
         loop {
             let notified = self.more.notified();
             if let Some(left) = self.bytes.get().checked_sub(count) {
@@ -60,7 +67,7 @@ impl Room {
     }
 
     fn add(&self, count: u32) {
-        self.bytes.set(self.bytes.get().saturating_add(count).min(MAX_ROOM));
+        self.bytes.set(self.bytes.get().saturating_add(count).min(MAX_NETWORK_BUFFER_BYTES));
         self.more.notify_waiters();
     }
 }
@@ -121,9 +128,13 @@ impl Tab {
     }
 }
 
+/// A request, known by its tab and the number its script host gave it.
+type Key = (u32, u32);
+
 /// A request that has started and not ended.
 struct Live {
-    tab: u32,
+    /// The context that started it, with which it ends.
+    context: ContextId,
     room: Rc<Room>,
     /// Its task, once its body is whole.
     task: Option<JoinHandle<()>>,
@@ -134,16 +145,16 @@ struct Live {
 /// What the loop and every request's task share.
 struct Shared {
     engine: Engine,
-    live: RefCell<HashMap<u32, Live>>,
+    live: RefCell<HashMap<Key, Live>>,
     tabs: RefCell<HashMap<u32, Rc<Tab>>>,
-    events: mpsc::Sender<FromWebClient>,
+    events: mpsc::Sender<(u32, FromWebClient)>,
 }
 
 impl Shared {
-    /// Sends an event to the trusted core, waiting while the pipe is full.
-    /// After the pipe has gone there is no one to tell.
-    async fn send(&self, event: FromWebClient) {
-        let _ = self.events.send(event).await;
+    /// Sends an event of the tab `tab` to the trusted core, waiting while
+    /// the pipe is full. After the pipe has gone there is no one to tell.
+    async fn send(&self, tab: u32, event: FromWebClient) {
+        let _ = self.events.send((tab, event)).await;
     }
 
     /// Writes the jar out for the trusted core to keep, if it changed.
@@ -153,20 +164,33 @@ impl Shared {
         }
         for session in [false, true] {
             let written = self.engine.jar.borrow().write(session);
-            let mut pieces = written.chunks(MAX_BODY_PIECE).peekable();
+            let mut pieces = written.chunks(MAX_CHUNK_BYTES).peekable();
             if pieces.peek().is_none() {
-                self.send(FromWebClient::Jar(JarPiece { session, last: true, bytes: Vec::new() })).await;
+                self.send(PROCESS_TAB, FromWebClient::Jar(JarPiece { session, last: true, bytes: Vec::new() })).await;
             }
             while let Some(piece) = pieces.next() {
-                self.send(FromWebClient::Jar(JarPiece { session, last: pieces.peek().is_none(), bytes: piece.to_vec() })).await;
+                self.send(PROCESS_TAB, FromWebClient::Jar(JarPiece { session, last: pieces.peek().is_none(), bytes: piece.to_vec() })).await;
             }
         }
     }
 
-    /// The request `id` has ended: it is no longer live. Its tab is kept,
+    /// The request `key` has ended: it is no longer live. Its tab is kept,
     /// with what it has left of its rate, until the tab closes.
-    fn ended(&self, id: u32) {
-        self.live.borrow_mut().remove(&id);
+    fn ended(&self, key: Key) {
+        self.live.borrow_mut().remove(&key);
+    }
+
+    /// Ends, unanswered, every request `which` picks.
+    fn end_all(&self, which: impl Fn(Key, &Live) -> bool) {
+        self.live.borrow_mut().retain(|&key, live| {
+            if !which(key, live) {
+                return true;
+            }
+            if let Some(task) = live.task.take() {
+                task.abort();
+            }
+            false
+        });
     }
 }
 
@@ -177,18 +201,21 @@ fn is_futile(reason: Reason) -> bool {
     !matches!(reason, Reason::Connection | Reason::Timeout | Reason::Protocol | Reason::Proxy | Reason::Coding)
 }
 
-/// A script's `fetch`, or the browser's page load: the answer's head, then
-/// its body as far as there is room for it.
-async fn fetch_one(shared: &Shared, start: &Start, body: Option<Bytes>, room: &Room) -> Result<(), Reason> {
+/// A script's `fetch`: what was written of its body, the answer's head,
+/// then its body as far as there is room for it.
+async fn fetch_one(shared: &Shared, (tab, id): Key, start: &Start, body: Option<Bytes>, room: &Room) -> Result<(), Reason> {
     let fetched = fetch(&shared.engine, start, body).await;
     shared.send_jar().await;
-    let Fetched { response_type, status, status_text, url, redirected, headers, body } = fetched?;
-    shared.send(FromWebClient::Head(Box::new(Head { id: start.id, response_type, status, status_text, url, redirected, headers }))).await;
+    let Fetched { response_type, status, status_text, url, redirected, headers, body, sent } = fetched?;
+    if let Some(bytes) = u32::try_from(sent).ok().filter(|&bytes| bytes > 0) {
+        shared.send(tab, FromWebClient::Sent { id, bytes }).await;
+    }
+    shared.send(tab, FromWebClient::Head(Box::new(Head { id, response_type, status, status_text, url, redirected, headers }))).await;
     let Some(mut reader) = body else { return Ok(()) };
     // The time the trusted core takes to make room is not the server's.
     while let Some(bytes) = tokio::time::timeout(BODY_IDLE_TIMEOUT, reader.piece()).await.map_err(|_| Reason::Timeout)?? {
         room.take(bytes.len()).await;
-        shared.send(FromWebClient::Body { id: start.id, bytes }).await;
+        shared.send(tab, FromWebClient::Body { id, bytes }).await;
     }
     Ok(())
 }
@@ -207,15 +234,16 @@ fn is_event_stream(fetched: &Fetched) -> bool {
 /// opened, its events sent on, and after a failure of the network opened
 /// again with the last event's ID. It ends only by failing for good; the
 /// script closes it by aborting.
-async fn event_source(shared: &Shared, start: &Start, room: &Room) -> Result<(), Reason> {
-    let mut stream = EventStream::default();
+async fn event_source(shared: &Shared, (tab, id): Key, start: &Start, room: &Room) -> Result<(), Reason> {
+    let mut stream = EventStream::after(&start.last_event_id);
     let mut request = start.clone();
     // The standard's request: a `GET` that is never cached, read across
-    // origins only by CORS.
+    // origins only by CORS. Seen from `fetch` it is a fetch.
     "GET".clone_into(&mut request.method);
     (request.kind, request.mode, request.cache, request.redirect, request.body) =
         (RequestKind::Fetch, Mode::Cors, CacheMode::NoStore, RedirectMode::Follow, BodySource::None);
     request.integrity = String::new();
+    request.last_event_id = String::new();
     request.headers = vec![("accept".to_owned(), b"text/event-stream".to_vec())];
     loop {
         request.headers.retain(|(name, _)| name != "last-event-id");
@@ -228,14 +256,14 @@ async fn event_source(shared: &Shared, start: &Start, room: &Room) -> Result<(),
             Ok(fetched) => {
                 let streams = fetched.status == 200 && is_event_stream(&fetched);
                 let Some(mut reader) = fetched.body.filter(|_| streams) else { return Err(Reason::NotEventStream) };
-                shared.send(FromWebClient::Opened { id: start.id, text: fetched.url }).await;
+                shared.send(tab, FromWebClient::Opened { id, protocol: String::new() }).await;
                 // Until the connection ends, however it ends.
                 while let Ok(Some(bytes)) = reader.piece().await {
                     let mut events = Vec::new();
                     stream.push(&bytes, &mut |event| events.push(event)).map_err(|_| Reason::TooLarge)?;
                     for event in events {
                         room.take(event.data.len().saturating_add(event.kind.len()).saturating_add(event.last_id.len())).await;
-                        shared.send(FromWebClient::Event { id: start.id, event: event.kind, data: event.data, last_id: event.last_id }).await;
+                        shared.send(tab, FromWebClient::Event { id, event: event.kind, data: event.data, last_id: event.last_id }).await;
                     }
                 }
             }
@@ -243,118 +271,135 @@ async fn event_source(shared: &Shared, start: &Start, room: &Room) -> Result<(),
             Err(_) => {}
         }
         stream.connection_ended();
-        shared.send(FromWebClient::Retrying(start.id)).await;
+        shared.send(tab, FromWebClient::Retrying(id)).await;
         let wait = stream.retry().map_or(DEFAULT_RETRY, Duration::from_millis).clamp(MIN_RETRY, MAX_RETRY);
         tokio::time::sleep(wait).await;
     }
 }
 
+/// The failure a script is told of for `reason`: a time limit's is the
+/// standard's `TimeoutError`, any other a network error.
+const fn failure(id: u32, reason: Reason) -> FromWebClient {
+    let error = if matches!(reason, Reason::Timeout) { ErrorKind::Timeout } else { ErrorKind::Network };
+    FromWebClient::Failed { id, error, reason }
+}
+
 /// One request, from its place among its tab's to its last event.
-async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, start: Box<Start>, body: Option<Bytes>, room: Rc<Room>) {
+async fn serve(shared: Rc<Shared>, tab: Rc<Tab>, key: Key, start: Box<Start>, body: Option<Bytes>, room: Rc<Room>) {
     let outcome = async {
         let _place = tab.enter().await?;
         match start.kind {
-            RequestKind::EventSource => event_source(&shared, &start, &room).await,
-            RequestKind::Fetch | RequestKind::Page => fetch_one(&shared, &start, body, &room).await,
+            RequestKind::EventSource => event_source(&shared, key, &start, &room).await,
+            RequestKind::Fetch => fetch_one(&shared, key, &start, body, &room).await,
             RequestKind::WebSocket => Err(Reason::Unsupported),
         }
     }
     .await;
     // No longer live before its last event is said, so an abort that
     // crosses it is answered by nothing more.
-    shared.ended(start.id);
-    shared
-        .send(match outcome {
-            Ok(()) => FromWebClient::End(start.id),
-            Err(reason) => FromWebClient::Failed { id: start.id, error: ErrorKind::Network, reason },
-        })
-        .await;
+    shared.ended(key);
+    shared.send(key.0, outcome.map_or_else(|reason| failure(key.1, reason), |()| FromWebClient::End(key.1))).await;
+}
+
+/// The tab `tab`'s count and rate.
+fn tab_of(shared: &Shared, tab: u32) -> Rc<Tab> {
+    Rc::clone(shared.tabs.borrow_mut().entry(tab).or_insert_with(|| Rc::new(Tab::new())))
 }
 
 /// Starts the task of a request whose body, if it has one, is whole.
-fn spawn(shared: &Rc<Shared>, start: Box<Start>, body: Option<Vec<u8>>) {
-    let id = start.id;
-    let tab = Rc::clone(shared.tabs.borrow_mut().entry(start.tab).or_insert_with(|| Rc::new(Tab::new())));
+fn spawn(shared: &Rc<Shared>, key: Key, start: Box<Start>, body: Option<Vec<u8>>) {
+    let tab = tab_of(shared, key.0);
     let mut live = shared.live.borrow_mut();
-    let Some(entry) = live.get_mut(&id) else { return };
-    entry.task = Some(tokio::task::spawn_local(serve(Rc::clone(shared), tab, start, body.map(Bytes::from), Rc::clone(&entry.room))));
+    let Some(entry) = live.get_mut(&key) else { return };
+    entry.task = Some(tokio::task::spawn_local(serve(Rc::clone(shared), tab, key, start, body.map(Bytes::from), Rc::clone(&entry.room))));
 }
 
-/// Fails a request that never became a task.
-async fn refuse(shared: &Shared, id: u32, error: ErrorKind, reason: Reason) {
-    shared.ended(id);
-    shared.send(FromWebClient::Failed { id, error, reason }).await;
+/// Fails a request that never became a task, or was stopped as one.
+async fn refuse(shared: &Shared, key: Key, event: FromWebClient) {
+    shared.ended(key);
+    shared.send(key.0, event).await;
 }
 
-/// Does what one message from the trusted core asks.
+/// The bytes a request's body may still take: its stated length for
+/// bytes, the bound for a stream.
+fn stated(body: BodySource) -> usize {
+    match body {
+        BodySource::None => 0,
+        BodySource::Bytes(length) => usize::try_from(length).unwrap_or(usize::MAX).min(MAX_REQUEST_BODY_BYTES),
+        BodySource::Stream => MAX_REQUEST_BODY_BYTES,
+    }
+}
+
+/// Does what one message for the tab `tab` asks.
 ///
 /// # Errors
-/// What ends the process: a request for another partition, a request
-/// number already in use, or a kept jar past its bound.
-async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], message: ToWebClient) -> Result<(), String> {
+/// What ends the process: a kept jar past its bound.
+async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], tab: u32, message: ToWebClient) -> Result<(), String> {
     match message {
         ToWebClient::Start(start) => {
-            if !shared.engine.policy.holds(start.jar, &start.channel) {
-                return Err("a request for another partition".to_owned());
+            let key = (tab, start.id);
+            // A number is its script host's choice, so one in use twice is
+            // that host's fault alone and costs no one else: the second
+            // start is not served, and the first goes on.
+            if shared.live.borrow().contains_key(&key) {
+                return Ok(());
             }
-            let id = start.id;
-            if shared.live.borrow().contains_key(&id) {
-                return Err(format!("request {id} started twice"));
-            }
-            let admitted = Rc::clone(shared.tabs.borrow_mut().entry(start.tab).or_insert_with(|| Rc::new(Tab::new()))).admits(Instant::now());
-            shared
-                .live
-                .borrow_mut()
-                .insert(id, Live { tab: start.tab, room: Rc::new(Room { bytes: Cell::new(INITIAL_ROOM), more: Notify::new() }), task: None, upload: None });
+            let admitted = tab_of(shared, tab).admits(Instant::now());
+            let room = Rc::new(Room { bytes: Cell::new(FETCH_WINDOW_BYTES), more: Notify::new() });
+            shared.live.borrow_mut().insert(key, Live { context: start.context, room, task: None, upload: None });
             if start.kind == RequestKind::WebSocket {
-                refuse(shared, id, ErrorKind::Network, Reason::Unsupported).await;
+                refuse(shared, key, failure(start.id, Reason::Unsupported)).await;
             } else if !admitted {
-                refuse(shared, id, ErrorKind::Network, Reason::Busy).await;
+                refuse(shared, key, failure(start.id, Reason::Busy)).await;
             } else if start.body == BodySource::None {
-                spawn(shared, start, None);
-            } else if let Some(live) = shared.live.borrow_mut().get_mut(&id) {
+                spawn(shared, key, start, None);
+            } else if let Some(live) = shared.live.borrow_mut().get_mut(&key) {
                 live.upload = Some((start, Vec::new()));
             }
         }
         ToWebClient::RequestBody { id, bytes } => {
-            let too_large = shared.live.borrow_mut().get_mut(&id).and_then(|live| live.upload.as_mut()).is_some_and(|(_, body)| {
+            let key = (tab, id);
+            let too_large = shared.live.borrow_mut().get_mut(&key).and_then(|live| live.upload.as_mut()).is_some_and(|(start, body)| {
                 body.extend_from_slice(&bytes);
-                body.len() > MAX_REQUEST_BODY
+                body.len() > stated(start.body)
             });
             if too_large {
-                refuse(shared, id, ErrorKind::Network, Reason::TooLarge).await;
+                refuse(shared, key, failure(id, Reason::TooLarge)).await;
             }
         }
         ToWebClient::RequestBodyEnd(id) => {
-            let upload = shared.live.borrow_mut().get_mut(&id).and_then(|live| live.upload.take());
-            if let Some((start, body)) = upload {
-                spawn(shared, start, Some(body));
+            let key = (tab, id);
+            let upload = shared.live.borrow_mut().get_mut(&key).and_then(|live| live.upload.take());
+            match upload {
+                // Bytes of a stated length are that many, no fewer.
+                Some((start, body)) if matches!(start.body, BodySource::Bytes(_)) && body.len() != stated(start.body) => {
+                    refuse(shared, key, failure(id, Reason::Request)).await;
+                }
+                Some((start, body)) => spawn(shared, key, start, Some(body)),
+                None => {}
             }
         }
         ToWebClient::Abort(id) => {
-            let task = shared.live.borrow_mut().get_mut(&id).map(|live| live.task.take());
+            let key = (tab, id);
+            let task = shared.live.borrow_mut().get_mut(&key).map(|live| live.task.take());
             if let Some(task) = task {
                 if let Some(task) = task {
                     task.abort();
                 }
-                refuse(shared, id, ErrorKind::Abort, Reason::Aborted).await;
+                refuse(shared, key, FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted }).await;
             }
         }
         ToWebClient::More { id, bytes } => {
-            if let Some(live) = shared.live.borrow().get(&id) {
+            if let Some(live) = shared.live.borrow().get(&(tab, id)) {
                 live.room.add(bytes);
             }
         }
-        ToWebClient::TabCloses(tab) => {
-            shared.live.borrow_mut().retain(|_, live| {
-                if live.tab != tab {
-                    return true;
-                }
-                if let Some(task) = live.task.take() {
-                    task.abort();
-                }
-                false
-            });
+        // A context's end, and a tab's, end their requests and say nothing
+        // more of them. A request marked keepalive ends with them too: it
+        // is not yet kept alive past its page.
+        ToWebClient::ContextCloses(context) => shared.end_all(|key, live| key.0 == tab && live.context == context),
+        ToWebClient::TabCloses => {
+            shared.end_all(|key, _| key.0 == tab);
             shared.tabs.borrow_mut().remove(&tab);
         }
         ToWebClient::JarKept(piece) => {
@@ -367,7 +412,16 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], message: ToWebClie
                 shared.engine.jar.borrow_mut().read_written(&core::mem::take(part));
             }
         }
-        // Reserved: no WebSocket is ever live, so there is none to act on.
+        ToWebClient::ForgetJar => {
+            // The jar and every state kept with it: the remembered
+            // preflights, and the connections, which a server could know
+            // the viewer by.
+            shared.engine.jar.borrow_mut().forget();
+            *shared.engine.preflights.borrow_mut() = PreflightCache::default();
+            shared.engine.pool.forget();
+            shared.send_jar().await;
+        }
+        // No WebSocket is ever live, so there is none to act on.
         ToWebClient::SocketSend { .. } | ToWebClient::SocketClose { .. } => {}
     }
     Ok(())
@@ -375,11 +429,11 @@ async fn handle(shared: &Rc<Shared>, kept: &mut [Vec<u8>; 2], message: ToWebClie
 
 /// The loop: each message from the trusted core, until its pipe ends.
 async fn serve_core(shared: Rc<Shared>, mut from_core: mpsc::Receiver<FromCore>) -> Result<(), String> {
-    shared.send(FromWebClient::Confined).await;
+    shared.send(PROCESS_TAB, FromWebClient::Confined).await;
     let mut kept = [Vec::new(), Vec::new()];
     while let Some(read) = from_core.recv().await {
         match read {
-            FromCore::Message(message) => handle(&shared, &mut kept, message).await?,
+            FromCore::Message(tab, message) => handle(&shared, &mut kept, tab, message).await?,
             FromCore::End => break,
             FromCore::Broken(error) => return Err(error),
         }
@@ -387,45 +441,59 @@ async fn serve_core(shared: Rc<Shared>, mut from_core: mpsc::Receiver<FromCore>)
     Ok(())
 }
 
-/// Runs the web client for the partition of the jar of windows `windows`
-/// and the channel identity `channel`, on the process's pipes, with the
+/// What a web client process is told once, at its start, by the trusted
+/// core alone: its partition's channel, the token every `Start` relayed
+/// to it carries, and the address space its channel was loaded from.
+/// Nothing of it is ever a script host's word.
+pub struct Partition<'a> {
+    /// The channel identity: the address of its folder.
+    pub channel: &'a str,
+    /// The partition's token.
+    pub token: PartitionToken,
+    /// The address space the channel was loaded from.
+    pub space: AddressSpace,
+}
+
+/// Runs the web client for `partition` on the process's pipes, with the
 /// addresses on this computer or the local network in `allowed` open to
-/// any page (the viewer's standing permission, DEC-7315), and `proxy`.
+/// any page (an address-space override, DEC-7315), and `proxy`.
 ///
 /// # Errors
-/// When `channel` is no channel identity, the trusted core sends what is
-/// no message or a request for another partition, or the runtime cannot
-/// start.
-pub fn run(allowed: &[IpAddr], proxy: Option<Proxy>, windows: u32, channel: &str) -> Result<(), String> {
+/// When the channel is no channel identity, the trusted core sends what
+/// is no message or a start with another partition's token, or the
+/// runtime cannot start.
+pub fn run(allowed: &[IpAddr], proxy: Option<Proxy>, partition: &Partition<'_>) -> Result<(), String> {
     let settings = Settings::new(allowed, proxy, neoteletext_transport::mozilla_roots());
-    run_with(settings, windows, channel, None, Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+    run_with(settings, partition, None, Box::new(std::io::stdin()), Box::new(std::io::stdout()))
 }
 
 /// [`run`] with the connection settings, the public suffix list and the
 /// pipes, which a test replaces.
 pub(crate) fn run_with(
     settings: Settings,
-    windows: u32,
-    channel: &str,
+    partition: &Partition<'_>,
     suffixes: Suffixes,
     input: Box<dyn Read + Send>,
     output: Box<dyn Write + Send>,
 ) -> Result<(), String> {
-    let policy = ChannelPolicy::new(windows, channel).ok_or_else(|| format!("{channel}: not a channel identity"))?;
+    let policy = ChannelPolicy::new(partition.channel).ok_or_else(|| format!("{}: not a channel identity", partition.channel))?;
     let runtime = tokio::runtime::Builder::new_current_thread().enable_io().enable_time().build().map_err(|error| error.to_string())?;
     let (to_loop, from_core) = mpsc::channel(QUEUED_MESSAGES);
-    let (events, mut to_core) = mpsc::channel::<FromWebClient>(QUEUED_MESSAGES);
+    let (events, mut to_core) = mpsc::channel::<(u32, FromWebClient)>(QUEUED_MESSAGES);
+    let token = partition.token;
     // The pipes block, so each has a thread; the queues between hold a
     // bounded number of messages, and a full one holds its sender back.
     std::thread::spawn(move || {
         let mut input = BufReader::new(input);
         loop {
-            let read = match read_to_client(&mut input) {
-                Ok(Some(message)) => FromCore::Message(message),
+            // A start with another partition's token is refused by the
+            // reader itself, and ends the process as any error does.
+            let read = match read_to_client(&mut input, &token) {
+                Ok(Some((tab, message))) => FromCore::Message(tab, message),
                 Ok(None) => FromCore::End,
                 Err(error) => FromCore::Broken(error.to_string()),
             };
-            let last = !matches!(read, FromCore::Message(_));
+            let last = !matches!(read, FromCore::Message(..));
             if to_loop.blocking_send(read).is_err() || last {
                 break;
             }
@@ -433,16 +501,22 @@ pub(crate) fn run_with(
     });
     let writer = std::thread::spawn(move || {
         let mut output = BufWriter::new(output);
-        while let Some(event) = to_core.blocking_recv() {
+        while let Some((tab, event)) = to_core.blocking_recv() {
             // The events of one burst go in one write.
-            if write_to_core(&mut output, &event).is_err() || (to_core.is_empty() && output.flush().is_err()) {
+            if write_from_client(&mut output, tab, &event).is_err() || (to_core.is_empty() && output.flush().is_err()) {
                 break;
             }
         }
         let _ = output.flush();
     });
     let shared = Rc::new(Shared {
-        engine: Engine { policy, pool: Pool::new(settings), jar: RefCell::new(Jar::new(suffixes)), preflights: RefCell::new(PreflightCache::default()) },
+        engine: Engine {
+            policy,
+            pool: Pool::new(settings),
+            jar: RefCell::new(Jar::new(suffixes)),
+            preflights: RefCell::new(PreflightCache::default()),
+            space: partition.space,
+        },
         live: RefCell::default(),
         tabs: RefCell::default(),
         events,
@@ -455,4 +529,30 @@ pub(crate) fn run_with(
     drop(runtime);
     let _ = writer.join();
     ran
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Room is never more than its bound at once, however much is given,
+    /// and a tab's starts are a burst and then a rate.
+    #[test]
+    fn room_and_starts_are_bounded() {
+        let room = Room { bytes: Cell::new(FETCH_WINDOW_BYTES), more: Notify::new() };
+        for _ in 0..4 {
+            room.add(MAX_NETWORK_BUFFER_BYTES);
+        }
+        assert_eq!(room.bytes.get(), MAX_NETWORK_BUFFER_BYTES);
+        let tab = Tab::new();
+        let now = Instant::now();
+        assert_eq!((0..START_BURST * 2).filter(|_| tab.admits(now)).count(), START_BURST as usize, "the burst, and no more at once");
+        let later = now + Duration::from_secs(1);
+        assert_eq!((0..START_BURST).filter(|_| tab.admits(later)).count(), STARTS_PER_SECOND as usize, "a second's worth after a second");
+        assert_eq!(
+            (0..START_BURST * 2).filter(|_| tab.admits(now + Duration::from_secs(3600))).count(),
+            START_BURST as usize,
+            "never more than the burst saved up"
+        );
+    }
 }

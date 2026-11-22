@@ -341,8 +341,29 @@ doc = false
 bench = false
 
 [[bin]]
-name = "web_messages"
-path = "fuzz_targets/web_messages.rs"
+name = "script_link_to_host"
+path = "fuzz_targets/script_link_to_host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_link_to_decoder"
+path = "fuzz_targets/script_link_to_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_to_client"
+path = "fuzz_targets/web_to_client.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_from_client"
+path = "fuzz_targets/web_from_client.rs"
 test = false
 doc = false
 bench = false

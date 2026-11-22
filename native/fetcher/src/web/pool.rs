@@ -18,7 +18,7 @@ use std::time::Instant;
 
 use hyper::body::{Body as _, Bytes, Frame, Incoming, SizeHint};
 use hyper::client::conn::{http1, http2};
-use protocol::web::{Header, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_RESPONSE_HEADERS, MAX_STATUS_TEXT, Reason};
+use protocol::web::{Header, MAX_HEADER_NAME_BYTES, MAX_HEADER_VALUE_BYTES, MAX_RESPONSE_HEADERS, MAX_STATUS_TEXT_BYTES, Reason};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 use url::Url;
@@ -235,7 +235,7 @@ fn head(parts: &hyper::http::response::Parts) -> Result<(u16, String, Vec<Header
     for (name, value) in &parts.headers {
         let (name, value) = (name.as_str(), value.as_bytes());
         total = total.saturating_add(name.len()).saturating_add(value.len());
-        if name.len() > MAX_HEADER_NAME || value.len() > MAX_HEADER_VALUE || total > MAX_RESPONSE_HEAD {
+        if name.len() > MAX_HEADER_NAME_BYTES || value.len() > MAX_HEADER_VALUE_BYTES || total > MAX_RESPONSE_HEAD {
             return Err(Reason::TooLarge);
         }
         headers.push((name.to_owned(), value.to_vec()));
@@ -252,7 +252,7 @@ fn head(parts: &hyper::http::response::Parts) -> Result<(u16, String, Vec<Header
             .extensions
             .get::<hyper::ext::ReasonPhrase>()
             .and_then(|phrase| std::str::from_utf8(phrase.as_bytes()).ok())
-            .filter(|phrase| phrase.len() <= MAX_STATUS_TEXT && phrase.bytes().all(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\t')))
+            .filter(|phrase| phrase.len() <= MAX_STATUS_TEXT_BYTES && phrase.bytes().all(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\t')))
             .or_else(|| parts.status.canonical_reason())
             .unwrap_or_default()
     };
@@ -272,6 +272,12 @@ pub(crate) struct Pool {
 impl Pool {
     pub(crate) fn new(settings: Settings) -> Rc<Self> {
         Rc::new(Self { settings, resolving: resolving(), idle: RefCell::default(), shared: RefCell::default() })
+    }
+
+    /// Lets every kept connection go: none is used again.
+    pub(crate) fn forget(&self) {
+        self.idle.borrow_mut().clear();
+        self.shared.borrow_mut().clear();
     }
 
     /// Keeps an HTTP/1.1 connection whose answer was read whole.

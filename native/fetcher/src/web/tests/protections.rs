@@ -10,24 +10,26 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use neoteletext_web::proxy::Proxy;
-use protocol::web::{AddressSpace, ErrorKind, FromWebClient, MAX_HEADER_VALUE, MAX_RESPONSE_HEADERS, Reason, ResponseType, ToWebClient};
+use protocol::web::{AddressSpace, ErrorKind, FromWebClient, MAX_HEADER_VALUE_BYTES, MAX_RESPONSE_HEADERS, Reason, ResponseType, ToWebClient};
 
-use super::support::{Client, HERE, Piece, Reply, as_page, header, raw, serve, serve_tls};
+use protocol::script::ContextId;
+
+use super::support::{Client, HERE, OTHER_TOKEN, Piece, Reply, TAB, raw, serve, serve_tls};
 use crate::web::limits::{MAX_REQUESTS_PER_TAB, START_BURST};
 
-/// neoteletext-common's DEC-7315, the browser's TODO-7316 items 5 and 7,
+/// neoteletext-common's DEC-7315, the browser's TODO-7316 items 5 to 7,
 /// and finding F-62: this computer and the local network are reached as
-/// that decision allows. A page loaded from this computer or the local
-/// network asks them freely. A page from the internet is refused unless
-/// it is a secure context, and then needs the viewer's permission, one
-/// for this computer and one for the local network, whatever name
-/// resolved to the address; until the browser can ask, that is a refusal
-/// by its own name.
+/// that decision allows, by the address space the trusted core told the
+/// process its channel was loaded from. A channel loaded from this
+/// computer or the local network asks them freely. A channel from the
+/// internet is refused unless it is a secure context, and then needs the
+/// viewer's permission, one for this computer and one for the local
+/// network, whatever name resolved to the address; until the browser can
+/// ask, that is a refusal by its own name.
 #[test]
-fn a_public_page_asks_this_computer_and_the_local_network_only_by_permission() {
+fn a_public_channel_asks_this_computer_and_the_local_network_only_by_permission() {
     let server = serve(|_| Reply::ok("local"));
     let channel = server.url("/a/");
-    let public = |start: &mut protocol::web::Start| start.client_space = AddressSpace::Public;
     let here = [
         server.url("/a/x"),
         server.at("http", "127.0.0.1", "/"),
@@ -38,47 +40,50 @@ fn a_public_page_asks_this_computer_and_the_local_network_only_by_permission() {
     ];
     let nearby =
         ["http://10.0.0.1/", "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/", "http://[fd00::1]/", "http://100.64.0.1/"];
+    // A channel loaded from this computer: reached, by name and by address.
     let mut client = Client::new(&channel);
-    // A page loaded from this computer: reached, by name and by address.
     assert_eq!(client.get(&server.url("/a/x")).text(), "local");
     assert_eq!(client.get(&server.at("http", "127.0.0.1", "/a/x")).reason(), Reason::Cors, "reached, and another origin");
-    // A page on the local network asks this computer freely too.
-    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.client_space = AddressSpace::Local).text(), "local");
-    let before = server.asked().len();
-    // A public page over plain http: refused without asking, on a new
-    // connection and on the one kept, for the name that resolves here
-    // and for the address in each of its spellings.
-    for address in here.iter().map(String::as_str).chain(nearby) {
-        assert_eq!(client.fetch(address, public).reason(), Reason::LocalRefused, "{address}");
-    }
-    assert_eq!(server.asked().len(), before, "nothing was connected to");
     client.finish().unwrap();
-    // A public page that is a secure context: it needs permission, for
+    // A channel on the local network asks this computer freely too, and
+    // the local network: no permission is wanted, whatever then becomes
+    // of the connection.
+    let mut local = Client::with(&channel, |setup| (setup.space, setup.settings.open_deadline) = (AddressSpace::Local, Duration::from_millis(300)));
+    assert_eq!(local.get(&server.url("/a/x")).text(), "local");
+    let outcome = local.get("http://10.255.255.1/");
+    assert!(matches!(outcome.reason(), Reason::Timeout | Reason::Connection), "{outcome:?}");
+    local.finish().unwrap();
+    let before = server.asked().len();
+    // A public channel over plain http: refused without asking, for the
+    // name that resolves here and for the address in each of its
+    // spellings. What the script host says of its page changes nothing:
+    // the space is the trusted core's word.
+    let mut public = Client::with(&channel, |setup| setup.space = AddressSpace::Public);
+    for address in here.iter().map(String::as_str).chain(nearby) {
+        assert_eq!(public.get(address).reason(), Reason::LocalRefused, "{address}");
+    }
+    assert_eq!(public.fetch(&server.url("/a/x"), |start| start.client = "http://127.0.0.1/a/".into()).reason(), Reason::LocalRefused);
+    assert_eq!(server.asked().len(), before, "nothing was connected to");
+    public.finish().unwrap();
+    // A public channel that is a secure context: it needs permission, for
     // this computer and for the local network apart. A plain address is
     // mixed content to it before anything else, so each is asked over
     // https.
     let secure = serve_tls(&["http/1.1"], |_| Reply::ok("secure"));
-    let mut secure_page = Client::new(&secure.at("https", "localhost", "/a/"));
-    assert_eq!(secure_page.get(&secure.at("https", "localhost", "/a/x")).text(), "secure", "loaded from this computer, it asks it freely");
-    assert_eq!(secure_page.fetch(&secure.at("https", "localhost", "/a/x"), public).reason(), Reason::DevicePermission);
-    assert_eq!(secure_page.fetch(&secure.at("https", "public.test", "/"), public).reason(), Reason::DevicePermission, "a name that resolves here");
+    let mut secure_public = Client::with(&secure.at("https", "public.test", "/a/"), |setup| setup.space = AddressSpace::Public);
+    assert_eq!(secure_public.get(&secure.at("https", "localhost", "/a/x")).reason(), Reason::DevicePermission);
+    assert_eq!(secure_public.get(&secure.at("https", "public.test", "/a/x")).reason(), Reason::DevicePermission, "its own name, now resolving here");
     for address in ["https://10.0.0.1/", "https://192.168.1.1/", "https://[fe80::1]/"] {
-        assert_eq!(secure_page.fetch(address, public).reason(), Reason::LocalPermission, "{address}");
+        assert_eq!(secure_public.get(address).reason(), Reason::LocalPermission, "{address}");
     }
-    assert_eq!(secure.asked().len(), 1, "nothing more was connected to");
-    secure_page.finish().unwrap();
+    assert!(secure.asked().is_empty(), "nothing was connected to");
+    secure_public.finish().unwrap();
     // An address the viewer named when the browser started is taken as
-    // public: open to a public page, and nothing else is.
-    let mut named = Client::with(&channel, 0, |setup| setup.settings.allowed = vec![HERE]);
-    assert_eq!(named.fetch(&server.url("/a/x"), public).text(), "local");
-    assert_eq!(named.fetch("http://192.168.1.1/", public).reason(), Reason::LocalRefused, "and nothing else");
+    // public: open to a public channel, and nothing else is.
+    let mut named = Client::with(&channel, |setup| (setup.space, setup.settings.allowed) = (AddressSpace::Public, vec![HERE]));
+    assert_eq!(named.get(&server.url("/a/x")).text(), "local");
+    assert_eq!(named.get("http://192.168.1.1/").reason(), Reason::LocalRefused, "and nothing else");
     named.finish().unwrap();
-    // A page on the local network asks the local network freely: no
-    // permission is wanted, whatever then becomes of the connection.
-    let mut local = Client::with(&channel, 0, |setup| setup.settings.open_deadline = Duration::from_millis(300));
-    let outcome = local.fetch("http://10.255.255.1/", |start| start.client_space = AddressSpace::Local);
-    assert!(matches!(outcome.reason(), Reason::Timeout | Reason::Connection), "{outcome:?}");
-    local.finish().unwrap();
 }
 
 /// The engine's REQ-SEC-007: no redirect leads from `https` to `http`;
@@ -91,7 +96,6 @@ fn nothing_goes_from_https_down_to_http() {
     let mut client = Client::new(&secure.at("https", "localhost", "/a/"));
     assert_eq!(client.get(&secure.at("https", "localhost", "/a/x")).text(), "secure");
     assert_eq!(client.get(&secure.at("https", "localhost", "/a/down")).reason(), Reason::Downgrade);
-    assert_eq!(client.load(&secure.at("https", "localhost", "/a/down")).reason(), Reason::Downgrade, "nor a page load");
     assert_eq!(client.get("http://elsewhere.test/x").reason(), Reason::MixedContent);
     assert!(plain.asked().is_empty());
     // Up from http to https is followed.
@@ -112,7 +116,7 @@ fn a_certificate_that_fails_is_a_hard_stop() {
     let mut wrong_name = Client::new(&secure.at("https", "site.test", "/a/"));
     assert_eq!(wrong_name.get(&secure.at("https", "site.test", "/a/x")).reason(), Reason::Certificate, "the certificate is localhost's");
     wrong_name.finish().unwrap();
-    let mut untrusting = Client::with(&secure.at("https", "localhost", "/a/"), 0, |setup| {
+    let mut untrusting = Client::with(&secure.at("https", "localhost", "/a/"), |setup| {
         let (allowed, names) = (setup.settings.allowed.clone(), setup.settings.names.take());
         setup.settings = crate::web::connect::Settings::new(&allowed, None, neoteletext_transport::mozilla_roots());
         setup.settings.names = names;
@@ -128,7 +132,7 @@ fn a_certificate_that_fails_is_a_hard_stop() {
 fn a_server_that_says_nothing_fails_in_time() {
     let silent = raw(None);
     let short = Duration::from_millis(300);
-    let mut client = Client::with(&format!("http://site.test:{silent}/a/"), 0, move |setup| {
+    let mut client = Client::with(&format!("http://site.test:{silent}/a/"), move |setup| {
         (setup.settings.open_deadline, setup.settings.head_timeout) = (short, short);
     });
     // The connection opens and no head comes.
@@ -150,7 +154,7 @@ fn a_server_that_says_nothing_fails_in_time() {
 fn a_head_that_breaks_the_rules_is_refused() {
     let lines = |count: usize, value: &str| (0..count).fold(String::new(), |lines, index| lines + &format!("X-H{index}: {value}\r\n"));
     let many = lines(MAX_RESPONSE_HEADERS + 1, "v");
-    let long = format!("X-Long: {}\r\n", "v".repeat(MAX_HEADER_VALUE + 1));
+    let long = format!("X-Long: {}\r\n", "v".repeat(MAX_HEADER_VALUE_BYTES + 1));
     let huge = lines(80, &"v".repeat(1000));
     let cases: Vec<(&str, String, &[Reason])> = vec![
         ("a folded header", "HTTP/1.1 200 OK\r\nX-A: one\r\n two\r\nContent-Length: 0\r\n\r\n".into(), &[Reason::Protocol]),
@@ -222,33 +226,34 @@ fn every_connection_goes_through_the_proxy() {
     let plain = serve(|_| Reply::ok("through the tunnel"));
     let secure = serve_tls(&["h2", "http/1.1"], |_| Reply::ok("secure"));
     let (proxy, asked) = tunnelling_proxy();
-    let mut client = Client::with(&plain.url("/a/"), 0, move |setup| {
+    let mut client = Client::with(&plain.url("/a/"), move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
         // The proxy resolves names: nothing resolves here.
         setup.settings.names = Some(Rc::new(|name: &str, _: u16| panic!("{name} was resolved beside the proxy")));
     });
     assert_eq!(client.get(&plain.url("/a/x")).text(), "through the tunnel");
     assert_eq!(asked.recv().unwrap(), format!("CONNECT site.test:{} HTTP/1.1", plain.port));
-    let mut secure_client = Client::with(&secure.at("https", "localhost", "/a/"), 0, move |setup| {
+    let mut secure_client = Client::with(&secure.at("https", "localhost", "/a/"), move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
     });
     assert_eq!(secure_client.get(&secure.at("https", "localhost", "/a/x")).reason(), Reason::LocalRefused, "a local name is not asked of the proxy");
     secure_client.finish().unwrap();
-    let mut strict = Client::with(&plain.url("/a/"), 0, move |setup| {
+    let mut strict = Client::with(&plain.url("/a/"), move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
+        setup.space = AddressSpace::Public;
     });
     for address in ["http://printer.local/", "http://router/", "http://intranet.corp/"] {
         assert_eq!(strict.get(address).reason(), Reason::LocalRefused, "{address}");
     }
     for address in ["http://10.0.0.1/", "http://127.0.0.1:8000/"] {
-        assert_eq!(strict.fetch(address, |start| start.client_space = AddressSpace::Public).reason(), Reason::LocalRefused, "{address}");
+        assert_eq!(strict.get(address).reason(), Reason::LocalRefused, "{address}");
     }
     assert!(asked.try_recv().is_err(), "the proxy was asked for none of them");
     strict.finish().unwrap();
     // TLS runs end to end inside the tunnel: the server's own certificate
     // is what is checked, and here refused, being `localhost`'s, which
     // through a proxy can be asked for only by its address.
-    let mut tunnelled = Client::with(&secure.at("https", "127.0.0.1", "/a/"), 0, move |setup| {
+    let mut tunnelled = Client::with(&secure.at("https", "127.0.0.1", "/a/"), move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
     });
     assert_eq!(tunnelled.get(&secure.at("https", "127.0.0.1", "/a/x")).reason(), Reason::Certificate);
@@ -257,47 +262,37 @@ fn every_connection_goes_through_the_proxy() {
     client.finish().unwrap();
     // A proxy that refuses, or is not there.
     let refusing = raw(Some(b"HTTP/1.1 403 Forbidden\r\n\r\n".to_vec()));
-    let mut refused =
-        Client::with(&plain.url("/a/"), 0, move |setup| setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{refusing}")).unwrap()));
+    let mut refused = Client::with(&plain.url("/a/"), move |setup| setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{refusing}")).unwrap()));
     assert_eq!(refused.get(&plain.url("/a/x")).reason(), Reason::Proxy);
     refused.finish().unwrap();
 }
 
-/// The browser's requirement 5.14 and REQ-702, kept: its own load of a
-/// page carries a fixed set of headers that says nothing of the viewer,
-/// no `Referer`, and no header of a caller's but its validators.
+/// The browser's requirement 5.14, kept for a script's requests: beside
+/// what the script itself set, a request carries a fixed set of headers
+/// that says nothing of the viewer. (The browser's own page loads do not
+/// come by these messages: DEC-7317 item 7.)
 #[test]
-fn a_page_load_says_nothing_of_the_viewer() {
-    let server = serve(|asked| if asked.target == "/a/moved" { Reply::to(302, "/a/100.tti") } else { Reply::ok("PN,10000") });
+fn a_request_says_nothing_of_the_viewer() {
+    let server = serve(|_| Reply::ok("PN,10000"));
     let mut client = Client::new(&server.url("/a/"));
-    let loaded = client.fetch(&server.url("/a/100.tti"), |start| {
-        as_page(start);
-        start.headers = vec![header("X-Viewer", "me"), header("Accept-Language", "en-AU"), header("If-None-Match", "\"v1\""), header("Authorization", "x")];
-    });
-    assert_eq!((loaded.ok().response_type, loaded.text().as_str()), (ResponseType::Basic, "PN,10000"));
-    let asked = server.the("/a/100.tti");
-    assert_eq!(asked.names(), ["accept", "accept-encoding", "host", "if-none-match", "user-agent"]);
+    client.get(&server.url("/a/script"));
+    let asked = server.the("/a/script");
+    assert_eq!(asked.names(), ["accept", "accept-encoding", "host", "referer", "user-agent"]);
     assert_eq!(asked.header("accept").as_deref(), Some("*/*"));
     let family = neoteletext_web::user_agent::os_family().unwrap();
     assert_eq!(asked.header("user-agent"), Some(format!("NeoTeletext/0.1 ({family})")), "the browser's name, version and system family, as today");
-    assert!(asked.header("cache-control").is_none(), "a page's validators are its own cache's");
-    // A link followed from another page of the channel still tells the
-    // server nothing of where the viewer was.
-    client.fetch(&server.url("/a/200.tti"), |start| {
-        as_page(start);
-        start.client = server.url("/a/100.tti");
-    });
-    assert_eq!(server.the("/a/200.tti").names(), ["accept", "accept-encoding", "host", "user-agent"]);
-    // The browser's loader may follow a redirect itself: it is given the
-    // redirect as it came.
-    let manual = client.fetch(&server.url("/a/moved"), |start| {
-        as_page(start);
-        start.redirect = protocol::web::RedirectMode::Manual;
-    });
-    assert_eq!((manual.ok().status, manual.header("location").as_deref()), (302, Some("/a/100.tti")));
-    // A script's own request carries the same fixed words and a referrer.
-    client.get(&server.url("/a/script"));
-    assert_eq!(server.the("/a/script").names(), ["accept", "accept-encoding", "host", "referer", "user-agent"]);
+    // The page asking is the script host's word, taken only for a page of
+    // the process's own channel: another's address is never sent on as a
+    // referrer, and gives the request no other origin.
+    for claimed in ["http://elsewhere.test/secret/page", &server.url("/other-channel/page"), "", "not an address"] {
+        if claimed.contains(' ') {
+            continue;
+        }
+        client.fetch(&server.url("/a/claimed"), |start| start.client = claimed.to_owned());
+        let asked = server.asked().pop().unwrap();
+        assert_eq!(asked.header("referer"), Some(server.url("/a/")), "{claimed}: the channel's folder stands in");
+        assert_eq!(asked.header("origin"), None, "{claimed}");
+    }
     client.finish().unwrap();
 }
 
@@ -350,28 +345,40 @@ fn another_channel_of_the_origin_is_another_origin() {
     client.finish().unwrap();
 }
 
-/// The browser's DEC-7268: a process serves one partition. A request that
-/// names another channel, or another jar of windows, ends it; and it does
-/// not start for what is no channel identity.
+/// The browser's DEC-7268 and DEC-7317 item 4 (TODO-7291's check): a
+/// process serves one partition. A start that carries another
+/// partition's token ends it, whatever tab it names; and it does not
+/// start for what is no channel identity. A request number in use twice
+/// is its script host's own fault and costs no one else.
 #[test]
-fn a_request_for_another_partition_ends_the_process() {
-    let server = serve(|_| Reply::ok("x"));
+fn a_start_with_another_partitions_token_ends_the_process() {
+    let server = serve(|asked| if asked.target == "/home/hang" { Reply::new(200).then(Piece::Hang) } else { Reply::ok("x") });
     let mut client = Client::new(&server.url("/home/"));
     assert_eq!(client.get(&server.url("/home/x")).ok().status, 200);
-    client.start(&server.url("/demosite/x"), |start| start.channel = server.url("/demosite/"));
-    assert_eq!(client.ended(), Err("a request for another partition".to_owned()));
-    let mut private = Client::with(&server.url("/home/"), 3, |_| {});
-    private.start(&server.url("/home/x"), |start| start.jar = 0);
-    assert!(private.ended().is_err());
-    assert_eq!(server.asked().len(), 1, "neither request was made");
-    assert!(Client::with("http://site.test/home", 0, |_| {}).ended().is_err(), "a channel identity is a folder");
-    // A request number in use twice is the trusted core's fault, and ends
-    // the process too.
-    let hanging = serve(|_| Reply::new(200).then(Piece::Hang));
-    let mut twice = Client::new(&hanging.url("/a/"));
-    let id = twice.start(&hanging.url("/a/x"), |_| {});
-    twice.start(&hanging.url("/a/y"), |start| start.id = id);
-    assert!(twice.ended().is_err());
+    let mut start = None;
+    client.start(&server.url("/home/y"), |made| start = Some(made.clone()));
+    assert_eq!(client.outcome(2).ok().status, 200);
+    let mut other = start.unwrap();
+    other.id = 99;
+    client.send_as(TAB, &OTHER_TOKEN, &ToWebClient::Start(Box::new(other)));
+    assert_eq!(client.ended(), Err("invalid value: partition token".to_owned()));
+    assert_eq!(server.asked().len(), 2, "the start with another's token was never made");
+    assert!(Client::new("http://site.test/home").ended().is_err(), "a channel identity is a folder");
+    // The same number twice in one tab: the second is not served and the
+    // first goes on; the same number in another tab is another request.
+    let mut twice = Client::new(&server.url("/home/"));
+    let id = twice.start(&server.url("/home/hang"), |_| {});
+    assert!(matches!(twice.next_event(), FromWebClient::Head(_)));
+    twice.start(&server.url("/home/again"), |start| start.id = id);
+    assert_eq!(twice.next_within(Duration::from_millis(300)), None);
+    assert_eq!(server.count("GET", "/home/again"), 0);
+    twice.start_in(2, &server.url("/home/hang"), |start| start.id = id);
+    assert!(matches!(twice.next_event(), FromWebClient::Head(_)));
+    assert_eq!(twice.tab, 2);
+    twice.send(&ToWebClient::Abort(id));
+    assert_eq!(twice.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
+    assert_eq!(twice.tab, TAB, "the abort was the first tab's");
+    twice.finish().unwrap();
 }
 
 /// The web client's limits on a tab: its requests under way, and its
@@ -388,13 +395,25 @@ fn a_tabs_requests_are_counted_and_its_starts_held_to_a_rate() {
     // One more waits its turn; another tab's does not.
     let waiting = client.start(&server.url("/a/fast"), |_| {});
     assert_eq!(client.next_within(Duration::from_millis(300)), None, "the tab's places are taken");
-    let other_tab = client.start(&server.url("/a/fast"), |start| start.tab = 2);
+    let other_tab = client.start_in(2, &server.url("/a/fast"), |_| {});
     assert_eq!(client.outcome(other_tab).text(), "fast");
+    assert_eq!(client.tab, 2);
     client.send(&ToWebClient::Abort(slow[0]));
     assert_eq!(client.next_event(), FromWebClient::Failed { id: slow[0], error: ErrorKind::Abort, reason: Reason::Aborted });
     assert_eq!(client.outcome(waiting).text(), "fast");
+    // A context's closing ends its requests and no other's, saying
+    // nothing more of them: one place is free, and the page's requests
+    // still hold the rest.
+    let channels = client.start(&server.url("/a/slow"), |start| start.context = ContextId::Channel);
+    assert!(matches!(client.next_event(), FromWebClient::Head(_)));
+    let waiting = client.start(&server.url("/a/fast"), |_| {});
+    assert_eq!(client.next_within(Duration::from_millis(300)), None, "the tab's places are taken again");
+    client.send(&ToWebClient::ContextCloses(ContextId::Channel));
+    assert_eq!(client.outcome(waiting).text(), "fast");
+    client.send(&ToWebClient::Abort(channels));
+    assert_eq!(client.next_within(Duration::from_millis(200)), None, "a request its context ended is gone");
     // A tab's closing ends its requests, saying nothing more of them.
-    client.send(&ToWebClient::TabCloses(1));
+    client.send(&ToWebClient::TabCloses);
     assert_eq!(client.get(&server.url("/a/fast")).text(), "fast", "the tab's places are free again");
     client.finish().unwrap();
 

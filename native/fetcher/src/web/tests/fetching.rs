@@ -29,7 +29,7 @@ fn every_method_carries_its_headers_and_body() {
             start.method = method.to_owned();
             start.headers = vec![header("X-Custom", "v"), header("content-type", "text/plain")];
             if with_body {
-                start.body = BodySource::Bytes;
+                start.body = BodySource::Bytes(11);
             }
         });
         if with_body {
@@ -43,6 +43,7 @@ fn every_method_carries_its_headers_and_body() {
         assert_eq!(head.url, server.url(&path));
         assert_eq!(outcome.header("x-seen").as_deref(), Some("yes"));
         assert_eq!(outcome.text(), if method == "HEAD" { String::new() } else { format!("{method} {path}") });
+        assert_eq!(outcome.sent, if with_body { 11 } else { 0 }, "{method}: the body's bytes, said as written");
         let asked = server.the(&path);
         assert_eq!(asked.method, method);
         assert_eq!(asked.header("x-custom").as_deref(), Some("v"));
@@ -62,18 +63,20 @@ fn every_method_carries_its_headers_and_body() {
 #[test]
 fn what_the_standard_forbids_never_reaches_the_network() {
     let (server, mut client) = echo();
+    // A forbidden method, and an address that is not the web's, are no
+    // message at all: the pipe's one definition refuses to write or read
+    // them (DEC-7317 item 11), and the web client holds the same rules
+    // behind it.
     for method in ["TRACE", "CONNECT", "track"] {
-        assert_eq!(client.fetch(&server.url("/a/x"), |start| start.method = method.into()).reason(), Reason::Method);
+        assert!(client.unwritable(&server.url("/a/x"), |start| start.method = method.into()), "{method}");
     }
     assert_eq!(client.get("http://site.test:25/a/").reason(), Reason::BadPort);
     assert_eq!(client.get("http://site.test:6667/a/").reason(), Reason::BadPort);
-    for address in ["ftp://site.test/a/", "file:///etc/passwd", "data:text/plain,x", "about:blank", "javascript:1", "not an address"] {
-        // What is no address at all is refused before it is a message.
-        if address.contains(' ') {
-            continue;
-        }
-        assert_eq!(client.get(address).reason(), Reason::Address, "{address}");
+    for address in ["ftp://site.test/a/", "file:///etc/passwd", "data:text/plain,x", "about:blank", "javascript:1", "ws://site.test/a/", "not an address"] {
+        assert!(client.unwritable(address, |_| {}), "{address}");
     }
+    assert_eq!(client.get("http://").reason(), Reason::Address);
+    assert_eq!(client.get("http://[::1/").reason(), Reason::Address);
     assert!(server.asked().is_empty());
     client.fetch(&server.url("/a/headers"), |start| {
         start.headers = vec![
@@ -129,14 +132,14 @@ fn redirects_are_followed_by_the_standards_rules() {
     };
     // 301 and 303 make a POST a GET with no body or body headers; 307 and
     // 308 send it again as it was.
-    let after_301 = post("/a/301", BodySource::Bytes);
+    let after_301 = post("/a/301", BodySource::Bytes(4));
     assert_eq!((after_301.text().as_str(), after_301.header("x-type").as_deref()), ("GET /a/end ", Some("")));
     assert!(after_301.ok().redirected);
-    let after_303 = post("/a/303", BodySource::Bytes);
+    let after_303 = post("/a/303", BodySource::Bytes(4));
     assert_eq!(after_303.text(), "GET /a/end?from=303 ");
     assert_eq!(after_303.ok().url, server.url("/a/end?from=303"), "the answer's address, without its fragment");
     for path in ["/a/307", "/a/308"] {
-        let after = post(path, BodySource::Bytes);
+        let after = post(path, BodySource::Bytes(4));
         assert_eq!((after.text().as_str(), after.header("x-type").as_deref()), ("POST /a/end body", Some("text/plain")), "{path}");
         // A stream cannot be sent twice.
         assert_eq!(post(path, BodySource::Stream).reason(), Reason::Redirect, "{path}");
@@ -200,13 +203,9 @@ fn another_origin_is_read_only_by_its_leave() {
     // Each hop of a redirect is checked, and its answer is the last's.
     let redirected = client.get(&there("/redirect"));
     assert_eq!((redirected.ok().response_type, redirected.ok().redirected, redirected.ok().url.as_str()), (ResponseType::Cors, true, there("/open").as_str()));
-    // The mode `same-origin` asks no other origin; `no-cors` is refused
-    // (`docs/script-api.md` departure D5).
+    // The mode `same-origin` asks no other origin. (The mode `no-cors` has
+    // no code on the pipe: `docs/script-api.md` departure D5.)
     assert_eq!(client.fetch(&there("/open"), |start| start.mode = Mode::SameOrigin).reason(), Reason::SameOriginMode);
-    let before = server.asked().len();
-    assert_eq!(client.fetch(&there("/closed"), |start| start.mode = Mode::NoCors).reason(), Reason::Unsupported);
-    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.mode = Mode::NoCors).reason(), Reason::Unsupported, "nor of its own channel");
-    assert_eq!(server.asked().len(), before, "no request was made blind");
     client.finish().unwrap();
 }
 
@@ -373,15 +372,16 @@ fn coded_bodies_are_decoded() {
     client.finish().unwrap();
 }
 
-/// A WebSocket's messages are reserved and its start refused until it is
-/// built; a start that is a navigation but not a page load, or a page
-/// load that is not a navigation, is malformed.
+/// A WebSocket's start is refused by name until it is built, and its
+/// messages act on nothing.
 #[test]
 fn what_is_not_built_is_refused_by_name() {
     let (server, mut client) = echo();
-    assert_eq!(client.fetch(&server.url("/a/socket"), |start| start.kind = RequestKind::WebSocket).reason(), Reason::Unsupported);
-    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.mode = Mode::Navigate).reason(), Reason::Request);
-    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.kind = RequestKind::Page).reason(), Reason::Request);
-    assert!(server.asked().is_empty());
+    let socket = server.at("ws", "site.test", "/a/socket");
+    assert_eq!(client.fetch(&socket, |start| (start.kind, start.protocols) = (RequestKind::WebSocket, vec!["chat".into()])).reason(), Reason::Unsupported);
+    client.send(&ToWebClient::SocketSend { id: 1, binary: false, last: true, bytes: b"hello".to_vec() });
+    client.send(&ToWebClient::SocketClose { id: 1, code: 1000, reason: String::new() });
+    assert_eq!(client.get(&server.url("/a/after")).ok().status, 200, "and the process goes on");
+    assert_eq!(server.asked().len(), 1);
     client.finish().unwrap();
 }

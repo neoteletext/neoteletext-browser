@@ -3,7 +3,7 @@
 //! events. Nothing here touches the network; the web client feeds it the
 //! body's pieces.
 
-use protocol::web::{MAX_EVENT_DATA, MAX_EVENT_ID, MAX_EVENT_TYPE};
+use protocol::web::{MAX_EVENT_DATA_BYTES, MAX_EVENT_ID_BYTES, MAX_EVENT_TYPE_BYTES};
 
 /// An event, as the script is given it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub(crate) struct TooLong;
 const BYTE_ORDER_MARK: [u8; 3] = [0xEF, 0xBB, 0xBF];
 /// The longest line kept: an event's whole data in one `data:` line, with
 /// its field name.
-const MAX_LINE: usize = MAX_EVENT_DATA + 8;
+const MAX_LINE: usize = MAX_EVENT_DATA_BYTES + 8;
 
 /// An event stream being read.
 #[derive(Default)]
@@ -51,6 +51,12 @@ pub(crate) struct EventStream {
 }
 
 impl EventStream {
+    /// A stream that starts with the last event ID `last_id`, as one made
+    /// again by its script does.
+    pub(crate) fn after(last_id: &str) -> Self {
+        Self { id_buffer: last_id.to_owned(), last_id: last_id.to_owned(), ..Self::default() }
+    }
+
     /// The last event ID, for the `Last-Event-ID` header of a
     /// reconnection.
     pub(crate) fn last_id(&self) -> &str {
@@ -127,13 +133,13 @@ impl EventStream {
         };
         match field {
             "event" => {
-                if value.len() > MAX_EVENT_TYPE {
+                if value.len() > MAX_EVENT_TYPE_BYTES {
                     return Err(TooLong);
                 }
                 value.clone_into(&mut self.event);
             }
             "data" => {
-                if self.data.len().saturating_add(value.len()).saturating_add(1) > MAX_EVENT_DATA.saturating_add(1) {
+                if self.data.len().saturating_add(value.len()).saturating_add(1) > MAX_EVENT_DATA_BYTES.saturating_add(1) {
                     return Err(TooLong);
                 }
                 self.data.push_str(value);
@@ -141,7 +147,7 @@ impl EventStream {
             }
             // An ID with a NUL is ignored.
             "id" if !value.contains('\0') => {
-                if value.len() > MAX_EVENT_ID {
+                if value.len() > MAX_EVENT_ID_BYTES {
                     return Err(TooLong);
                 }
                 value.clone_into(&mut self.id_buffer);
@@ -242,15 +248,15 @@ data: never dispatched";
         let mut sink = |_: Event| {};
         assert_eq!(reader.push(&vec![b'a'; MAX_LINE + 1], &mut sink), Err(TooLong), "a line with no end");
         let mut reader = EventStream::default();
-        let line = format!("data: {}\n", "a".repeat(MAX_EVENT_DATA / 2));
+        let line = format!("data: {}\n", "a".repeat(MAX_EVENT_DATA_BYTES / 2));
         assert_eq!(reader.push(line.as_bytes(), &mut sink), Ok(()));
         assert_eq!(reader.push(line.as_bytes(), &mut sink), Err(TooLong), "data past its bound over two lines");
         let mut reader = EventStream::default();
-        assert_eq!(reader.push(format!("event: {}\n", "e".repeat(MAX_EVENT_TYPE + 1)).as_bytes(), &mut sink), Err(TooLong));
-        assert_eq!(reader.push(format!("id: {}\n", "i".repeat(MAX_EVENT_ID + 1)).as_bytes(), &mut sink), Err(TooLong));
+        assert_eq!(reader.push(format!("event: {}\n", "e".repeat(MAX_EVENT_TYPE_BYTES + 1)).as_bytes(), &mut sink), Err(TooLong));
+        assert_eq!(reader.push(format!("id: {}\n", "i".repeat(MAX_EVENT_ID_BYTES + 1)).as_bytes(), &mut sink), Err(TooLong));
         let mut whole = EventStream::default();
         let mut found = Vec::new();
-        whole.push(format!("data: {}\n\n", "a".repeat(MAX_EVENT_DATA)).as_bytes(), &mut |event| found.push(event.data.len())).unwrap();
-        assert_eq!(found, [MAX_EVENT_DATA], "an event of exactly the bound passes");
+        whole.push(format!("data: {}\n\n", "a".repeat(MAX_EVENT_DATA_BYTES)).as_bytes(), &mut |event| found.push(event.data.len())).unwrap();
+        assert_eq!(found, [MAX_EVENT_DATA_BYTES], "an event of exactly the bound passes");
     }
 }

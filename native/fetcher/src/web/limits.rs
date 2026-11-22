@@ -3,10 +3,7 @@
 
 use std::time::Duration;
 
-use neoteletext_web::consts::{DEFAULT_CONNECT_TIMEOUT_US, DEFAULT_RESPONSE_TIMEOUT_US, MAX_URL_LENGTH};
-
-// The pipe's longest address is the engine's.
-const _: () = assert!(protocol::web::MAX_URL == MAX_URL_LENGTH, "the pipe's longest address is the engine's");
+use neoteletext_web::consts::{DEFAULT_CONNECT_TIMEOUT_US, DEFAULT_RESPONSE_TIMEOUT_US};
 
 /// The most redirects followed: the Fetch standard's HTTP-redirect fetch
 /// fails a request whose redirect count is 20.
@@ -44,7 +41,7 @@ pub(crate) const MAX_RESPONSE_HEAD: usize = protocol::web::MAX_HEADER_BYTES;
 pub(crate) const MAX_DECODED_BODY: u64 = 64 * 1024 * 1024;
 /// The largest body held whole to check its integrity metadata before any
 /// of it is given to the script: the largest request body's size.
-pub(crate) const MAX_INTEGRITY_BODY: usize = protocol::web::MAX_REQUEST_BODY;
+pub(crate) const MAX_INTEGRITY_BODY: usize = protocol::web::MAX_REQUEST_BODY_BYTES;
 /// The longest gzip member header read (RFC 1952 section 2.3): its extra
 /// field alone may be 65,535 bytes, and no web server writes one.
 pub(crate) const MAX_GZIP_HEADER: usize = 8 * 1024;
@@ -99,4 +96,4 @@ pub(crate) const MAX_REFERRER: usize = 4096;
 /// memory: the pipe is read and written no faster than they are handled.
 pub(crate) const QUEUED_MESSAGES: usize = 64;
 /// The bytes of a body decoded or read at a time: one piece of the pipe.
-pub(crate) const PIECE: usize = protocol::web::MAX_BODY_PIECE;
+pub(crate) const PIECE: usize = protocol::web::MAX_CHUNK_BYTES;

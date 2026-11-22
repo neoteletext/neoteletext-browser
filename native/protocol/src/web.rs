@@ -1,37 +1,47 @@
-//! Messages between the trusted core and the fetcher's general web client
-//! (neoteletext-common's DEC-7260 item 6, adopted by DEC-7262): a script's
-//! request crosses as flat, bounded values, and its answer returns as
-//! events. A set of their own, on a pipe of their own: no message of
-//! `protocol::fetcher` is read or written here, and none of these on a
-//! channel's fetcher's.
+//! Messages between a channel's scripts and its web client (DEC-7260 item
+//! 6, DEC-7262, DEC-7287 item 13; the script API's specification section
+//! 11.3): a script's request crosses as flat, bounded values, and its
+//! answer returns as events. This is the one definition both sides use.
 //!
-//! - **To the web client:** [`ToWebClient::Start`] (a request's number,
-//!   kind, method, address, headers and the Fetch standard's options),
-//!   its body in pieces and their end, an abort, more room for the answer's
-//!   body, a tab's closing and a private window's jars forgotten.
-//! - **From it:** that it is confined, an answer's head, its body in
-//!   pieces, its end, a failure by kind, for an event stream (the HTML
-//!   standard's `EventSource`) its opening, each event and each
-//!   reconnection, and the cookie jar written out after a change.
-//! - **One process, one partition** (the browser's DEC-7268): a web client
+//! - **Three processes, two forms.** A script host writes a request in the
+//!   *host form* ([`write_request`]): the message alone. The trusted core
+//!   relays it by its kind and length, never reading its payload
+//!   ([`relay_to_client`]), into the *client form* the web client reads
+//!   ([`read_to_client`]): the tab's number before each message, as on a
+//!   fetcher's pipe (REQ-6980), and the partition's token at the front of
+//!   a [`Start`]. Answers go the other way: the web client writes the
+//!   client form ([`write_from_client`]), the core relays
+//!   ([`relay_from_client`]) and the script host reads the host form
+//!   ([`read_answer`]).
+//! - **One process, one partition** (DEC-7268, DEC-7264): a web client
 //!   serves the one channel identity in the one jar of windows it was
-//!   started for, and holds no other's cookies or connections.
-//! - **Reserved** for a WebSocket, in the same shape: a message each way
-//!   and a close each way. The web client refuses a WebSocket's start with
-//!   [`Reason::Unsupported`] until it is built.
+//!   started for. The trusted core gives it a [`PartitionToken`] at its
+//!   start and adds that token to every `Start` it relays; a `Start` with
+//!   another token is refused by [`read_to_client`], and the web client
+//!   ends. A script host never sees a token and cannot name a partition.
+//! - **What a script host may say** is held by kind: it cannot write a
+//!   tab's closing, a kept jar or a jar's forgetting, and it is never
+//!   given the web client's `Confined` or `Jar`.
 //!
 //! A request's body and an answer's body cross in pieces of at most
-//! [`MAX_BODY_PIECE`] bytes. The answer's body is sent only as far as the
-//! receiver has made room for it ([`INITIAL_ROOM`], then
+//! [`MAX_CHUNK_BYTES`]. The answer's body is sent only as far as the
+//! receiver has made room for it ([`FETCH_WINDOW_BYTES`], then
 //! [`ToWebClient::More`]), so that a server that sends without end holds
 //! no more memory than that.
 
 use std::io::{Read, Write};
 
-use crate::{Fields, MAX_PAYLOAD, ProtocolError, read_frame, write_frame};
+use crate::coded::coded;
+use crate::fetcher::{PROCESS_TAB, cut_short, read_tab};
+use crate::framing::HEADER_BYTES;
+use crate::script::ContextId;
+use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_bytes, read_frame, write_frame};
 
-// The web client pipe's kinds, in the next numbers free across every pipe
-// on 22 November 2026, after the 233 then in use.
+// The web client's kinds: numbers no other pipe used on 22 November 2026,
+// and none the script link uses (`crate::script`), since a script host
+// writes both on its one pipe and the trusted core tells them apart by
+// kind alone.
+const KIND_FORGET_JAR: u8 = 229;
 const KIND_START: u8 = 234;
 const KIND_REQUEST_BODY: u8 = 235;
 const KIND_REQUEST_BODY_END: u8 = 236;
@@ -52,103 +62,159 @@ const KIND_RETRYING: u8 = 250;
 const KIND_SOCKET_MESSAGE: u8 = 251;
 const KIND_SOCKET_CLOSED: u8 = 252;
 const KIND_JAR: u8 = 253;
+const KIND_CONTEXT_CLOSES: u8 = 254;
+const KIND_SENT: u8 = 255;
+
+/// Every kind of this module, for the test that no two pipes that share a
+/// process confuse a kind.
+#[cfg(test)]
+pub(crate) const KINDS: &[u8] = &[
+    KIND_FORGET_JAR,
+    KIND_START,
+    KIND_REQUEST_BODY,
+    KIND_REQUEST_BODY_END,
+    KIND_ABORT,
+    KIND_MORE,
+    KIND_TAB_CLOSES,
+    KIND_JAR_KEPT,
+    KIND_SOCKET_SEND,
+    KIND_SOCKET_CLOSE,
+    KIND_CONFINED,
+    KIND_HEAD,
+    KIND_BODY,
+    KIND_END,
+    KIND_FAILED,
+    KIND_OPENED,
+    KIND_EVENT,
+    KIND_RETRYING,
+    KIND_SOCKET_MESSAGE,
+    KIND_SOCKET_CLOSED,
+    KIND_JAR,
+    KIND_CONTEXT_CLOSES,
+    KIND_SENT,
+];
 
 /// The longest address, in bytes: the engine's `MAX_URL_LENGTH`, which the
 /// fetcher asserts this equals.
-pub const MAX_URL: usize = 8000;
+pub const MAX_URL_BYTES: usize = 8000;
 /// The longest method: the longest the HTTP method registry holds is
 /// `UPDATEREDIRECTREF`, 17 bytes; twice that, rounded up.
-pub const MAX_METHOD: usize = 40;
+pub const MAX_METHOD_BYTES: usize = 40;
 /// The most headers a request carries.
 pub const MAX_REQUEST_HEADERS: usize = 64;
-/// The most headers an answer's head carries to the trusted core.
+/// The most headers an answer's head carries.
 pub const MAX_RESPONSE_HEADERS: usize = 128;
 /// The longest header name, in bytes.
-pub const MAX_HEADER_NAME: usize = 128;
+pub const MAX_HEADER_NAME_BYTES: usize = 128;
 /// The longest header value, in bytes: what common servers accept for one
 /// field line.
-pub const MAX_HEADER_VALUE: usize = 8 * 1024;
+pub const MAX_HEADER_VALUE_BYTES: usize = 8 * 1024;
 /// The most bytes of names and values together in one head, a request's or
 /// an answer's.
 pub const MAX_HEADER_BYTES: usize = 64 * 1024;
 /// The longest status text of an answer, in bytes (RFC 9112 section 4: a
 /// reason phrase, which HTTP/2 does not have).
-pub const MAX_STATUS_TEXT: usize = 128;
+pub const MAX_STATUS_TEXT_BYTES: usize = 128;
 /// The longest integrity metadata, in bytes: three hashes of the longest
 /// kind, SHA-512's 88 bytes of base64 and its `sha512-` prefix, with
 /// options.
-pub const MAX_INTEGRITY: usize = 512;
-/// The most bytes of a body in one message.
-pub const MAX_BODY_PIECE: usize = 64 * 1024;
+pub const MAX_INTEGRITY_BYTES: usize = 512;
+/// The most bytes of a body, a WebSocket message or a jar in one message.
+pub const MAX_CHUNK_BYTES: usize = 64 * 1024;
 /// The largest request body, in bytes. The web client holds a request's
 /// body whole before it sends it, so that a redirect can send it again.
-pub const MAX_REQUEST_BODY: usize = 16 * 1024 * 1024;
+pub const MAX_REQUEST_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// The bytes of an answer's body a request starts with room for; the
 /// receiver makes more with [`ToWebClient::More`].
-pub const INITIAL_ROOM: u32 = 256 * 1024;
+pub const FETCH_WINDOW_BYTES: u32 = 256 * 1024;
 /// The most room a request may have at once, in bytes.
-pub const MAX_ROOM: u32 = 4 * 1024 * 1024;
+pub const MAX_NETWORK_BUFFER_BYTES: u32 = 4 * 1024 * 1024;
 /// The longest event type of an event stream, in bytes.
-pub const MAX_EVENT_TYPE: usize = 256;
+pub const MAX_EVENT_TYPE_BYTES: usize = 256;
 /// The longest last event ID of an event stream, in bytes.
-pub const MAX_EVENT_ID: usize = 1024;
+pub const MAX_EVENT_ID_BYTES: usize = 1024;
 /// The longest data of one event of an event stream, in bytes; a longer
 /// event ends the stream with [`Reason::TooLarge`].
-pub const MAX_EVENT_DATA: usize = 128 * 1024;
+pub const MAX_EVENT_DATA_BYTES: usize = 128 * 1024;
 /// The longest reason of a WebSocket's close, in bytes (RFC 6455 section
 /// 5.5: a control frame's payload of 125 bytes less the two of the code).
-pub const MAX_CLOSE_REASON: usize = 123;
+pub const MAX_CLOSE_REASON_BYTES: usize = 123;
 /// The most bytes of one part of a cookie jar written out for the trusted
-/// core to keep (the browser's DEC-7268 item 3): room for a channel's
-/// whole jar at the cookie standard's limits, which the fetcher asserts.
+/// core to keep (DEC-7268 item 3): room for a channel's whole jar at the
+/// cookie standard's limits, which the fetcher asserts.
 pub const MAX_JAR_BYTES: usize = 4 * 1024 * 1024;
 /// The most web client processes alive at once, browser-wide (DEC-7268
 /// item 4): one for each partition with a page open, the least recently
 /// used ending first. The trusted core holds to it; a process for each
 /// of the most tabs a window shows.
 pub const MAX_WEB_CLIENTS: usize = crate::MAX_TABS;
-/// The address space of a page opened from disk. The behaviour DEC-7315
-/// follows makes it this computer's own, so its script reaches this
-/// computer and the local network unasked; whether NeoTeletext does the
-/// same is with the owner and not yet decided, and this one value is
-/// where either answer is set ([`AddressSpace::Public`] makes such a
-/// page ask).
-pub const FILE_PAGE_SPACE: AddressSpace = AddressSpace::Loopback;
-/// The longest subprotocol a WebSocket's server chose, in bytes.
-pub const MAX_SUBPROTOCOL: usize = 128;
+/// The longest subprotocol of a WebSocket, in bytes.
+pub const MAX_SUBPROTOCOL_BYTES: usize = 128;
+/// The most subprotocols a WebSocket's opening offers.
+pub const MAX_WS_PROTOCOLS: usize = 8;
+/// The largest whole WebSocket message, in bytes, which crosses in pieces
+/// of at most [`MAX_CHUNK_BYTES`]. Each side counts the pieces of a
+/// message against it; no one message here can.
+pub const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
+/// The bytes of a partition's token.
+pub const PARTITION_TOKEN_BYTES: usize = 16;
+
+/// The longest payload of a `Start` as a script host writes it: the
+/// trusted core puts the token before it, and the whole is one payload.
+const MAX_HOST_START_BYTES: usize = MAX_PAYLOAD - PARTITION_TOKEN_BYTES;
+/// The bytes of a length before a text or byte field.
+const LENGTH_BYTES: usize = size_of::<u32>();
 
 // Every message fits one payload.
-const _: () = assert!(MAX_BODY_PIECE + 8 <= MAX_PAYLOAD);
-const _: () = assert!(5 * MAX_URL + MAX_HEADER_BYTES + 4 * MAX_RESPONSE_HEADERS + MAX_INTEGRITY + MAX_METHOD + MAX_STATUS_TEXT + 64 <= MAX_PAYLOAD);
-const _: () = assert!(MAX_EVENT_TYPE + MAX_EVENT_ID + MAX_EVENT_DATA + 16 <= MAX_PAYLOAD);
+const _: () = assert!(MAX_CHUNK_BYTES + 8 <= MAX_PAYLOAD);
+const _: () = assert!(
+    PARTITION_TOKEN_BYTES
+        + 3 * MAX_URL_BYTES
+        + MAX_HEADER_BYTES
+        + 2 * LENGTH_BYTES * MAX_REQUEST_HEADERS
+        + MAX_INTEGRITY_BYTES
+        + MAX_METHOD_BYTES
+        + MAX_WS_PROTOCOLS * (LENGTH_BYTES + MAX_SUBPROTOCOL_BYTES)
+        + MAX_EVENT_ID_BYTES
+        + 64
+        <= MAX_PAYLOAD
+);
+const _: () = assert!(MAX_URL_BYTES + MAX_HEADER_BYTES + 2 * LENGTH_BYTES * MAX_RESPONSE_HEADERS + MAX_STATUS_TEXT_BYTES + 64 <= MAX_PAYLOAD);
+const _: () = assert!(MAX_EVENT_TYPE_BYTES + MAX_EVENT_ID_BYTES + MAX_EVENT_DATA_BYTES + 16 <= MAX_PAYLOAD);
 
-/// An enumeration carried as one byte.
-macro_rules! coded {
-    ($(#[$meta:meta])* $name:ident, $what:literal { $($(#[$variant_meta:meta])* $variant:ident = $code:literal,)+ }) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        pub enum $name {
-            $($(#[$variant_meta])* $variant,)+
-        }
+/// The token of a web client's partition: the trusted core's own value,
+/// made for one process and told to it once at its start. It is no
+/// secret kept from the web client; it is how a `Start` relayed to the
+/// wrong process is known and refused.
+#[derive(Clone, Copy)]
+pub struct PartitionToken([u8; PARTITION_TOKEN_BYTES]);
 
-        impl $name {
-            /// Every value.
-            pub const ALL: &'static [Self] = &[$(Self::$variant,)+];
+impl PartitionToken {
+    /// The token of `bytes`.
+    #[must_use]
+    pub const fn new(bytes: [u8; PARTITION_TOKEN_BYTES]) -> Self {
+        Self(bytes)
+    }
 
-            const fn code(self) -> u8 {
-                match self {
-                    $(Self::$variant => $code,)+
-                }
-            }
+    /// The token's bytes, for the trusted core to hand to the process it
+    /// starts.
+    #[must_use]
+    pub const fn bytes(&self) -> &[u8; PARTITION_TOKEN_BYTES] {
+        &self.0
+    }
 
-            const fn of(code: u8) -> Result<Self, ProtocolError> {
-                match code {
-                    $($code => Ok(Self::$variant),)+
-                    _ => Err(ProtocolError::BadValue($what)),
-                }
-            }
-        }
-    };
+    /// Whether `other` is this token, compared in the same time whatever
+    /// the bytes are.
+    fn is(&self, other: &[u8; PARTITION_TOKEN_BYTES]) -> bool {
+        self.0.iter().zip(other).fold(0_u8, |difference, (own, given)| difference | (own ^ given)) == 0
+    }
+}
+
+impl std::fmt::Debug for PartitionToken {
+    /// A token is never written to a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PartitionToken(..)")
+    }
 }
 
 coded! {
@@ -158,25 +224,19 @@ coded! {
         Fetch = 0,
         /// A script's `EventSource` (the HTML standard, server-sent events).
         EventSource = 1,
-        /// A script's `WebSocket`: reserved, and refused until built.
+        /// A script's `WebSocket`.
         WebSocket = 2,
-        /// The browser's own load of a page, a navigation: it carries no
-        /// header of the caller's, and no `Referer` or `Origin`.
-        Page = 3,
     }
 }
 
 coded! {
-    /// The Fetch standard's request mode.
+    /// The Fetch standard's request mode. `no-cors` is refused by the
+    /// script API (its departure D5) and has no code here.
     Mode, "request mode" {
         /// Only the client's own origin.
         SameOrigin = 0,
         /// Another origin if it allows it (CORS).
         Cors = 1,
-        /// Another origin, with an answer the script cannot read.
-        NoCors = 2,
-        /// A navigation, the browser's own.
-        Navigate = 3,
     }
 }
 
@@ -247,27 +307,13 @@ coded! {
 }
 
 coded! {
-    /// Where an address is (the Local Network Access draft's address
-    /// spaces, which neoteletext-common's DEC-7315 follows).
-    AddressSpace, "address space" {
-        /// The internet.
-        Public = 0,
-        /// The local network: private, link-local and shared addresses.
-        Local = 1,
-        /// This computer itself.
-        Loopback = 2,
-    }
-}
-
-coded! {
-    /// The Fetch standard's response type.
+    /// The Fetch standard's response type. An opaque answer, `no-cors`'s,
+    /// has no code here (departure D5).
     ResponseType, "response type" {
         /// Same origin: every header but the cookie ones.
         Basic = 0,
         /// Another origin that allowed it: the headers it exposes.
         Cors = 1,
-        /// Another origin, unreadable: no status, header or body.
-        Opaque = 2,
         /// A redirect not followed, unreadable.
         OpaqueRedirect = 3,
     }
@@ -280,27 +326,28 @@ coded! {
         Network = 0,
         /// The request was aborted: an `AbortError`.
         Abort = 1,
+        /// A time limit passed: a `TimeoutError`.
+        Timeout = 2,
     }
 }
 
 coded! {
-    /// Why a request failed, by kind alone, for the console: never text
-    /// from outside.
+    /// Why a request failed, by kind alone, for the developer log: never
+    /// text from outside, and never given to the script.
     Reason, "failure reason" {
-        /// The script aborted it, or its tab closed.
+        /// The script aborted it, or its tab or context closed.
         Aborted = 0,
-        /// The address is no address, or not `http` or `https`.
+        /// The address is no address, or its scheme is not the request's.
         Address = 1,
         /// The port is one the Fetch standard blocks.
         BadPort = 2,
         /// The method is one the Fetch standard forbids, or no method.
         Method = 3,
-        /// A page from the internet asked an address on the local network:
-        /// it needs the viewer's permission to reach devices there
-        /// (neoteletext-common's DEC-7315). Until the browser can ask for
-        /// it, the request is refused; this reason is what the trusted
-        /// core turns into the asking.
-        LocalPermission = 4,
+        /// A channel from the internet that is not a secure context asked
+        /// this computer or the local network, or a local name was asked
+        /// through the proxy: refused, and never asked about
+        /// (neoteletext-common's DEC-7315, the browser's TODO-7316 item 7).
+        LocalRefused = 4,
         /// A page loaded securely asked for an address that is not.
         MixedContent = 5,
         /// A redirect led from `https` to `http`.
@@ -329,13 +376,13 @@ coded! {
         Proxy = 16,
         /// A time limit passed.
         Timeout = 17,
-        /// The answer broke a rule of HTTP.
+        /// The answer broke a rule of HTTP or of WebSocket framing.
         Protocol = 18,
         /// A limit on size or count was passed.
         TooLarge = 19,
         /// The body's content coding was unknown or its bytes malformed.
         Coding = 20,
-        /// Too many requests under way for the tab.
+        /// Too many requests under way, or started too fast.
         Busy = 21,
         /// An event stream's answer was not an event stream.
         NotEventStream = 22,
@@ -343,17 +390,65 @@ coded! {
         Unsupported = 23,
         /// The request itself was malformed.
         Request = 24,
-        /// A page from the internet asked this computer itself: it needs
-        /// the viewer's permission to reach this device's own services, a
-        /// permission apart from the local network's (DEC-7315). Refused
-        /// until the browser can ask, as [`Reason::LocalPermission`] is.
-        DevicePermission = 25,
-        /// A page from the internet that is not a secure context asked
-        /// this computer or the local network, or a local name was asked
-        /// through the proxy: refused, and never asked about.
-        LocalRefused = 26,
+        /// A channel from the internet asked an address on the local
+        /// network: it needs the viewer's permission to reach devices
+        /// there (DEC-7315). Until the browser can ask for it, the request
+        /// is refused; this reason is what the trusted core turns into the
+        /// asking.
+        LocalPermission = 25,
+        /// A channel from the internet asked this computer itself: it
+        /// needs the viewer's permission to reach this device's own
+        /// services, a permission apart from the local network's
+        /// (DEC-7315). Refused until the browser can ask, as
+        /// [`Reason::LocalPermission`] is.
+        DevicePermission = 26,
     }
 }
+
+/// Where an address is (the Local Network Access draft's address spaces,
+/// which neoteletext-common's DEC-7315 follows). A web client is told at
+/// its start the space its channel was loaded from: only a channel of
+/// [`AddressSpace::Public`] needs the viewer's permission for this
+/// computer or the local network. It is the trusted core's word and no
+/// message carries it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AddressSpace {
+    /// The internet.
+    Public,
+    /// The local network: private, link-local and shared addresses.
+    Local,
+    /// This computer itself.
+    Loopback,
+}
+
+impl AddressSpace {
+    /// Every space.
+    pub const ALL: &'static [Self] = &[Self::Public, Self::Local, Self::Loopback];
+
+    /// The space's name, as a web client's argument says it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::Local => "local",
+            Self::Loopback => "loopback",
+        }
+    }
+
+    /// The space `name` names, if it names one.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|space| space.name() == name)
+    }
+}
+
+/// The address space of a page opened from disk. The behaviour DEC-7315
+/// follows makes it this computer's own, so its script reaches this
+/// computer and the local network unasked; whether NeoTeletext does the
+/// same is with the owner and not yet decided, and this one value is
+/// where either answer is set ([`AddressSpace::Public`] makes such a
+/// page ask).
+pub const FILE_PAGE_SPACE: AddressSpace = AddressSpace::Loopback;
 
 /// The referrer a request starts with (the Fetch standard's request
 /// referrer).
@@ -376,12 +471,14 @@ const REFERRER_URL: u8 = 2;
 pub enum BodySource {
     /// No body.
     None,
-    /// Bytes the script holds, which a redirect may send again;
-    /// [`ToWebClient::RequestBody`] messages and a
-    /// [`ToWebClient::RequestBodyEnd`] follow.
-    Bytes,
+    /// Bytes the script holds, this many, at most
+    /// [`MAX_REQUEST_BODY_BYTES`], which a redirect may send again;
+    /// [`ToWebClient::RequestBody`] messages of that many bytes together
+    /// and a [`ToWebClient::RequestBodyEnd`] follow.
+    Bytes(u32),
     /// A stream, which cannot be sent twice (the Fetch standard's body
-    /// with a null source); the same messages follow.
+    /// with a null source); the same messages follow. Version 1's script
+    /// host never sends it (departure D7).
     Stream,
 }
 
@@ -392,43 +489,32 @@ const BODY_STREAM: u8 = 2;
 /// A header: its name, and its value's bytes.
 pub type Header = (String, Vec<u8>);
 
-/// A request's start.
+/// A request's start, as a script host writes it. Every field is the
+/// script host's word and hostile input to the web client, which holds
+/// each to the channel's policy before it acts. What the web client must
+/// know and a script must not say (its tab, its partition) is not here:
+/// the trusted core adds the tab before the message and the token before
+/// these fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Start {
-    /// The request's number, the trusted core's choice, which every later
-    /// message of the request carries.
+    /// The request's number, the script host's choice, unique for its
+    /// container's life, which every later message of the request
+    /// carries. A web client knows a request by its tab and this.
     pub id: u32,
-    /// The tab it belongs to: its requests are counted and closed
-    /// together.
-    pub tab: u32,
-    /// The jar of windows: 0 the ordinary windows', another a private
-    /// window's. With [`Start::channel`] it names the partition the
-    /// request belongs to (neoteletext-common's DEC-7264). A web client
-    /// process serves one partition, the one it was started for (the
-    /// browser's DEC-7268): a start that names another ends the process.
-    pub jar: u32,
-    /// The identity of the channel asking, as the trusted core knows it:
-    /// the address of its folder, ending in `/` (the browser's REQ-712).
-    /// Never the script's word.
-    pub channel: String,
+    /// The context asking, so that a page's requests end with it.
+    pub context: ContextId,
     /// What it is for.
     pub kind: RequestKind,
-    /// The method, as the script side normalized it.
+    /// The method: an RFC 9110 token as the script side normalized it,
+    /// never `CONNECT`, `TRACE` or `TRACK`.
     pub method: String,
-    /// The address, absolute.
+    /// The address, absolute, as the host's parser serialised it: `http:`
+    /// or `https:`, or for a WebSocket `ws:` or `wss:`.
     pub url: String,
-    /// The address of the page asking, from which its origin and its
-    /// referrer come; empty for a page with no address, whose origin is
-    /// opaque.
+    /// The address of the page asking, from which its referrer comes;
+    /// empty for none. The web client trusts it only as far as its
+    /// partition's channel holds it.
     pub client: String,
-    /// The address space the page asking was itself loaded from: that of
-    /// the address its answer came from, as the trusted core noted it;
-    /// for a page the viewer asked for by hand, [`AddressSpace::Loopback`],
-    /// the viewer being at this computer; for a page opened from disk,
-    /// [`FILE_PAGE_SPACE`]. Only a page of [`AddressSpace::Public`] needs
-    /// the viewer's permission for this computer or the local network
-    /// (neoteletext-common's DEC-7315).
-    pub client_space: AddressSpace,
     /// The headers the script set.
     pub headers: Vec<Header>,
     /// The request mode.
@@ -449,6 +535,12 @@ pub struct Start {
     pub keepalive: bool,
     /// Where the body comes from.
     pub body: BodySource,
+    /// A WebSocket's subprotocols, at most [`MAX_WS_PROTOCOLS`] distinct
+    /// tokens; none for any other kind.
+    pub protocols: Vec<String>,
+    /// An event stream's last event ID, for its `Last-Event-ID` header;
+    /// empty for none, and for any other kind.
+    pub last_event_id: String,
 }
 
 /// An answer's head.
@@ -467,16 +559,17 @@ pub struct Head {
     pub url: String,
     /// Whether a redirect was followed.
     pub redirected: bool,
-    /// The headers the script may read.
+    /// The headers the script may read: for a `cors` answer only the
+    /// CORS-safelisted names and those the server exposed, and never
+    /// `Set-Cookie`.
     pub headers: Vec<Header>,
 }
 
-/// A piece of a cookie jar written out (the browser's DEC-7268 item 3).
-/// The web client writes no file: after a change it sends its jar whole,
-/// in pieces, for the trusted core to seal and keep for its partition, and
-/// is given it back when a process for the partition next starts. The
-/// bytes are the web client's own writing and the trusted core reads none
-/// of them.
+/// A piece of a cookie jar written out (DEC-7268 item 3). The web client
+/// writes no file: after a change it sends its jar whole, in pieces, for
+/// the trusted core to seal and keep for its partition, and is given it
+/// back when a process for the partition next starts. The bytes are the
+/// web client's own writing and the trusted core reads none of them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JarPiece {
     /// Whether these are the cookies that end with the session, which the
@@ -486,13 +579,13 @@ pub struct JarPiece {
     /// Whether this is the part's last piece. The pieces of one part are
     /// at most [`MAX_JAR_BYTES`] together.
     pub last: bool,
-    /// At most [`MAX_BODY_PIECE`] bytes; none only in a last piece.
+    /// At most [`MAX_CHUNK_BYTES`] bytes; none only in a last piece.
     pub bytes: Vec<u8>,
 }
 
 impl JarPiece {
     fn check(&self) -> Result<(), ProtocolError> {
-        if self.bytes.len() > MAX_BODY_PIECE || (self.bytes.is_empty() && !self.last) { Err(ProtocolError::BadValue("jar piece")) } else { Ok(()) }
+        if self.bytes.len() > MAX_CHUNK_BYTES || (self.bytes.is_empty() && !self.last) { Err(ProtocolError::BadValue("jar piece")) } else { Ok(()) }
     }
 
     fn write(&self) -> Result<Vec<u8>, ProtocolError> {
@@ -503,13 +596,15 @@ impl JarPiece {
     }
 
     fn read(fields: &mut Fields<'_>) -> Result<Self, ProtocolError> {
-        let piece = Self { session: fields.flag("session")?, last: fields.flag("last")?, bytes: fields.take(fields.remaining())?.to_vec() };
+        let piece = Self { session: fields.flag("session")?, last: fields.flag("last")?, bytes: fields.rest().to_vec() };
         piece.check()?;
         Ok(piece)
     }
 }
 
-/// From the trusted core to the web client.
+/// To the web client. A script host writes the requests' messages; the
+/// trusted core alone writes [`ToWebClient::TabCloses`],
+/// [`ToWebClient::JarKept`] and [`ToWebClient::ForgetJar`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToWebClient {
     /// A request starts.
@@ -518,7 +613,7 @@ pub enum ToWebClient {
     RequestBody {
         /// The request's number.
         id: u32,
-        /// At most [`MAX_BODY_PIECE`] bytes, and not none.
+        /// At most [`MAX_CHUNK_BYTES`] bytes, and not none.
         bytes: Vec<u8>,
     },
     /// A request's body is complete.
@@ -526,51 +621,63 @@ pub enum ToWebClient {
     /// A request is aborted; a [`FromWebClient::Failed`] answers, unless
     /// the request had already ended.
     Abort(u32),
-    /// Room for this many more bytes of a request's answer.
+    /// The script consumed this many bytes of a request's answer: room
+    /// for as many more.
     More {
         /// The request's number.
         id: u32,
         /// The bytes, not none; a request never has more than
-        /// [`MAX_ROOM`] at once.
+        /// [`MAX_NETWORK_BUFFER_BYTES`] of room at once.
         bytes: u32,
     },
-    /// A tab closes: each of its requests is aborted, unanswered.
-    TabCloses(u32),
-    /// A piece of the partition's cookie jar as the trusted core kept it,
-    /// given before the first request.
-    JarKept(JarPiece),
-    /// Reserved: a message to send on a WebSocket.
+    /// A piece of a message to send on a WebSocket.
     SocketSend {
         /// The request's number.
         id: u32,
         /// Whether binary, else text.
         binary: bool,
-        /// At most [`MAX_BODY_PIECE`] bytes.
+        /// Whether this is the message's last piece.
+        last: bool,
+        /// At most [`MAX_CHUNK_BYTES`] bytes; none only in a last piece.
         bytes: Vec<u8>,
     },
-    /// Reserved: a WebSocket's close, from the script.
+    /// A WebSocket's close, from the script.
     SocketClose {
         /// The request's number.
         id: u32,
         /// The close code.
         code: u16,
-        /// The reason.
+        /// The reason, at most [`MAX_CLOSE_REASON_BYTES`].
         reason: String,
     },
+    /// A context of the tab ends while the tab stays: each of its
+    /// requests is aborted, unanswered, but those with keepalive.
+    ContextCloses(ContextId),
+    /// The tab closes: each of its requests is aborted, unanswered, but
+    /// those with keepalive. The trusted core's alone.
+    TabCloses,
+    /// A piece of the partition's cookie jar as the trusted core kept it,
+    /// given before the first request. The trusted core's alone.
+    JarKept(JarPiece),
+    /// The process forgets its one jar, and every kept state with it. The
+    /// trusted core's alone.
+    ForgetJar,
 }
 
-/// From the web client to the trusted core. A fetcher is untrusted.
+/// From the web client, which is untrusted. A script host is given the
+/// answers' messages; [`FromWebClient::Confined`] and
+/// [`FromWebClient::Jar`] are for the trusted core alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FromWebClient {
     /// It is confined and running, said first as every helper says it.
     Confined,
     /// An answer's head.
     Head(Box<Head>),
-    /// The next bytes of an answer's body.
+    /// The next bytes of an answer's body, within the room given.
     Body {
         /// The request's number.
         id: u32,
-        /// At most [`MAX_BODY_PIECE`] bytes, and not none.
+        /// At most [`MAX_CHUNK_BYTES`] bytes, and not none.
         bytes: Vec<u8>,
     },
     /// An answer's body is complete; nothing follows for the request.
@@ -581,16 +688,17 @@ pub enum FromWebClient {
         id: u32,
         /// The error the script is given.
         error: ErrorKind,
-        /// Why, for the console.
+        /// Why, for the developer log; the script host never gives it to
+        /// the script.
         reason: Reason,
     },
-    /// An event stream is open, or a WebSocket (reserved).
+    /// An event stream is open, or a WebSocket.
     Opened {
         /// The request's number.
         id: u32,
-        /// The address that answered, whose origin is each event's; for a
-        /// WebSocket, the subprotocol the server chose.
-        text: String,
+        /// For a WebSocket, the subprotocol the server chose; empty for
+        /// none, and for an event stream.
+        protocol: String,
     },
     /// An event of an event stream.
     Event {
@@ -606,19 +714,18 @@ pub enum FromWebClient {
     /// An event stream's connection was lost and will be made again: the
     /// script's `error` event with the stream still connecting.
     Retrying(u32),
-    /// Reserved: a message received on a WebSocket.
+    /// A piece of a message received on a WebSocket.
     SocketMessage {
         /// The request's number.
         id: u32,
         /// Whether binary, else text.
         binary: bool,
-        /// At most [`MAX_BODY_PIECE`] bytes.
+        /// Whether this is the message's last piece.
+        last: bool,
+        /// At most [`MAX_CHUNK_BYTES`] bytes; none only in a last piece.
         bytes: Vec<u8>,
     },
-    /// A piece of the partition's cookie jar, written out after a change
-    /// for the trusted core to keep.
-    Jar(JarPiece),
-    /// Reserved: a WebSocket closed.
+    /// A WebSocket closed.
     SocketClosed {
         /// The request's number.
         id: u32,
@@ -629,10 +736,22 @@ pub enum FromWebClient {
         /// Whether the closing handshake completed.
         clean: bool,
     },
+    /// Bytes of a request's body or of a WebSocket's messages were
+    /// written to the network: for `bufferedAmount` and the flow of an
+    /// upload.
+    Sent {
+        /// The request's number.
+        id: u32,
+        /// How many, not none and at most [`MAX_REQUEST_BODY_BYTES`].
+        bytes: u32,
+    },
+    /// A piece of the partition's cookie jar, written out after a change
+    /// for the trusted core to keep. Never relayed to a script host.
+    Jar(JarPiece),
 }
 
 /// Whether `byte` is a token character (RFC 9110 section 5.6.2), of which
-/// a method and a header name are made.
+/// a method, a header name and a subprotocol are made.
 #[must_use]
 pub const fn is_token_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~')
@@ -646,13 +765,16 @@ pub fn is_header_value(value: &[u8]) -> bool {
     !value.iter().any(|&byte| matches!(byte, 0 | b'\r' | b'\n')) && !edge(value.first()) && !edge(value.last())
 }
 
+/// The methods the Fetch standard forbids, compared without case.
+const FORBIDDEN_METHODS: [&str; 3] = ["CONNECT", "TRACE", "TRACK"];
+
 fn check_token(text: &str, max: usize, what: &'static str) -> Result<(), ProtocolError> {
     if text.is_empty() || text.len() > max || !text.bytes().all(is_token_byte) { Err(ProtocolError::BadValue(what)) } else { Ok(()) }
 }
 
 /// An address on the pipe: visible ASCII, as the URL standard writes one.
 fn check_url(text: &str, what: &'static str) -> Result<(), ProtocolError> {
-    if text.len() > MAX_URL || !text.bytes().all(|byte| byte.is_ascii_graphic()) { Err(ProtocolError::BadValue(what)) } else { Ok(()) }
+    if text.len() > MAX_URL_BYTES || !text.bytes().all(|byte| byte.is_ascii_graphic()) { Err(ProtocolError::BadValue(what)) } else { Ok(()) }
 }
 
 fn check_headers(headers: &[Header], most: usize) -> Result<(), ProtocolError> {
@@ -661,8 +783,8 @@ fn check_headers(headers: &[Header], most: usize) -> Result<(), ProtocolError> {
     }
     let mut total = 0_usize;
     for (name, value) in headers {
-        check_token(name, MAX_HEADER_NAME, "header name")?;
-        if value.len() > MAX_HEADER_VALUE || !is_header_value(value) {
+        check_token(name, MAX_HEADER_NAME_BYTES, "header name")?;
+        if value.len() > MAX_HEADER_VALUE_BYTES || !is_header_value(value) {
             return Err(ProtocolError::BadValue("header value"));
         }
         total = total.saturating_add(name.len()).saturating_add(value.len());
@@ -670,8 +792,15 @@ fn check_headers(headers: &[Header], most: usize) -> Result<(), ProtocolError> {
     if total > MAX_HEADER_BYTES { Err(ProtocolError::BadValue("headers too long")) } else { Ok(()) }
 }
 
+/// A piece of a body: not none.
 fn check_piece(bytes: &[u8]) -> Result<(), ProtocolError> {
-    if bytes.is_empty() || bytes.len() > MAX_BODY_PIECE { Err(ProtocolError::BadValue("body piece")) } else { Ok(()) }
+    if bytes.is_empty() || bytes.len() > MAX_CHUNK_BYTES { Err(ProtocolError::BadValue("body piece")) } else { Ok(()) }
+}
+
+/// A piece of a WebSocket message: none only when it is the last, since a
+/// message may be empty.
+fn check_socket_piece(bytes: &[u8], last: bool) -> Result<(), ProtocolError> {
+    if bytes.len() > MAX_CHUNK_BYTES || (bytes.is_empty() && !last) { Err(ProtocolError::BadValue("socket piece")) } else { Ok(()) }
 }
 
 fn check_text(text: &str, max: usize, what: &'static str) -> Result<(), ProtocolError> {
@@ -681,7 +810,7 @@ fn check_text(text: &str, max: usize, what: &'static str) -> Result<(), Protocol
 /// A status text: visible ASCII, spaces and tabs (RFC 9112 section 4,
 /// without its obsolete bytes).
 fn check_status_text(text: &str) -> Result<(), ProtocolError> {
-    if text.len() > MAX_STATUS_TEXT || !text.bytes().all(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\t')) {
+    if text.len() > MAX_STATUS_TEXT_BYTES || !text.bytes().all(|byte| byte.is_ascii_graphic() || matches!(byte, b' ' | b'\t')) {
         Err(ProtocolError::BadValue("status text"))
     } else {
         Ok(())
@@ -689,37 +818,28 @@ fn check_status_text(text: &str) -> Result<(), ProtocolError> {
 }
 
 fn check_room(bytes: u32) -> Result<(), ProtocolError> {
-    if bytes == 0 || bytes > MAX_ROOM { Err(ProtocolError::BadValue("room")) } else { Ok(()) }
+    if bytes == 0 || bytes > MAX_NETWORK_BUFFER_BYTES { Err(ProtocolError::BadValue("room")) } else { Ok(()) }
+}
+
+fn check_sent(bytes: u32) -> Result<(), ProtocolError> {
+    if bytes == 0 || usize::try_from(bytes).is_ok_and(|bytes| bytes > MAX_REQUEST_BODY_BYTES) { Err(ProtocolError::BadValue("sent")) } else { Ok(()) }
+}
+
+/// A subprotocol the server chose: a token, or empty for none.
+fn check_protocol(text: &str) -> Result<(), ProtocolError> {
+    if text.is_empty() { Ok(()) } else { check_token(text, MAX_SUBPROTOCOL_BYTES, "subprotocol") }
 }
 
 /// A status a head may carry: 0 for an unreadable answer, else a final
 /// HTTP status (RFC 9110 section 15).
 fn check_status(status: u16, response_type: ResponseType) -> Result<(), ProtocolError> {
-    let unreadable = matches!(response_type, ResponseType::Opaque | ResponseType::OpaqueRedirect);
+    let unreadable = matches!(response_type, ResponseType::OpaqueRedirect);
     if (unreadable && status == 0) || (!unreadable && (200..=599).contains(&status)) { Ok(()) } else { Err(ProtocolError::BadValue("status")) }
-}
-
-fn push_bytes(payload: &mut Vec<u8>, bytes: &[u8]) -> Result<(), ProtocolError> {
-    payload.extend_from_slice(&u32::try_from(bytes.len()).map_err(|_| ProtocolError::BadValue("length"))?.to_be_bytes());
-    payload.extend_from_slice(bytes);
-    Ok(())
-}
-
-fn take_bytes<'a>(fields: &mut Fields<'a>, max: usize, what: &'static str) -> Result<&'a [u8], ProtocolError> {
-    let length = usize::try_from(fields.u32()?).map_err(|_| ProtocolError::BadValue(what))?;
-    if length > max {
-        return Err(ProtocolError::BadValue(what));
-    }
-    fields.take(length)
-}
-
-fn take_string(fields: &mut Fields<'_>, max: usize, what: &'static str) -> Result<String, ProtocolError> {
-    std::str::from_utf8(take_bytes(fields, max, what)?).map(str::to_owned).map_err(|_| ProtocolError::BadValue(what))
 }
 
 fn push_headers(payload: &mut Vec<u8>, headers: &[Header], most: usize) -> Result<(), ProtocolError> {
     check_headers(headers, most)?;
-    payload.extend_from_slice(&u16::try_from(headers.len()).map_err(|_| ProtocolError::BadValue("too many headers"))?.to_be_bytes());
+    crate::push_count(payload, headers.len(), most, "too many headers")?;
     for (name, value) in headers {
         push_bytes(payload, name.as_bytes())?;
         push_bytes(payload, value)?;
@@ -731,8 +851,8 @@ fn take_headers(fields: &mut Fields<'_>, most: usize) -> Result<Vec<Header>, Pro
     let count = fields.count_u16(most, "too many headers")?;
     let mut headers = Vec::with_capacity(count);
     for _ in 0..count {
-        let name = take_string(fields, MAX_HEADER_NAME, "header name")?;
-        let value = take_bytes(fields, MAX_HEADER_VALUE, "header value")?.to_vec();
+        let name = fields.string(MAX_HEADER_NAME_BYTES, "header name")?;
+        let value = fields.bytes(MAX_HEADER_VALUE_BYTES, "header value")?.to_vec();
         headers.push((name, value));
     }
     check_headers(&headers, most)?;
@@ -745,22 +865,44 @@ impl Start {
     /// # Errors
     /// [`ProtocolError::BadValue`] naming the first that does not.
     pub fn check(&self) -> Result<(), ProtocolError> {
-        check_token(&self.method, MAX_METHOD, "method")?;
+        check_token(&self.method, MAX_METHOD_BYTES, "method")?;
+        if FORBIDDEN_METHODS.iter().any(|forbidden| self.method.eq_ignore_ascii_case(forbidden)) {
+            return Err(ProtocolError::BadValue("method"));
+        }
         check_url(&self.url, "address")?;
-        if self.url.is_empty() {
+        let socket = self.kind == RequestKind::WebSocket;
+        let schemes: [&str; 2] = if socket { ["ws://", "wss://"] } else { ["http://", "https://"] };
+        if !schemes.iter().any(|scheme| self.url.starts_with(scheme)) {
             return Err(ProtocolError::BadValue("address"));
         }
         check_url(&self.client, "client address")?;
-        check_url(&self.channel, "channel identity")?;
-        if !self.channel.ends_with('/') {
-            return Err(ProtocolError::BadValue("channel identity"));
-        }
         check_headers(&self.headers, MAX_REQUEST_HEADERS)?;
         if let Referrer::Url(url) = &self.referrer {
             check_url(url, "referrer")?;
         }
-        if self.integrity.len() > MAX_INTEGRITY || !self.integrity.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ') {
+        if self.integrity.len() > MAX_INTEGRITY_BYTES || !self.integrity.bytes().all(|byte| byte.is_ascii_graphic() || byte == b' ') {
             return Err(ProtocolError::BadValue("integrity"));
+        }
+        if let BodySource::Bytes(length) = self.body
+            && usize::try_from(length).is_ok_and(|length| length > MAX_REQUEST_BODY_BYTES)
+        {
+            return Err(ProtocolError::BadValue("body length"));
+        }
+        if self.protocols.len() > MAX_WS_PROTOCOLS || (!socket && !self.protocols.is_empty()) {
+            return Err(ProtocolError::BadValue("subprotocols"));
+        }
+        for (place, protocol) in self.protocols.iter().enumerate() {
+            check_token(protocol, MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
+            if self.protocols.iter().take(place).any(|earlier| earlier == protocol) {
+                return Err(ProtocolError::BadValue("subprotocols"));
+            }
+        }
+        // It becomes a header's value, so it is held to one.
+        if self.last_event_id.len() > MAX_EVENT_ID_BYTES
+            || (self.kind != RequestKind::EventSource && !self.last_event_id.is_empty())
+            || self.last_event_id.bytes().any(|byte| matches!(byte, 0 | b'\r' | b'\n'))
+        {
+            return Err(ProtocolError::BadValue("last event ID"));
         }
         Ok(())
     }
@@ -768,27 +910,27 @@ impl Start {
     fn write(&self, payload: &mut Vec<u8>) -> Result<(), ProtocolError> {
         self.check()?;
         payload.extend_from_slice(&self.id.to_be_bytes());
-        payload.extend_from_slice(&self.tab.to_be_bytes());
-        payload.extend_from_slice(&self.jar.to_be_bytes());
         payload.extend_from_slice(&[
+            self.context.code(),
             self.kind.code(),
             self.mode.code(),
             self.credentials.code(),
             self.cache.code(),
             self.redirect.code(),
             self.referrer_policy.code(),
-            self.client_space.code(),
             u8::from(self.keepalive),
-            match self.body {
-                BodySource::None => BODY_NONE,
-                BodySource::Bytes => BODY_BYTES,
-                BodySource::Stream => BODY_STREAM,
-            },
         ]);
+        match self.body {
+            BodySource::None => payload.push(BODY_NONE),
+            BodySource::Bytes(length) => {
+                payload.push(BODY_BYTES);
+                payload.extend_from_slice(&length.to_be_bytes());
+            }
+            BodySource::Stream => payload.push(BODY_STREAM),
+        }
         push_bytes(payload, self.method.as_bytes())?;
         push_bytes(payload, self.url.as_bytes())?;
         push_bytes(payload, self.client.as_bytes())?;
-        push_bytes(payload, self.channel.as_bytes())?;
         match &self.referrer {
             Referrer::None => payload.push(REFERRER_NONE),
             Referrer::Client => payload.push(REFERRER_CLIENT),
@@ -798,49 +940,54 @@ impl Start {
             }
         }
         push_bytes(payload, self.integrity.as_bytes())?;
-        push_headers(payload, &self.headers, MAX_REQUEST_HEADERS)
+        push_headers(payload, &self.headers, MAX_REQUEST_HEADERS)?;
+        crate::push_count(payload, self.protocols.len(), MAX_WS_PROTOCOLS, "subprotocols")?;
+        for protocol in &self.protocols {
+            push_bytes(payload, protocol.as_bytes())?;
+        }
+        push_bytes(payload, self.last_event_id.as_bytes())
     }
 
     fn read(fields: &mut Fields<'_>) -> Result<Self, ProtocolError> {
         let id = fields.u32()?;
-        let tab = fields.u32()?;
-        let jar = fields.u32()?;
+        let context = ContextId::of(fields.u8()?)?;
         let kind = RequestKind::of(fields.u8()?)?;
         let mode = Mode::of(fields.u8()?)?;
         let credentials = Credentials::of(fields.u8()?)?;
         let cache = CacheMode::of(fields.u8()?)?;
         let redirect = RedirectMode::of(fields.u8()?)?;
         let referrer_policy = ReferrerPolicy::of(fields.u8()?)?;
-        let client_space = AddressSpace::of(fields.u8()?)?;
         let keepalive = fields.flag("keepalive")?;
         let body = match fields.u8()? {
             BODY_NONE => BodySource::None,
-            BODY_BYTES => BodySource::Bytes,
+            BODY_BYTES => BodySource::Bytes(fields.u32()?),
             BODY_STREAM => BodySource::Stream,
             _ => return Err(ProtocolError::BadValue("body source")),
         };
-        let method = take_string(fields, MAX_METHOD, "method")?;
-        let url = take_string(fields, MAX_URL, "address")?;
-        let client = take_string(fields, MAX_URL, "client address")?;
-        let channel = take_string(fields, MAX_URL, "channel identity")?;
+        let method = fields.string(MAX_METHOD_BYTES, "method")?;
+        let url = fields.string(MAX_URL_BYTES, "address")?;
+        let client = fields.string(MAX_URL_BYTES, "client address")?;
         let referrer = match fields.u8()? {
             REFERRER_NONE => Referrer::None,
             REFERRER_CLIENT => Referrer::Client,
-            REFERRER_URL => Referrer::Url(take_string(fields, MAX_URL, "referrer")?),
+            REFERRER_URL => Referrer::Url(fields.string(MAX_URL_BYTES, "referrer")?),
             _ => return Err(ProtocolError::BadValue("referrer")),
         };
-        let integrity = take_string(fields, MAX_INTEGRITY, "integrity")?;
+        let integrity = fields.string(MAX_INTEGRITY_BYTES, "integrity")?;
         let headers = take_headers(fields, MAX_REQUEST_HEADERS)?;
+        let count = fields.count_u16(MAX_WS_PROTOCOLS, "subprotocols")?;
+        let mut protocols = Vec::with_capacity(count);
+        for _ in 0..count {
+            protocols.push(fields.string(MAX_SUBPROTOCOL_BYTES, "subprotocol")?);
+        }
+        let last_event_id = fields.string(MAX_EVENT_ID_BYTES, "last event ID")?;
         let start = Self {
             id,
-            tab,
-            jar,
-            channel,
+            context,
             kind,
             method,
             url,
             client,
-            client_space,
             headers,
             mode,
             credentials,
@@ -851,6 +998,8 @@ impl Start {
             integrity,
             keepalive,
             body,
+            protocols,
+            last_event_id,
         };
         start.check()?;
         Ok(start)
@@ -885,8 +1034,8 @@ impl Head {
         let response_type = ResponseType::of(fields.u8()?)?;
         let status = fields.u16()?;
         let redirected = fields.flag("redirected")?;
-        let status_text = take_string(fields, MAX_STATUS_TEXT, "status text")?;
-        let url = take_string(fields, MAX_URL, "address")?;
+        let status_text = fields.string(MAX_STATUS_TEXT_BYTES, "status text")?;
+        let url = fields.string(MAX_URL_BYTES, "address")?;
         let headers = take_headers(fields, MAX_RESPONSE_HEADERS)?;
         let head = Self { id, response_type, status, status_text, url, redirected, headers };
         head.check()?;
@@ -898,182 +1047,463 @@ fn with_id(id: u32) -> Vec<u8> {
     id.to_be_bytes().to_vec()
 }
 
-fn piece(id: u32, flag: Option<bool>, bytes: &[u8]) -> Result<Vec<u8>, ProtocolError> {
-    check_piece(bytes)?;
-    let mut payload = with_id(id);
-    if let Some(flag) = flag {
-        payload.push(u8::from(flag));
-    }
-    payload.extend_from_slice(bytes);
-    Ok(payload)
-}
-
-/// # Errors
-/// When writing fails or a field is out of its bounds.
-pub fn write_to_client(out: &mut dyn Write, message: &ToWebClient) -> Result<(), ProtocolError> {
-    match message {
-        ToWebClient::Start(start) => {
-            let mut payload = Vec::new();
-            start.write(&mut payload)?;
-            write_frame(out, KIND_START, &payload)
-        }
-        ToWebClient::RequestBody { id, bytes } => write_frame(out, KIND_REQUEST_BODY, &piece(*id, None, bytes)?),
-        ToWebClient::RequestBodyEnd(id) => write_frame(out, KIND_REQUEST_BODY_END, &with_id(*id)),
-        ToWebClient::Abort(id) => write_frame(out, KIND_ABORT, &with_id(*id)),
-        ToWebClient::More { id, bytes } => {
-            check_room(*bytes)?;
-            let mut payload = with_id(*id);
-            payload.extend_from_slice(&bytes.to_be_bytes());
-            write_frame(out, KIND_MORE, &payload)
-        }
-        ToWebClient::TabCloses(tab) => write_frame(out, KIND_TAB_CLOSES, &with_id(*tab)),
-        ToWebClient::JarKept(piece) => write_frame(out, KIND_JAR_KEPT, &piece.write()?),
-        ToWebClient::SocketSend { id, binary, bytes } => write_frame(out, KIND_SOCKET_SEND, &piece(*id, Some(*binary), bytes)?),
-        ToWebClient::SocketClose { id, code, reason } => {
-            check_text(reason, MAX_CLOSE_REASON, "close reason")?;
-            let mut payload = with_id(*id);
-            payload.extend_from_slice(&code.to_be_bytes());
-            payload.extend_from_slice(reason.as_bytes());
-            write_frame(out, KIND_SOCKET_CLOSE, &payload)
-        }
-    }
-}
-
-/// The rest of a payload as a body's piece.
-fn rest_piece(fields: &mut Fields<'_>) -> Result<Vec<u8>, ProtocolError> {
-    let bytes = fields.take(fields.remaining())?;
-    check_piece(bytes)?;
-    Ok(bytes.to_vec())
-}
-
 /// The rest of a payload as text of at most `max` bytes.
 fn rest_text(fields: &mut Fields<'_>, max: usize, what: &'static str) -> Result<String, ProtocolError> {
-    let bytes = fields.take(fields.remaining())?;
+    let bytes = fields.rest();
     if bytes.len() > max {
         return Err(ProtocolError::BadValue(what));
     }
     std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| ProtocolError::BadValue(what))
 }
 
-/// Reads one message from the trusted core, or `None` at a clean end.
-///
-/// # Errors
-/// On input errors, a kind the trusted core does not send here, and any
-/// payload that is malformed or out of its bounds.
-pub fn read_to_client(input: &mut dyn Read) -> Result<Option<ToWebClient>, ProtocolError> {
-    let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields::new(&payload);
-    let message = match kind {
-        KIND_START => ToWebClient::Start(Box::new(Start::read(&mut fields)?)),
-        KIND_REQUEST_BODY => ToWebClient::RequestBody { id: fields.u32()?, bytes: rest_piece(&mut fields)? },
-        KIND_REQUEST_BODY_END => ToWebClient::RequestBodyEnd(fields.u32()?),
-        KIND_ABORT => ToWebClient::Abort(fields.u32()?),
-        KIND_MORE => {
-            let id = fields.u32()?;
-            let bytes = fields.u32()?;
-            check_room(bytes)?;
-            ToWebClient::More { id, bytes }
-        }
-        KIND_TAB_CLOSES => ToWebClient::TabCloses(fields.u32()?),
-        KIND_JAR_KEPT => ToWebClient::JarKept(JarPiece::read(&mut fields)?),
-        KIND_SOCKET_SEND => ToWebClient::SocketSend { id: fields.u32()?, binary: fields.flag("binary")?, bytes: rest_piece(&mut fields)? },
-        KIND_SOCKET_CLOSE => {
-            ToWebClient::SocketClose { id: fields.u32()?, code: fields.u16()?, reason: rest_text(&mut fields, MAX_CLOSE_REASON, "close reason")? }
-        }
-        other => return Err(ProtocolError::UnknownKind(other)),
-    };
-    fields.end()?;
-    Ok(Some(message))
+/// Whether a script host may write a message of `kind`, and the trusted
+/// core relay it to the web client: the requests' kinds, and none of the
+/// trusted core's own.
+#[must_use]
+pub const fn is_request_kind(kind: u8) -> bool {
+    matches!(kind, KIND_START | KIND_REQUEST_BODY | KIND_REQUEST_BODY_END | KIND_ABORT | KIND_MORE | KIND_SOCKET_SEND | KIND_SOCKET_CLOSE | KIND_CONTEXT_CLOSES)
 }
 
-/// # Errors
-/// When writing fails or a field is out of its bounds.
-pub fn write_to_core(out: &mut dyn Write, message: &FromWebClient) -> Result<(), ProtocolError> {
-    match message {
-        FromWebClient::Confined => write_frame(out, KIND_CONFINED, &[]),
-        FromWebClient::Head(head) => {
-            let mut payload = Vec::new();
-            head.write(&mut payload)?;
-            write_frame(out, KIND_HEAD, &payload)
-        }
-        FromWebClient::Body { id, bytes } => write_frame(out, KIND_BODY, &piece(*id, None, bytes)?),
-        FromWebClient::End(id) => write_frame(out, KIND_END, &with_id(*id)),
-        FromWebClient::Failed { id, error, reason } => {
-            let mut payload = with_id(*id);
-            payload.extend_from_slice(&[error.code(), reason.code()]);
-            write_frame(out, KIND_FAILED, &payload)
-        }
-        FromWebClient::Opened { id, text } => {
-            check_url(text, "opened")?;
-            let mut payload = with_id(*id);
-            payload.extend_from_slice(text.as_bytes());
-            write_frame(out, KIND_OPENED, &payload)
-        }
-        FromWebClient::Event { id, event, data, last_id } => {
-            check_text(event, MAX_EVENT_TYPE, "event type")?;
-            check_text(data, MAX_EVENT_DATA, "event data")?;
-            check_text(last_id, MAX_EVENT_ID, "event ID")?;
-            let mut payload = with_id(*id);
-            push_bytes(&mut payload, event.as_bytes())?;
-            push_bytes(&mut payload, last_id.as_bytes())?;
-            push_bytes(&mut payload, data.as_bytes())?;
-            write_frame(out, KIND_EVENT, &payload)
-        }
-        FromWebClient::Retrying(id) => write_frame(out, KIND_RETRYING, &with_id(*id)),
-        FromWebClient::Jar(piece) => write_frame(out, KIND_JAR, &piece.write()?),
-        FromWebClient::SocketMessage { id, binary, bytes } => write_frame(out, KIND_SOCKET_MESSAGE, &piece(*id, Some(*binary), bytes)?),
-        FromWebClient::SocketClosed { id, code, reason, clean } => {
-            check_text(reason, MAX_CLOSE_REASON, "close reason")?;
-            let mut payload = with_id(*id);
-            payload.extend_from_slice(&code.to_be_bytes());
-            payload.push(u8::from(*clean));
-            payload.extend_from_slice(reason.as_bytes());
-            write_frame(out, KIND_SOCKET_CLOSED, &payload)
-        }
+/// Whether the trusted core relays a web client's message of `kind` to a
+/// script host: the answers' kinds, and neither `Confined` nor `Jar`.
+#[must_use]
+pub const fn is_answer_kind(kind: u8) -> bool {
+    matches!(
+        kind,
+        KIND_HEAD | KIND_BODY | KIND_END | KIND_FAILED | KIND_OPENED | KIND_EVENT | KIND_RETRYING | KIND_SOCKET_MESSAGE | KIND_SOCKET_CLOSED | KIND_SENT
+    )
+}
+
+impl ToWebClient {
+    /// The message's kind and its payload, in the host form.
+    fn payload(&self) -> Result<(u8, Vec<u8>), ProtocolError> {
+        Ok(match self {
+            Self::Start(start) => {
+                let mut payload = Vec::new();
+                start.write(&mut payload)?;
+                if payload.len() > MAX_HOST_START_BYTES {
+                    return Err(ProtocolError::TooLong(payload.len()));
+                }
+                (KIND_START, payload)
+            }
+            Self::RequestBody { id, bytes } => {
+                check_piece(bytes)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(bytes);
+                (KIND_REQUEST_BODY, payload)
+            }
+            Self::RequestBodyEnd(id) => (KIND_REQUEST_BODY_END, with_id(*id)),
+            Self::Abort(id) => (KIND_ABORT, with_id(*id)),
+            Self::More { id, bytes } => {
+                check_room(*bytes)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&bytes.to_be_bytes());
+                (KIND_MORE, payload)
+            }
+            Self::SocketSend { id, binary, last, bytes } => {
+                check_socket_piece(bytes, *last)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&[u8::from(*binary), u8::from(*last)]);
+                payload.extend_from_slice(bytes);
+                (KIND_SOCKET_SEND, payload)
+            }
+            Self::SocketClose { id, code, reason } => {
+                check_text(reason, MAX_CLOSE_REASON_BYTES, "close reason")?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&code.to_be_bytes());
+                payload.extend_from_slice(reason.as_bytes());
+                (KIND_SOCKET_CLOSE, payload)
+            }
+            Self::ContextCloses(context) => (KIND_CONTEXT_CLOSES, vec![context.code()]),
+            Self::TabCloses => (KIND_TAB_CLOSES, Vec::new()),
+            Self::JarKept(piece) => (KIND_JAR_KEPT, piece.write()?),
+            Self::ForgetJar => (KIND_FORGET_JAR, Vec::new()),
+        })
+    }
+
+    /// The message of `kind` whose host-form payload is `payload`.
+    fn parse(kind: u8, payload: &[u8]) -> Result<Self, ProtocolError> {
+        let mut fields = Fields::new(payload);
+        let message = match kind {
+            KIND_START => Self::Start(Box::new(Start::read(&mut fields)?)),
+            KIND_REQUEST_BODY => {
+                let id = fields.u32()?;
+                let bytes = fields.rest();
+                check_piece(bytes)?;
+                Self::RequestBody { id, bytes: bytes.to_vec() }
+            }
+            KIND_REQUEST_BODY_END => Self::RequestBodyEnd(fields.u32()?),
+            KIND_ABORT => Self::Abort(fields.u32()?),
+            KIND_MORE => {
+                let id = fields.u32()?;
+                let bytes = fields.u32()?;
+                check_room(bytes)?;
+                Self::More { id, bytes }
+            }
+            KIND_SOCKET_SEND => {
+                let (id, binary, last) = (fields.u32()?, fields.flag("binary")?, fields.flag("last")?);
+                let bytes = fields.rest();
+                check_socket_piece(bytes, last)?;
+                Self::SocketSend { id, binary, last, bytes: bytes.to_vec() }
+            }
+            KIND_SOCKET_CLOSE => {
+                Self::SocketClose { id: fields.u32()?, code: fields.u16()?, reason: rest_text(&mut fields, MAX_CLOSE_REASON_BYTES, "close reason")? }
+            }
+            KIND_CONTEXT_CLOSES => Self::ContextCloses(ContextId::of(fields.u8()?)?),
+            KIND_TAB_CLOSES => Self::TabCloses,
+            KIND_JAR_KEPT => Self::JarKept(JarPiece::read(&mut fields)?),
+            KIND_FORGET_JAR => Self::ForgetJar,
+            other => return Err(ProtocolError::UnknownKind(other)),
+        };
+        fields.end()?;
+        Ok(message)
+    }
+
+    /// Whether the message is for the process and no tab: the jar's.
+    const fn is_process(&self) -> bool {
+        matches!(self, Self::JarKept(_) | Self::ForgetJar)
     }
 }
 
-/// Reads one message from the web client, or `None` at a clean end.
+impl FromWebClient {
+    /// The message's kind and its payload.
+    fn payload(&self) -> Result<(u8, Vec<u8>), ProtocolError> {
+        Ok(match self {
+            Self::Confined => (KIND_CONFINED, Vec::new()),
+            Self::Head(head) => {
+                let mut payload = Vec::new();
+                head.write(&mut payload)?;
+                (KIND_HEAD, payload)
+            }
+            Self::Body { id, bytes } => {
+                check_piece(bytes)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(bytes);
+                (KIND_BODY, payload)
+            }
+            Self::End(id) => (KIND_END, with_id(*id)),
+            Self::Failed { id, error, reason } => {
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&[error.code(), reason.code()]);
+                (KIND_FAILED, payload)
+            }
+            Self::Opened { id, protocol } => {
+                check_protocol(protocol)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(protocol.as_bytes());
+                (KIND_OPENED, payload)
+            }
+            Self::Event { id, event, data, last_id } => {
+                check_text(event, MAX_EVENT_TYPE_BYTES, "event type")?;
+                check_text(data, MAX_EVENT_DATA_BYTES, "event data")?;
+                check_text(last_id, MAX_EVENT_ID_BYTES, "event ID")?;
+                let mut payload = with_id(*id);
+                push_bytes(&mut payload, event.as_bytes())?;
+                push_bytes(&mut payload, last_id.as_bytes())?;
+                push_bytes(&mut payload, data.as_bytes())?;
+                (KIND_EVENT, payload)
+            }
+            Self::Retrying(id) => (KIND_RETRYING, with_id(*id)),
+            Self::SocketMessage { id, binary, last, bytes } => {
+                check_socket_piece(bytes, *last)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&[u8::from(*binary), u8::from(*last)]);
+                payload.extend_from_slice(bytes);
+                (KIND_SOCKET_MESSAGE, payload)
+            }
+            Self::SocketClosed { id, code, reason, clean } => {
+                check_text(reason, MAX_CLOSE_REASON_BYTES, "close reason")?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&code.to_be_bytes());
+                payload.push(u8::from(*clean));
+                payload.extend_from_slice(reason.as_bytes());
+                (KIND_SOCKET_CLOSED, payload)
+            }
+            Self::Sent { id, bytes } => {
+                check_sent(*bytes)?;
+                let mut payload = with_id(*id);
+                payload.extend_from_slice(&bytes.to_be_bytes());
+                (KIND_SENT, payload)
+            }
+            Self::Jar(piece) => (KIND_JAR, piece.write()?),
+        })
+    }
+
+    /// The message of `kind` whose payload is `payload`.
+    fn parse(kind: u8, payload: &[u8]) -> Result<Self, ProtocolError> {
+        let mut fields = Fields::new(payload);
+        let message = match kind {
+            KIND_CONFINED => Self::Confined,
+            KIND_HEAD => Self::Head(Box::new(Head::read(&mut fields)?)),
+            KIND_BODY => {
+                let id = fields.u32()?;
+                let bytes = fields.rest();
+                check_piece(bytes)?;
+                Self::Body { id, bytes: bytes.to_vec() }
+            }
+            KIND_END => Self::End(fields.u32()?),
+            KIND_FAILED => Self::Failed { id: fields.u32()?, error: ErrorKind::of(fields.u8()?)?, reason: Reason::of(fields.u8()?)? },
+            KIND_OPENED => {
+                let id = fields.u32()?;
+                let protocol = rest_text(&mut fields, MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
+                check_protocol(&protocol)?;
+                Self::Opened { id, protocol }
+            }
+            KIND_EVENT => {
+                let id = fields.u32()?;
+                let event = fields.string(MAX_EVENT_TYPE_BYTES, "event type")?;
+                let last_id = fields.string(MAX_EVENT_ID_BYTES, "event ID")?;
+                let data = fields.string(MAX_EVENT_DATA_BYTES, "event data")?;
+                Self::Event { id, event, data, last_id }
+            }
+            KIND_RETRYING => Self::Retrying(fields.u32()?),
+            KIND_SOCKET_MESSAGE => {
+                let (id, binary, last) = (fields.u32()?, fields.flag("binary")?, fields.flag("last")?);
+                let bytes = fields.rest();
+                check_socket_piece(bytes, last)?;
+                Self::SocketMessage { id, binary, last, bytes: bytes.to_vec() }
+            }
+            KIND_SOCKET_CLOSED => {
+                let (id, code, clean) = (fields.u32()?, fields.u16()?, fields.flag("clean")?);
+                Self::SocketClosed { id, code, reason: rest_text(&mut fields, MAX_CLOSE_REASON_BYTES, "close reason")?, clean }
+            }
+            KIND_SENT => {
+                let (id, bytes) = (fields.u32()?, fields.u32()?);
+                check_sent(bytes)?;
+                Self::Sent { id, bytes }
+            }
+            KIND_JAR => Self::Jar(JarPiece::read(&mut fields)?),
+            other => return Err(ProtocolError::UnknownKind(other)),
+        };
+        fields.end()?;
+        Ok(message)
+    }
+
+    /// Whether the message is the process's and no tab's: for the trusted
+    /// core alone.
+    const fn is_process(&self) -> bool {
+        matches!(self, Self::Confined | Self::Jar(_))
+    }
+}
+
+/// Holds a message's tab to its kind: the process's own messages name
+/// [`PROCESS_TAB`], and a tab's never do.
+fn check_tab(tab: u32, process: bool) -> Result<(), ProtocolError> {
+    if (tab == PROCESS_TAB) == process { Ok(()) } else { Err(ProtocolError::BadValue("tab")) }
+}
+
+/// Writes a request's message as a script host writes it: the host form.
 ///
 /// # Errors
-/// On input errors, a kind a web client may not send (every
-/// `protocol::fetcher` kind among them), and any payload that is malformed
-/// or out of its bounds.
-pub fn read_from_client(input: &mut dyn Read) -> Result<Option<FromWebClient>, ProtocolError> {
+/// When writing fails, a field is out of its bounds, or the message is
+/// one only the trusted core may write.
+pub fn write_request(out: &mut dyn Write, message: &ToWebClient) -> Result<(), ProtocolError> {
+    let (kind, payload) = message.payload()?;
+    if !is_request_kind(kind) {
+        return Err(ProtocolError::BadValue("not a script host's message"));
+    }
+    write_frame(out, kind, &payload)
+}
+
+/// Reads one message a script host wrote, or `None` at a clean end: the
+/// host form, for whatever stands where the web client would without a
+/// trusted core between (the standalone runner, a test).
+///
+/// # Errors
+/// On input errors, a kind a script host may not write, and any payload
+/// that is malformed or out of its bounds.
+pub fn read_request(input: &mut dyn Read) -> Result<Option<ToWebClient>, ProtocolError> {
     let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
-    let mut fields = Fields::new(&payload);
-    let message = match kind {
-        KIND_CONFINED => FromWebClient::Confined,
-        KIND_HEAD => FromWebClient::Head(Box::new(Head::read(&mut fields)?)),
-        KIND_BODY => FromWebClient::Body { id: fields.u32()?, bytes: rest_piece(&mut fields)? },
-        KIND_END => FromWebClient::End(fields.u32()?),
-        KIND_FAILED => FromWebClient::Failed { id: fields.u32()?, error: ErrorKind::of(fields.u8()?)?, reason: Reason::of(fields.u8()?)? },
-        KIND_OPENED => {
-            let id = fields.u32()?;
-            let text = rest_text(&mut fields, MAX_URL, "opened")?;
-            check_url(&text, "opened")?;
-            FromWebClient::Opened { id, text }
+    if !is_request_kind(kind) {
+        return Err(ProtocolError::UnknownKind(kind));
+    }
+    ToWebClient::parse(kind, &payload).map(Some)
+}
+
+/// The trusted core's relay to a web client: moves every whole message at
+/// the front of `written`, which a script host of the tab `tab` wrote, to
+/// `out` in the client form, each after the tab's number and a `Start`
+/// with `token` before its fields. Only a kind and a length are read. A
+/// message not yet whole stays in `written` for the bytes that complete
+/// it.
+///
+/// # Errors
+/// [`ProtocolError::UnknownKind`] at a kind a script host may not write,
+/// and [`ProtocolError::TooLong`] at a length no message has. The
+/// messages before it are moved; it and what follows stay, and the caller
+/// ends the script host.
+pub fn relay_to_client(tab: u32, token: &PartitionToken, written: &mut Vec<u8>, out: &mut Vec<u8>) -> Result<(), ProtocolError> {
+    let mut moved = 0_usize;
+    let mut outcome = Ok(());
+    while let Some(header) = written.get(moved..).and_then(|rest| rest.first_chunk::<HEADER_BYTES>()) {
+        let [kind, length @ ..] = *header;
+        let length = u32::from_be_bytes(length) as usize;
+        if !is_request_kind(kind) {
+            outcome = Err(ProtocolError::UnknownKind(kind));
+            break;
         }
-        KIND_EVENT => {
-            let id = fields.u32()?;
-            let event = take_string(&mut fields, MAX_EVENT_TYPE, "event type")?;
-            let last_id = take_string(&mut fields, MAX_EVENT_ID, "event ID")?;
-            let data = take_string(&mut fields, MAX_EVENT_DATA, "event data")?;
-            FromWebClient::Event { id, event, data, last_id }
+        let start = kind == KIND_START;
+        if length > if start { MAX_HOST_START_BYTES } else { MAX_PAYLOAD } {
+            outcome = Err(ProtocolError::TooLong(length));
+            break;
         }
-        KIND_RETRYING => FromWebClient::Retrying(fields.u32()?),
-        KIND_JAR => FromWebClient::Jar(JarPiece::read(&mut fields)?),
-        KIND_SOCKET_MESSAGE => FromWebClient::SocketMessage { id: fields.u32()?, binary: fields.flag("binary")?, bytes: rest_piece(&mut fields)? },
-        KIND_SOCKET_CLOSED => {
-            let id = fields.u32()?;
-            let code = fields.u16()?;
-            let clean = fields.flag("clean")?;
-            FromWebClient::SocketClosed { id, code, reason: rest_text(&mut fields, MAX_CLOSE_REASON, "close reason")?, clean }
+        let from = moved.saturating_add(HEADER_BYTES);
+        let whole = from.saturating_add(length);
+        let Some(payload) = written.get(from..whole) else { break };
+        let relayed = if start { length.saturating_add(PARTITION_TOKEN_BYTES) } else { length };
+        let Ok(relayed) = u32::try_from(relayed) else {
+            outcome = Err(ProtocolError::TooLong(length));
+            break;
+        };
+        out.extend_from_slice(&tab.to_be_bytes());
+        out.push(kind);
+        out.extend_from_slice(&relayed.to_be_bytes());
+        if start {
+            out.extend_from_slice(token.bytes());
         }
-        other => return Err(ProtocolError::UnknownKind(other)),
+        out.extend_from_slice(payload);
+        moved = whole;
+    }
+    written.drain(..moved);
+    outcome
+}
+
+/// Writes `message` for the tab `tab` in the client form, as
+/// [`relay_to_client`] relays a script host's: what the trusted core
+/// writes of its own, with [`PROCESS_TAB`] for the jar's messages.
+///
+/// # Errors
+/// When writing fails, a field is out of its bounds, or the tab is not
+/// one the message may name.
+pub fn write_to_client(out: &mut dyn Write, tab: u32, token: &PartitionToken, message: &ToWebClient) -> Result<(), ProtocolError> {
+    check_tab(tab, message.is_process())?;
+    let (kind, mut payload) = message.payload()?;
+    if kind == KIND_START {
+        payload.splice(0..0, token.bytes().iter().copied());
+    }
+    out.write_all(&tab.to_be_bytes())?;
+    write_frame(out, kind, &payload)
+}
+
+/// Reads one message as the web client whose token is `own` reads it, with
+/// its tab, or `None` at a clean end.
+///
+/// # Errors
+/// On input errors, an unknown kind, any payload that is malformed or out
+/// of its bounds, a tab the message may not name, and a `Start` whose
+/// token is not `own`. Each ends the web client: it serves one partition,
+/// and a start for any other is never served (DEC-7268).
+pub fn read_to_client(input: &mut dyn Read, own: &PartitionToken) -> Result<Option<(u32, ToWebClient)>, ProtocolError> {
+    let Some(tab) = read_tab(input)? else { return Ok(None) };
+    let (kind, payload) = read_frame(input)?.ok_or_else(cut_short)?;
+    let message = if kind == KIND_START {
+        let mut fields = Fields::new(&payload);
+        if !own.is(&fields.array()?) {
+            return Err(ProtocolError::BadValue("partition token"));
+        }
+        ToWebClient::parse(kind, fields.rest())?
+    } else {
+        ToWebClient::parse(kind, &payload)?
     };
-    fields.end()?;
-    Ok(Some(message))
+    check_tab(tab, message.is_process())?;
+    Ok(Some((tab, message)))
+}
+
+/// Writes `message` as the web client writes it, for the tab `tab`: the
+/// client form, with [`PROCESS_TAB`] for `Confined` and `Jar`.
+///
+/// # Errors
+/// When writing fails, a field is out of its bounds, or the tab is not
+/// one the message may name.
+pub fn write_from_client(out: &mut dyn Write, tab: u32, message: &FromWebClient) -> Result<(), ProtocolError> {
+    check_tab(tab, message.is_process())?;
+    let (kind, payload) = message.payload()?;
+    out.write_all(&tab.to_be_bytes())?;
+    write_frame(out, kind, &payload)
+}
+
+/// Reads one message a web client wrote, whole, with its tab, or `None` at
+/// a clean end.
+///
+/// # Errors
+/// On input errors, a kind a web client may not send (every other pipe's
+/// kind among them), any payload that is malformed or out of its bounds,
+/// and a tab the message may not name.
+pub fn read_from_client(input: &mut dyn Read) -> Result<Option<(u32, FromWebClient)>, ProtocolError> {
+    let Some(tab) = read_tab(input)? else { return Ok(None) };
+    let (kind, payload) = read_frame(input)?.ok_or_else(cut_short)?;
+    let message = FromWebClient::parse(kind, &payload)?;
+    check_tab(tab, message.is_process())?;
+    Ok(Some((tab, message)))
+}
+
+/// What the trusted core takes from a web client's pipe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FromClientFrame {
+    /// A message for the trusted core itself, read whole:
+    /// [`FromWebClient::Confined`] or [`FromWebClient::Jar`].
+    Core(FromWebClient),
+    /// An answer for the script host of a tab, its payload unread.
+    Answer {
+        /// The tab.
+        tab: u32,
+        /// The message in the host form, to be written to that tab's
+        /// script host as it stands.
+        frame: Vec<u8>,
+    },
+}
+
+/// The trusted core's relay from a web client: reads one message in the
+/// client form, or `None` at a clean end. An answer is given back as the
+/// bytes a script host reads, known by its kind and length alone; only
+/// the process's own messages are parsed.
+///
+/// # Errors
+/// On input errors, a kind a web client may not send, a tab the kind may
+/// not name, and a malformed `Confined` or `Jar`.
+pub fn relay_from_client(input: &mut dyn Read) -> Result<Option<FromClientFrame>, ProtocolError> {
+    let Some(tab) = read_tab(input)? else { return Ok(None) };
+    let (kind, payload) = read_frame(input)?.ok_or_else(cut_short)?;
+    if is_answer_kind(kind) {
+        check_tab(tab, false)?;
+        let mut frame = Vec::with_capacity(HEADER_BYTES.saturating_add(payload.len()));
+        write_frame(&mut frame, kind, &payload)?;
+        return Ok(Some(FromClientFrame::Answer { tab, frame }));
+    }
+    if !matches!(kind, KIND_CONFINED | KIND_JAR) {
+        return Err(ProtocolError::UnknownKind(kind));
+    }
+    check_tab(tab, true)?;
+    FromWebClient::parse(kind, &payload).map(|message| Some(FromClientFrame::Core(message)))
+}
+
+/// Writes an answer's message in the host form, as a script host reads
+/// it: for whatever stands where the web client would without a trusted
+/// core between.
+///
+/// # Errors
+/// When writing fails, a field is out of its bounds, or the message is
+/// one a script host is never given.
+pub fn write_answer(out: &mut dyn Write, message: &FromWebClient) -> Result<(), ProtocolError> {
+    let (kind, payload) = message.payload()?;
+    if !is_answer_kind(kind) {
+        return Err(ProtocolError::BadValue("not a script host's message"));
+    }
+    write_frame(out, kind, &payload)
+}
+
+/// Reads one answer's message as a script host reads it, or `None` at a
+/// clean end. Every field is hostile input to the script host too.
+///
+/// # Errors
+/// On input errors, a kind a script host is never given, and any payload
+/// that is malformed or out of its bounds.
+pub fn read_answer(input: &mut dyn Read) -> Result<Option<FromWebClient>, ProtocolError> {
+    let Some((kind, payload)) = read_frame(input)? else { return Ok(None) };
+    if !is_answer_kind(kind) {
+        return Err(ProtocolError::UnknownKind(kind));
+    }
+    FromWebClient::parse(kind, &payload).map(Some)
 }
 
 #[cfg(test)]

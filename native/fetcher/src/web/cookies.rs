@@ -177,6 +177,13 @@ impl Jar {
         &self.suffixes
     }
 
+    /// Forgets every cookie.
+    pub(crate) fn forget(&mut self) {
+        self.store = CookieStore::new();
+        self.created.clear();
+        self.changed = true;
+    }
+
     /// How many cookies the jar keeps.
     pub(crate) fn count(&self) -> usize {
         self.created.len()
