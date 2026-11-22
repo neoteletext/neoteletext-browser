@@ -44,6 +44,7 @@ readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs na
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-raster/src/lib.rs native/draw-embedded/src/lib.rs
     native/web-opener/src/lib.rs native/dock-menu/src/lib.rs native/dbus/src/lib.rs native/secret-store/src/lib.rs native/dialog/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs native/script/src/lib.rs
+    native/script-run/src/lib.rs native/script-run/src/main.rs
     native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
 
@@ -138,7 +139,7 @@ readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-form
 readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
 # The packages that may hold the script engine's interpreter, and the one
 # interpreter they may hold.
-readonly SCRIPT_PACKAGES=(neoteletext-script)
+readonly SCRIPT_PACKAGES=(neoteletext-script neoteletext-script-run)
 readonly SCRIPT_INTERPRETER='wasmi'
 # Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
 # user interface or graphics toolkit; those are the interface's alone.
