@@ -32,12 +32,12 @@ fn said(output: &Output) -> String {
     format!("{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
 }
 
-/// The command line of the kept run: the folder, a channel's, with its
-/// page script named.
+/// The command line of the kept run: the folder, a channel's, whose
+/// channel file names the page's script.
 fn beacon_arguments() -> Vec<String> {
     let folder = beacon();
     let path = |name: &str| folder.join(name).to_str().unwrap().to_owned();
-    [path(""), "--script".into(), path("beacon.js"), "--ticks".into(), "40".into(), "--input".into(), path("input.txt"), "--png-at".into(), "0,39".into()]
+    [path(""), "--ticks".into(), "40".into(), "--input".into(), path("input.txt"), "--png-at".into(), "0,39".into()]
         .into_iter()
         .chain(["--expect".to_owned(), path("expect")])
         .collect()
@@ -119,31 +119,37 @@ fn each_exit_status() {
     assert!(said(&output).contains("usage:"));
 }
 
-/// "Runs a channel folder, one page of it, or one script": a folder with
-/// a channel file and a page file, the channel file and the page file
-/// read by the engine's readers, with one command; and the files a run
-/// writes where the command line says.
+/// "Runs a channel folder, one page of it, or one script": a channel's
+/// folder runs with one command and no script named on it. The channel
+/// file's `scripts` member names the channel's script and a page's, a TTI
+/// page file's `JS` line names its own, which is used before the channel
+/// file's entry for the same page (section 12.6), and all three are read
+/// by the engine's readers; and the files a run writes go where the
+/// command line says.
 #[test]
 fn a_channel_folder_runs_with_one_command() {
     let folder = scratch("channel");
-    std::fs::write(folder.join("channel.ttx"), r#"{"name": "Harbour", "initial_page": "101"}"#).unwrap();
-    std::fs::write(folder.join("101.tti"), "PN,10100\r\nSC,0000\r\nOL,4,TIDES\r\n").unwrap();
-    std::fs::write(
-        folder.join("101.js"),
-        r#"/*! nt {"api": 1, "renderer": "teletext"} */ console.log("on", nt.page.number, "of", nt.channel.title, nt.channel.url, nt.page.url);"#,
-    )
-    .unwrap();
-    std::fs::write(folder.join("channel.js"), r#"/*! nt {"api": 1} */ nt.addEventListener("pageshow", (event) => console.log("shows", event.page.url));"#)
-        .unwrap();
+    let write = |name: &str, text: &str| std::fs::write(folder.join(name), text).unwrap();
+    write(
+        "channel.ttx",
+        r#"{"name": "Harbour", "initial_page": "101", "scripts": {"channel": "channel.js", "pages": {"101": "tides.js", "102": "never.js"}}}"#,
+    );
+    write("101.tti", "PN,10100\r\nSC,0000\r\nOL,4,TIDES\r\n");
+    write("102.tti", "PN,10200\r\nSC,0000\r\nJS,boats.js\r\nOL,4,BOATS\r\n");
+    let says = |what: &str| {
+        format!(
+            r#"/*! nt {{"api": 1, "renderer": "teletext"}} */ console.log("{what} on", nt.page.number, "of", nt.channel.title, nt.channel.url, nt.page.url);"#
+        )
+    };
+    write("tides.js", &says("tides"));
+    write("boats.js", &says("boats"));
+    write("never.js", &says("never"));
+    write("channel.js", r#"/*! nt {"api": 1} */ nt.addEventListener("pageshow", (event) => console.log("shows", event.page.url));"#);
     let out = folder.join("out");
     let report = folder.join("report.json");
     let wav = folder.join("heard.wav");
     let output = runner(&[
         folder.to_str().unwrap(),
-        "--script",
-        folder.join("101.js").to_str().unwrap(),
-        "--channel-script",
-        folder.join("channel.js").to_str().unwrap(),
         "--ticks",
         "3",
         "--out",
@@ -157,7 +163,7 @@ fn a_channel_folder_runs_with_one_command() {
     ]);
     assert_eq!(output.status.code(), Some(0), "{}", said(&output));
     let all = said(&output);
-    assert!(all.contains("page log on 101 of Harbour https://harbour.test/boats/ https://harbour.test/boats/101.tti"), "{all}");
+    assert!(all.contains("page log tides on 101 of Harbour https://harbour.test/boats/ https://harbour.test/boats/101"), "{all}");
     assert!(all.contains("channel log shows https://harbour.test/boats/101"), "{all}");
     assert!(out.join("tick-000002.png").is_file() && out.join("log.txt").is_file() && out.join("budget.json").is_file());
     assert_eq!(std::fs::read(&wav).unwrap().len(), 44 + 3 * 800 * 2);
@@ -165,10 +171,27 @@ fn a_channel_folder_runs_with_one_command() {
     for member in ["\"stepMicroseconds\"", "\"ninthDecile\"", "\"outputBytes\"", "\"network\"", "\"events\"", "\"budget\"", "\"heapBytes\"", "\"most\""] {
         assert!(report.contains(member), "no {member} in {report}");
     }
-    // The page-level script of another page than the channel's first.
-    std::fs::write(folder.join("1A0.js"), r#"/*! nt {"api": 1, "renderer": "regis"} */ console.log("a JavaScript page", nt.page.number, nt.page.renderer);"#)
-        .unwrap();
-    let output = runner(&[folder.to_str().unwrap(), "--page", "1A0", "--script", folder.join("1A0.js").to_str().unwrap(), "--ticks", "1"]);
+    // The page file's own reference wins over the channel file's entry.
+    let output = runner(&[folder.to_str().unwrap(), "--page", "102", "--ticks", "1"]);
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    assert!(said(&output).contains("page log boats on 102") && !said(&output).contains("never on"), "{}", said(&output));
+    // A page file opened from disk finds the script it names in its own folder.
+    let output = runner(&[folder.join("102.tti").to_str().unwrap(), "--ticks", "1"]);
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    assert!(said(&output).contains("page log boats on 102"), "{}", said(&output));
+    // A page with no script of its own still runs the channel's.
+    write("103.tti", "PN,10300\r\nSC,0000\r\nOL,4,NOTHING\r\n");
+    let output = runner(&[folder.to_str().unwrap(), "--page", "103", "--ticks", "1"]);
+    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
+    assert!(said(&output).contains("channel log shows") && !said(&output).contains("page log"), "{}", said(&output));
+    // A script the channel names and its folder does not hold: bad files.
+    std::fs::remove_file(folder.join("tides.js")).unwrap();
+    let output = runner(&[folder.to_str().unwrap(), "--ticks", "1"]);
+    assert_eq!(output.status.code(), Some(4), "{}", said(&output));
+    assert!(said(&output).contains("tides.js"), "{}", said(&output));
+    // One script by itself is a JavaScript page, on the page asked for.
+    write("1A0.js", r#"/*! nt {"api": 1, "renderer": "regis"} */ console.log("a JavaScript page", nt.page.number, nt.page.renderer);"#);
+    let output = runner(&[folder.join("1A0.js").to_str().unwrap(), "--page", "1A0", "--ticks", "1"]);
     assert_eq!(output.status.code(), Some(0), "{}", said(&output));
     assert!(said(&output).contains("a JavaScript page 1A0 regis"), "{}", said(&output));
 }
@@ -246,32 +269,79 @@ fn the_hostile_scripts_each_end_as_a_run_or_a_stop() {
     println!("stopped under the browser's limits: {stopped:?}");
 }
 
+/// Runs one script against the kept results of `page`.
+fn kept_run(script: &Path, page: &str, arguments: &[&str]) -> String {
+    let kept = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pages").join(page);
+    let (input, expect) = (kept.join("input.txt"), kept.join("expect"));
+    let mut all = vec![script.to_str().unwrap()];
+    all.extend(arguments);
+    if input.is_file() {
+        all.extend(["--input", input.to_str().unwrap()]);
+    }
+    all.extend(["--expect", expect.to_str().unwrap()]);
+    let output = runner(&all);
+    let all = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{all}");
+    assert!(all.contains("matched the "), "{all}");
+    assert!(!all.contains("NOT DRAWN") && !all.contains("no snapshot"), "everything a batch holds is drawn by the decoder's own code: {all}");
+    all
+}
+
+fn library_script(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../script/tests").join(name)
+}
+
 /// The teletext API's worked example (script-api.md section 5.8; work
-/// package T1's `native/script/tests/teletext/101.js`) run against its
-/// kept results: the page plane it writes is drawn by the decoder's
-/// engine. Until the decoder's side of a step exists (work package F4)
-/// the runner's stand-in does not draw the example's overlay band or its
-/// defined colour, and the report must say so, never pass silently.
+/// package T1's `native/script/tests/teletext/101.js`) against its kept
+/// results, drawn whole by the decoder's own code: the page plane, the
+/// overlay band in the colour the script defined, and the clock written
+/// over it. The press on the page's control is picked by the decoder and
+/// heard, and navigates as the keys do.
 #[test]
 fn the_teletext_worked_example_matches_its_kept_run() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let kept = manifest.join("tests/pages/harbour");
-    let output = runner(&[
-        manifest.join("../script/tests/teletext/101.js").to_str().unwrap(),
-        "--page",
-        "101",
-        "--ticks",
-        "61",
-        "--input",
-        kept.join("input.txt").to_str().unwrap(),
-        "--png-at",
-        "0,60",
-        "--expect",
-        kept.join("expect").to_str().unwrap(),
-    ]);
-    assert_eq!(output.status.code(), Some(0), "{}", said(&output));
-    let all = said(&output);
-    assert!(all.contains("matched the 5 kept files"), "{all}");
-    assert!(all.contains("runner note navigate 103") && all.contains("runner note navigate 102"), "the keys 2 and 1 navigate: {all}");
-    assert!(all.contains("NOT DRAWN") && all.contains("teletext enhancement, teletext settings"), "{all}");
+    let all = kept_run(&library_script("teletext/101.js"), "harbour", &["--page", "101", "--ticks", "91", "--png-at", "0,90"]);
+    assert!(all.contains("000010 runner note navigate 103") && all.contains("000085 runner note navigate 102"), "the keys 2 and 1 navigate: {all}");
+    assert!(all.contains("000021 runner note verdicts h\n000021 runner note navigate 102"), "the release on the control is heard and navigates: {all}");
+}
+
+/// The teletext game of section 5.8 (work package T2's
+/// `native/script/tests/teletext/110.js`): sprites of sixel blocks over a
+/// sea of a defined colour, the boat steered by held keys, rocks falling
+/// and the score written, as the decoder draws them.
+#[test]
+fn the_teletext_game_matches_its_kept_run() {
+    kept_run(&library_script("teletext/110.js"), "boat", &["--page", "110", "--ticks", "240", "--png-at", "0,119,239"]);
+}
+
+/// The sixel bitmap's animation (section 5.7; work package T3's
+/// `native/script/tests/bitmap/animation.js`, which has no manifest of
+/// its own: the one the script library's test opens it with is put
+/// before it here): the whole page redrawn and presented on every tick.
+#[test]
+fn the_bitmap_animation_matches_its_kept_run() {
+    let folder = scratch("bitmap");
+    let script = folder.join("animation.js");
+    let body = std::fs::read_to_string(library_script("bitmap/animation.js")).unwrap();
+    std::fs::write(&script, format!("/*! nt {{\"api\": 1, \"renderer\": \"teletext\", \"tick\": 1}} */\n{body}")).unwrap();
+    let all = kept_run(&script, "bitmap", &["--ticks", "31", "--png-at", "0,30"]);
+    assert!(all.contains("000030 page log 30 "), "{all}");
+}
+
+/// The NAPLPS page of section 7.6 (work packages N1 and N2's
+/// `native/script/tests/naplps_page/harbour.js`): the backdrop painted
+/// with its two waits and its texture, the lamp lit by the colour map
+/// alone on a key, and set blinking on another.
+#[test]
+fn the_naplps_page_matches_its_kept_run() {
+    kept_run(&library_script("naplps_page/harbour.js"), "naplps-harbour", &["--page", "300", "--ticks", "240", "--png-at", "0,29,59,119,159,163"]);
+}
+
+/// The NAPLPS game of section 7.6 (work package N2's
+/// `native/script/tests/naplps_page/gull.js`): an actor of two frames
+/// cycling, steered by a held key, among actors that cross the picture,
+/// composed over the backdrop by the decoder.
+#[test]
+fn the_naplps_game_matches_its_kept_run() {
+    let all = kept_run(&library_script("naplps_page/gull.js"), "naplps-gull", &["--page", "301", "--ticks", "300", "--png-at", "0,150,299"]);
+    assert!(all.contains("runner note title Gull: "), "{all}");
 }

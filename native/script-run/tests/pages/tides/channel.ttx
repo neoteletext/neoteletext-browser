@@ -1,1 +1,1 @@
-{"name": "Tides", "initial_page": "100"}
+{"name": "Tides", "initial_page": "100", "scripts": {"pages": {"100": "tides.js"}}}

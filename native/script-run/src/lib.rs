@@ -13,10 +13,9 @@
 //! - [`args`]: the command line;
 //! - [`files`]: what is read from disk for a run, by the unconfined
 //!   process, and [`blobs`], how it reaches the confined one;
-//! - [`manifest`]: a script's manifest (section 3.1);
 //! - [`input`]: the input script (`--input`), every event of section 4.2;
 //! - [`network`]: the network modes (`--network`), over the web client's
-//!   own messages;
+//!   own messages, and [`live`], the real web client and a local server;
 //! - [`screen`] and [`sound`]: snapshots as PNG and WAV;
 //! - [`run`]: the stepped loop;
 //! - [`report`]: the budget, the times and the counts, as text and JSON;
@@ -48,7 +47,7 @@ pub mod files;
 pub mod input;
 pub mod json;
 pub mod limits;
-pub mod manifest;
+pub mod live;
 pub mod network;
 pub mod report;
 pub mod run;
