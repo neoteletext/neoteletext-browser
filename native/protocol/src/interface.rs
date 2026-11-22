@@ -170,6 +170,15 @@ pub enum ToInterface {
     /// (`interaction.md` section 11).
     #[cfg(feature = "interaction")]
     Typing(interaction::Typing),
+    /// The trusted core's word on the open page's program: whether it
+    /// runs, holds the keys or has stopped (script-api.md sections 3.1 and
+    /// 4.6), for the trusted indications.
+    #[cfg(feature = "interaction")]
+    Script(interface_core::browser::scripts::ScriptView),
+    /// A key the open page's program let through, or did not answer for
+    /// in time: its default action is taken (script-api.md section 4.1).
+    #[cfg(feature = "interaction")]
+    KeyDefault(interaction::script::KeyDefault),
     /// The last input event sent to a channel, with the trusted core's
     /// `--input-trace`, for the open page's row 0.
     #[cfg(feature = "interaction")]
@@ -352,6 +361,11 @@ pub enum ToCore {
     /// The wall of pages shows with no page zoomed: the tab has no page
     /// selected (neoteletext-common's DEC-1538 item 9).
     WallWithoutPage,
+    /// The viewer pressed the browser's own key that stops the program of
+    /// the active tab's page, which no page can claim (script-api.md
+    /// section 4.6; DEC-7282 item 6).
+    #[cfg(feature = "interaction")]
+    StopScripts,
     /// A key, text, the mouse, a paste or a composition on the open page,
     /// for its channel if it takes input (REQ-INT-130, REQ-INT-132).
     #[cfg(feature = "interaction")]
