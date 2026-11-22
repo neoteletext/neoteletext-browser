@@ -501,3 +501,21 @@ fn the_built_in_list_is_the_recorded_bytes() {
     assert!(bundled_suffixes().unwrap().is_some());
     println!("the list read in {:?}", started.elapsed());
 }
+
+/// DEC-7315 version 2 (TODO-7395 step 1): the jar of a page opened from
+/// disk keeps nothing, whether an answer sets it or the trusted core
+/// hands back what another jar wrote.
+#[test]
+fn a_closed_jar_keeps_nothing() {
+    let mut kept = jar();
+    assert!(kept.store(&url("https://www.shop.com/"), b"sid=1; Max-Age=600", SAME));
+    let written = kept.write(false);
+    let mut closed = Jar::closed();
+    assert!(!closed.store(&url("https://www.shop.com/"), b"sid=1", SAME));
+    closed.read_written(&written);
+    assert_eq!((closed.count(), sent(&closed, "https://www.shop.com/")), (0, None));
+    assert!(!closed.take_changed());
+    let mut open = jar();
+    open.read_written(&written);
+    assert_eq!(open.count(), 1, "the same bytes are a cookie to a jar that keeps");
+}
