@@ -1,0 +1,45 @@
+[package]
+name = "neoteletext-script"
+description = "The script library (script-api.md, DEC-7262): a channel's JavaScript run in QuickJS compiled to WebAssembly and interpreted by wasmi, in a container with a channel context and a page context, behind one flat host call"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# The interpreter's plain loop in place of its tail calls, whatever the
+# build. wasmi chooses between them by the profile's optimisation level
+# and debug assertions as its build script sees them; a build that turns
+# debug assertions on by compiler flags alone, as the fuzz targets' does,
+# is not seen, and would run tail calls that are not tail calls and nest
+# on the native stack until it overflows.
+portable-dispatch = ["wasmi/portable-dispatch"]
+
+[dependencies]
+# MIT or Apache-2.0, pure Rust: the WebAssembly interpreter the script
+# engine's module runs in, with fuel metering and memory limits (the
+# owner's DEC-7256; under the standing approval of pure-Rust libraries,
+# DEC-6579). `std`, `validate` and `auto-dispatch` and nothing else: no
+# text format, no 64-bit memories, no SIMD. `auto-dispatch` is wasmi's own
+# default: its interpreter loop is tail calls where the build is one in
+# which the compiler makes them (an optimised build without debug
+# assertions) and a plain loop otherwise. Without the feature it is tail
+# calls always, and in a build with debug assertions those nest on the
+# native stack until it overflows.
+wasmi = { version = "=2.0.2", default-features = false, features = ["std", "validate", "auto-dispatch"] }
+# HKDF-SHA-256 and ChaCha20, for a context's random sources (script-api.md
+# section 13 item 7; TODO-7279, TODO-7285 item 2).
+ring.workspace = true
+# The rule table's bounds on queued events and held keys, and the audio
+# channels, by name (script-api.md section 10.6).
+neoteletext-rules.workspace = true
+# The engine's largest frame, which bounds one step's output, by name.
+neoteletext-web.workspace = true
+# The synthesizer families' codec numbers, by name (script-api.md section 3.5).
+neoteletext-audio.workspace = true
+# The bound on the keys a page may claim, by name.
+protocol.workspace = true
+
+[lints]
+workspace = true
