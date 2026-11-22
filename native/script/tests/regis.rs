@@ -914,10 +914,11 @@ throws("a language", TypeError, "'xx' is not a language", paint((p) => p.text("x
 throws("a long string", RangeError, "MAX_TEXT_CHARS", paint((p) => p.text("x".repeat(1001))));
 throws("call takes a macrograph", TypeError, "call takes a Macrograph", paint((p) => p.call(d)));
 throws("a Macrograph is not constructed", TypeError, "a Macrograph is made by", () => new Macrograph());
-throws("after an arc", TypeError, "the position is where an arc", paint((p) => p.moveTo(40, 0).arc(0, 0, 90).lineTo(-5, 0)));
+d.draw((p) => p.moveTo(40, 0).arc(0, 0, 90).lineTo(-5, 0).call(star).lineTo(-9, 0).text("ab").lineTo(-1, -1));
+throws("a macrograph's body has no position", TypeError, "a macrograph is drawn wherever it is called", () => g.macrograph((p) => p.lineTo(-5, 0)));
 throws("a macrograph's text", TypeError, "a macrograph's text does not hold", () => g.macrograph((p) => p.text("a@;b")));
 throws("measure", TypeError, "measure takes a string", () => g.measure(5));
-equal("a refused draw leaves the contents", nt.budget().contentBytes.used > 100, true);
+equal("a refused draw leaves the contents", nt.budget().contentBytes.used > 30, true);
 done();
 "##;
     let mut container = regis_page(&script(body));
@@ -928,7 +929,11 @@ done();
     assert_eq!(receiver.commits, 1);
     let sent = String::from_utf8_lossy(batch.regis.as_ref().unwrap()).into_owned();
     assert!(sent.starts_with("D(S1(X100,Y100))@:AW(I3)V(W(M8))0246@;D(B1)P[0,0]V[+5,+5]V(W(M1))7C[+20]C[30,0]C(C,A+90)[0,0]P[0,0]"), "{sent}");
-    assert!(sent.ends_with("@AD(E)@:AW(I2)C[+6]@;D(C)"), "{sent}");
+    assert!(sent.contains("@AD(E)@:AW(I2)C[+6]@;"), "{sent}");
+    // After an arc, a macrograph's call and text, a line to a place with
+    // a negative coordinate is written from where the renderer says the
+    // position is (TODO-7389).
+    assert!(sent.ends_with("D(B1)P[40,0]C(C,A+90)[0,0]V[-5,+40]@AV[-4,+0]T(A101)\"ab\"T(A0)V[-10,-1]D(E)D(C)"), "{sent}");
     for written in [
         "W(C)W(V)W(N1)W(N0)W(P4(M1))W(P11110000(M3))W(P1(M1))W(F15)W(S1)W(S[,50])W(S(X)[50])W(S'#')W(S0)",
         "T(A101)\"Score 12\"T(A0)",

@@ -86,7 +86,9 @@ fn get(host: &mut Host, handle: i32, field: i32) -> Reply {
 /// What a painter program writes as a drawing's contents, in English,
 /// with no macrograph to call.
 fn encode_plain(program: &[i32]) -> Result<Vec<u8>, Reply> {
-    painter::encode(program, &Setting { language: "en", letter: &|_| Err(type_error("not a macrograph")), macrograph: false })
+    let mut pen = Pen::new();
+    painter::encode(program, &Setting { language: "en", letter: &|_| Err(type_error("not a macrograph")), macrograph: false }, &mut pen)
+        .map(|(written, _)| written)
 }
 
 /// A filled rectangle as a painter program.
@@ -1115,4 +1117,37 @@ fn many_drawings_are_set_in_one_call_as_each_alone_would_be() {
     // And the step's output is held as for any operation.
     host.set_limits_for_test(usize::MAX, host.batch_bytes() + 20);
     refuses(&mut host, "MAX_BATCH_BYTES", |host| many(host, Property::X, &handles, &[100, 200, 300, 400]));
+}
+
+/// TODO-7389 item 6: what asking the renderer for the position costs
+/// where a drawing is defined. A drawing with a rectangle, an arc and a
+/// short string is defined a thousand times; printed with the time of
+/// the same drawing without the arc and the string, which ask nothing.
+#[test]
+fn defining_a_drawing_that_asks_the_renderer_for_the_position_is_measured() {
+    use std::time::Instant;
+    /// The definitions timed.
+    const DEFINITIONS: u32 = 1000;
+    use crate::ops::RegisPaint as P;
+    let mut host = host();
+    let one = drawing(&mut host);
+    assert_eq!(set(&mut host, one, Property::VISIBLE, 0), Reply::Undefined);
+    let plain = vec![P::INK.number(), 3, P::RECT.number(), 0, 0, 40, 20];
+    let mut asking = plain.clone();
+    asking.extend_from_slice(&[P::MOVE_TO.number(), 40, 0, P::ARC.number(), 0, 0, 90, P::TEXT.number()]);
+    asking.extend_from_slice(&[OPTION_NOT_GIVEN; 10]);
+    asking.extend_from_slice(&[0, 5, 0x53, 0x54, 0x41, 0x52, 0x54]);
+    let time = |host: &mut Host, program: &[i32]| {
+        let began = Instant::now();
+        for at in 0..DEFINITIONS {
+            assert_eq!(call_ints(host, Op::RG_DEFINE, &[one], program), Reply::Undefined);
+            if at % 100 == 99 {
+                let _ = host.take_batch(1, &[]);
+                host.begin_step(u64::from(at), true);
+            }
+        }
+        began.elapsed() / DEFINITIONS
+    };
+    let (without, with) = (time(&mut host, &plain), time(&mut host, &asking));
+    println!("defining a drawing: {without:?} with a rectangle alone, {with:?} with an arc and a string of five characters the renderer is asked about");
 }

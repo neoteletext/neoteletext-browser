@@ -11,15 +11,19 @@
 //! drawing context with [0,0] at the drawing's own origin (`regis-v2.md`,
 //! "Rules for contents", rule 1). In ReGIS a signed number in brackets is
 //! relative, so a place with a negative coordinate can only be written as
-//! a move from where the position is, and the encoder follows the
-//! position through every call that moves it by a known amount. Three
-//! things leave it where the encoder cannot say: an arc about a given
-//! centre, which ends where the renderer's own arithmetic puts it; a
-//! macrograph's call, which may do anything; and text after a call. From
-//! there a `moveTo` is written from the origin, and anything else that
-//! needs the position to reach a negative coordinate is a `TypeError`
-//! asking for a `moveTo` first. A macrograph's body starts so, since it
-//! runs wherever it is called.
+//! a move from where the position is, and the encoder always knows where
+//! that is. Moves and vectors to a place say it themselves. For what
+//! only the renderer's own arithmetic can say (where an arc about a
+//! centre ends; how far a string advances with the text controls in
+//! force; where a macrograph's body leaves it) the encoder asks the
+//! renderer: a [`Pen`] is the renderer's own interpreter, given the same
+//! bytes from the same place, and read for where it ended (TODO-7389).
+//! Nothing of that arithmetic is written a second time here. A fill
+//! puts the position back where it began, as ReGIS does. Only a
+//! macrograph's body, which is drawn wherever it is called, has a
+//! position nobody can know when it is defined: there a place with a
+//! negative coordinate can be reached by a `moveTo` alone, which is
+//! written from the origin, as it could only be in ReGIS itself.
 //!
 //! **Text** is written by the engine's own picture text encoder
 //! (`neoteletext_formats::picture_text`, renderer parity PAR-3 and PAR-4),
@@ -33,6 +37,7 @@
 use std::io::Write as _;
 
 use neoteletext_formats::picture_text::{self, PictureTextError};
+use regis::{Screen, Terminal};
 
 use super::super::{Reply, range, type_error};
 use crate::limits::MAX_LANGUAGE_BYTES;
@@ -152,36 +157,106 @@ pub(in crate::host) struct Setting<'a> {
     pub(in crate::host) macrograph: bool,
 }
 
-/// How text advances, as far as the encoder has followed the text
-/// controls: the move after each character.
-#[derive(Clone, Copy, Debug)]
-struct TextAdvance {
-    /// The display cell's width.
-    width: i32,
-    /// The spacing set outright, in place of the cell's width.
-    spacing: Option<(i32, i32)>,
-    /// The string's direction, as a pixel vector's.
-    direction: i32,
+/// The renderer's own interpreter, asked where the position is after
+/// bytes the encoder wrote: a terminal that is fed them from the place
+/// the encoder says and read for the place it ended at. It holds the
+/// page's macrographs as the host defined them, and the text controls of
+/// the drawing being written, since both decide where a call or a string
+/// leaves the position.
+pub(in crate::host) struct Pen {
+    terminal: Terminal,
+    screen: Screen,
+}
+
+/// What a fresh drawing context's text controls and pixel-vector
+/// multiplier are (the manual's chapter 1, table 1-2), given to the pen
+/// before each drawing's contents are written: alphabet 0, standard size
+/// 1, no tilt, no slant, a multiplier of 1.
+const FRESH_CONTEXT: &[u8] = b"T(A0,S1,D0,I0)W(M1)";
+/// The bytes a pen's screen holds: two pages of 800 by 480 pixels.
+const PEN_SCREEN_BYTES: usize = 2 * (regis::SCREEN_WIDTH as usize) * (regis::SCREEN_HEIGHT as usize);
+/// Two places a macrograph is called from to learn how it leaves the
+/// position: far enough apart that a body which goes to a place of its
+/// own and one which moves from where it was called are told apart.
+const LEAVE_FROM: [(i32, i32); 2] = [(1000, 1000), (3000, 2000)];
+/// A character drawn after the call, to learn the advance the body left
+/// the text controls with.
+const LEAVE_TEXT: &[u8] = b"T'x'";
+
+impl Pen {
+    pub(in crate::host) fn new() -> Self {
+        Self { terminal: Terminal::new(), screen: Screen::new() }
+    }
+
+    /// The bytes held.
+    pub(in crate::host) fn held_bytes(&self) -> usize {
+        self.terminal.held_bytes().saturating_add(PEN_SCREEN_BYTES)
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        let _ = self.terminal.feed_regis(&mut self.screen, bytes);
+    }
+
+    /// Begins a drawing's contents: a fresh drawing context.
+    fn begin(&mut self) {
+        self.feed(FRESH_CONTEXT);
+    }
+
+    /// Where the position is after `bytes`, written from the place `from`.
+    fn after(&mut self, from: (i32, i32), bytes: &[u8]) -> (i32, i32) {
+        // To the place: as it stands, or from the origin when a
+        // coordinate is negative.
+        let mut to = Vec::new();
+        let _ = if from.0 >= 0 && from.1 >= 0 { write!(to, "P[{},{}]", from.0, from.1) } else { write!(to, "P[0,0]P[{:+},{:+}]", from.0, from.1) };
+        self.feed(&to);
+        self.feed(bytes);
+        self.terminal.position()
+    }
+
+    /// Defines the macrograph `letter` as the host has it.
+    pub(in crate::host) fn define(&mut self, letter: u8, body: &[u8]) {
+        let mut text = vec![b'@', b':', letter];
+        text.extend_from_slice(body);
+        text.extend_from_slice(b"@;");
+        self.feed(&text);
+    }
+
+    /// How the macrograph `letter` leaves the position and the text's
+    /// advance, as far as calling it shows: where it ends, and where a
+    /// character drawn after it ends, called from each of two places in
+    /// a fresh context.
+    pub(in crate::host) fn leave(&mut self, letter: u8) -> [(i32, i32); 4] {
+        let mut ends = [(0, 0); 4];
+        for (from, pair) in LEAVE_FROM.iter().zip(ends.as_chunks_mut::<2>().0) {
+            self.begin();
+            let after_call = self.after(*from, &[b'@', letter]);
+            self.feed(LEAVE_TEXT);
+            *pair = [after_call, self.terminal.position()];
+        }
+        ends
+    }
 }
 
 /// Writes a drawing's contents from a painter program.
 pub(in crate::host) struct Encoder<'a> {
     setting: &'a Setting<'a>,
+    pen: &'a mut Pen,
+    /// The macrographs the contents call: bit 0 for A.
+    calls: u32,
     /// The contents so far.
     out: Vec<u8>,
     /// Where the position is, from the drawing's origin, while it is known.
     at: Option<(i32, i32)>,
-    /// How text advances, while it is known.
-    text: Option<TextAdvance>,
     /// Whether the calls being read are inside a `fill`.
     filling: bool,
     /// The vertices the `fill` being read has traced.
     fill_vertices: usize,
 }
 
-/// The `TypeError` for a call that needs the position where it is not known.
+/// The `TypeError` for a call in a macrograph's body that needs the
+/// position, which a body does not have.
 fn unknown_position() -> Reply {
-    type_error("the position is where an arc, a macrograph or text left it, which the host does not follow: moveTo first to reach a negative coordinate")
+    type_error("a macrograph is drawn wherever it is called, so its body has no position of its own: moveTo first to reach a negative coordinate")
 }
 
 /// The fault of the engine's picture text encoder as the API's error.
@@ -317,16 +392,20 @@ pub(in crate::host) fn written_text(text: &str, named: &str, own: &str) -> Resul
 
 impl<'a> Encoder<'a> {
     /// An encoder at the start of a drawing's contents or a macrograph's body.
-    fn new(setting: &'a Setting<'a>) -> Self {
-        let fresh = !setting.macrograph;
-        Self {
-            setting,
-            out: Vec::new(),
-            at: fresh.then_some((0, 0)),
-            text: fresh.then_some(TextAdvance { width: STANDARD_CELL_WIDTH, spacing: None, direction: 0 }),
-            filling: false,
-            fill_vertices: 0,
-        }
+    fn new(setting: &'a Setting<'a>, pen: &'a mut Pen) -> Self {
+        pen.begin();
+        Self { setting, pen, calls: 0, out: Vec::new(), at: (!setting.macrograph).then_some((0, 0)), filling: false, fill_vertices: 0 }
+    }
+
+    /// Takes the position to where the renderer's own arithmetic puts
+    /// it after the bytes written since `start`: asked of the pen, from
+    /// the place the position was. A macrograph's body has no place to
+    /// ask from.
+    fn ask(&mut self, start: usize) -> Result<(), Reply> {
+        let Some(from) = self.at else { return Ok(()) };
+        let (x, y) = self.pen.after(from, self.out.get(start..).unwrap_or_default());
+        self.at = Some((coordinate(x)?, coordinate(y)?));
+        Ok(())
     }
 
     /// Writes text; writing to a vector cannot fail.
@@ -412,7 +491,8 @@ impl<'a> Encoder<'a> {
         let language = words.string(MAX_LANGUAGE_BYTES, "MAX_LANGUAGE_BYTES")?;
         let string = words.string(MAX_TEXT_CHARS, "MAX_TEXT_CHARS")?;
         self.outside_fill("text")?;
-        let (written, cells) = written_text(&string, &language, self.setting.language)?;
+        let (written, _) = written_text(&string, &language, self.setting.language)?;
+        let start = self.out.len();
         // The options, in the order that lets each stand: a standard size
         // sets both cells and forgets the spacing, so it comes first.
         let mut parts: Vec<String> = Vec::new();
@@ -444,34 +524,9 @@ impl<'a> Encoder<'a> {
             }
         }
         self.out.extend_from_slice(&written);
-        // What the options changed of how text advances, and where the
-        // string left the position.
-        if let Some(advance) = self.text.as_mut() {
-            if options.size.is_some() {
-                advance.spacing = None;
-            }
-            if options.size.is_some() || options.cell.is_some() {
-                advance.width = options.cell().0;
-            }
-            if let Some(direction) = options.direction() {
-                advance.direction = direction;
-            }
-            if options.spacing.is_some() {
-                advance.spacing = options.spacing;
-            }
-        } else if options.size.is_some() && options.tilt.is_some() {
-            // A size and a tilt together say everything about the advance.
-            self.text = Some(TextAdvance { width: options.cell().0, spacing: options.spacing, direction: options.direction().unwrap_or(0) });
-        }
-        let Some(advance) = self.text else {
-            self.at = None;
-            return Ok(());
-        };
-        let (x, y) = advance.spacing.unwrap_or_else(|| {
-            let (x, y) = direction(advance.direction);
-            (x.saturating_mul(advance.width), y.saturating_mul(advance.width))
-        });
-        self.moved_by(x.saturating_mul(cells), y.saturating_mul(cells))
+        // Where the string leaves the position is the renderer's to say:
+        // its advance with the text controls now in force.
+        self.ask(start)
     }
 
     /// Reads and writes one call.
@@ -590,19 +645,17 @@ impl<'a> Encoder<'a> {
             }
             RegisPaint::ARC => {
                 // An arc from the position about a centre: `C(C,A d)`.
-                // It leaves the position at its end, so that arcs link,
-                // and only the renderer's arithmetic says where that is;
-                // a whole circle leaves it where it was.
+                // It leaves the position at its end, so that arcs link;
+                // where that is, the renderer's own arithmetic says.
                 let (x, y) = (coordinate(words.next()?)?, coordinate(words.next()?)?);
                 let degrees = words.next()?;
                 if !(-MAX_ARC_DEGREES..=MAX_ARC_DEGREES).contains(&degrees) || degrees == 0 {
                     return Err(type_error("an arc is -360 to 360 degrees, and not none"));
                 }
+                let start = self.out.len();
                 self.put(format_args!("C(C,A{degrees:+})"));
                 self.bracket(x, y)?;
-                if degrees.saturating_abs() != MAX_ARC_DEGREES {
-                    self.at = None;
-                }
+                self.ask(start)?;
             }
             RegisPaint::CURVE => {
                 // ReGIS's interpolated curve through the points, from the
@@ -634,12 +687,16 @@ impl<'a> Encoder<'a> {
                 let mut body = words.take(length)?;
                 self.filling = true;
                 self.fill_vertices = 0;
+                // A fill puts the position back where it began, "whether
+                // or not any drawing takes place" (chapter 11).
+                let began = self.at;
                 self.out.extend_from_slice(b"F(");
                 while !body.is_empty() {
                     self.call(&mut body)?;
                 }
                 self.out.push(b')');
                 self.filling = false;
+                self.at = began;
             }
             RegisPaint::INK => {
                 let entry = words.next()?;
@@ -723,10 +780,12 @@ impl<'a> Encoder<'a> {
             RegisPaint::CALL => {
                 let handle = words.next()?;
                 let letter = (self.setting.letter)(handle)?;
+                let start = self.out.len();
                 self.out.extend_from_slice(&[b'@', letter]);
-                // A macrograph may move the position and set any control.
-                self.at = None;
-                self.text = None;
+                self.calls |= 1_u32.checked_shl(u32::from(letter.saturating_sub(b'A'))).unwrap_or(0);
+                // Where the body leaves the position, and the controls it
+                // sets, are the renderer's to say.
+                self.ask(start)?;
             }
         }
         if self.out.len() > REGIS_MAX_CONTENTS_BYTES {
@@ -736,11 +795,12 @@ impl<'a> Encoder<'a> {
     }
 }
 
-/// What the painter program `words` writes, for `setting`, or the error
-/// that refuses it whole.
-pub(in crate::host) fn encode(words: &[i32], setting: &Setting<'_>) -> Result<Vec<u8>, Reply> {
+/// What the painter program `words` writes, for `setting`, with the
+/// macrographs it calls (bit 0 for A), or the error that refuses it
+/// whole. `pen` is asked where the position is.
+pub(in crate::host) fn encode(words: &[i32], setting: &Setting<'_>, pen: &mut Pen) -> Result<(Vec<u8>, u32), Reply> {
     let mut words = Words(words);
-    let mut encoder = Encoder::new(setting);
+    let mut encoder = Encoder::new(setting, pen);
     while !words.is_empty() {
         encoder.call(&mut words)?;
     }
@@ -751,5 +811,5 @@ pub(in crate::host) fn encode(words: &[i32], setting: &Setting<'_>) -> Result<Ve
     if setting.macrograph && encoder.out.windows(DEFINITION_END.len()).any(|pair| pair == DEFINITION_END) {
         return Err(type_error("a macrograph's text does not hold '@;', which ends a macrograph's definition"));
     }
-    Ok(encoder.out)
+    Ok((encoder.out, encoder.calls))
 }

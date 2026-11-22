@@ -44,7 +44,7 @@ use crate::ops::{EventKind, Op, Property, RegisField};
 mod colour;
 pub(super) mod painter;
 
-use painter::{Setting, TextOptions};
+use painter::{Pen, Setting, TextOptions};
 #[cfg(test)]
 mod painter_tests;
 #[cfg(test)]
@@ -177,6 +177,8 @@ struct Drawing {
     clip: Option<[i16; 4]>,
     /// The bytes of its contents.
     contents: usize,
+    /// The macrographs its contents call: bit 0 for A.
+    calls: u32,
     label: Option<Box<str>>,
     frames: Option<Box<[u16]>>,
 }
@@ -199,6 +201,8 @@ struct Colour {
 struct Macrograph {
     owner: ContextId,
     body: Vec<u8>,
+    /// The macrographs its body calls: bit 0 for A.
+    calls: u32,
 }
 
 /// The tables as a step began, to put back if its commit fails.
@@ -244,6 +248,9 @@ pub(super) struct Regis {
     colours: [Colour; REGIS_COLOURS],
     /// The macrographs, by letter from A.
     macrographs: [Option<Macrograph>; MACROGRAPHS],
+    /// The renderer's own interpreter, asked where a drawing's position
+    /// is while its contents are written; made when first needed.
+    pen: Option<Box<Pen>>,
     /// The tracked drawings' rectangles as of the last step.
     bounds: Vec<Bounds>,
     snapshot: Option<Box<Snapshot>>,
@@ -289,6 +296,7 @@ impl Regis {
             animate: Vec::new(),
             colours: Default::default(),
             macrographs: Default::default(),
+            pen: None,
             bounds: Vec::new(),
             snapshot: None,
             validator,
@@ -529,6 +537,7 @@ impl Regis {
             .iter()
             .flatten()
             .fold(bytes, |sum, held| sum.saturating_add(held.body.len().saturating_mul(2)).saturating_add(size_of::<Macrograph>()));
+        bytes = bytes.saturating_add(self.pen.as_ref().map_or(0, |pen| pen.held_bytes()));
         bytes = bytes.saturating_add(self.bounds.len().saturating_mul(size_of::<Bounds>()));
         bytes = self
             .failures
@@ -939,10 +948,7 @@ impl Host {
                 if program.len() > MAX_PAINTER_WORDS {
                     return Err(range("MAX_PAINTER_WORDS", "a painter program is at most 65,536 whole numbers"));
                 }
-                let language = self.context(context).map_or("", |held| held.open.language.as_str());
-                let regis = &self.regis;
-                let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: false };
-                let contents = painter::encode(&program, &setting)?;
+                let (contents, calls) = self.regis_encode(context, &program, false)?;
                 let before = self.regis.get(number).map_or(0, |drawing| drawing.contents);
                 let held = self.regis.contents.get(slot(context)).copied().unwrap_or(0);
                 let after = held.saturating_sub(before).saturating_add(contents.len());
@@ -952,6 +958,7 @@ impl Host {
                 self.regis_room(contents.len().saturating_add(DEFINE_WRAPPER_BYTES), 0)?;
                 if let Some(drawing) = self.regis.get_mut(number) {
                     drawing.contents = contents.len();
+                    drawing.calls = calls;
                 }
                 if let Some(held) = self.regis.contents.get_mut(slot(context)) {
                     *held = after;
@@ -1057,6 +1064,20 @@ impl Host {
         }
     }
 
+    /// A painter program as a drawing's contents, or a macrograph's body,
+    /// with the macrographs it calls: written by the encoder, which asks
+    /// the page's pen where the position is.
+    fn regis_encode(&mut self, context: ContextId, program: &[i32], macrograph: bool) -> Result<(Vec<u8>, u32), Reply> {
+        // The pen is the page's, taken while the tables are read.
+        let mut pen = self.regis.pen.take().unwrap_or_else(|| Box::new(Pen::new()));
+        let language = self.context(context).map_or("", |held| held.open.language.as_str());
+        let regis = &self.regis;
+        let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph };
+        let written = painter::encode(program, &setting, &mut pen);
+        self.regis.pen = Some(pen);
+        written
+    }
+
     /// Defines a macrograph, or defines one again (section 6.2,
     /// `macrograph` and `redefine`): `@:x … @;`, written among the step's
     /// operations and outside every drawing's definition, where the
@@ -1080,21 +1101,52 @@ impl Host {
         } else {
             regis.macrograph_index(context, existing)?
         };
-        let language = self.context(context).map_or("", |held| held.open.language.as_str());
-        let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: true };
-        let body = painter::encode(program, &setting)?;
+        let (body, calls) = self.regis_encode(context, program, true)?;
+        let regis = &self.regis;
         let before = regis.macrographs.get(index).and_then(Option::as_ref).map_or(0, |held| held.body.len());
         if held_bytes.saturating_sub(before).saturating_add(body.len()) > most_bytes {
             return Err(range("MAX_MACROGRAPH_BYTES", "the macrographs hold as many bytes as they may"));
         }
-        self.regis_room(body.len().saturating_add(MACROGRAPH_WRAPPER_BYTES), 0)?;
+        // A drawing's contents are written from where the macrographs it
+        // calls leave the position, and the host keeps no drawing's
+        // program to write it again. So a macrograph that anything calls
+        // may be defined again only if it leaves the position, and the
+        // text's advance, as it did: the renderer is asked both ways
+        // (TODO-7389 item 3).
+        let letter = Regis::macrograph_letter(index);
+        let bit = 1_u32.checked_shl(u32::try_from(index).unwrap_or(0)).unwrap_or(0);
+        let caller = regis
+            .drawings
+            .iter()
+            .find(|drawing| drawing.calls & bit != 0)
+            .map(|drawing| format!("drawing {}", drawing.number))
+            .or_else(|| regis.macrographs.iter().flatten().any(|held| held.calls & bit != 0).then(|| "another macrograph".to_owned()));
+        let old_body = regis.macrographs.get(index).and_then(Option::as_ref).map(|held| held.body.clone()).unwrap_or_default();
+        let pen = self.regis.pen.get_or_insert_with(|| Box::new(Pen::new()));
+        let left = caller.as_ref().map(|_| pen.leave(letter));
+        pen.define(letter, &body);
+        if let (Some(caller), Some(left)) = (caller, left)
+            && pen.leave(letter) != left
+        {
+            pen.define(letter, &old_body);
+            return Err(Reply::Type(format!(
+                "{caller} calls this macrograph and was written from where it left the position: it may be defined again only to leave the position and the text's advance as it did"
+            )));
+        }
+        if let Err(refused) = self.regis_room(body.len().saturating_add(MACROGRAPH_WRAPPER_BYTES), 0) {
+            // Refused for room: the pen keeps the definition that stands.
+            if let Some(pen) = self.regis.pen.as_mut() {
+                pen.define(letter, &old_body);
+            }
+            return Err(refused);
+        }
         let regis = &mut self.regis;
-        let mut text = vec![b'@', b':', Regis::macrograph_letter(index)];
+        let mut text = vec![b'@', b':', letter];
         text.extend_from_slice(&body);
         text.extend_from_slice(b"@;");
         regis.stage(&text);
         if let Some(slot) = regis.macrographs.get_mut(index) {
-            *slot = Some(Macrograph { owner: context, body });
+            *slot = Some(Macrograph { owner: context, body, calls });
         }
         Ok(Reply::Int(regis.macrograph_handle(index)))
     }
@@ -1245,6 +1297,7 @@ impl Host {
             look: 0,
             clip: None,
             contents: 0,
+            calls: 0,
             label: None,
             frames: None,
         };
@@ -1662,6 +1715,9 @@ impl Host {
                             text.extend_from_slice(before.as_ref().map_or(&[][..], |held| &held.body));
                             text.extend_from_slice(b"@;");
                             let _ = regis.validator.feed_regis(&text);
+                            if let Some(pen) = regis.pen.as_mut() {
+                                pen.define(Regis::macrograph_letter(index), before.as_ref().map_or(&[][..], |held| &held.body));
+                            }
                         }
                     }
                     self.regis_put_back(*snapshot, error, drawing);
@@ -1771,5 +1827,6 @@ impl Host {
 /// # Errors
 /// The `RangeError` or `TypeError` that refuses the program whole.
 pub fn painter_contents(program: &[i32], language: &str, macrograph: bool) -> Result<Vec<u8>, Reply> {
-    painter::encode(program, &Setting { language, letter: &|_| Ok(FIRST_MACROGRAPH_LETTER), macrograph })
+    let mut pen = Pen::new();
+    painter::encode(program, &Setting { language, letter: &|_| Ok(FIRST_MACROGRAPH_LETTER), macrograph }, &mut pen).map(|(written, _)| written)
 }
