@@ -159,6 +159,15 @@ impl Engine {
         }
     }
 
+    /// What each fetched page file read since the last call says of its
+    /// script (script-api.md section 12.4): its page and sub-code, and
+    /// the name its `JS` line or `SCRIPT_REF` record gives, or none for a
+    /// TTI page with no such line. Page bytes of a push connection are
+    /// never among them (DEC-7282 item 10).
+    pub fn take_script_names(&mut self) -> Vec<(u16, u16, Option<String>)> {
+        core::mem::take(&mut self.script_names)
+    }
+
     /// The header packet that addresses the sub-page for a script's
     /// packets: the page's own control bits without erasure, and the
     /// display bytes its row 0 holds, so that row 0 is as it was. For a
