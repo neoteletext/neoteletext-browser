@@ -229,6 +229,18 @@ mod tests {
         }
     }
 
+    /// URL standard section 4.1: an address with a user name and no
+    /// password has an empty password. The crate's slicing at
+    /// `Position::BeforePassword` gave "@" for it in a release build and
+    /// failed a debug assertion (url 2.5.9, slicing.rs:148), which ended
+    /// the script host of any build with them (rdm TODO-7386).
+    #[test]
+    fn a_user_name_without_a_password_has_an_empty_password() {
+        let reply = text(parse(-1, "https://user@example.test/a"));
+        let fields: Vec<&str> = reply.split('\n').collect();
+        assert_eq!((fields[3], fields[4], fields[6]), ("user", "", "example.test"));
+    }
+
     /// URL standard section 4.4: what the parser fails on is undefined to
     /// the prelude, which throws the constructor's `TypeError`; an input
     /// past the bound is refused by the bound's name.

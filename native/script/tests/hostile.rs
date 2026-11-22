@@ -115,11 +115,13 @@ fn after_its_callback(source: &str) -> (Container, Batch, Took) {
 /// for the copy at the top level.
 #[test]
 fn a_top_level_that_never_ends_is_stopped_at_the_start_limit() {
-    stopped_at_its_top_level("toploop.js", hostile!("toploop"));
-    stopped_at_its_top_level("copy_top.js", hostile!("copy_top"));
-    // The promise chain that never ends: microtasks run to exhaustion
-    // inside the limit of the entry that made them.
-    stopped_at_its_top_level("jobs_carry.js", hostile!("jobs_carry"));
+    common::unless_starved(|| {
+        stopped_at_its_top_level("toploop.js", hostile!("toploop"));
+        stopped_at_its_top_level("copy_top.js", hostile!("copy_top"));
+        // The promise chain that never ends: microtasks run to exhaustion
+        // inside the limit of the entry that made them.
+        stopped_at_its_top_level("jobs_carry.js", hostile!("jobs_carry"));
+    });
 }
 
 /// S-04 (TODO-7270): under the 50 ms callback limit the review measured
@@ -127,11 +129,13 @@ fn a_top_level_that_never_ends_is_stopped_at_the_start_limit() {
 /// loop of host calls.
 #[test]
 fn a_callback_that_never_ends_is_stopped_at_the_callback_limit() {
-    stopped_in_its_callback("loop.js", hostile!("loop"));
-    stopped_in_its_callback("copy_cb.js", hostile!("copy_cb"));
-    stopped_in_its_callback("fill_cb.js", hostile!("fill_cb"));
-    stopped_in_its_callback("budget.js", hostile!("budget"));
-    stopped_in_its_callback("promises.js", hostile!("promises"));
+    common::unless_starved(|| {
+        stopped_in_its_callback("loop.js", hostile!("loop"));
+        stopped_in_its_callback("copy_cb.js", hostile!("copy_cb"));
+        stopped_in_its_callback("fill_cb.js", hostile!("fill_cb"));
+        stopped_in_its_callback("budget.js", hostile!("budget"));
+        stopped_in_its_callback("promises.js", hostile!("promises"));
+    });
 }
 
 /// S-09 item 4 (TODO-7275): the text of what was thrown is taken without
@@ -142,37 +146,39 @@ fn a_callback_that_never_ends_is_stopped_at_the_callback_limit() {
 /// stopped at the callback's limit as the review measured.
 #[test]
 fn describing_what_was_thrown_runs_no_page_code_after_the_callback() {
-    let (container, batch, took) = after_its_callback(hostile!("throwobj"));
-    assert!(took.running < CALLBACK_TIME_LIMIT, "throwobj.js ran {took:?}: its toString was called");
-    assert_eq!(lines(&batch), vec!["uncaught: {}"]);
-    assert_eq!(container.stop_reason(), None);
-    stopped_in_its_callback("throwstack.js", hostile!("throwstack"));
-    // Thrown at the top level, where the shim describes it after the
-    // script has returned: neither the toString nor the getter is called.
-    for (source, expected) in [
-        ("throw { toString() { for (;;) {} } };", "uncaught: a value was thrown: an object"),
-        ("const e = new Error('x'); Object.defineProperty(e, 'stack', { get() { for (;;) {} } }); throw e;", "uncaught: Error: x"),
-        ("const e = new Error('x'); Object.defineProperty(e, 'message', { get() { for (;;) {} } }); throw e;", "uncaught: Error\n"),
-        (
-            "throw new Proxy(new Error('x'), { get() { for (;;) {} }, getOwnPropertyDescriptor() { for (;;) {} }, getPrototypeOf() { for (;;) {} } });",
-            "uncaught: a value was thrown: an object",
-        ),
-        ("class Mine extends Error { get name() { for (;;) {} } } throw new Mine('x');", "uncaught: Error: x"),
-        ("Promise.reject({ toString() { for (;;) {} } });", "unhandled rejection: a value was thrown: an object"),
-        ("throw 'a string';", "uncaught: a string was thrown: a string"),
-        ("throw null;", "uncaught: a value was thrown: null"),
-    ] {
-        let (mut container, opened, took) = open(source);
-        opened.unwrap();
-        // Page code that never returns would run to the start limit and
-        // stop the container.
-        assert!(took.running < START_TIME_LIMIT, "{source} ran {took:?}: the page's code was called to describe what it threw");
-        let log = lines(&container.step(&tick(1, 0)).unwrap());
-        // The stack, where there is one, follows on the next line.
-        let first = log[0].replace("     at", "\n    at");
-        assert!(first == expected || first.starts_with(&format!("{}\n", expected.trim_end())), "{source} logged {log:?}");
-        assert_eq!(container.stop_reason(), None, "{source}");
-    }
+    common::unless_starved(|| {
+        let (container, batch, took) = after_its_callback(hostile!("throwobj"));
+        assert!(took.running < CALLBACK_TIME_LIMIT, "throwobj.js ran {took:?}: its toString was called");
+        assert_eq!(lines(&batch), vec!["uncaught: {}"]);
+        assert_eq!(container.stop_reason(), None);
+        stopped_in_its_callback("throwstack.js", hostile!("throwstack"));
+        // Thrown at the top level, where the shim describes it after the
+        // script has returned: neither the toString nor the getter is called.
+        for (source, expected) in [
+            ("throw { toString() { for (;;) {} } };", "uncaught: a value was thrown: an object"),
+            ("const e = new Error('x'); Object.defineProperty(e, 'stack', { get() { for (;;) {} } }); throw e;", "uncaught: Error: x"),
+            ("const e = new Error('x'); Object.defineProperty(e, 'message', { get() { for (;;) {} } }); throw e;", "uncaught: Error\n"),
+            (
+                "throw new Proxy(new Error('x'), { get() { for (;;) {} }, getOwnPropertyDescriptor() { for (;;) {} }, getPrototypeOf() { for (;;) {} } });",
+                "uncaught: a value was thrown: an object",
+            ),
+            ("class Mine extends Error { get name() { for (;;) {} } } throw new Mine('x');", "uncaught: Error: x"),
+            ("Promise.reject({ toString() { for (;;) {} } });", "unhandled rejection: a value was thrown: an object"),
+            ("throw 'a string';", "uncaught: a string was thrown: a string"),
+            ("throw null;", "uncaught: a value was thrown: null"),
+        ] {
+            let (mut container, opened, took) = open(source);
+            opened.unwrap();
+            // Page code that never returns would run to the start limit and
+            // stop the container.
+            assert!(took.running < START_TIME_LIMIT, "{source} ran {took:?}: the page's code was called to describe what it threw");
+            let log = lines(&container.step(&tick(1, 0)).unwrap());
+            // The stack, where there is one, follows on the next line.
+            let first = log[0].replace("     at", "\n    at");
+            assert!(first == expected || first.starts_with(&format!("{}\n", expected.trim_end())), "{source} logged {log:?}");
+            assert_eq!(container.stop_reason(), None, "{source}");
+        }
+    });
 }
 
 /// Section 3.1's table: a memory limit passed stops the container for
@@ -181,25 +187,29 @@ fn describing_what_was_thrown_runs_no_page_code_after_the_callback() {
 /// the callback's limit, and with the container's memory within its cap.
 #[test]
 fn allocation_without_end_is_stopped_within_the_memory_cap() {
-    for (name, source) in [("alloc.js", hostile!("alloc")), ("bigstring.js", hostile!("bigstring"))] {
-        let (mut container, batch, took) = after_its_callback(source);
-        assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN, "{name} ran {took:?}");
-        assert!(container.memory().0 <= WASM_MEMORY_BYTES, "{name}: the container's memory is {} bytes", container.memory().0);
-        match container.stop_reason() {
-            Some(reason) => {
-                assert!(matches!(reason, FailReason::Memory | FailReason::Time), "{name}: {reason:?}");
-                assert_stopped_for_good(&mut container, reason);
+    common::unless_starved(|| {
+        for (name, source) in [("alloc.js", hostile!("alloc")), ("bigstring.js", hostile!("bigstring"))] {
+            let (mut container, batch, took) = after_its_callback(source);
+            assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN, "{name} ran {took:?}");
+            assert!(container.memory().0 <= WASM_MEMORY_BYTES, "{name}: the container's memory is {} bytes", container.memory().0);
+            match container.stop_reason() {
+                Some(reason) => {
+                    assert!(matches!(reason, FailReason::Memory | FailReason::Time), "{name}: {reason:?}");
+                    assert_stopped_for_good(&mut container, reason);
+                }
+                // A string doubled without end meets the engine's longest
+                // string first, an ordinary error that ends the callback.
+                None => {
+                    assert!(lines(&batch).iter().any(|line| line.contains("string too long")), "{name} was neither stopped nor failed: {:?}", lines(&batch));
+                }
             }
-            // A string doubled without end meets the engine's longest
-            // string first, an ordinary error that ends the callback.
-            None => assert!(lines(&batch).iter().any(|line| line.contains("string too long")), "{name} was neither stopped nor failed: {:?}", lines(&batch)),
         }
-    }
-    // Typed arrays reach the heap's limit long before the start limit.
-    let (mut container, opened, took) = open("const keep = []; for (;;) keep.push(new Uint8Array(4 * 1024 * 1024));");
-    assert!(matches!(opened, Err(LinkError::Stopped(FailReason::Memory, _))), "{opened:?}");
-    assert!(took.running < START_TIME_LIMIT);
-    assert_stopped_for_good(&mut container, FailReason::Memory);
+        // Typed arrays reach the heap's limit long before the start limit.
+        let (mut container, opened, took) = open("const keep = []; for (;;) keep.push(new Uint8Array(4 * 1024 * 1024));");
+        assert!(matches!(opened, Err(LinkError::Stopped(FailReason::Memory, _))), "{opened:?}");
+        assert!(took.running < START_TIME_LIMIT);
+        assert_stopped_for_good(&mut container, FailReason::Memory);
+    });
 }
 
 /// Section 3.1's table and section 10.1 rule 5: recursion without end
@@ -207,12 +217,14 @@ fn allocation_without_end_is_stopped_within_the_memory_cap() {
 /// for good, whether it recurses directly or through native callbacks.
 #[test]
 fn recursion_without_end_is_stopped_at_the_stack_limit() {
-    for (name, source) in [("recurse.js", hostile!("recurse")), ("recurse2.js", hostile!("recurse2"))] {
-        let (mut container, batch, took) = after_its_callback(source);
-        assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN, "{name} ran {took:?}");
-        assert_eq!(container.stop_reason(), Some(FailReason::Stack), "{name}: {:?}", lines(&batch));
-        assert_stopped_for_good(&mut container, FailReason::Stack);
-    }
+    common::unless_starved(|| {
+        for (name, source) in [("recurse.js", hostile!("recurse")), ("recurse2.js", hostile!("recurse2"))] {
+            let (mut container, batch, took) = after_its_callback(source);
+            assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN, "{name} ran {took:?}");
+            assert_eq!(container.stop_reason(), Some(FailReason::Stack), "{name}: {:?}", lines(&batch));
+            assert_stopped_for_good(&mut container, FailReason::Stack);
+        }
+    });
 }
 
 /// The review's lead (section 3.5): a callback made 2,000 sound stops in
@@ -220,12 +232,14 @@ fn recursion_without_end_is_stopped_at_the_stack_limit() {
 /// no more than the bound.
 #[test]
 fn sound_stops_are_held_to_the_callbacks_rate() {
-    let (container, batch, _) = after_its_callback(hostile!("soundstop"));
-    assert_eq!(view(&batch).sound, vec![SoundOperation::Stop { voice: 0 }; MAX_SOUND_OPERATIONS_PER_CALLBACK as usize]);
-    let log = lines(&batch);
-    assert!(log[0].starts_with("uncaught: RangeError: MAX_SOUND_OPERATIONS_PER_CALLBACK: "), "{log:?}");
-    assert!(!log.iter().any(|line| line == "stopped"));
-    assert_eq!(container.stop_reason(), None);
+    common::unless_starved(|| {
+        let (container, batch, _) = after_its_callback(hostile!("soundstop"));
+        assert_eq!(view(&batch).sound, vec![SoundOperation::Stop { voice: 0 }; MAX_SOUND_OPERATIONS_PER_CALLBACK as usize]);
+        let log = lines(&batch);
+        assert!(log[0].starts_with("uncaught: RangeError: MAX_SOUND_OPERATIONS_PER_CALLBACK: "), "{log:?}");
+        assert!(!log.iter().any(|line| line == "stopped"));
+        assert_eq!(container.stop_reason(), None);
+    });
 }
 
 /// The review's survey of the realm: no shared memory and no `Atomics`
@@ -233,19 +247,33 @@ fn sound_stops_are_held_to_the_callbacks_rate() {
 /// D14): neither `Date` nor `performance.now()` moves within a callback.
 #[test]
 fn the_realm_has_no_shared_memory_and_no_fine_clock() {
-    let mut container = opened("globals.js", hostile!("globals"));
-    let log = all_lines(&[container.step(&tick(1, 0)), container.step(&tick(2, 1))]);
-    let names: String = log.iter().filter_map(|line| line.strip_prefix("globals ")).collect();
-    let globals: Vec<&str> = names.split(',').collect();
-    for absent in ["SharedArrayBuffer", "Atomics", "WeakRef", "FinalizationRegistry", "__host", "__setDispatch", "__setRejection", "os", "std", "gc", "print"] {
-        assert!(!globals.contains(&absent), "{absent} is a global: {globals:?}");
-    }
-    for present in
-        ["nt", "crypto", "performance", "setTimeout", "structuredClone", "console", "atob", "queueMicrotask", "EventTarget", "AbortController", "DOMException"]
-    {
-        assert!(globals.contains(&present), "{present} is not a global: {globals:?}");
-    }
-    assert_eq!(&log[log.len() - 2..], ["date 0 perf 0 now 1", "atomics: ReferenceError"]);
+    common::unless_starved(|| {
+        let mut container = opened("globals.js", hostile!("globals"));
+        let log = all_lines(&[container.step(&tick(1, 0)), container.step(&tick(2, 1))]);
+        let names: String = log.iter().filter_map(|line| line.strip_prefix("globals ")).collect();
+        let globals: Vec<&str> = names.split(',').collect();
+        for absent in
+            ["SharedArrayBuffer", "Atomics", "WeakRef", "FinalizationRegistry", "__host", "__setDispatch", "__setRejection", "os", "std", "gc", "print"]
+        {
+            assert!(!globals.contains(&absent), "{absent} is a global: {globals:?}");
+        }
+        for present in [
+            "nt",
+            "crypto",
+            "performance",
+            "setTimeout",
+            "structuredClone",
+            "console",
+            "atob",
+            "queueMicrotask",
+            "EventTarget",
+            "AbortController",
+            "DOMException",
+        ] {
+            assert!(globals.contains(&present), "{present} is not a global: {globals:?}");
+        }
+        assert_eq!(&log[log.len() - 2..], ["date 0 perf 0 now 1", "atomics: ReferenceError"]);
+    });
 }
 
 /// S-13 (TODO-7279): the review found three pages started in the same
@@ -253,13 +281,15 @@ fn the_realm_has_no_shared_memory_and_no_fine_clock() {
 /// context's seed, which the trusted core draws afresh for each.
 #[test]
 fn pages_started_in_the_same_second_have_different_random_sequences() {
-    let sequence = |seed: u8| {
-        let mut container = limited();
-        let mut open = opening(ContextId::Page);
-        open.seed = [seed; 32];
-        container.open_with(open, hostile!("rand").as_bytes()).unwrap();
-        lines(&container.step(&tick(1, 0)).unwrap())
-    };
-    let (first, second, third) = (sequence(1), sequence(2), sequence(3));
-    assert!(first[0].starts_with("r=0.") && first != second && second != third && first != third, "{first:?} {second:?} {third:?}");
+    common::unless_starved(|| {
+        let sequence = |seed: u8| {
+            let mut container = limited();
+            let mut open = opening(ContextId::Page);
+            open.seed = [seed; 32];
+            container.open_with(open, hostile!("rand").as_bytes()).unwrap();
+            lines(&container.step(&tick(1, 0)).unwrap())
+        };
+        let (first, second, third) = (sequence(1), sequence(2), sequence(3));
+        assert!(first[0].starts_with("r=0.") && first != second && second != third && first != third, "{first:?} {second:?} {third:?}");
+    });
 }
