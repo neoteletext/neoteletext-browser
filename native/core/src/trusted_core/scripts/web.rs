@@ -24,20 +24,19 @@
 //! (every web client is started as for a public page, the strictest);
 //! the permission prompt and the viewer's controls.
 
-use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
 use confine::broker::{Broker, Helper};
 use neoteletext::outbox::Outbox;
+use neoteletext::script_network::{Tabs, request_for_client};
 use protocol::console::Level;
-use protocol::fetcher::PROCESS_TAB;
 use protocol::script::FailReason;
 use protocol::script::relay::Relayed;
 use protocol::web::{
     FILE_PAGE_IDENTITY, FILE_PAGE_SPACE, FromClientFrame, FromWebClient, MAX_WEB_CLIENTS, PARTITION_TOKEN_BYTES, PartitionToken, ToWebClient,
-    relay_from_client, relay_to_client, write_to_client,
+    relay_from_client, write_to_client,
 };
 use ring::rand::SecureRandom as _;
 
@@ -72,10 +71,8 @@ struct WebClient {
     token: PartitionToken,
     /// Which web client this is: its events carry it.
     generation: u64,
-    /// The script hosts it serves: each tab number's channel.
-    tabs: BTreeMap<u32, u32>,
-    /// The last tab number given, never one used before.
-    last_tab: u32,
+    /// The script hosts it serves, each a tab of its own.
+    tabs: Tabs,
     /// It has said it is confined.
     heard: bool,
 }
@@ -96,7 +93,7 @@ impl WebClients {
 
     fn place(&mut self, channel: u32) -> Option<(&mut WebClient, u32)> {
         self.clients.iter_mut().find_map(|client| {
-            let tab = client.tabs.iter().find(|(_, served)| **served == channel).map(|(&tab, _)| tab)?;
+            let tab = client.tabs.of(channel)?;
             Some((client, tab))
         })
     }
@@ -138,7 +135,7 @@ fn start_client(broker: &Arc<Broker>, partition: Partition, generation: u64, eve
     let output = child.stdout.take().ok_or("the web client has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the web client has no input")?);
     relay(output, relay_from_client, events, move |frame| Event::WebClientSaid(generation, frame), move |end| Event::WebClientEnded(generation, end));
-    Ok(WebClient { partition, child, input, token, generation, tabs: BTreeMap::new(), last_tab: PROCESS_TAB, heard: false })
+    Ok(WebClient { partition, child, input, token, generation, tabs: Tabs::default(), heard: false })
 }
 
 impl Core {
@@ -180,13 +177,10 @@ impl Core {
                 self.scripts.web.clients.len().saturating_sub(1)
             };
             let client = self.scripts.web.clients.get_mut(serving).ok_or("no web client")?;
-            client.last_tab = client.last_tab.wrapping_add(1).max(PROCESS_TAB.saturating_add(1));
-            client.tabs.insert(client.last_tab, channel);
+            client.tabs.open(channel);
         }
         let (client, tab) = self.scripts.web.place(channel).ok_or("no web client")?;
-        let mut written = request.into_frame();
-        let mut out = Vec::new();
-        relay_to_client(tab, &client.token, &mut written, &mut out).map_err(|error| format!("the script host's request was refused: {error}"))?;
+        let out = request_for_client(tab, &client.token, request)?;
         // A web client that has stopped reading ends as its reader finds.
         let _ = client.input.write_all(&out).and_then(|()| client.input.flush());
         Ok(())
@@ -198,7 +192,7 @@ impl Core {
         let Some((client, tab)) = self.scripts.web.place(channel) else { return };
         let _ =
             write_to_client(&mut client.input, tab, &client.token, &ToWebClient::TabCloses).map_err(std::io::Error::other).and_then(|()| client.input.flush());
-        client.tabs.remove(&tab);
+        client.tabs.close(tab);
         if !client.tabs.is_empty() {
             return;
         }
@@ -226,7 +220,7 @@ impl Core {
             FromClientFrame::Core(_) => {}
             FromClientFrame::Answer { tab, frame } => {
                 // An answer for a tab that has closed has no one to hear it.
-                let Some(&channel) = client.tabs.get(&tab) else { return };
+                let Some(channel) = client.tabs.channel(tab) else { return };
                 let Some(host) = self.scripts.hosts.get_mut(&channel) else { return };
                 if host.input.write_all(&frame).and_then(|()| host.input.flush()).is_err() {
                     self.stop_scripts(channel, FailReason::Link, "the script host stopped reading and was ended");
@@ -252,7 +246,7 @@ impl Core {
         if !heard {
             self.updates.helper_failed("the web client stopped before it said it was confined");
         }
-        for channel in client.tabs.into_values() {
+        for channel in client.tabs.channels().collect::<Vec<_>>() {
             self.stop_scripts(channel, FailReason::Link, &why);
         }
     }

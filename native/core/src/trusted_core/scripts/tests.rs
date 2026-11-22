@@ -432,7 +432,10 @@ fn a_context_that_had_the_network_finishes_with_it_and_starts_nothing_after() {
     assert!(test.core.scripts_due_at().is_some(), "the trusted core wakes when the time to finish is up");
     // The time to finish is up.
     let host = test.core.scripts.hosts.get_mut(&channel).unwrap();
-    host.network_left = Instant::now().checked_sub(NETWORK_DRAIN + Duration::from_millis(1));
+    let left = Instant::now().checked_sub(NETWORK_DRAIN + Duration::from_millis(1)).unwrap();
+    host.network = NetworkClaim::default();
+    host.network.reported(true, left);
+    host.network.reported(false, left);
     test.core.scripts_tick(Instant::now());
     assert!(!test.core.scripts.web.serves(channel), "the web client was told to end what it held for the channel");
     assert_eq!(test.core.scripts_due_at(), None);
