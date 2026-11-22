@@ -8,4 +8,5 @@ mod support;
 mod cookies;
 mod fetching;
 mod protections;
+mod standards;
 mod streams;
