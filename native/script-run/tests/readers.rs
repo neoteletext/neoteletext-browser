@@ -77,6 +77,7 @@ fn start(id: u32, kind: RequestKind, method: &str, url: &str) -> ToWebClient {
         body: BodySource::None,
         protocols: Vec::new(),
         last_event_id: String::new(),
+        target_space: None,
     }))
 }
 

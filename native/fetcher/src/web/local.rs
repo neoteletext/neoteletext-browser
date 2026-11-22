@@ -143,12 +143,81 @@ pub(crate) fn local_access(asker: Asker, target: IpAddr, overrides: &[IpAddr]) -
     }
 }
 
+/// Whether an address is known to be of the local network before its
+/// name is resolved (the Local Network Access draft, sections 2.5 and
+/// 3.2; TODO-7316 item 10): the script declared it so
+/// (`targetAddressSpace: "local"`), its host is an address of the local
+/// network written out, or its host's name ends in `.local`. Such a
+/// request is not mixed content from a page loaded securely; the rule on
+/// the local network still decides whether it is made.
+pub(crate) fn known_local(url: &url::Url, declared: Option<AddressSpace>) -> bool {
+    /// The top-level name of multicast DNS (RFC 6762 section 3).
+    const LOCAL_NAME: &str = "local";
+    declared == Some(AddressSpace::Local)
+        || match url.host() {
+            Some(url::Host::Ipv4(address)) => space_of(IpAddr::V4(address)) == AddressSpace::Local,
+            Some(url::Host::Ipv6(address)) => space_of(IpAddr::V6(address)) == AddressSpace::Local,
+            Some(url::Host::Domain(name)) => {
+                let name = name.strip_suffix('.').unwrap_or(name);
+                name.rsplit('.').next().is_some_and(|last| last.eq_ignore_ascii_case(LOCAL_NAME)) && name.contains('.')
+            }
+            None => false,
+        }
+}
+
+/// Whether an answer's address is where the script said the address
+/// would be (`targetAddressSpace`; TODO-7316 item 10, "wrong
+/// declaration"). `peer` is the address connected to, none through a
+/// proxy, where the server's address is not known and is taken as
+/// public, as the behaviour followed takes it.
+pub(crate) fn is_as_declared(peer: Option<IpAddr>, declared: Option<AddressSpace>) -> bool {
+    declared.is_none_or(|declared| peer.map_or(AddressSpace::Public, space_of) == declared)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn ip(text: &str) -> IpAddr {
         text.parse().unwrap()
+    }
+
+    /// TODO-7316 item 10: what is known to be local before a name is
+    /// resolved, and whether an answer came from where the script said.
+    #[test]
+    fn a_declared_or_written_local_address_is_known_and_a_wrong_declaration_is_seen() {
+        let host = |text: &str| url::Url::parse(text).unwrap();
+        for (address, known) in [
+            ("http://192.168.1.10/", true),
+            ("http://10.0.0.1:8080/", true),
+            ("http://[fe80::1]/", true),
+            ("http://printer.local/", true),
+            ("http://printer.LOCAL./", true),
+            ("http://local/", false),
+            ("http://notlocal/", false),
+            ("http://printer.localhost.example/", false),
+            ("http://127.0.0.1/", false),
+            ("http://93.184.216.34/", false),
+            ("http://device.example/", false),
+        ] {
+            assert_eq!(known_local(&host(address), None), known, "{address}");
+        }
+        assert!(known_local(&host("http://device.example/"), Some(AddressSpace::Local)));
+        assert!(!known_local(&host("http://device.example/"), Some(AddressSpace::Loopback)), "this computer by name is asked over https or as localhost");
+        assert!(!known_local(&host("http://device.example/"), Some(AddressSpace::Public)));
+        for (peer, declared, holds) in [
+            (Some("192.168.1.10"), None, true),
+            (Some("192.168.1.10"), Some(AddressSpace::Local), true),
+            (Some("192.168.1.10"), Some(AddressSpace::Public), false),
+            (Some("127.0.0.1"), Some(AddressSpace::Local), false),
+            (Some("127.0.0.1"), Some(AddressSpace::Loopback), true),
+            (Some("93.184.216.34"), Some(AddressSpace::Local), false),
+            (None, Some(AddressSpace::Public), true),
+            (None, Some(AddressSpace::Local), false),
+            (None, None, true),
+        ] {
+            assert_eq!(is_as_declared(peer.map(ip), declared), holds, "{peer:?} {declared:?}");
+        }
     }
 
     /// TODO-7316 item 5: the ranges of each space, as verified, and the
