@@ -477,10 +477,10 @@ pub const MAX_FETCHER_TABS: usize = crate::MAX_TABS;
 /// [`FromFetcher::Confined`], and never a tab's (REQ-6980).
 pub const PROCESS_TAB: u32 = 0;
 /// The bytes of a tab number before a message (REQ-6980).
-const TAB_BYTES: usize = size_of::<u32>();
+pub(crate) const TAB_BYTES: usize = size_of::<u32>();
 
 /// Reads the tab number before a message, or `None` at a clean end.
-fn read_tab(input: &mut dyn Read) -> Result<Option<u32>, ProtocolError> {
+pub(crate) fn read_tab(input: &mut dyn Read) -> Result<Option<u32>, ProtocolError> {
     let mut tab = [0_u8; TAB_BYTES];
     match input.read_exact(&mut tab) {
         Ok(()) => Ok(Some(u32::from_be_bytes(tab))),
@@ -490,7 +490,7 @@ fn read_tab(input: &mut dyn Read) -> Result<Option<u32>, ProtocolError> {
 }
 
 /// A pipe that ended after a tab number, where its message must follow.
-fn cut_short() -> ProtocolError {
+pub(crate) fn cut_short() -> ProtocolError {
     ProtocolError::Io(std::io::ErrorKind::UnexpectedEof.into())
 }
 

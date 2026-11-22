@@ -54,6 +54,44 @@ impl<'a> Fields<'a> {
         Ok(u32::from_be_bytes(self.array()?))
     }
 
+    pub(crate) fn u64(&mut self) -> Result<u64, ProtocolError> {
+        Ok(u64::from_be_bytes(self.array()?))
+    }
+
+    pub(crate) fn i8(&mut self) -> Result<i8, ProtocolError> {
+        Ok(i8::from_be_bytes(self.array()?))
+    }
+
+    pub(crate) fn i16(&mut self) -> Result<i16, ProtocolError> {
+        Ok(i16::from_be_bytes(self.array()?))
+    }
+
+    pub(crate) fn i32(&mut self) -> Result<i32, ProtocolError> {
+        Ok(i32::from_be_bytes(self.array()?))
+    }
+
+    /// Every byte that is left.
+    pub(crate) fn rest(&mut self) -> &'a [u8] {
+        core::mem::take(&mut self.bytes)
+    }
+
+    /// Bytes after their four-byte length, which is at most `max`; `what`
+    /// names the field refused. The length is held to `max` before a byte
+    /// is taken, and nothing is copied.
+    pub(crate) fn bytes(&mut self, max: usize, what: &'static str) -> Result<&'a [u8], ProtocolError> {
+        let length = usize::try_from(self.u32()?).map_err(|_| ProtocolError::BadValue(what))?;
+        if length > max {
+            return Err(ProtocolError::BadValue(what));
+        }
+        self.take(length)
+    }
+
+    /// UTF-8 after its four-byte length of at most `max` bytes, as it
+    /// came: its reader says what else it must be.
+    pub(crate) fn string(&mut self, max: usize, what: &'static str) -> Result<String, ProtocolError> {
+        core::str::from_utf8(self.bytes(max, what)?).map(str::to_owned).map_err(|_| ProtocolError::BadValue(what))
+    }
+
     /// A page of a channel: its number a display page, as
     /// [`Fields::display_page`], since a decoder refuses any other and
     /// would restart for it (finding F-29).
@@ -129,6 +167,13 @@ impl<'a> Fields<'a> {
     pub(crate) fn end(&self) -> Result<(), ProtocolError> {
         if self.bytes.is_empty() { Ok(()) } else { Err(ProtocolError::BadValue("payload longer than its fields")) }
     }
+}
+
+/// Bytes after their four-byte length.
+pub(crate) fn push_bytes(payload: &mut Vec<u8>, bytes: &[u8]) -> Result<(), ProtocolError> {
+    payload.extend_from_slice(&u32::try_from(bytes.len()).map_err(|_| ProtocolError::BadValue("length"))?.to_be_bytes());
+    payload.extend_from_slice(bytes);
+    Ok(())
 }
 
 pub(crate) fn push_key(payload: &mut Vec<u8>, key: PageKey) {

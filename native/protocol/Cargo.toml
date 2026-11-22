@@ -42,5 +42,12 @@ neoteletext-core.workspace = true
 # beside decision 49).
 unicode-normalization.workspace = true
 
+[dev-dependencies]
+# The engine's records and the ReGIS renderer's limits, for the tests that
+# hold the script link's bounds equal to the figures of the crates that own
+# them; the library takes neither.
+neoteletext-web.workspace = true
+regis.workspace = true
+
 [lints]
 workspace = true

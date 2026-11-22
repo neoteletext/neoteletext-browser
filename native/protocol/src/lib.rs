@@ -1,6 +1,8 @@
 //! Messages between the browser's processes (`architecture.md` section
 //! 6.4): the trusted core and the interface, a decoder, a fetcher, the
-//! keyboard and the sound helper. The framing is the engine's: one kind
+//! keyboard and the sound helper; and, relayed by the trusted core, a
+//! decoder and its script host ([`script`]), and a script host and its
+//! channel's web client ([`web`]). The framing is the engine's: one kind
 //! byte, a 32-bit big-endian payload length, then the payload. Every length is bounded
 //! before anything is allocated, every payload is parsed strictly to its
 //! exact length, and each side accepts only the kinds meant for it, so the
@@ -23,6 +25,7 @@
 
 pub mod audio;
 mod bounds;
+mod coded;
 pub mod console;
 mod controls;
 pub mod decoder;
@@ -42,6 +45,7 @@ pub mod links;
 pub mod picture;
 pub mod regis;
 pub mod rules;
+pub mod script;
 pub mod settings;
 pub mod snapshot;
 pub mod sound;
@@ -50,10 +54,11 @@ mod text;
 #[cfg(feature = "timed-test")]
 pub mod timed_test;
 pub mod viewer_state;
+pub mod web;
 
 pub use bounds::*;
 pub use error::ProtocolError;
-pub(crate) use fields::{Fields, KEY_BYTES, push_count, push_count_u8, push_flag, push_key, push_keys, push_text};
+pub(crate) use fields::{Fields, KEY_BYTES, push_bytes, push_count, push_count_u8, push_flag, push_key, push_keys, push_text};
 pub(crate) use framing::{read_frame, tail, write_frame};
 pub use interface::{ThumbnailImage, ToCore, ToInterface, problem_code, problem_of, read_from_core, read_from_interface, write_to_core, write_to_interface};
 pub use text::clean;
