@@ -156,10 +156,14 @@ impl Screen {
         self.renderer = renderer;
         self.designation =
             (renderer == Renderer::Teletext).then(|| language_value(language, true).or_else(|| language_value(DEFAULT_LANGUAGE, true))).flatten();
-        // A JavaScript page opens blank (section 12.3): the decoder gives
-        // a teletext one its blank page, and holds nothing of a ReGIS or
-        // NAPLPS one until its script draws.
-        self.engine.script_blank_page(self.at());
+        // A JavaScript page opens blank (section 12.3). The decoder holds
+        // nothing of it, and makes the page when its script arrives: a
+        // page of any renderer is carried by a teletext page of its
+        // number, as a channel's is (`decoder::scripts`, TODO-7406).
+        if self.held_renderer().is_none() {
+            let carrier = ScriptPage { page: self.place.page, sub: self.place.subcode, renderer: Renderer::Teletext, designation: None };
+            self.engine.script_blank_page(carrier);
+        }
     }
 
     /// Moves the engine's clock to `tick`.
@@ -266,8 +270,7 @@ impl Screen {
     /// picture the decoder has sent, or the teletext page rendered.
     ///
     /// # Errors
-    /// When the decoder has nothing of the page to draw (a ReGIS or
-    /// NAPLPS JavaScript page whose script has drawn nothing yet), or the
+    /// When the decoder has nothing of the page to draw, or the
     /// PNG writer refuses the picture.
     pub fn snapshot(&mut self) -> Result<Vec<u8>, String> {
         let shown = if let Some(picture) = &self.picture {
