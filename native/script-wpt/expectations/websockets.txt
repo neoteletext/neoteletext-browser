@@ -1,6 +1,6 @@
 # The web-platform-tests' websockets suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
 # Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
-# 214 files run, 143 not run here; cases: 162 pass, 164 fail as a listed departure, 164 fail as a fault with its to-do (0 of them unlisted)
+# 214 files run, 143 not run here; cases: 168 pass, 164 fail as a listed departure, 158 fail as a fault with its to-do (0 of them unlisted)
 # FILE <file> <harness status> <cases passed> <cases not passed>
 # <status> <reason> <file> <case>     for each case that does not pass
 # HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
@@ -179,8 +179,8 @@ FILE	websockets/close-invalid.any.js?wss	OK	6	0
 FILE	websockets/close-invalid.any.js?wpt_flags=h2	OK	6	0
 FILE	websockets/constructor/option-bag.any.js?default	OK	0	2
 FILE	websockets/constructor/option-bag.any.js?wss	OK	0	2
-FILE	websockets/constructor/target-address-space.any.js?default	OK	2	4
-FILE	websockets/constructor/target-address-space.any.js?wss	OK	2	4
+FILE	websockets/constructor/target-address-space.any.js?default	OK	5	1
+FILE	websockets/constructor/target-address-space.any.js?wss	OK	5	1
 FILE	websockets/constructor/third-param-ignored.any.js?default	OK	0	3
 FILE	websockets/constructor/third-param-ignored.any.js?wss	OK	0	3
 FILE	websockets/constructor.any.js?default	OK	1	0
@@ -366,13 +366,7 @@ FAIL	TODO-7321	websockets/constructor/option-bag.any.js?default	Option bag with 
 FAIL	TODO-7321	websockets/constructor/option-bag.any.js?wss	Empty option bag should be accepted
 FAIL	TODO-7321	websockets/constructor/option-bag.any.js?wss	Option bag with protocols array should be accepted
 FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with targetAddressSpace 'private' throws TypeError as it is an unsupported legacy alias
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with targetAddressSpace 'unknown' throws TypeError
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?default	WebSocket constructor with invalid targetAddressSpace throws TypeError
 FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with matching targetAddressSpace 'loopback' succeeds
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with targetAddressSpace 'private' throws TypeError as it is an unsupported legacy alias
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with targetAddressSpace 'unknown' throws TypeError
-FAIL	TODO-7388/6	websockets/constructor/target-address-space.any.js?wss	WebSocket constructor with invalid targetAddressSpace throws TypeError
 FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	a third parameter to the constructor should be ignored
 FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	protocol string should work with ignored third parameter
 FAIL	TODO-7321	websockets/constructor/third-param-ignored.any.js?default	protocol sequence should work with ignored third parameter
