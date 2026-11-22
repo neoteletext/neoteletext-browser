@@ -16,9 +16,11 @@ mod fonts;
 #[path = "regis_page/receiver.rs"]
 mod receiver;
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use common::{Opens as _, all_lines, assert_checks, claim, container, ints_event, limited, lines, opening, script, tick, view, with_events};
+use common::{
+    Opens as _, all_lines, assert_checks, claim, container, ints_event, limited, lines, opening, script, tick, timed, view, waited_for_a_processor, with_events,
+};
 use neoteletext_script::Container;
 use neoteletext_script::limits::regis::{CHANNEL_SHARE_DRAWINGS, REGIS_MAX_DRAWINGS};
 use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, WASM_MEMORY_BYTES};
@@ -410,9 +412,9 @@ fn run_hostile(source: &str, ticks: u32, unhurried: bool) -> (Cost, Vec<String>)
     let mut cost = Cost::default();
     let mut log = Vec::new();
     for at in 0..ticks {
-        let began = Instant::now();
-        let Ok(batch) = container.step(&tick(at, u64::from(at))) else { break };
-        cost.longest_step = cost.longest_step.max(began.elapsed());
+        let (stepped, took) = timed(|| container.step(&tick(at, u64::from(at))));
+        let Ok(batch) = stepped else { break };
+        cost.longest_step = cost.longest_step.max(took.wall);
         cost.steps += 1;
         let mut written = Vec::new();
         protocol::script::write_to_decoder(&mut written, &protocol::script::FromScriptHost::Batch(Box::new(batch.clone()))).expect("a batch is one frame");
@@ -499,11 +501,17 @@ fn a_script_that_fills_every_regis_table_is_held_to_the_hosts_bound() {
     assert!(cost.host_bytes > 2 * 900_000 && cost.host_bytes <= MAX_HOST_STATE_BYTES, "{cost:?}");
 }
 
-/// What one way of moving the page's drawings each tick costs.
+/// What one way of moving the page's drawings each tick costs. The times
+/// are those the test's thread was running, the wall clock less its waits
+/// for a processor (`common::timed`), as the library's own budget tests
+/// take them and as the script host counts its limits on its own
+/// processor time (DEC-7450).
 struct Moved {
     /// A step's time on average and at most.
     average: Duration,
     longest: Duration,
+    /// A step's time on the wall clock on average, the waits included.
+    wall: Duration,
     /// The bytes of a step's commit.
     bytes: usize,
     /// The receiver's time to take and compose a step, on average.
@@ -557,65 +565,122 @@ nt.addEventListener("tick", (e) => {{
     }
     // The page's share, less the one hidden master.
     assert_eq!(log, vec![format!("made {}: REGIS_MAX_DRAWINGS", REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS - 1)]);
-    let (mut total, mut longest, mut bytes, mut compose) = (Duration::ZERO, Duration::ZERO, 0_usize, Duration::ZERO);
+    let (mut total, mut longest, mut wall, mut bytes, mut compose) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, 0_usize, Duration::ZERO);
     for _ in 0..TICKS {
-        let began = Instant::now();
-        let batch = container.step(&tick(at, u64::from(at))).unwrap();
-        let took = began.elapsed();
-        total += took;
-        longest = longest.max(took);
+        let (batch, took) = timed(|| container.step(&tick(at, u64::from(at))).unwrap());
+        total += took.running;
+        wall += took.wall;
+        longest = longest.max(took.running);
         bytes = bytes.max(batch.regis.as_ref().map_or(0, Vec::len));
         assert_eq!(lines(&batch), Vec::<String>::new());
-        let began = Instant::now();
-        receiver.take(&batch);
-        let _ = receiver.picture();
-        compose += began.elapsed();
+        let ((), took) = timed(|| {
+            receiver.take(&batch);
+            let _ = receiver.picture();
+        });
+        compose += took.running;
         at += 1;
     }
-    Moved { average: total / TICKS, longest, bytes, receiver: compose / TICKS }
+    Moved { average: total / TICKS, longest, wall: wall / TICKS, bytes, receiver: compose / TICKS }
 }
+
+/// Measures `each_tick` (see [`moved`]) and holds its average step to
+/// `limit`. A measurement over the limit that was made while this thread
+/// waited for a processor is made again, as `common::unless_starved`
+/// tries a test again: the time a thread is counted as running still
+/// grows a little on a machine with no processor free (two threads on one
+/// core, a cache shared with strangers), and that is the machine's and
+/// not the step's. A measurement over the limit with no such wait fails
+/// at once, and one over it at every try fails: what a quiet machine is
+/// held to is unchanged.
+#[track_caller]
+fn moved_within(name: &str, each_tick: &str, limit: Duration) -> Moved {
+    for attempt in 1..=STARVED_TRIES {
+        let waited_before = waited_for_a_processor();
+        let cost = moved(each_tick);
+        let waited = waited_for_a_processor().saturating_sub(waited_before);
+        if cost.average < limit {
+            return cost;
+        }
+        assert!(
+            waited > neoteletext_script::limits::TIME_CHECK_MARGIN && attempt < STARVED_TRIES,
+            "2,048 drawings, each tick {name}: a step takes {:?} on average, over {limit:?} (try {attempt}; the thread waited {waited:?} for a processor)",
+            cost.average
+        );
+        eprintln!("{name}: try {attempt} took {:?} a step after its thread waited {waited:?} for a processor: measuring again", cost.average);
+    }
+    unreachable!("the last try returns or fails")
+}
+
+/// The ways a page of 2,048 drawings moves them each tick, as [`moved`]
+/// runs them: what each does once the drawings are made.
+const WAYS: [(&str, &str); 8] = [
+    ("nothing", ""),
+    ("the script's loop alone, over plain objects", "for (const o of plain) o.x = (o.x + 1) % 790;"),
+    ("two reads a drawing, nothing written", "let sum = 0; for (const d of all) sum += d.x + d.x;"),
+    ("one write a drawing of the value it has", "for (let i = 0; i < all.length; i++) all[i].x = xs[i];"),
+    ("one write a drawing of a new value", "for (let i = 0; i < all.length; i++) { xs[i] = (xs[i] + 1) % 790; all[i].x = xs[i]; }"),
+    ("a read and a write a drawing: d.x = (d.x + 1) % 790", "for (const d of all) d.x = (d.x + 1) % 790;"),
+    ("x and y of every drawing: d.moveBy(1, 1)", "for (const d of all) d.moveBy(1, 1);"),
+    (
+        "a list's set of x from an Int32Array the script computed",
+        "if (!globalThis.list) { globalThis.list = g.many(all); globalThis.values = Int32Array.from(xs); } \
+         for (let i = 0; i < values.length; i++) values[i] = (values[i] + 1) % 790; list.set('x', values);",
+    ),
+];
 
 /// TODO-7298's and TODO-7373's measurement: a commit a tick on a scene of
 /// 2,048 drawings, every one of the page's 1,983 shown drawings moved by
 /// its properties each tick, with where a step's time goes: the script's
 /// own loop over as many plain objects, the reads alone, the writes
 /// alone, the whole by assignments one by one, and a list's `set`.
-/// Printed; the list's held to the step's budget (section 3.2,
-/// `STEP_TIME_BUDGET`) in a release build, which is what the figure is of.
+///
+/// The times are printed and none is held here (rdm TODO-7451): this
+/// test runs beside the rest of the workspace's, and a step's time is
+/// the machine's as much as the step's. Measured with every processor
+/// taken twice over, the time a thread is counted as running was itself
+/// twice a quiet machine's. What is held is what no load changes: each
+/// way sends what it should, and a list's `set` sends byte for byte what
+/// the same assignments one by one send. The budget is held by the timed
+/// test below.
 #[test]
 fn a_commit_a_tick_on_2048_drawings_is_measured() {
-    let ways = [
-        ("nothing", ""),
-        ("the script's loop alone, over plain objects", "for (const o of plain) o.x = (o.x + 1) % 790;"),
-        ("two reads a drawing, nothing written", "let sum = 0; for (const d of all) sum += d.x + d.x;"),
-        ("one write a drawing of the value it has", "for (let i = 0; i < all.length; i++) all[i].x = xs[i];"),
-        ("one write a drawing of a new value", "for (let i = 0; i < all.length; i++) { xs[i] = (xs[i] + 1) % 790; all[i].x = xs[i]; }"),
-        ("a read and a write a drawing: d.x = (d.x + 1) % 790", "for (const d of all) d.x = (d.x + 1) % 790;"),
-        ("x and y of every drawing: d.moveBy(1, 1)", "for (const d of all) d.moveBy(1, 1);"),
-        (
-            "a list's set of x from an Int32Array the script computed",
-            "if (!globalThis.list) { globalThis.list = g.many(all); globalThis.values = Int32Array.from(xs); } \
-             for (let i = 0; i < values.length; i++) values[i] = (values[i] + 1) % 790; list.set('x', values);",
-        ),
-    ];
-    let mut costs = Vec::new();
-    for (name, each_tick) in ways {
+    let mut bytes = Vec::new();
+    for (name, each_tick) in WAYS {
         let cost = moved(each_tick);
         println!(
-            "2,048 drawings, each tick {name}: a step takes {:?} on average and {:?} at most; its commit is {} bytes; the receiver takes and composes it in {:?}",
-            cost.average, cost.longest, cost.bytes, cost.receiver
+            "2,048 drawings, each tick {name}: a step takes {:?} on average and {:?} at most ({:?} on the wall clock); its commit is {} bytes; the receiver takes and composes it in {:?}",
+            cost.average, cost.longest, cost.wall, cost.bytes, cost.receiver
         );
-        costs.push(cost);
+        bytes.push(cost.bytes);
     }
-    // The way to move very many drawings each tick is the list's: held
-    // to the step's budget in the build the figure is of. A debug build,
-    // and the assignments one by one (TODO-7373 records what they cost
-    // and why), are held to the decoder's deadline for a step's answer.
-    let list = costs.last().unwrap();
-    let limit = if cfg!(debug_assertions) { STEP_DEADLINE } else { neoteletext_script::limits::STEP_TIME_BUDGET };
-    assert!(list.average < limit, "a list's set of every drawing takes {:?} a step, over {limit:?}", list.average);
-    for cost in &costs {
-        assert!(cost.average < STEP_DEADLINE, "a step took {:?}", cost.average);
+    let [nothing, plain, reads, same, new, read_and_write, both, list] = bytes[..] else { panic!("eight ways") };
+    assert_eq!([nothing, plain, reads, same], [0; 4], "a tick that changes no drawing commits nothing");
+    assert!(new > 0 && read_and_write == new && list == new, "one x of every drawing, however it is set, is one commit of {new} bytes: {bytes:?}");
+    assert!(both > new, "x and y of every drawing is a longer commit: {bytes:?}");
+}
+
+/// Section 3.2's budget for a step (`STEP_TIME_BUDGET`, 12 ms) held for
+/// the way to move very many drawings each tick, a list's `set`, on the
+/// page of 2,048 drawings; and every other way held to the decoder's
+/// deadline for a step's answer (TODO-7373 records what the assignments
+/// one by one cost and why).
+///
+/// A timed test (DEVELOPMENT.md section 8; rdm TODO-7451): the figure is
+/// of an optimised build on a machine with processors free, and holds on
+/// no other. The times are those the thread was running, and a
+/// measurement made while the thread waited for a processor is made
+/// again, which is enough for the passing load of a gate's own steps and
+/// not for a machine with every processor taken.
+#[test]
+#[ignore = "a timed test: a step's time on a page of 2,048 drawings against STEP_TIME_BUDGET, which needs a release build and a quiet machine; run it there with --release -- --ignored"]
+fn a_lists_set_of_2048_drawings_keeps_to_the_steps_budget() {
+    // Asked for in a build it cannot hold in, it fails and says so.
+    let optimised = !cfg!(debug_assertions);
+    assert!(optimised, "the budget is for an optimised build: run with --release");
+    for (place, (name, each_tick)) in WAYS.iter().enumerate() {
+        let limit = if place + 1 == WAYS.len() { neoteletext_script::limits::STEP_TIME_BUDGET } else { STEP_DEADLINE };
+        let cost = moved_within(name, each_tick, limit);
+        println!("2,048 drawings, each tick {name}: a step takes {:?} on average and {:?} at most, within {limit:?}", cost.average, cost.longest);
     }
 }
 
