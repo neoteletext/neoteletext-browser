@@ -616,7 +616,7 @@ class Nt extends EventTarget {
   get shared() { return shared; }
   get sound() { return sound; }
   get synth() { return synth; }
-  get naplps() { return naplpsApi; }
+  get naplps() { return naplpsNow(); }
   get teletext() { return teletextApi; }
   get regis() { return core.regis; }
   now() { return host(OP.NOW); }
