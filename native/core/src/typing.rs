@@ -328,7 +328,7 @@ pub struct Typing {
 impl Typing {
     /// Whether the keys are away from the page: the window lost the focus,
     /// or the address is being edited.
-    fn away(&self) -> bool {
+    const fn away(&self) -> bool {
         self.unfocused || self.editing
     }
 
@@ -378,6 +378,21 @@ impl Typing {
             // other key stays the viewer's (REQ-7037).
             asked: state.filter(|_| on).map(|state| state.gate.asked_keys()).unwrap_or_default(),
         })
+    }
+
+    /// The state the interface draws now, for a caller that has changed
+    /// what is put into it: what the open page's scripts hold
+    /// (script-api.md section 4.6).
+    #[must_use]
+    pub fn interface_state(&self) -> Option<TypingState> {
+        self.state()
+    }
+
+    /// Whether the keys are away from the page: the window lost the
+    /// focus, or another part of the browser has them (REQ-1554).
+    #[must_use]
+    pub const fn keys_away(&self) -> bool {
+        self.away()
     }
 
     fn tell_interface(&self, sends: &mut Vec<Send>) {

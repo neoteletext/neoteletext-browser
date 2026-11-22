@@ -19,6 +19,8 @@ use super::kinds::{
 use super::pages::{CELL_BYTES, push_cell, read_cell};
 use super::windows::{push_tab_to_window, push_window_number, window_intent};
 #[cfg(feature = "interaction")]
+use crate::interaction::script::KIND_STOP_SCRIPTS;
+#[cfg(feature = "interaction")]
 use crate::interaction::{KIND_EDITING, KIND_INPUT, KIND_WALL_WITHOUT_PAGE};
 #[cfg(feature = "phone-keyboard")]
 use crate::keyboard::{KIND_PHONE_FINISH, KIND_PHONE_PANEL, PHONE_PANEL_WITH_PIN};
@@ -90,6 +92,8 @@ fn kind_of(message: &ToCore) -> u8 {
         ToCore::Editing(_) => KIND_EDITING,
         #[cfg(feature = "interaction")]
         ToCore::WallWithoutPage => KIND_WALL_WITHOUT_PAGE,
+        #[cfg(feature = "interaction")]
+        ToCore::StopScripts => KIND_STOP_SCRIPTS,
         #[cfg(feature = "interaction")]
         ToCore::Input(_) => KIND_INPUT,
         #[cfg(feature = "phone-keyboard")]
@@ -171,7 +175,7 @@ fn push_fields(payload: &mut Vec<u8>, message: &ToCore) -> Result<(), ProtocolEr
         #[cfg(feature = "interaction")]
         ToCore::Editing(editing) => payload.push(u8::from(*editing)),
         #[cfg(feature = "interaction")]
-        ToCore::WallWithoutPage => {}
+        ToCore::WallWithoutPage | ToCore::StopScripts => {}
         #[cfg(feature = "interaction")]
         ToCore::Input(intent) => crate::interaction::push_input(payload, intent)?,
         #[cfg(feature = "phone-keyboard")]
@@ -398,6 +402,8 @@ pub fn read_from_interface(input: &mut dyn Read) -> Result<Option<ToCore>, Proto
         KIND_EDITING => ToCore::Editing(fields.flag("editing")?),
         #[cfg(feature = "interaction")]
         KIND_WALL_WITHOUT_PAGE => ToCore::WallWithoutPage,
+        #[cfg(feature = "interaction")]
+        KIND_STOP_SCRIPTS => ToCore::StopScripts,
         #[cfg(feature = "links")]
         KIND_CONFIRM => ToCore::Confirm(fields.u32()?),
         #[cfg(feature = "links")]

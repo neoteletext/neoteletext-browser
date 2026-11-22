@@ -177,6 +177,14 @@ class WebSocket extends EventTarget {
     }
     if (scheme !== "ws" && scheme !== "wss") throw domException("a WebSocket's address is ws: or wss:", "SyntaxError");
     if (record.href.indexOf("#") >= 0) throw domException("a WebSocket's address has no fragment", "SyntaxError");
+    // The second argument is the subprotocols or, as the Local Network
+    // Access draft adds, a dictionary of them and `targetAddressSpace`.
+    let target = "";
+    if (typeof protocols === "object" && protocols !== null && !(Symbol.iterator in protocols)) {
+      const options = protocols;
+      if (options.targetAddressSpace !== undefined) target = oneOf(options.targetAddressSpace, TARGET_ADDRESS_SPACES, "target address space");
+      protocols = options.protocols === undefined ? [] : options.protocols;
+    }
     if (typeof protocols === "string") protocols = [protocols];
     protocols = Array.from(protocols, String);
     // Steps 8 and 9: no protocol twice, each a token.
@@ -187,7 +195,7 @@ class WebSocket extends EventTarget {
     state.origin = record.origin;
     let id = 0;
     try {
-      id = host(OP.WS_OPEN, record.href.length, record.href + protocols.join(","));
+      id = host(OP.WS_OPEN, record.href.length, record.href + protocols.join(",") + (target === "" ? "" : "\n" + target));
     } catch (error) {
       id = 0;
     }

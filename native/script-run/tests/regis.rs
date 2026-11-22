@@ -31,24 +31,26 @@ fn said(output: &Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr))
 }
 
-/// The page: a background with its title, a caption, and a button whose
-/// release navigates. The run gives no `painted` report: the example
-/// answers one by playing sound 1, and a JavaScript page with no page
-/// file has no way yet to bring a sound (the specification's section 18),
-/// so the call would be refused and the kept log would hold an error's
-/// stack, whose line numbers move with every change to the prelude. The
-/// script library's own test of the example gives the report and hears
-/// the sound.
+/// The page: a background with its title, a caption painted at its
+/// paint rate, and a button whose release navigates. The pictures are the
+/// page as the decoder paints it tick by tick: at tick 39 the caption is
+/// part painted, and at tick 179 whole. When it is whole the decoder
+/// reports it painted and the example answers by playing sound 1, which a
+/// JavaScript page with no page file has no way yet to bring (the
+/// specification's section 18): the call is refused, as it is in the
+/// browser, and the kept log holds that error.
 #[test]
 fn the_regis_page_example_matches_its_kept_run() {
-    let output = example("example-page.js", "regis-page", "40", "0,39");
+    let output = example("example-page.js", "regis-page", "180", "0,39,179");
     let all = said(&output);
     assert_eq!(output.status.code(), Some(0), "{all}");
-    assert!(all.contains("matched the 5 kept files"), "{all}");
+    assert!(all.contains("matched the 6 kept files"), "{all}");
     assert!(all.contains("runner note navigate 106"), "the button's release navigates: {all}");
+    assert!(all.contains("000127 page error uncaught: TypeError: the channel announced no such sound"), "the decoder's painted report is heard: {all}");
 }
 
-/// The game: drawings moved by their properties, one commit a step.
+/// The game: drawings moved by their properties, one commit a step. At
+/// tick 99 the boat has sailed to the right edge and crates are falling.
 #[test]
 fn the_regis_game_example_matches_its_kept_run() {
     let output = example("example-game.js", "regis-game", "100", "0,99");

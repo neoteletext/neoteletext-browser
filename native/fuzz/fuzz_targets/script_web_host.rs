@@ -113,7 +113,7 @@ fn answer(input: &mut Bytes<'_>) -> FromWebClient {
             error: ErrorKind::of(input.byte() % 3).unwrap_or(ErrorKind::Network),
             reason: Reason::of(input.byte() % 27).unwrap_or(Reason::Connection),
         },
-        6 => FromWebClient::Opened { id, protocol: if input.byte() & 1 == 0 { String::new() } else { input.text() } },
+        6 => FromWebClient::Opened { id, protocol: if input.byte() & 1 == 0 { String::new() } else { input.text() }, url: String::new() },
         7 => FromWebClient::Event { id, event: input.text(), data: input.text(), last_id: input.text() },
         8 => FromWebClient::Retrying(id),
         9 => FromWebClient::SocketMessage { id, binary: input.byte() & 1 != 0, last: input.byte() & 1 != 0, bytes: input.bytes() },

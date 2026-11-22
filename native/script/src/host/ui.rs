@@ -4,21 +4,35 @@
 //!
 //! **Where a renderer plugs in.** [`Host::ui_drawn`] chooses the
 //! [`Painter`](crate::ui::Painter) of the renderer of the page shown, one
-//! arm for each: teletext's (work package U1) and ReGIS's (U2), each an
-//! implementation of the trait on its own state. Nothing else of this
-//! file, of `ui.rs` or of the prelude's part knows which renderer draws.
+//! arm for each: teletext's (work package U1), ReGIS's (U2) and NAPLPS's
+//! (U3), each an implementation of the trait on its own state. Nothing
+//! else of this file, of `ui.rs` or of the prelude's part knows which
+//! renderer draws.
 
 use protocol::script::{ContextId, Renderer};
 
+use super::naplps::Naplps;
 use super::{Host, Ints, Payload, Reply, no_payload, text_of, type_error};
 use crate::limits::{MAX_KEY_NAME_BYTES, MAX_LABEL_BYTES, MAX_TEXT_EVENT_BYTES, TICKS_PER_SECOND};
 use crate::ops::{EventKind, KeyBit, Op, PointerAction};
+use crate::teletext::Slot;
 use crate::ui::limits::{GRID_COLUMNS, GRID_FIRST_ROW, GRID_LAST_ROW, MAX_UI_OPTION_BYTES};
 use crate::ui::options::Area;
 use crate::ui::{Kind, Painter, Time, Ui, What, keys_json};
 
 /// Milliseconds in a second.
 const SECOND_MS: u64 = 1000;
+
+/// The drawing of components for `context` by a renderer whose state is
+/// its own part of the host, when the page shown has one: teletext's page
+/// plane (work package U1), or NAPLPS's backdrop and cast (work package
+/// U3).
+fn painter_of<'a>(teletext: &'a mut Slot, naplps: &'a mut Naplps, context: ContextId) -> Option<&'a mut dyn Painter> {
+    if naplps.draws_components() {
+        return naplps.ui_painter(context);
+    }
+    teletext.painter(context)
+}
 
 /// The drawing of components a call needs: a renderer with no page state
 /// for the context has none, and the call is refused.
@@ -66,7 +80,9 @@ impl Host {
     /// components on the page shown: its renderer's own, chosen here and
     /// nowhere else, or none when the renderer has no page state for the
     /// context. The vocabulary is out of the host's hands meanwhile,
-    /// since a renderer's drawing may be the host's own operations.
+    /// since a renderer's drawing may be the host's own operations, as
+    /// ReGIS's is: a component there is numbered drawings of the page's
+    /// table.
     fn ui_drawn<T>(&mut self, context: ContextId, with: impl FnOnce(&mut Ui, Option<&mut dyn Painter>) -> T) -> T {
         let mut ui = core::mem::take(&mut self.ui);
         let renderer = self.context(context).map(|held| held.open.renderer);
@@ -75,7 +91,7 @@ impl Host {
                 let mut painter = super::regis::Components::new(self, context, ui.state_bytes());
                 with(&mut ui, Some(&mut painter))
             }
-            _ => with(&mut ui, self.teletext.painter(context)),
+            _ => with(&mut ui, painter_of(&mut self.teletext, &mut self.naplps, context)),
         };
         self.ui = ui;
         result

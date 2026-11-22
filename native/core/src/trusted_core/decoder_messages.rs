@@ -43,7 +43,7 @@ impl Core {
             // A channel's decoder took a font for pictures, or refused it (PAR-35).
             FromDecoder::FontChecked { refusal, .. } => self.font_taken(channel, refusal.as_deref()),
             // The channel's scripts (script-api.md sections 4.6 and 11.2).
-            FromDecoder::Script(report) => self.script_reported(channel, report),
+            FromDecoder::Script(report) => self.script_reported(channel, report)?,
             // Only a decoder started to read bookmarks reports them, only
             // one started to convert a picture makes one, and only one
             // started in snapshot mode draws a snapshot (REQ-6885): from a
@@ -183,7 +183,7 @@ impl Core {
     /// A page that has arrived has a picture's title (DEC-6638 item 3,
     /// TODO-6748): it names the page in the page list in place of a title
     /// from its rows, never in place of the program's index's.
-    fn picture_titled(&mut self, channel: u32, page: u16, title: &str) -> Result<(), String> {
+    pub(super) fn picture_titled(&mut self, channel: u32, page: u16, title: &str) -> Result<(), String> {
         let active = self.active_channel();
         let Some(tab) = self.session.tabs.iter_mut().find(|tab| tab.channel.id == channel) else { return Ok(()) };
         let Some(title) = tab.channel.picture_titled(page, title) else { return Ok(()) };

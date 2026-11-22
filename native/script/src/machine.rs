@@ -27,6 +27,7 @@
 //! trap of any kind, from any of them, stops the container for good: the
 //! module's state is then not trusted, and it is never entered again.
 
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use wasmi::errors::HostError;
@@ -39,11 +40,12 @@ use crate::host::{Host, Payload, Reply};
 use crate::limits::{
     BULK_BYTES_PER_FUEL, CONTAINER_START_LIMIT, CONTEXTS, FUEL_PER_BYTE_TRANSLATED, FUEL_PER_BYTE_VALIDATED, FUEL_SLICE, HOST_COPY_CHECK_BYTES,
     MAX_ERROR_BYTES, MAX_EVENT_PAYLOAD_BYTES, MAX_HOST_BYTES, MAX_HOST_INTS, MAX_RESULT_BYTES, MAX_SCRIPT_BYTES, MAX_WRITE_BYTES, MAX_WRITE_VECTORS,
-    QUICKJS_HEAP_BYTES, QUICKJS_STACK_BYTES, WASM_MAX_RECURSION, WASM_MEMORY_BYTES,
+    PRELUDE_COMPILE_LIMIT, QUICKJS_HEAP_BYTES, QUICKJS_STACK_BYTES, WASM_MAX_RECURSION, WASM_MEMORY_BYTES,
 };
 use protocol::script::{ContextId, FailReason};
 
 use crate::link::Context as _;
+use crate::ops::Parts;
 use crate::watchdog::Watchdog;
 
 /// The module: QuickJS, the host-boundary shim and the module's own
@@ -406,6 +408,12 @@ fn link(linker: &mut Linker<State>) -> Result<(), wasmi::Error> {
     Ok(())
 }
 
+/// The prelude with one choice of its parts, as QuickJS's bytecode.
+type Compiled = (Parts, Arc<[u8]>);
+
+/// The name the prelude is compiled under, which its errors' stacks show.
+const PRELUDE_NAME: &str = "nt:prelude";
+
 /// The engine every container of a process shares: its compiled module is
 /// kept, so a second container starts without compiling again.
 #[derive(Clone)]
@@ -414,6 +422,9 @@ pub struct Engine {
     module: Module,
     /// How long compiling the module took.
     pub compile_time: Duration,
+    /// The prelude as QuickJS's bytecode, for each choice of its parts
+    /// asked for so far: every clone of the engine shares them.
+    preludes: Arc<Mutex<Vec<Compiled>>>,
 }
 
 impl Engine {
@@ -434,7 +445,38 @@ impl Engine {
         let began = Instant::now();
         let interpreter = wasmi::Engine::new(&Self::config());
         let module = Module::new(&interpreter, module).map_err(|error| Stop::Container(error.to_string()))?;
-        Ok(Self { interpreter, module, compile_time: began.elapsed() })
+        Ok(Self { interpreter, module, compile_time: began.elapsed(), preludes: Arc::default() })
+    }
+
+    /// The prelude with `parts` as QuickJS's bytecode, compiled the first
+    /// time it is asked for and kept (rdm TODO-7386). Compiling the
+    /// prelude was two thirds of what opening a context cost, and it is
+    /// the same work for every context of every container, so it is done
+    /// once for the engine, in a container of its own that is then thrown
+    /// away, and is no part of any script's start: a caller may ask ahead
+    /// of the first context it opens.
+    ///
+    /// The bytecode is made here, by this module, from the source compiled
+    /// into this program, and is held on this side of the module's memory:
+    /// nothing of a channel's is in it and no script can reach it. It is
+    /// never stored or read from outside the process, so it cannot differ
+    /// from the source the build holds.
+    ///
+    /// # Errors
+    /// When the prelude does not compile, which is a fault of the build.
+    pub fn prelude(&self, parts: Parts) -> Result<Arc<[u8]>, Stop> {
+        // A thread that panicked while holding the list left it whole: an
+        // entry is pushed complete or not at all.
+        let mut preludes = self.preludes.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, bytecode)) = preludes.iter().find(|(kept, _)| *kept == parts) {
+            return Ok(Arc::clone(bytecode));
+        }
+        let mut machine = Machine::new(self, Host::new(), 0, None)?;
+        let deadline = Instant::now().checked_add(PRELUDE_COMPILE_LIMIT);
+        machine.open_context(ContextId::Page, 0, deadline)?;
+        let bytecode: Arc<[u8]> = machine.compile(ContextId::Page, crate::ops::prelude_of(parts).as_bytes(), PRELUDE_NAME, deadline)?.into();
+        preludes.push((parts, Arc::clone(&bytecode)));
+        Ok(bytecode)
     }
 
     /// The interpreter's settings: fuel metering on; the call depth
@@ -475,6 +517,9 @@ struct Exports {
     context_open: TypedFunc<(i32, i64), i32>,
     context_close: TypedFunc<i32, i32>,
     eval: TypedFunc<(i32, i32, i32, i32, i32), i32>,
+    compile: TypedFunc<(i32, i32, i32, i32), i32>,
+    compiled: TypedFunc<(), i32>,
+    run: TypedFunc<(i32, i32, i32), i32>,
     event: TypedFunc<EventArguments, i32>,
     error: TypedFunc<(i32, i32), i32>,
 }
@@ -569,6 +614,9 @@ impl Machine {
             context_open: instance.get_typed_func(&store, "nt_context_open").map_err(container)?,
             context_close: instance.get_typed_func(&store, "nt_context_close").map_err(container)?,
             eval: instance.get_typed_func(&store, "nt_eval").map_err(container)?,
+            compile: instance.get_typed_func(&store, "nt_compile").map_err(container)?,
+            compiled: instance.get_typed_func(&store, "nt_compiled").map_err(container)?,
+            run: instance.get_typed_func(&store, "nt_run").map_err(container)?,
             event: instance.get_typed_func(&store, "nt_event").map_err(container)?,
             error: instance.get_typed_func(&store, "nt_error").map_err(container)?,
         };
@@ -781,6 +829,53 @@ impl Machine {
         let bits = self.enter(self.exports.eval, (context.number(), code, length, label, i32::from(strict)), deadline)?;
         self.enter(self.exports.free, code, deadline)?;
         self.enter(self.exports.free, label, deadline)?;
+        self.finish(bits, began, deadline)
+    }
+
+    /// Compiles `source` in `context` as a classic script named `name`,
+    /// without running it, and gives its bytecode: the engine's own
+    /// prelude and nothing else ([`Engine::prelude`]).
+    fn compile(&mut self, context: ContextId, source: &[u8], name: &str, deadline: Option<Instant>) -> Result<Vec<u8>, Stop> {
+        let failed = |what: &str| Stop::Container(format!("the prelude did not compile: {what}"));
+        let length = i32::try_from(source.len()).map_err(|_| failed("it is too long"))?;
+        let name_length = i32::try_from(name.len()).map_err(|_| failed("its name is too long"))?;
+        // The source and its name, each with a NUL after it.
+        let code = self.enter(self.exports.alloc, length.saturating_add(1), deadline)?;
+        let label = self.enter(self.exports.alloc, name_length.saturating_add(1), deadline)?;
+        if code == 0 || label == 0 {
+            return Err(failed("the module has no room for it"));
+        }
+        self.put(code, source)?;
+        self.put(code.saturating_add(length), &[0])?;
+        self.put(label, name.as_bytes())?;
+        self.put(label.saturating_add(name_length), &[0])?;
+        let written = self.enter(self.exports.compile, (context.number(), code, length, label), deadline)?;
+        let address = self.enter(self.exports.compiled, (), deadline)?;
+        let bytecode = usize::try_from(written).ok().filter(|length| *length > 0).and_then(|length| read(self.memory.data(&self.store), address, length));
+        if let Some(bytecode) = bytecode {
+            return Ok(bytecode.to_vec());
+        }
+        let capacity = i32::try_from(MAX_ERROR_BYTES.min(SCRATCH_BYTES)).unwrap_or(0);
+        let length = usize::try_from(self.enter(self.exports.error, (self.scratch, capacity), deadline)?).unwrap_or(0).min(MAX_ERROR_BYTES);
+        let error = read(self.memory.data(&self.store), self.scratch, length).map(String::from_utf8_lossy).unwrap_or_default();
+        Err(failed(&error))
+    }
+
+    /// Runs in `context` the bytecode [`Engine::prelude`] gave, to end
+    /// before `deadline`. The crate's own: QuickJS does not check the
+    /// bytecode it reads, so nothing but what the engine compiled itself
+    /// is ever given to it.
+    pub(crate) fn run(&mut self, context: ContextId, bytecode: &[u8], deadline: Option<Instant>) -> Result<Entry, Stop> {
+        let began = Instant::now();
+        let length = i32::try_from(bytecode.len()).map_err(|_| Stop::Container("the prelude's bytecode is too long".into()))?;
+        let code = self.enter(self.exports.alloc, length, deadline)?;
+        if code == 0 {
+            self.stopped = Some(Stop::Memory);
+            return Err(Stop::Memory);
+        }
+        self.put(code, bytecode)?;
+        let bits = self.enter(self.exports.run, (context.number(), code, length), deadline)?;
+        self.enter(self.exports.free, code, deadline)?;
         self.finish(bits, began, deadline)
     }
 

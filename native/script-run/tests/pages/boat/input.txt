@@ -1,0 +1,5 @@
+# the teletext game of section 5.8: the boat steered left, then right
+20 keydown ArrowLeft
+60 keyup ArrowLeft
+100 keydown ArrowRight
+160 keyup ArrowRight

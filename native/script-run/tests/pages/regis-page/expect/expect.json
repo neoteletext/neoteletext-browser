@@ -1,11 +1,12 @@
 {
   "form": 1,
-  "version": 3,
+  "version": 4,
   "files": {
-    "budget.json": "b589e9b449770cbaf37f4db90e816eb80ced18da43262212861a7ed600f708dd",
-    "log.txt": "34836ee5f28af9ac5f032b94f1f663600f55a8d25c0edc7111605ff657d0af19",
-    "sound.wav": "2b778f2304b47ba4ab1fb3846e613567d30be4d80830ef494d897459a32e264e",
-    "tick-000000.png": "34d58df92b4b1d6afb4bfdf10aff8b6ca9ddc8d50f9d13274956445eefcd431c",
-    "tick-000039.png": "34d58df92b4b1d6afb4bfdf10aff8b6ca9ddc8d50f9d13274956445eefcd431c"
+    "budget.json": "911ef6c78b1a12e954040eba82c67ca3e7e8befc53e9c11e433bf776d065a899",
+    "log.txt": "30e6dfc97fc792d30974e039cf19880fb1210495544cbfbdd6a111159d5864bb",
+    "sound.wav": "5cffdd4793d2c7986a33d893ef9f6e29f84420b47f145c3669ecc971581941e7",
+    "tick-000000.png": "c3046d934032cb4e463c77a7b928ca3fb8b86faa54862e7a2746c5e43390c047",
+    "tick-000039.png": "28b38815aa4a42d9ed8aa0f22deb96449a8263c7516adb41ab7a118915349123",
+    "tick-000179.png": "34d58df92b4b1d6afb4bfdf10aff8b6ca9ddc8d50f9d13274956445eefcd431c"
   }
 }

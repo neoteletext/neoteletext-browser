@@ -1,0 +1,17 @@
+# the thirteen kinds of component on NAPLPS: the focus moved through them, a menu's highlight, a table's, a toggle, a slider, a field's text, and a press on a row of the menu
+5 key Tab
+8 key ArrowDown
+10 key ArrowDown
+12 key Tab
+14 key ArrowDown
+16 key Tab
+17 key Tab
+18 key Tab
+20 key Enter
+22 key Tab
+24 key ArrowRight
+26 key Tab
+28 text Mary Rose
+30 key Backspace
+40 pointer down 40 170 thing=83886083
+41 pointer up 40 170 thing=83886083

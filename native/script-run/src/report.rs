@@ -150,8 +150,6 @@ pub struct Report {
     /// The bytes of packets and records the batches became for the
     /// page's renderer.
     pub output_bytes: u64,
-    /// The sections of batches that were not applied to the page.
-    pub left_out: Vec<&'static str>,
     /// The network's counts.
     pub network: Counts,
     /// Whether the network mode gives the same answers every run.
@@ -190,10 +188,7 @@ impl Report {
             "steps: {} run, median {} us, ninth decile {} us, worst {} us; start {} us",
             self.times.steps, self.times.median, self.times.ninth_decile, self.times.worst, self.start_micros
         );
-        let _ = writeln!(out, "output: {} bytes of {} packets and records", self.output_bytes, self.renderer);
-        if !self.left_out.is_empty() {
-            let _ = writeln!(out, "NOT DRAWN: the batches held sections this runner does not yet apply to the page: {}", self.left_out.join(", "));
-        }
+        let _ = writeln!(out, "output: {} bytes of {} drawing", self.output_bytes, self.renderer);
         let _ = writeln!(
             out,
             "network: {} requests, {} unanswered, {} answers{}",
@@ -230,8 +225,6 @@ impl Report {
         );
         let _ = writeln!(out, "  \"startMicroseconds\": {},", self.start_micros);
         let _ = writeln!(out, "  \"outputBytes\": {{{}: {}}},", quote(self.renderer), self.output_bytes);
-        let left_out: Vec<String> = self.left_out.iter().map(|name| quote(name)).collect();
-        let _ = writeln!(out, "  \"sectionsNotApplied\": [{}],", left_out.join(", "));
         let _ = writeln!(
             out,
             "  \"network\": {{\"requests\": {}, \"unanswered\": {}, \"answers\": {}, \"deterministic\": {}}},",

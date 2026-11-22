@@ -43,6 +43,10 @@ pub fn read_core(proxy: &EventLoopProxy<Incoming>) {
             #[cfg(feature = "interaction")]
             Ok(Some(ToInterface::Typing(typing))) => Incoming::Typing(typing),
             #[cfg(feature = "interaction")]
+            Ok(Some(ToInterface::Script(view))) => Incoming::Program(crate::incoming::Program::View(view)),
+            #[cfg(feature = "interaction")]
+            Ok(Some(ToInterface::KeyDefault(default))) => Incoming::Program(crate::incoming::Program::KeyDefault(default)),
+            #[cfg(feature = "interaction")]
             Ok(Some(ToInterface::InputTrace(line))) => Incoming::InputTrace(line),
             #[cfg(feature = "phone-keyboard")]
             Ok(Some(ToInterface::Phone(view))) => Incoming::Phone(view),

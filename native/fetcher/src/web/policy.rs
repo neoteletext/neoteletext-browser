@@ -106,16 +106,41 @@ pub(crate) struct ChannelPolicy {
 }
 
 impl ChannelPolicy {
-    /// The policy of the channel whose identity is written `channel`;
-    /// `None` when the text is no channel identity.
+    /// The policy of the channel whose identity is written `channel`, or
+    /// of a page opened from disk when it is
+    /// [`protocol::web::FILE_PAGE_IDENTITY`]; `None` when the text is
+    /// neither.
     pub(crate) fn new(channel: &str) -> Option<Self> {
+        if channel == protocol::web::FILE_PAGE_IDENTITY {
+            return Some(Self { channel: Channel { folder: None } });
+        }
         let channel = Channel::read(channel);
         channel.folder().is_some().then_some(Self { channel })
     }
 
-    /// The channel's folder, whose origin is its scripts' origin.
+    /// The channel's folder, whose origin is its scripts' origin; none
+    /// for a page opened from disk, which has no channel.
     pub(crate) const fn folder(&self) -> Option<&Url> {
         self.channel.folder()
+    }
+
+    /// Whether the partition is a page opened from disk (DEC-7315 version
+    /// 2): its origin is written `null`, no address is its own, and its
+    /// jar is never kept.
+    pub(crate) const fn is_file_page(&self) -> bool {
+        self.channel.folder().is_none()
+    }
+
+    /// The origin of the partition's scripts as a request writes it.
+    pub(crate) fn origin(&self) -> String {
+        self.folder().map_or_else(|| "null".to_owned(), |folder| folder.origin().ascii_serialization())
+    }
+
+    /// Whether the partition's pages are a secure context (the W3C
+    /// Secure Contexts section 3.1): loaded over `https`, from this
+    /// computer by name or address, or from disk.
+    pub(crate) fn is_secure_context(&self) -> bool {
+        self.folder().is_none_or(|folder| folder.scheme() == "https" || crate::web::fetch::is_loopback(folder))
     }
 
     /// How `url` stands to the channel (rule P1).
@@ -213,6 +238,25 @@ mod tests {
     fn only_a_channel_identity_has_a_policy() {
         assert!(ChannelPolicy::new("https://host.example/home/").is_some());
         assert!(ChannelPolicy::new("").is_none() && ChannelPolicy::new("https://host.example/home").is_none() && ChannelPolicy::new("file:///home/").is_none());
+    }
+
+    /// DEC-7315 version 2 (TODO-7395 step 1): a page opened from disk has
+    /// a policy by its one identity and by no path; its origin is written
+    /// `null`, it is a secure context, and no address is its own, another
+    /// file's least of all.
+    #[test]
+    fn a_page_from_disk_has_the_origin_null_and_owns_no_address() {
+        let policy = ChannelPolicy::new(protocol::web::FILE_PAGE_IDENTITY).unwrap();
+        assert!(policy.is_file_page() && policy.is_secure_context() && policy.folder().is_none());
+        assert_eq!(policy.origin(), "null");
+        for url in ["file:///home/viewer/page.tti", "http://localhost/", "https://host.example/home/", "data:text/plain,x"] {
+            assert_eq!(policy.relation(&Url::parse(url).unwrap()), Relation::CrossOrigin, "{url}");
+        }
+        let channel = ChannelPolicy::new("https://localhost/a/").unwrap();
+        assert!(!channel.is_file_page() && channel.is_secure_context());
+        assert_eq!(channel.origin(), "https://localhost");
+        assert!(ChannelPolicy::new("http://localhost:8080/a/").unwrap().is_secure_context());
+        assert!(!ChannelPolicy::new("http://host.example/a/").unwrap().is_secure_context());
     }
 
     /// Rules P1 and P2: an address is inside the channel, of its origin

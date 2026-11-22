@@ -88,6 +88,10 @@ impl Core {
             next = next.map(|at| at.min(due));
         }
         #[cfg(feature = "interaction")]
+        if let Some(due) = self.script_gate_due_at() {
+            next = next.map(|at| at.min(due));
+        }
+        #[cfg(feature = "interaction")]
         if let Some(due) = self.fill_due_at() {
             next = next.map(|at| at.min(due));
         }
@@ -114,6 +118,8 @@ impl Core {
         self.notice_tick()?;
         self.refresh_tick(now);
         self.scripts_tick(now);
+        #[cfg(feature = "interaction")]
+        self.script_gate_tick(now)?;
         if !self.decoders.is_empty() && now >= self.next_cost_reading {
             self.next_cost_reading = now.checked_add(super::page_cost::SAMPLE_INTERVAL).unwrap_or(now);
             self.read_decoder_times()?;

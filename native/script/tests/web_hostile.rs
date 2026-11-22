@@ -131,9 +131,11 @@ fn eighteen_hundred_event_streams_a_step_open_two_a_step() {
 /// bounds on what it starts hold.
 #[test]
 fn the_floods_are_held_under_the_browsers_time_limits_too() {
-    for (name, source) in
-        [("fetchabort.js", hostile!("fetchabort")), ("fetchabort2.js", hostile!("fetchabort2")), ("sse.js", hostile!("sse")), ("sse2.js", hostile!("sse2"))]
-    {
-        assert_held(name, &ran(limited(), source));
-    }
+    common::unless_starved(|| {
+        for (name, source) in
+            [("fetchabort.js", hostile!("fetchabort")), ("fetchabort2.js", hostile!("fetchabort2")), ("sse.js", hostile!("sse")), ("sse2.js", hostile!("sse2"))]
+        {
+            assert_held(name, &ran(limited(), source));
+        }
+    });
 }

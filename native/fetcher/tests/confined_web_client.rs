@@ -94,6 +94,7 @@ fn a_confined_web_client_fetches_through_its_pipes() {
         body: BodySource::None,
         protocols: Vec::new(),
         last_event_id: String::new(),
+        target_space: None,
     };
     write_to_client(&mut input, TAB, &TOKEN, &ToWebClient::Start(Box::new(start))).unwrap();
     input.flush().unwrap();

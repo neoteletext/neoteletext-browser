@@ -18,7 +18,14 @@ pub const CHANNEL: &str = "https://example.test/chan/";
 /// The engine, compiled once for the test program.
 pub fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| Engine::new().expect("the module compiles"))
+    ENGINE.get_or_init(|| {
+        let engine = Engine::new().expect("the module compiles");
+        // As the script host does when it starts: the prelude's bytecode
+        // is made before any context opens, so no test's timing of an
+        // opening holds the one compilation.
+        engine.prelude(neoteletext_script::ops::Parts::ALL).expect("the prelude compiles");
+        engine
+    })
 }
 
 /// A context's opening for `context` with nothing claimed. Its script's
@@ -144,6 +151,31 @@ pub fn assert_checks(lines: &[String], passed: u32) {
 /// A script: the checks, then `body`.
 pub fn script(body: &str) -> String {
     format!("{CHECKS}\n{body}")
+}
+
+/// How often a test of the limits on the wall clock is tried again when
+/// this machine kept its thread waiting.
+pub const STARVED_TRIES: usize = 5;
+
+/// Runs a test that holds the script library to its limits on the wall
+/// clock, and runs it again when it failed while its thread was kept
+/// waiting for a processor (rdm TODO-7386). The limits are the browser's
+/// own and the same in every build; a container measures them on the wall
+/// clock, as it must, so on a machine with no processor free a script is
+/// stopped, or a step's budget is used, by time in which nothing ran. A
+/// failure with no such wait fails at once, and a failure in every try
+/// fails: what a build is held to is unchanged.
+#[track_caller]
+pub fn unless_starved(test: impl Fn()) {
+    for attempt in 1..=STARVED_TRIES {
+        let waited_before = waited_for_a_processor();
+        let Err(failure) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(&test)) else { return };
+        let waited = waited_for_a_processor().saturating_sub(waited_before);
+        if waited <= neoteletext_script::limits::TIME_CHECK_MARGIN || attempt == STARVED_TRIES {
+            std::panic::resume_unwind(failure);
+        }
+        eprintln!("try {attempt} failed after its thread waited {waited:?} for a processor: trying again");
+    }
 }
 
 /// The time this thread has spent waiting for a processor, where the

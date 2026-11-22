@@ -194,6 +194,9 @@ coded! {
         Failures = 5,
         /// The link broke: a message refused, or a version not spoken.
         Link = 6,
+        /// The viewer stopped the page's program with the browser's own
+        /// key for it (section 4.6; DEC-7282 item 6).
+        Viewer = 7,
     }
 }
 
