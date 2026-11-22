@@ -30,6 +30,10 @@ use std::collections::BTreeSet;
 /// channel that writes many is cut, not kept.
 pub(super) const MAX_LOGS_HELD: usize = 64;
 
+/// The most page files' script names held between two takes: a channel
+/// names at most the engine's `MAX_SCRIPT_PAGES` scripts.
+pub(super) const MAX_SCRIPT_NAMES_HELD: usize = neoteletext_web::scripts::MAX_SCRIPT_PAGES;
+
 /// Keeps a log line read, within [`MAX_LOGS_HELD`].
 fn keep_log(logs: &mut Vec<ChannelLog>, line: &neoteletext_formats::log::LogLine<'_>, page: Option<PageAddress>) {
     use neoteletext_formats::log::LogLevel;
@@ -79,6 +83,8 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: &mut self.input,
             receiver_rows: &mut self.receiver_rows,
+            // A fetched page file may name its script.
+            named: Some(&mut self.script_names),
             unused: core::marker::PhantomData,
         };
         let logs = &mut self.logs;
@@ -106,6 +112,9 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: &mut self.input,
             receiver_rows: &mut self.receiver_rows,
+            // Page bytes of a push connection never name a script
+            // (DEC-7282 item 10): the engine's one rule says which may.
+            named: (!pushed || neoteletext_web::scripts::page_bytes_may_name_a_script(neoteletext_web::agent::Source::Push)).then_some(&mut self.script_names),
             unused: core::marker::PhantomData,
         };
         let reader = if packets { &mut self.pushed_packets } else { &mut self.pushed_pages };
@@ -264,6 +273,14 @@ impl Engine {
             if let Some(Taken::Change(held @ (Held::Stream { .. } | Held::Objects { .. } | Held::Cursor { .. } | Held::Sheet { .. }))) = Taken::of(&read) {
                 self.apply_held(vec![held]);
             }
+            // A `SCRIPT_REF` record names the script of its page and
+            // sub-code (section 12.4); a later one replaces an earlier.
+            if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::ScriptRef(record)) = &read
+                && self.script_names.len() < MAX_SCRIPT_NAMES_HELD
+            {
+                let name = String::from_utf8_lossy(record.name.as_bytes()).into_owned();
+                self.script_names.push((record.page.mpp(), record.subcode.value(), Some(name)));
+            }
             // Drawing links are no change the animation takes.
             #[cfg(feature = "links")]
             if let neoteletext_web::records::Read::Record(neoteletext_web::records::ChannelRecord::DrawingLinks(record)) = read
@@ -316,6 +333,7 @@ impl Engine {
             #[cfg(feature = "interaction")]
             input: &mut self.input,
             receiver_rows: &mut self.receiver_rows,
+            named: Some(&mut self.script_names),
             unused: core::marker::PhantomData,
         };
         let logs = &mut self.logs;
@@ -439,6 +457,9 @@ struct PageLines<'a> {
     receiver_rows: &'a mut BTreeMap<(u16, u16), ReceiverRow>,
     #[cfg(feature = "interaction")]
     input: &'a mut InputRecords,
+    /// Where the script each page file names is noted, or none when the
+    /// bytes may name no script.
+    named: Option<&'a mut Vec<(u16, u16, Option<String>)>>,
     unused: core::marker::PhantomData<&'a ()>,
 }
 
@@ -448,6 +469,12 @@ impl PageLines<'_> {
         #[cfg(feature = "links")]
         self.lines.read(page);
         let key = (page.address.mpp(), page.subcode.value());
+        // The page file's `JS` line, or that it has none (script-api.md
+        // section 12.4): within a bound, past which a file of very many
+        // pages names no more.
+        if let Some(named) = self.named.as_mut().filter(|named| named.len() < MAX_SCRIPT_NAMES_HELD) {
+            named.push((key.0, key.1, page.script.map(|name| String::from_utf8_lossy(name.as_bytes()).into_owned())));
+        }
         match receiver_row(page) {
             Some(row) => self.receiver_rows.insert(key, row),
             None => self.receiver_rows.remove(&key),

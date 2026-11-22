@@ -2,17 +2,19 @@
 //! 7.6; work package N1): JavaScript run in the container, its batches'
 //! NAPLPS played by the NAPLPS renderer at the pinned commit as the
 //! browser's decoder plays it, and the pictures compared with those kept.
-#![allow(clippy::unwrap_used, clippy::arithmetic_side_effects, clippy::indexing_slicing, clippy::panic, reason = "tests")]
+#![allow(clippy::unwrap_used, clippy::arithmetic_side_effects, clippy::indexing_slicing, clippy::panic, clippy::naive_bytecount, reason = "tests")]
 
 mod common;
 mod naplps_drawn;
 
-use common::{Opens as _, all_lines, assert_checks, container, key, lines, opening, script, tick, with_events};
+use common::{Opens as _, all_lines, assert_checks, container, ints_event, key, lines, opening, script, tick, view, with_events};
 use naplps_drawn::{Receiver, expect, lit, pixel};
 use neoteletext_script::Container;
 use neoteletext_script::host::naplps::BACKDROP_HANDLE;
 use neoteletext_script::host::naplps::limits::{NAPLPS_MAX_BYTES_PER_CALLBACK, NAPLPS_MAX_BYTES_PER_SECOND};
 use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES};
+use neoteletext_script::ops::PointerAction;
+use protocol::script::batch::SoundOperation;
 use protocol::script::{Batch, ContextId, EventKind, Renderer, Step};
 
 /// A container with a page context on a NAPLPS page running `source`,
@@ -29,22 +31,19 @@ fn naplps_page(source: &str, keys: &[&str]) -> Container {
 /// Steps the container and gives the receiver what the batch appends.
 fn step(container: &mut Container, receiver: &mut Receiver, step: &Step) -> Batch {
     let batch = container.step(step).expect("the step is answered");
-    if let Some(append) = &batch.naplps {
-        receiver.take(append.new_generation, &append.bytes);
-    }
+    receiver.take_batch(&batch);
     batch
 }
 
-/// The worked page example of section 7.6 as far as this work package
-/// builds it: its texture, a definition of section 7.4, is work package
-/// N2's, so the sea is hatched with one of the standard's own patterns
-/// and every other line is the example's. A staged reveal played by the
-/// receiver's WAITs, text on the cell grid, a lamp painted dark and lit
-/// by the colour map alone, then made to blink: the pictures at each
-/// stage are the ones kept.
+/// The worked page example of section 7.6, word for word (work packages
+/// N1 and N2; TODO-7299's and TODO-7367's "done"): a staged reveal played
+/// by the receiver's WAITs, a sea filled with a texture the script
+/// defines, text on the cell grid, a lamp painted dark and lit by the
+/// colour map alone, then made to blink. The pictures at each stage are
+/// the ones kept.
 #[test]
 fn the_worked_page_example_draws_its_kept_pictures() {
-    let mut container = naplps_page(include_str!("naplps_page/harbour-hatched.js"), &["l", "b"]);
+    let mut container = naplps_page(include_str!("naplps_page/harbour.js"), &["l", "b"]);
     let mut receiver = Receiver::new();
     let batch = step(&mut container, &mut receiver, &tick(0, 0));
     assert_eq!(lines(&batch), Vec::<String>::new());
@@ -53,12 +52,19 @@ fn the_worked_page_example_draws_its_kept_pictures() {
     expect("harbour-0-sky", &receiver.canvas, &receiver.colours());
     assert!(!receiver.player.idle());
     assert_eq!(pixel(&receiver.canvas, 240, 380), 0);
-    // Half a second later, the sea; half a second after that, the rest.
+    // Half a second later, the sea in its waves; half a second after that, the rest.
     receiver.advance(30);
     expect("harbour-1-sea", &receiver.canvas, &receiver.colours());
+    let sea: Vec<u8> = (300..460).flat_map(|y| (0..480).map(move |x| (x, y))).map(|(x, y)| pixel(&receiver.canvas, x, y)).collect();
+    assert!(sea.contains(&11) && sea.contains(&9) && sea.iter().all(|entry| *entry == 11 || *entry == 9), "the sea is foam on sea and nothing else");
+    // The pattern is the texture's: it repeats every 12 dots across and 6 lines down.
+    assert!((300..448).all(|y| (0..468).all(|x| pixel(&receiver.canvas, x, y) == pixel(&receiver.canvas, x + 12, y + 6))));
+    assert!((300..306).any(|y| pixel(&receiver.canvas, 0, y) != pixel(&receiver.canvas, 3, y)), "and is not plain hatching");
     receiver.advance(30);
     expect("harbour-2-all", &receiver.canvas, &receiver.colours());
     assert!(receiver.player.idle(), "everything appended is painted and every WAIT has passed");
+    let diagnostics = receiver.terminal.diagnostics();
+    assert_eq!((diagnostics.passed_over, diagnostics.refusals), (0, [0; naplps::REFUSAL_KINDS]), "{diagnostics:?}");
     let dark = receiver.canvas.pixels().to_vec();
     let (sky, lamp) = (8_usize, 10_usize);
     assert_eq!((receiver.colours()[sky], receiver.colours()[lamp]), ([0x11, 0x33, 0x66], [0, 0, 0]));
@@ -89,20 +95,237 @@ fn the_worked_page_example_draws_its_kept_pictures() {
     assert_eq!(receiver.canvas.pixels(), dark);
 }
 
-/// The worked page example of section 7.6 exactly as the specification
-/// gives it: work package TODO-7299's "done". It needs `nt.naplps.texture`
-/// (section 7.4, operation 307 `NP_TEXTURE`), which work package N2
-/// (TODO-7301) builds.
+/// The worked game example of section 7.6, word for word (work package
+/// N2; TODO-7301's "done"), for 600 ticks: a gull whose wings the
+/// receiver flaps by a frame cycle, steered by a held key, and kites that
+/// cross the picture, each an actor drawn by one symbol, moved by
+/// `ANIMATE` operations and removed past the left edge. The pictures
+/// presented at four ticks are the ones kept; the random source follows
+/// the context's seed, so every run is the same.
 #[test]
-#[ignore = "needs nt.naplps.texture, operation 307 NP_TEXTURE, which work package N2 (TODO-7301) builds; run with --ignored once it has"]
-fn the_worked_page_example_as_the_specification_gives_it() {
-    let mut container = naplps_page(include_str!("naplps_page/harbour.js"), &["l", "b"]);
+fn the_worked_game_example_draws_its_kept_pictures() {
+    let mut container = container();
+    let mut open = opening(ContextId::Page);
+    open.renderer = Renderer::Naplps;
+    open.keys = vec!["ArrowUp".into(), "ArrowDown".into()];
+    open.tick_divisor = 2;
+    container.open_with(open, include_bytes!("naplps_page/gull.js")).expect("the page opens");
     let mut receiver = Receiver::new();
-    let batch = step(&mut container, &mut receiver, &tick(0, 0));
-    assert_eq!(lines(&batch), Vec::<String>::new(), "the script ran without an error");
-    receiver.advance(60);
-    assert!(receiver.player.idle());
-    expect("harbour-waves", &receiver.canvas, &receiver.colours());
+    let (mut titles, mut most, mut removed, mut started) = (Vec::new(), 0, false, false);
+    for at in 0..600_u32 {
+        let events = match at {
+            100 => vec![key(EventKind::KeyDown, "ArrowUp", 0)],
+            130 => vec![key(EventKind::KeyUp, "ArrowUp", 0)],
+            _ => Vec::new(),
+        };
+        let batch = container.step(&with_events(at, u64::from(at), events)).expect("the step is answered");
+        assert_eq!(lines(&batch), Vec::<String>::new(), "tick {at}");
+        view(&batch);
+        started |= batch.sound.iter().flatten().any(|operation| matches!(operation, SoundOperation::SynthStart { part: 0, .. }));
+        titles.extend(batch.title.clone());
+        if let Some(record) = &batch.naplps_objects {
+            most = most.max(record.objects.len());
+            removed |= !record.one && at > 0;
+        }
+        receiver.take_batch(&batch);
+        if [0, 150, 300, 599].contains(&at) {
+            let colours = receiver.colours();
+            expect(&format!("gull-{at}"), receiver.presented(), &colours);
+        }
+        if at == 99 {
+            assert_eq!(receiver.terminal.bounds(1).map(|rect| (rect.x, rect.y)), Some((60, 240)), "the gull, object 1, at dot (60, 220): raster line 240");
+        }
+        if at == 131 {
+            // Held for ticks 100 to 129, heard on every second tick: fifteen moves of six lines up.
+            let _ = receiver.presented();
+            assert_eq!(receiver.terminal.bounds(1).map(|rect| (rect.x, rect.y)), Some((60, 150)));
+        }
+        receiver.advance(1);
+    }
+    assert!(started, "the synthesizer is started");
+    assert!(titles.iter().all(|title| title.starts_with("Gull: ")) && titles.len() >= 290, "{} titles", titles.len());
+    // A kite every second, five dots every other tick: one takes 196
+    // ticks to cross, so four are flying at once and some have left.
+    assert!((4..=9).contains(&most), "{most} objects at most");
+    assert!(removed, "a kite that left was removed");
+    assert_eq!(receiver.title, "Gull: 0".to_owned().replace('0', &titles.last().unwrap()["Gull: ".len()..]));
+    let diagnostics = receiver.terminal.diagnostics();
+    assert_eq!((diagnostics.passed_over, diagnostics.refusals), (0, [0; naplps::REFUSAL_KINDS]), "{diagnostics:?}");
+}
+
+/// Sections 7.4 and 7.5 from a script: symbols, a DRCS character, a
+/// texture, an actor and a region, their state as properties, bounds and
+/// overlaps in dots, scopes, redefinition and removal; and what they
+/// draw: a stamped symbol, a glyph, a textured fill, an actor composed
+/// over the backdrop, a hidden region's cover. After the definitions the
+/// backdrop is still painted where and in what its painter says
+/// (TODO-7367 item 3).
+#[test]
+#[expect(clippy::too_many_lines, reason = "one script that makes every call of sections 7.4 and 7.5, and what its batches draw")]
+fn a_script_defines_symbols_and_directs_a_cast() {
+    let mut container = container();
+    let mut open = opening(ContextId::Page);
+    open.renderer = Renderer::Naplps;
+    open.flags.pointer_press = true;
+    open.tick_divisor = 1;
+    container
+        .open_with(
+            open,
+            script(
+                r#"
+        const n = nt.naplps;
+        const box = n.symbol({ width: 8, height: 8 }, (p) => p.ink("white").fillRect(0, 0, 8, 8));
+        equal("a symbol's size", box.width + "x" + box.height, "8x8");
+        throws("a wait in a symbol", TypeError, "only the backdrop waits", () => n.symbol({ width: 4, height: 4 }, (p) => p.wait(1)));
+        throws("a symbol too wide", RangeError, "CANVAS_WIDTH", () => n.symbol({ width: 481, height: 4 }, (p) => p));
+        const a = n.actor({ frames: [box], x: 100, y: 50, detectable: true, label: "Box" });
+        equal("x", a.x, 100);
+        equal("size", a.width + "x" + a.height, "8x8");
+        equal("label", a.label, "Box");
+        equal("layer", a.layer, 2);
+        equal("shown", a.shown, true);
+        equal("look", a.look, "normal");
+        equal("bounds", JSON.stringify(a.bounds()), '{"x":100,"y":50,"width":8,"height":8}');
+        a.moveBy(10, 5);
+        equal("moved by", a.x + "," + a.y, "110,55");
+        a.x = 200;
+        equal("moved to", a.x + "," + a.y, "200,55");
+        const r = n.region({ x: 200, y: 50, width: 20, height: 20, cover: "red" });
+        check("overlaps", a.overlaps(r) && r.overlaps(a));
+        a.moveTo(0, 0);
+        check("apart", !a.overlaps(r));
+        a.shown = false;
+        equal("hidden has no bounds", a.bounds(), null);
+        check("hidden overlaps nothing", !r.overlaps(a));
+        a.shown = true;
+        a.layer = 3;
+        a.order = -5;
+        a.frame = 0;
+        a.cycle(0, 0, 10, { once: true });
+        a.stopCycle();
+        a.look = "hover";
+        equal("look set", a.look, "hover");
+        a.look = "normal";
+        throws("a frame past the last", RangeError, "MAX_FRAME", () => { a.frame = 16; });
+        throws("the stream's own layer", RangeError, "LAYERS", () => { a.layer = 0; });
+        throws("a look", TypeError, "no such look", () => { a.look = "sideways"; });
+        throws("a region's frame", TypeError, "a region has no frames", () => { r.frame = 1; });
+        throws("a symbol in use", TypeError, "an actor draws with the symbol", () => box.remove());
+        a.redefine({ x: 300, detectable: false });
+        equal("redefined", a.x + "," + a.y + "," + a.detectable + "," + a.layer, "300,0,false,3");
+        throws("frames that are none", TypeError, "an actor's frames", () => n.actor({ frames: "no" }));
+        throws("seventeen frames", RangeError, "MAX_OBJECT_FRAMES", () => n.actor({ frames: new Array(17).fill(box) }));
+        throws("no frame", TypeError, "an actor has 1 to 16 frames", () => n.actor({ frames: [] }));
+        throws("a frame that is no symbol", TypeError, "a frame is a symbol", () => n.actor({ frames: [{}] }));
+        const dot = n.drcs((p) => p.fillRect(0, 0, 12, 20));
+        const half = n.drcs((p) => p.fillRect(0, 0, 12, 10));
+        const tex = n.texture({ width: 4, height: 4 }, (p) => p.fillRect(0, 0, 2, 2));
+        throws("a texture too large", RangeError, "MASK_SIDE", () => n.texture({ width: 129, height: 4 }, (p) => p));
+        n.backdrop.paint((p) => {
+          p.stamp(box, 20, 300).moveTo(60, 319).glyph(dot).moveTo(80, 319).glyph(half);
+          p.fillStyle(tex).fillRect(100, 300, 40, 40).fillStyle("solid").ink("green").fillRect(200, 300, 8, 8);
+        });
+        let scoped;
+        const scope = nt.scope(() => { scoped = n.actor({ frames: [box], x: 5, y: 5 }); });
+        scope.end();
+        throws("a scope's actor goes with it", TypeError, "the actor or region was removed", () => scoped.x);
+        const still = n.actor({ frames: [box], x: 400, y: 400 });
+        const hidden = n.region({ x: 300, y: 100, width: 10, height: 10, cover: "yellow", shown: false });
+        a.addEventListener("pointerdown", (event) => console.log("pressed " + (event.target === a) + " " + event.x + "," + event.y));
+        r.remove();
+        throws("a region removed", TypeError, "the actor or region was removed", () => r.moveTo(1, 1));
+        const spare = n.symbol({ width: 2, height: 2 }, (p) => p.pointAt(0, 0));
+        spare.redefine((p) => p.pointAt(1, 1));
+        spare.remove();
+        throws("a symbol removed", TypeError, "the symbol was removed", () => spare.redefine((p) => p));
+        const budget = nt.budget();
+        equal("budget", [budget.symbols.used, budget.symbols.limit, budget.actors.used, budget.actors.limit, budget.drcs.used, budget.textures.used, budget.textures.limit].join(), "1,80,3,56,2,1,4");
+        nt.addEventListener("tick", (event) => { if (event.tick === 3) { still.moveBy(-100, 0); hidden.shown = true; } });
+        done();
+    "#,
+            )
+            .as_bytes(),
+        )
+        .expect("the page opens");
+    let mut receiver = Receiver::new();
+    let first = container.step(&tick(0, 0)).expect("the step is answered");
+    assert_checks(&lines(&first), 32);
+    view(&first);
+    receiver.take_batch(&first);
+    let record = first.naplps_objects.as_ref().expect("the objects");
+    assert!(!record.one, "several objects were made and some removed: every object is sent");
+    assert_eq!(record.objects.iter().map(|object| (object.number, object.x, object.y)).collect::<Vec<_>>(), [(1, 300, 20), (4, 400, 420), (5, 300, 120)]);
+    assert_eq!(record.objects[0].label, "Box");
+    let diagnostics = receiver.terminal.diagnostics();
+    assert_eq!((diagnostics.passed_over, diagnostics.refusals), (0, [0; naplps::REFUSAL_KINDS]), "{diagnostics:?}");
+    // The backdrop: the stamp, the two glyphs, the textured fill, and
+    // after them all a rectangle in its own colour at its own place.
+    let backdrop = receiver.canvas.clone();
+    let all = |x0: u32, y0: u32, x1: u32, y1: u32, entry: u8| (y0..y1).all(|y| (x0..x1).all(|x| pixel(&backdrop, x, y) == entry));
+    assert!(all(20, 300, 28, 308, 7) && all(28, 300, 36, 310, 0) && all(20, 308, 28, 312, 0), "the stamped symbol");
+    assert!(all(60, 300, 72, 320, 7) && all(72, 300, 80, 320, 0), "the whole-cell glyph");
+    assert!(all(80, 300, 92, 310, 7) && all(80, 310, 92, 320, 0), "the half-cell glyph");
+    let textured: Vec<u8> = (300..340).flat_map(|y| (100..140).map(move |x| (x, y))).map(|(x, y)| pixel(&backdrop, x, y)).collect();
+    assert_eq!(textured.iter().filter(|entry| **entry == 7).count(), 400, "a quarter of the textured rectangle's 1,600 dots");
+    assert!((300..336).all(|y| (100..136).all(|x| pixel(&backdrop, x, y) == pixel(&backdrop, x + 4, y + 4))));
+    assert!(all(200, 300, 208, 308, 2) && all(208, 300, 216, 308, 0), "the rectangle painted after the definitions");
+    // The cast, composed over it: the actors where they stand, the
+    // hidden region's cover.
+    let presented = receiver.presented().clone();
+    let over = |x0: u32, y0: u32, x1: u32, y1: u32, entry: u8| (y0..y1).all(|y| (x0..x1).all(|x| pixel(&presented, x, y) == entry));
+    assert!(over(300, 0, 308, 8, 7) && over(308, 0, 316, 8, 0), "the actor redefined at (300, 0)");
+    assert!(over(400, 400, 408, 408, 7));
+    assert!(over(300, 100, 310, 110, 3) && over(310, 100, 320, 110, 0), "the hidden region covers its rectangle in yellow");
+    assert!(over(200, 50, 220, 70, 0), "the region removed covers nothing");
+    // A press on the actor is heard on it.
+    let handle = (5 << 24) | 1;
+    let press = ints_event(EventKind::Pointer, [PointerAction::DOWN.number() | 1024, 303, 4, handle], &[1, 1, 3, 4]);
+    let pressed = container.step(&with_events(1, 1, vec![press])).expect("the step is answered");
+    assert_eq!(lines(&pressed), ["pressed true 303,4"]);
+    // Later moves and shows are animation operations, and no record.
+    receiver.take_batch(&pressed);
+    for at in 2..=3 {
+        let batch = container.step(&tick(at, u64::from(at))).expect("the step is answered");
+        assert_eq!(batch.naplps_objects, None);
+        receiver.take_batch(&batch);
+    }
+    let presented = receiver.presented().clone();
+    let over = |x0: u32, y0: u32, x1: u32, y1: u32, entry: u8| (y0..y1).all(|y| (x0..x1).all(|x| pixel(&presented, x, y) == entry));
+    assert!(over(300, 400, 308, 408, 7) && over(400, 400, 408, 408, 0), "the actor moved a hundred dots left");
+    assert!(over(300, 100, 310, 110, 0), "the region shown covers nothing");
+}
+
+/// Section 10.1 rule 7 and the security review's finding S-06
+/// (TODO-7272, TODO-7336 item 1), for definitions and the cast: a script
+/// that defines, redefines, casts, animates, removes and repaints as much
+/// as it can on every tick makes the host hold and send no more than the
+/// named bounds, every batch is a message the link takes whole, and the
+/// page is not stopped for it.
+#[test]
+fn a_script_that_defines_and_casts_without_end_stays_inside_the_bounds() {
+    let mut container = container();
+    let mut open = opening(ContextId::Page);
+    open.renderer = Renderer::Naplps;
+    open.tick_divisor = 1;
+    container.open_with(open, include_bytes!("naplps_page/hostile-cast.js")).expect("the page opens");
+    let (mut floods, mut objects, mut bytes, mut said) = (0, 0, 0, Vec::new());
+    for at in 0..8_u32 {
+        let batch = container.step(&tick(at, u64::from(at))).expect("the step is answered");
+        let lines = lines(&batch);
+        assert!(lines.iter().all(|line| line.starts_with("flood ")), "{lines:?}");
+        floods += lines.len();
+        said.extend(lines);
+        // The batch is written and read back whole: every section within its bounds.
+        view(&batch);
+        objects = objects.max(batch.naplps_objects.as_ref().map_or(0, |record| record.objects.len()));
+        bytes += batch.naplps.as_ref().map_or(0, |append| append.bytes.len());
+        assert!(batch.animate.as_ref().is_none_or(|operations| operations.len() <= 64));
+        assert!(container.host_bytes() <= MAX_HOST_STATE_BYTES, "tick {at}: the host holds {}", container.host_bytes());
+        assert_eq!(container.stop_reason(), None, "tick {at}");
+    }
+    assert!(floods >= 8, "{floods} floods");
+    assert_eq!(objects, 56, "the page's share of the cast was reached and not passed: {said:?}");
+    assert!(bytes <= NAPLPS_MAX_BYTES_PER_SECOND, "{bytes}");
 }
 
 /// Sections 7.1 to 7.3 from a script: the objects are frozen, calls

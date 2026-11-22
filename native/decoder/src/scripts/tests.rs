@@ -434,3 +434,86 @@ fn leaving_the_channel_closes_each_context_and_ends_the_script_host() {
         "{link:?}"
     );
 }
+
+/// DEC-7315 version 2, the owner's ruling on local files and the network: a
+/// page file opened from disk runs its script at once, and its script has
+/// the network when its manifest asks for it; the context is told the
+/// page is a file's, and the file's address is no folder a script's
+/// address is made from.
+#[test]
+fn a_file_opened_from_disk_runs_its_script_with_the_network_its_manifest_asks_for() {
+    let mut fixture = Fixture::new();
+    fixture.order(ScriptOrder::Channel(ChannelFacts { from_disk: true, ..ChannelFacts::default() }));
+    fixture.order(source(ContextId::Page, 0x100, "own.js", b"/*! nt {\"api\":1,\"network\":true} */"));
+    fixture.show(Some(0x100));
+    let (reports, link) = written(&mut fixture.out);
+    let open = link.iter().find_map(|message| if let ToScriptHost::ContextOpen(open) = message { Some(&**open) } else { None }).unwrap();
+    assert!(open.flags.network && open.flags.from_disk, "{:?}", open.flags);
+    assert_eq!((open.channel_url.as_str(), open.script_url.as_str()), ("", "own.js"));
+    assert!(matches!(reports.as_slice(), [ScriptReport::Claims(claims)] if claims.running && claims.network), "{reports:?}");
+}
+
+/// Sections 12.4 to 12.6 (DEC-7287 item 10; TODO-7304 steps 3 and 4): a
+/// page file that names its script has that script asked for by name,
+/// once; the channel file's script for the same page is then not run and
+/// the difference is said for the developer; the named script runs when
+/// it comes; and a file that names none again gives the page back to the
+/// channel file's.
+#[test]
+fn the_page_files_own_script_wins_over_the_channel_files() {
+    let mut fixture = Fixture::new();
+    fixture.show(Some(0x100));
+    let names = |fixture: &mut Fixture, name: Option<&str>| {
+        fixture.scripts.page_file_names(at(0x100), name.map(str::to_owned), &mut fixture.engine, &mut fixture.out).unwrap();
+    };
+    names(&mut fixture, Some("own.js"));
+    assert_eq!(written(&mut fixture.out).0, vec![ScriptReport::Wanted { page: at(0x100), name: "own.js".into() }]);
+    names(&mut fixture, Some("own.js"));
+    assert!(written(&mut fixture.out).0.is_empty(), "asked once");
+
+    // The channel file's script for the page arrives with the page.
+    fixture.order(source(ContextId::Page, 0x100, "other.js", PAGE));
+    let (reports, link) = written(&mut fixture.out);
+    assert!(link.is_empty(), "the channel file's script is not run: {link:?}");
+    assert!(matches!(reports.as_slice(), [ScriptReport::Log { level: 1, text, .. }] if text.contains("own.js") && text.contains("other.js")), "{reports:?}");
+
+    fixture.order(source(ContextId::Page, 0x100, "own.js", b"/*! nt {\"api\":1,\"keys\":[\"o\"]} */"));
+    let (reports, link) = written(&mut fixture.out);
+    assert!(
+        link.iter().any(|message| matches!(message, ToScriptHost::ContextOpen(open) if open.keys == ["o"] && open.script_url.ends_with("own.js"))),
+        "{link:?}"
+    );
+    assert!(matches!(reports.as_slice(), [ScriptReport::Claims(claims)] if claims.keys == ["o"]), "{reports:?}");
+
+    // Another page's file names nothing of this page: exact keys, and
+    // nothing inherited by a sub-page.
+    fixture.scripts.page_file_names(PageSub::new(0x100, 2), None, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(written(&mut fixture.out).1.is_empty(), "another sub-code of the page is another page");
+    assert!(fixture.scripts.page_context().is_some());
+
+    // The file is read again without its line: its script ends, and the
+    // channel file's runs when it next comes with the page.
+    names(&mut fixture, None);
+    let (_, link) = written(&mut fixture.out);
+    assert!(matches!(link.first(), Some(ToScriptHost::ContextClose(ContextId::Page))), "{link:?}");
+    fixture.order(source(ContextId::Page, 0x100, "other.js", PAGE));
+    let (_, link) = written(&mut fixture.out);
+    assert!(link.iter().any(|message| matches!(message, ToScriptHost::ContextOpen(open) if open.script_url.ends_with("other.js"))), "{link:?}");
+}
+
+/// DEC-7282 item 10 and section 12.4: a fetched page file's `JS` line is
+/// noted with its page and sub-code, a page file with none is noted as
+/// naming none, and page bytes of a push connection name no script.
+#[test]
+fn a_fetched_page_files_js_line_is_read_and_a_pushed_ones_is_not() {
+    let mut engine = Engine::new();
+    engine.feed(b"PN,10000\nSC,0000\nPS,8000\nJS,own.js\nOL,1,ONE\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,TWO\n");
+    engine.finish();
+    assert_eq!(engine.take_script_names(), vec![(0x100, 0, Some("own.js".to_owned())), (0x101, 0, None)]);
+    assert!(engine.take_script_names().is_empty(), "taken once");
+    let page = b"PN,10200\nSC,0000\nPS,8000\nJS,pushed.js\nOL,1,PUSHED\n";
+    engine.feed_whole(false, true, page);
+    assert!(engine.take_script_names().is_empty(), "a push connection's page bytes name no script");
+    engine.feed_whole(false, false, page);
+    assert_eq!(engine.take_script_names(), vec![(0x102, 0, Some("pushed.js".to_owned()))]);
+}

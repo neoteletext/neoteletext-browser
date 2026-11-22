@@ -1,0 +1,135 @@
+# The web-platform-tests' eventsource suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 38 files run, 29 not run here; cases: 8 pass, 0 fail as a listed departure, 61 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	eventsource/dedicated-worker/eventsource-constructor-no-new.any.js	OK	1	0
+FILE	eventsource/event-data.any.js	TIMEOUT	0	1
+FILE	eventsource/eventsource-constructor-empty-url.any.js	OK	1	0
+FILE	eventsource/eventsource-constructor-url-bogus.any.js	OK	2	0
+FILE	eventsource/eventsource-cross-origin-redirect-origin.any.js	OK	0	1
+FILE	eventsource/eventsource-eventtarget.any.js	TIMEOUT	0	1
+FILE	eventsource/eventsource-onmessage-trusted.any.js	TIMEOUT	0	1
+FILE	eventsource/eventsource-onmessage.any.js	TIMEOUT	0	1
+FILE	eventsource/eventsource-onopen.any.js	TIMEOUT	0	1
+FILE	eventsource/eventsource-prototype.any.js	OK	1	0
+FILE	eventsource/eventsource-url.any.js	OK	1	0
+FILE	eventsource/format-bom-2.any.js	TIMEOUT	0	1
+FILE	eventsource/format-bom-split.any.js	TIMEOUT	0	1
+FILE	eventsource/format-bom-utf-16.any.js	OK	0	2
+FILE	eventsource/format-bom.any.js	TIMEOUT	0	1
+FILE	eventsource/format-comments.any.js	TIMEOUT	0	1
+FILE	eventsource/format-data-before-final-empty-line.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-data.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-event-empty.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-event.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-id-2.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-id-redirect.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-id.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-parsing.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-retry-bogus-2.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-retry-bogus.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-retry-empty.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-retry.any.js	TIMEOUT	0	1
+FILE	eventsource/format-field-unknown.any.js	TIMEOUT	0	1
+FILE	eventsource/format-leading-space.any.js	TIMEOUT	0	1
+FILE	eventsource/format-mime-bogus.any.js	OK	1	0
+FILE	eventsource/format-mime-trailing-semicolon.any.js	OK	0	1
+FILE	eventsource/format-mime-valid-bogus.any.js	OK	1	0
+FILE	eventsource/format-newlines.any.js	TIMEOUT	0	1
+FILE	eventsource/format-null-character.any.js	OK	0	1
+FILE	eventsource/format-utf-8.any.js	OK	0	1
+FILE	eventsource/request-accept.any.js	TIMEOUT	0	1
+FILE	eventsource/request-cache-control.any.js	TIMEOUT	0	4
+HARNESS	TODO-7388/5	eventsource/event-data.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/event-data.any.js	event-data
+FAIL	TODO-7388/5	eventsource/eventsource-cross-origin-redirect-origin.any.js	MessageEvent.origin is the origin of the final URL after a cross-origin redirect
+HARNESS	TODO-7388/5	eventsource/eventsource-eventtarget.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/eventsource-eventtarget.any.js	eventsource-eventtarget
+HARNESS	TODO-7388/5	eventsource/eventsource-onmessage-trusted.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/eventsource-onmessage-trusted.any.js	EventSource message events are trusted
+HARNESS	TODO-7388/5	eventsource/eventsource-onmessage.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/eventsource-onmessage.any.js	eventsource-onmessage
+HARNESS	TODO-7388/5	eventsource/eventsource-onopen.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/eventsource-onopen.any.js	eventsource-onopen
+HARNESS	TODO-7388/5	eventsource/format-bom-2.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-bom-2.any.js	format-bom-2
+HARNESS	TODO-7388/5	eventsource/format-bom-split.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-bom-split.any.js	EventSource: byte order mark split across chunks
+FAIL	TODO-7388/5	eventsource/format-bom-utf-16.any.js	EventSource: UTF-16LE byte order mark is not used
+FAIL	TODO-7388/5	eventsource/format-bom-utf-16.any.js	EventSource: UTF-16BE byte order mark is not used
+HARNESS	TODO-7388/5	eventsource/format-bom.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-bom.any.js	format-bom
+HARNESS	TODO-7388/5	eventsource/format-comments.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-comments.any.js	format-comments
+HARNESS	TODO-7388/5	eventsource/format-data-before-final-empty-line.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-data-before-final-empty-line.any.js	format-data-before-final-empty-line
+HARNESS	TODO-7388/5	eventsource/format-field-data.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-data.any.js	format-field-data
+HARNESS	TODO-7388/5	eventsource/format-field-event-empty.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-event-empty.any.js	format-field-event-empty
+HARNESS	TODO-7388/5	eventsource/format-field-event.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-event.any.js	format-field-event
+HARNESS	TODO-7388/5	eventsource/format-field-id-2.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-id-2.any.js	format-field-id-2
+HARNESS	TODO-7388/5	eventsource/format-field-id-redirect.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-id-redirect.any.js	format-field-id-redirect
+HARNESS	TODO-7388/5	eventsource/format-field-id.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-id.any.js	format-field-id
+HARNESS	TODO-7388/5	eventsource/format-field-parsing.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-parsing.any.js	format-field-parsing
+HARNESS	TODO-7388/5	eventsource/format-field-retry-bogus-2.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-retry-bogus-2.any.js	format-field-retry-bogus-2
+HARNESS	TODO-7388/5	eventsource/format-field-retry-bogus.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-retry-bogus.any.js	format-field-retry-bogus
+HARNESS	TODO-7388/5	eventsource/format-field-retry-empty.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-retry-empty.any.js	format-field-retry-empty
+HARNESS	TODO-7388/5	eventsource/format-field-retry.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-retry.any.js	format-field-retry
+HARNESS	TODO-7388/5	eventsource/format-field-unknown.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-field-unknown.any.js	format-field-unknown
+HARNESS	TODO-7388/5	eventsource/format-leading-space.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-leading-space.any.js	format-leading-space
+FAIL	TODO-7388/5	eventsource/format-mime-trailing-semicolon.any.js	format-mime-trailing-semicolon
+HARNESS	TODO-7388/5	eventsource/format-newlines.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/format-newlines.any.js	format-newlines
+FAIL	TODO-7388/5	eventsource/format-null-character.any.js	format-null-character
+FAIL	TODO-7388/5	eventsource/format-utf-8.any.js	format-utf-8
+HARNESS	TODO-7388/5	eventsource/request-accept.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/request-accept.any.js	request-accept
+HARNESS	TODO-7388/5	eventsource/request-cache-control.any.js	TIMEOUT	
+TIMEOUT	TODO-7388/5	eventsource/request-cache-control.any.js	resources/cache-control.event_stream?pipe=sub1
+NOTRUN	TODO-7388/5	eventsource/request-cache-control.any.js	resources/cache-control.event_stream?pipe=sub2
+TIMEOUT	TODO-7388/5	eventsource/request-cache-control.any.js	http://www2.web-platform.test:8000/eventsource/resources/cors.py?run=cache-control1
+NOTRUN	TODO-7388/5	eventsource/request-cache-control.any.js	http://www2.web-platform.test:8000/eventsource/resources/cors.py?run=cache-control2
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-close.htm
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-close2.htm
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-constructor-non-same-origin.htm
+SKIP	WORKER-FILE	D-9.1	eventsource/dedicated-worker/eventsource-eventtarget.worker.js
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-onmessage.htm
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-onopen.htm
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-prototype.htm
+SKIP	PAGE	D-9.1	eventsource/dedicated-worker/eventsource-url.htm
+SKIP	PAGE	D-9.1	eventsource/eventsource-close.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-constructor-document-domain.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-constructor-non-same-origin.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-constructor-stringify.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-constructor-url-multi-window.htm
+SKIP	PAGE	D-9.1	eventsource/eventsource-cross-origin.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-onmessage-realm.htm
+SKIP	PAGE	D-9.1	eventsource/eventsource-reconnect.window.js
+SKIP	PAGE	D-9.1	eventsource/eventsource-request-cancellation.window.js
+SKIP	PAGE	D-9.1	eventsource/format-field-id-3.window.js
+SKIP	PAGE	D-9.1	eventsource/format-field-id-null.window.js
+SKIP	PAGE	D-9.1	eventsource/request-credentials.window.js
+SKIP	PAGE	D-9.1	eventsource/request-redirect.window.js
+SKIP	PAGE	D-9.1	eventsource/request-status-error.window.js
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-close.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-constructor-non-same-origin.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-eventtarget.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-onmessage.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-onopen.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-prototype.htm
+SKIP	PAGE	D-9.1	eventsource/shared-worker/eventsource-url.htm

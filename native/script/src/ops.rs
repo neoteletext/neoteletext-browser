@@ -118,6 +118,22 @@ numbered! {
     URL_SET = 48,
     /// Decodes bytes in an encoding of the Encoding standard, names a label's encoding, or encodes a string as UTF-8.
     DECODE = 49,
+    /// Components: makes one of a kind at an area, with its options as JSON; gives its handle.
+    UI_CREATE = 60,
+    /// Components: changes a component's options.
+    UI_SET = 61,
+    /// Components: removes a component.
+    UI_REMOVE = 62,
+    /// Components: gives a component the focus.
+    UI_FOCUS = 63,
+    /// Components: the names of the keys a kind uses, as JSON text.
+    UI_KEYS = 64,
+    /// Components: a component's value, as JSON text.
+    UI_VALUE = 65,
+    /// Components: offers a key, typed text or the pointer to a component; gives what it would do, as JSON text.
+    UI_OFFER = 66,
+    /// Components: carries out, or drops, what a component would do.
+    UI_SETTLE = 67,
     /// Teletext: text on the page plane, its style's spacing attributes before it.
     TT_PUT = 100,
     /// Teletext: raw seven-bit codes on a row.
@@ -218,6 +234,20 @@ numbered! {
     NP_PAINT = 303,
     /// NAPLPS: starts a new generation with a painter program.
     NP_REPAINT = 304,
+    /// NAPLPS: defines or redefines a symbol from a painter program; gives its handle.
+    NP_SYMBOL = 305,
+    /// NAPLPS: defines a DRCS character from a painter program; gives its handle.
+    NP_DRCS = 306,
+    /// NAPLPS: defines a texture from a painter program; gives its handle.
+    NP_TEXTURE = 307,
+    /// NAPLPS: makes or redefines an actor or a region; gives its handle.
+    NP_ACTOR = 308,
+    /// NAPLPS: labels an actor or a region.
+    NP_LABEL = 309,
+    /// NAPLPS: an animation operation on an actor or a region.
+    NP_ANIMATE = 310,
+    /// NAPLPS: removes an actor, a region or a symbol.
+    NP_REMOVE = 311,
     /// NAPLPS: measures text; gives `width,height` in dots.
     NP_MEASURE = 312,
 }
@@ -682,6 +712,10 @@ pub fn prelude_of(parts: Parts) -> String {
         table(&mut out, "RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
         out.push_str(include_str!("regis.js"));
     }
+    // The components (work package U1) are the same on every renderer and
+    // the core's dispatcher names them: every realm has them.
+    table(&mut out, "UI", &mut crate::host::ui_prelude_numbers().into_iter());
+    out.push_str(include_str!("ui.js"));
     if parts.web {
         // The web APIs (work package W2), inside the same function.
         crate::web::write_prelude(&mut out);

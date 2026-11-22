@@ -1,0 +1,67 @@
+# The web-platform-tests' fetch-network suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 0 files run, 60 not run here; cases: 0 pass, 0 fail as a listed departure, 0 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-basic.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-cookies-redirect.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-cookies.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-expose-star.sub.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-filtering.sub.any.js
+SKIP	PAGE	D-9.1	fetch/api/cors/cors-keepalive.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-multiple-origins.sub.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-no-preflight.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-origin.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-cache-tainted.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-cache.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-not-cors-safelisted.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-redirect.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-referrer.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-response-validation.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-safelist-value-size.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-star.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-status.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight-unterminated-body.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-preflight.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-redirect-credentials.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-redirect-preflight.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/cors/cors-redirect.any.js
+SKIP	PAGE	D-9.1	fetch/api/cors/data-url-iframe.html
+SKIP	PAGE	D-9.1	fetch/api/cors/data-url-shared-worker.html
+SKIP	PAGE	D-9.1	fetch/api/cors/data-url-worker.html
+SKIP	PAGE	D-9.1	fetch/api/cors/sandboxed-iframe.html
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-back-to-original-origin.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-count.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-empty-location.any.js
+SKIP	PAGE	D-9.1	fetch/api/redirect/redirect-keepalive.any.js
+SKIP	PAGE	D-9.1	fetch/api/redirect/redirect-keepalive.https.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-location-escape.tentative.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-location.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-method.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-mode.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-origin.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-referrer-override.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-referrer.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-schemes.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-to-dataurl.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/redirect/redirect-upload.h2.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/credentials/authentication-basic.any.js
+SKIP	PAGE	D-9.1	fetch/api/credentials/authentication-redirection-stored-credentials.window.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/credentials/authentication-redirection.any.js
+SKIP	LIVE-NETWORK	TODO-7388/5	fetch/api/credentials/cookies.any.js
+SKIP	PAGE	D-9.1	fetch/api/policies/csp-blocked-worker.html
+SKIP	PAGE	D-9.1	fetch/api/policies/csp-blocked.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-no-referrer-service-worker.https.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-no-referrer-worker.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-no-referrer.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin-service-worker.https.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin-when-cross-origin-service-worker.https.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin-when-cross-origin-worker.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin-when-cross-origin.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin-worker.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-origin.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-unsafe-url-service-worker.https.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-unsafe-url-worker.html
+SKIP	PAGE	D-9.1	fetch/api/policies/referrer-unsafe-url.html

@@ -1,15 +1,19 @@
 
-// nt.naplps (script-api.md sections 7.1 to 7.3; work package N1) ----------------
+// nt.naplps (script-api.md section 7; work packages N1 and N2) -------------------
 //
 // The script-side half of NAPLPS's own model: the colour map, the backdrop
-// and the painter. Like the rest of the prelude it is not trusted: a
+// and the painter (sections 7.1 to 7.3), definitions (7.4) and the cast
+// (7.5). Like the rest of the prelude it is not trusted: a
 // painter only records its calls as whole numbers (a painter program,
 // section 10.2), and the host checks every word and writes every byte of
 // NAPLPS itself. The tables NP (the painter's calls) and NP_BOUND are
 // written in front of the prelude by the host.
 
 const naplpsApi = (function () {
-  if (!isPage || host(OP.INFO, INFO.PAGE_RENDERER) !== "naplps") return undefined;
+  // The page context of a NAPLPS page has all of it. The channel context
+  // has its share of the cast, while the page shown is a NAPLPS page
+  // (naplpsNow, below). A page of another renderer has none of it.
+  if (isPage && host(OP.INFO, INFO.PAGE_RENDERER) !== "naplps") return undefined;
 
   // Teletext's eight colours are entries 0 to 7 (section 7.1).
   const colourNames = new Map([["black", 0], ["red", 1], ["green", 2], ["yellow", 3], ["blue", 4], ["magenta", 5], ["cyan", 6], ["white", 7]]);
@@ -195,6 +199,214 @@ const naplpsApi = (function () {
     return Int32Array.from(words);
   }
 
+
+  // Definitions (section 7.4) ---------------------------------------------------
+
+  function handleFor(thing, what) {
+    const handle = handleOf.get(thing);
+    if (handle === undefined) throw new TypeError(what);
+    return handle;
+  }
+
+  class NaplpsSymbol {
+    #width;
+    #height;
+    constructor(width, height) { this.#width = width; this.#height = height; }
+    get width() { return this.#width; }
+    get height() { return this.#height; }
+    // Every actor drawn by it changes: actors are drawn by their macros
+    // as last defined.
+    redefine(fn) { host(OP.NP_SYMBOL, handleFor(this, "the symbol was removed"), this.#width, this.#height, record(fn)); }
+    remove() {
+      host(OP.NP_REMOVE, handleFor(this, "the symbol was removed"));
+      handleOf.delete(this);
+    }
+  }
+  Object.freeze(NaplpsSymbol.prototype);
+  class NaplpsDrcs {}
+  class NaplpsTexture {}
+
+  function symbol(size, fn) {
+    const { width, height } = size || {};
+    const made = new NaplpsSymbol(int(width, "a symbol's width"), int(height, "a symbol's height"));
+    handleOf.set(made, host(OP.NP_SYMBOL, 0, width, height, record(fn)));
+    // The host removes a scope's symbols with the scope.
+    core.scopeEnds(() => handleOf.delete(made));
+    return Object.freeze(made);
+  }
+  function drcs(fn) {
+    const made = new NaplpsDrcs();
+    handleOf.set(made, host(OP.NP_DRCS, record(fn)));
+    return Object.freeze(made);
+  }
+  function texture(size, fn) {
+    const { width, height } = size || {};
+    const made = new NaplpsTexture();
+    handleOf.set(made, host(OP.NP_TEXTURE, int(width, "a texture's width"), int(height, "a texture's height"), record(fn)));
+    return Object.freeze(made);
+  }
+
+  // The cast (section 7.5) --------------------------------------------------------
+
+  const LOOKS = new Map([["normal", 0], ["hover", 1], ["pressed", 2], ["alternative", 3]]);
+  const LOOK_NAMES = ["normal", "hover", "pressed", "alternative"];
+  // Sixteen bits, as the record and the receiver hold a place.
+  const hold16 = (value) => Math.max(-32768, Math.min(32767, value));
+
+  function symbolOrNone(value, what) {
+    return value === undefined || value === null ? 0 : handleFor(value, what + " is a symbol");
+  }
+
+  // The whole numbers and the frames NP_ACTOR takes for a definition.
+  function actorCall(existing, d) {
+    const flags = (d.shown ? 1 : 0) | (d.detectable ? 2 : 0) | (d.wheel ? 4 : 0);
+    const ints = [
+      existing, d.region ? 2 : 1, int(d.x, "x"), int(d.y, "y"), int(d.width, "width"), int(d.height, "height"),
+      int(d.originX, "originX"), int(d.originY, "originY"), int(d.layer, "layer"), int(d.order, "order"), flags, d.region ? entryOf(d.cover) : 0,
+      symbolOrNone(d.hover, "hover"), symbolOrNone(d.pressed, "pressed"), symbolOrNone(d.alternative, "alternative"),
+    ];
+    if (d.region) return host(OP.NP_ACTOR, ...ints);
+    if (!Array.isArray(d.frames)) throw new TypeError("an actor's frames are an array of symbols");
+    return host(OP.NP_ACTOR, ...ints, Int32Array.from(d.frames, (frame) => handleFor(frame, "a frame is a symbol")));
+  }
+
+  // The size of an object: as given, else its first frame's.
+  function sized(d) {
+    const first = !d.region && Array.isArray(d.frames) ? d.frames[0] : undefined;
+    return { width: d.width || (first instanceof NaplpsSymbol ? first.width : 0), height: d.height || (first instanceof NaplpsSymbol ? first.height : 0) };
+  }
+
+  class NaplpsThing extends EventTarget {
+    #d; // its definition, as last given
+    #s; // its state, as the host holds it
+    #handle;
+    constructor(definition) {
+      super();
+      this.#d = definition;
+      this.#handle = actorCall(0, definition);
+      this.#settle();
+      handleOf.set(this, this.#handle);
+      things.set(this.#handle, this);
+      core.scopeEnds(() => this.#forget());
+      if (definition.label !== undefined) this.label = definition.label;
+    }
+    #settle() {
+      const d = this.#d;
+      this.#s = { x: d.x, y: d.y, ...sized(d), shown: !!d.shown, layer: d.layer, order: d.order, frame: 0, look: 0, label: this.#s ? this.#s.label : "" };
+    }
+    #forget() {
+      things.delete(this.#handle);
+      handleOf.delete(this);
+      this.#s = null;
+    }
+    #live() {
+      if (!this.#s) throw new TypeError("the actor or region was removed");
+      return this.#s;
+    }
+    #animate(operation, a = 0, b = 0, c = 0, d = 0) {
+      this.#live();
+      host(OP.NP_ANIMATE, this.#handle, operation, a, b, c, d);
+    }
+    get x() { return this.#live().x; }
+    set x(value) { this.moveTo(value, this.#live().y); }
+    get y() { return this.#live().y; }
+    set y(value) { this.moveTo(this.#live().x, value); }
+    get width() { return this.#live().width; }
+    get height() { return this.#live().height; }
+    moveTo(x, y) {
+      this.#animate(NP_BOUND.ANIMATE_MOVE, 0, int(x, "x"), int(y, "y"));
+      Object.assign(this.#s, { x, y });
+    }
+    moveBy(dx, dy) {
+      this.#animate(NP_BOUND.ANIMATE_MOVE, 1, int(dx, "dx"), int(dy, "dy"));
+      Object.assign(this.#s, { x: hold16(this.#s.x + dx), y: hold16(this.#s.y + dy) });
+    }
+    get shown() { return this.#live().shown; }
+    set shown(value) {
+      this.#animate(value ? NP_BOUND.ANIMATE_SHOW : NP_BOUND.ANIMATE_HIDE);
+      this.#s.shown = !!value;
+    }
+    get layer() { return this.#live().layer; }
+    set layer(value) {
+      this.#animate(NP_BOUND.ANIMATE_ORDER, int(value, "layer"), this.#live().order);
+      this.#s.layer = value;
+    }
+    get order() { return this.#live().order; }
+    set order(value) {
+      this.#animate(NP_BOUND.ANIMATE_ORDER, NP_BOUND.KEEP_LAYER, int(value, "order"));
+      this.#s.order = value;
+    }
+    get frame() { return this.#live().frame; }
+    set frame(value) {
+      this.#animate(NP_BOUND.ANIMATE_FRAME, int(value, "frame"));
+      this.#s.frame = value;
+    }
+    cycle(first, last, period, options) {
+      const { once = false } = options || {};
+      this.#animate(NP_BOUND.ANIMATE_CYCLE, int(first, "first"), int(last, "last"), int(period, "period"), once ? 1 : 0);
+      this.#s.frame = first;
+    }
+    stopCycle() { this.#animate(NP_BOUND.ANIMATE_STOP_CYCLE); }
+    get look() { return LOOK_NAMES[this.#live().look]; }
+    set look(value) {
+      const look = choice(LOOKS, value, "look");
+      this.#animate(NP_BOUND.ANIMATE_LOOK, look);
+      this.#s.look = look;
+    }
+    get label() { return this.#live().label; }
+    set label(value) {
+      if (typeof value !== "string") throw new TypeError("a label is a string");
+      this.#live();
+      host(OP.NP_LABEL, this.#handle, value);
+      this.#s.label = value;
+    }
+    get detectable() { return !!this.#d.detectable; }
+    // Sends the one object again: the others and their state are kept,
+    // and this one's frame, cycle and look start again.
+    redefine(options) {
+      this.#live();
+      const definition = { ...this.#d, x: this.#s.x, y: this.#s.y, shown: this.#s.shown, layer: this.#s.layer, order: this.#s.order, ...(options || {}) };
+      actorCall(this.#handle, definition);
+      this.#d = definition;
+      this.#settle();
+      if (options && options.label !== undefined) this.label = options.label;
+    }
+    remove() {
+      this.#live();
+      host(OP.NP_REMOVE, this.#handle);
+      this.#forget();
+    }
+    // Its rectangle in dots, or null while it is hidden or once it is removed.
+    bounds() {
+      const s = this.#s;
+      return s && s.shown ? { x: s.x, y: s.y, width: s.width, height: s.height } : null;
+    }
+    overlaps(other) {
+      if (!(other instanceof NaplpsThing)) throw new TypeError("overlaps takes an actor or a region");
+      const a = this.bounds(), b = other.bounds();
+      return !!a && !!b && a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+    }
+  }
+  class NaplpsActor extends NaplpsThing {}
+  class NaplpsRegion extends NaplpsThing {}
+  for (const made of [NaplpsThing, NaplpsActor, NaplpsRegion]) Object.freeze(made.prototype);
+
+  function actor(options) {
+    const {
+      frames, x = 0, y = 0, width = 0, height = 0, originX = 0, originY = 0, layer = isPage ? 2 : 3, order = 0, shown = true,
+      detectable = false, wheel = false, hover, pressed, alternative, label,
+    } = options || {};
+    return new NaplpsActor({ region: false, frames, x, y, width, height, originX, originY, layer, order, shown, detectable, wheel, hover, pressed, alternative, label });
+  }
+  function region(options) {
+    const { x = 0, y = 0, width, height, cover, layer = isPage ? 2 : 3, order = 0, shown = true, detectable = true, wheel = false, hover, pressed, label } = options || {};
+    return new NaplpsRegion({ region: true, x, y, width, height, originX: 0, originY: 0, layer, order, shown, detectable, wheel, cover, hover, pressed, label });
+  }
+
+  // The channel context draws only in the overlay: its share of the cast
+  // and the symbols its actors use (section 3.1).
+  if (!isPage) return Object.freeze({ NaplpsPainter, symbol, actor, region });
+
   const colours = Object.freeze({
     define(name, colour) {
       if (typeof name !== "string") throw new TypeError("a colour's name is a string");
@@ -230,5 +442,14 @@ const naplpsApi = (function () {
     return { width: answer[0], height: answer[1] };
   }
 
-  return Object.freeze({ colours, backdrop, measure, NaplpsPainter });
+  return Object.freeze({ colours, backdrop, measure, NaplpsPainter, symbol, drcs, texture, actor, region });
 })();
+
+// What `nt.naplps` is now: in the page context of a NAPLPS page, all of
+// it; in the channel context its share, while the page shown is drawn in
+// NAPLPS; otherwise undefined, as each renderer's API is off its own pages.
+function naplpsNow() {
+  if (isPage) return naplpsApi;
+  const page = pageNow();
+  return page && page.renderer === "naplps" ? naplpsApi : undefined;
+}

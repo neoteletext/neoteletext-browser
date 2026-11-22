@@ -470,8 +470,10 @@ impl Container {
         }
         let host = self.machine.host_ref();
         // A timer always has its callback, and so has the network's event:
-        // the prelude's own object for the request it answers.
-        if !host.runs(context) || (kind != EventKind::TIMER && !kind.is_network() && !host.listens(context, kind)) {
+        // the prelude's own object for the request it answers. A context's
+        // components hear keys, text and the pointer whether or not the
+        // script listens for them (section 8).
+        if !host.runs(context) || (kind != EventKind::TIMER && !kind.is_network() && !host.listens(context, kind) && !host.ui_hears(context, kind)) {
             return Ok(None);
         }
         self.machine.host().begin_callback(context, Some(kind), numbers[0]);
@@ -598,6 +600,11 @@ impl Container {
                 continue;
             }
             let mut numbers = event.ints;
+            // A key and typed text are heard by the focused component
+            // first (section 8): the context is told which that is.
+            if matches!(event.kind, EventKind::KEY_DOWN | EventKind::TEXT) {
+                numbers[1] = self.machine.host_ref().ui_focused(context);
+            }
             let mut ints_given: Vec<i32> = Vec::new();
             let payload = match &event.payload {
                 InputPayload::None => Given::None,

@@ -19,6 +19,7 @@ const PARTS: &[(&str, &str)] = &[
     ("teletext", include_str!("../src/teletext.js")),
     ("sprites", include_str!("../src/teletext_sprites.js")),
     ("ReGIS", include_str!("../src/regis.js")),
+    ("components", include_str!("../src/ui.js")),
     ("streams polyfill", include_str!("../src/web/streams/ponyfill.js")),
     ("web: encoding, URL", include_str!("../src/web/encoding_url.js")),
     ("web: fetch", include_str!("../src/web/fetch.js")),
@@ -47,13 +48,13 @@ fn opening_takes(source: &str, parts: Parts) -> Duration {
 #[test]
 #[ignore = "a measurement that prints its numbers and asserts nothing; run by hand on a quiet machine"]
 fn where_a_contexts_start_goes() {
-    let engine_began = std::time::Instant::now();
-    let _ = common::engine();
-    println!("the engine compiled in {:?}", engine_began.elapsed());
-    println!("a container starts in {:?}", container().costs().container);
+    // An engine of its own: the tests' shared one holds the bytecode already.
+    let (engine, took) = timed(|| neoteletext_script::Engine::new().unwrap());
+    println!("the engine compiled in {:?}", took.running);
     // Once for the engine, and no part of any context's start.
-    let (bytecode, took) = timed(|| common::engine().prelude(Parts::ALL).unwrap());
+    let (bytecode, took) = timed(|| engine.prelude(Parts::ALL).unwrap());
     println!("compiling the prelude once takes {:?} ({} bytes of source, {} of bytecode)", took.running, prelude_of(Parts::ALL).len(), bytecode.len());
+    println!("a container starts in {:?}", container().costs().container);
     let core = opening_takes(";", Parts::CORE);
     println!("a context with an empty script and the shared core alone opens in {core:?} ({} bytes of prelude)", prelude_of(Parts::CORE).len());
     for (name, parts) in [
