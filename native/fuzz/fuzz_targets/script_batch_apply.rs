@@ -27,8 +27,10 @@ thread_local! {
     // per process by design (the `engine` target says the same). It is
     // made before the first input (the `init` below), so that the leak
     // detector, which counts what each input allocates and does not free,
-    // never takes the store for an input's leak.
-    static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
+    // never takes the store for an input's leak; and it is never dropped,
+    // so that the store stays reachable through it when the detector
+    // looks again as the process ends.
+    static ENGINE: &'static RefCell<Engine> = Box::leak(Box::new(RefCell::new(Engine::new())));
 }
 
 /// The most host calls one input makes, and the most batches it applies.
@@ -129,7 +131,9 @@ fuzz_target!(init: { ENGINE.with(|_| ()); }, |data: &[u8]| {
     let sub = u16::from(input.byte() % 4);
     let at = ScriptPage { page, sub, renderer, designation: if input.byte() & 1 == 0 { None } else { Some(input.byte() % 0x58) } };
     let pixel = (u16::from_le_bytes([input.byte(), input.byte()]) % MAX_PIXEL, u16::from_le_bytes([input.byte(), input.byte()]) % MAX_PIXEL);
-    ENGINE.with_borrow_mut(|engine| {
+    ENGINE.with(|engine| {
+        let mut held = engine.borrow_mut();
+        let engine = &mut *held;
         engine.script_begins_again(at);
         for (page, _) in engine.script_blank_page(at) {
             assert!(page == at.page, "opening page {:03X} blank made page {page:03X} arrive", at.page);
