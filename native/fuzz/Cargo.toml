@@ -662,3 +662,31 @@ path = "fuzz_targets/web_address_space.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "core_script_gate"
+path = "fuzz_targets/core_script_gate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_script_network"
+path = "fuzz_targets/core_script_network.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_read_script"
+path = "fuzz_targets/core_read_script.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runner_live_answer"
+path = "fuzz_targets/runner_live_answer.rs"
+test = false
+doc = false
+bench = false
