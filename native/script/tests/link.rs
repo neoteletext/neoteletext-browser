@@ -37,8 +37,8 @@ fn a_script_runs_in_either_context_through_the_link() {
         }
         log.extend(lines(&link.step(tick(1, 0)).unwrap()));
         log.extend(lines(&link.step(with_events(2, 1, vec![key(EventKind::KeyDown, "Enter", 0)])).unwrap()));
-        // An answer from the web client has nothing to hear it until the
-        // web APIs are built: it is dropped, and the log says so once.
+        // An answer from the web client that names no request of these
+        // scripts is dropped (the web APIs' own tests are in `web.rs`).
         link.network(FromWebClient::End(7));
         link.network(FromWebClient::End(8));
         assert_eq!(link.take_requests(), Vec::new());
@@ -49,19 +49,7 @@ fn a_script_runs_in_either_context_through_the_link() {
         log
     }
     let mut link = link();
-    assert_eq!(
-        drive(&mut link),
-        vec![
-            "page key Enter",
-            "channel key Enter",
-            "page timer",
-            "channel timer",
-            "page tick",
-            "channel tick",
-            "page close",
-            "an answer from the web client was dropped: this script library has no web API yet"
-        ]
-    );
+    assert_eq!(drive(&mut link), vec!["page key Enter", "channel key Enter", "page timer", "channel timer", "page tick", "channel tick", "page close",]);
     assert!(link.container().is_none(), "the container outlived its contexts");
 }
 

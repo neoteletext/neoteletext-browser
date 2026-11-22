@@ -1,0 +1,19 @@
+1 keydown a ctrl alt meta repeat
+2 keyup a lost
+4 text h\tllo\\
+5 pointer down 12 7 button=1 buttons=2 type=touch id=5 local=3,4 under=3,9 thing=3
+6 pointer up 13 8 type=pen secondary
+8 wheel 0 -3 thing=4
+9 focus
+9 blur
+10 navigate link https://channel.test/101
+11 cue 2 9
+11 ended 3
+11 fault 4 MAX_SPRITES
+11 painted 7
+11 cycleend 7
+11 bounds 7 1 2 3 4
+11 ui 4 2 {"value":1}
+12 hide
+14 show
+15 close

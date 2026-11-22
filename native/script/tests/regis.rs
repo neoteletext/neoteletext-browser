@@ -555,8 +555,18 @@ struct Cost {
 /// script host runs with, or `unhurried`, with no clock to stop it
 /// first, so that the bounds on what the host holds are what holds it.
 fn run_hostile(source: &str, ticks: u32, unhurried: bool) -> (Cost, Vec<String>) {
-    let mut container = if unhurried { container() } else { limited() };
-    container.open_with(regis_opening(ContextId::Page), source.as_bytes()).expect("the script opens");
+    // The start limit is on the wall clock: on a machine with no
+    // processor free the prelude alone can wait past it, so an opening
+    // stopped for time is tried again, as tests/hostile.rs does.
+    let mut opened = None;
+    for _ in 0..STARVED_TRIES {
+        let mut container = if unhurried { container() } else { limited() };
+        if container.open_with(regis_opening(ContextId::Page), source.as_bytes()).is_ok() {
+            opened = Some(container);
+            break;
+        }
+    }
+    let mut container = opened.expect("the script opens");
     let mut receiver = Receiver::new();
     let mut cost = Cost::default();
     let mut log = Vec::new();
@@ -585,6 +595,9 @@ fn run_hostile(source: &str, ticks: u32, unhurried: bool) -> (Cost, Vec<String>)
     (cost, log)
 }
 
+/// How often a script that should open is tried again when this machine
+/// had no processor for it.
+const STARVED_TRIES: usize = 5;
 /// A frame's kind byte and length (`native/protocol/src/framing.rs`).
 const FRAME_HEADER_BYTES: usize = 5;
 /// The review measured the spike's host at 130 MB and one frame at 160 MB

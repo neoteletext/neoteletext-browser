@@ -45,6 +45,7 @@ readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs na
     native/web-opener/src/lib.rs native/dock-menu/src/lib.rs native/dbus/src/lib.rs native/secret-store/src/lib.rs native/dialog/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs native/script/src/lib.rs
     native/script-host/src/lib.rs native/script-host/src/main.rs
+    native/script-run/src/lib.rs native/script-run/src/main.rs
     native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
 
@@ -139,7 +140,7 @@ readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-form
 readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
 # The packages that may hold the script engine's interpreter, and the one
 # interpreter they may hold.
-readonly SCRIPT_PACKAGES=(neoteletext-script neoteletext-script-host)
+readonly SCRIPT_PACKAGES=(neoteletext-script neoteletext-script-host neoteletext-script-run)
 readonly SCRIPT_INTERPRETER='wasmi'
 # Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
 # user interface or graphics toolkit; those are the interface's alone.
@@ -297,10 +298,13 @@ $found"
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js painter_programs)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js painter_programs script_url_resolve script_web_host script_web_answers)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
+    # The streams library bundled into the prelude is the pinned bytes
+    # (neoteletext-common's DEC-7261; native/script/src/web/streams/NOTICE.txt).
+    (cd native/script/src/web/streams && sha256sum --check --quiet SHA256SUMS) || fail "the bundled web-streams-polyfill is not the bytes native/script/src/web/streams/SHA256SUMS records"
     local target
     for target in "${SCRIPT_FUZZ_TARGETS[@]}"; do
         [[ -f "native/fuzz/fuzz_targets/$target.rs" ]] && grep -q "^name = \"$target\"$" native/fuzz/Cargo.toml ||
@@ -474,6 +478,8 @@ fuzz_options() {
         dbus_message) echo "-max_len=131072" ;;
         # A whole script, and a memory image of a page.
         script_js | script_imports) echo "-max_len=65536" ;;
+        # A web client's answers, the longest of which is a piece of a body.
+        script_web_host | script_web_answers) echo "-max_len=65536" ;;
         script_link_to_host | script_link_to_decoder | web_to_client | web_from_client) echo "-max_len=262149" ;;
         # The same messages on the pipes they share, and a script host's
         # whole input (TODO-7292).

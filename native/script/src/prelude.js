@@ -795,7 +795,9 @@ function dispatch(kind, a, b, c, d, payload) {
       break;
     default:
       // A renderer's own events (its part of the prelude).
-      return core.dispatchMore.has(kind) ? core.dispatchMore.get(kind)(a, b, c, d, payload) : 0;
+      if (core.dispatchMore.has(kind)) return core.dispatchMore.get(kind)(a, b, c, d, payload);
+      // The network's events, 30 to 41 (work package W2, web/sockets.js).
+      return webDispatch(kind, a, b, c, d, payload);
   }
   // The channel context is given the page's input with the same fields
   // and a target of null (section 4.5): things are the page context's.
