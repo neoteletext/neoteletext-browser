@@ -36,8 +36,8 @@ script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
 # its manifest reader, expect.json and the files between its two processes.
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
 
 [workspace]
 members = ["."]
@@ -446,6 +446,13 @@ bench = false
 [[bin]]
 name = "script_teletext_ops"
 path = "fuzz_targets/script_teletext_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_bitmap_ops"
+path = "fuzz_targets/script_bitmap_ops.rs"
 test = false
 doc = false
 bench = false

@@ -83,6 +83,10 @@ pub(crate) struct Storage {
     push_head: Vec<u8>,
     push_request: Vec<u8>,
     push_message: Vec<u8>,
+    /// The table of the scripts the channel's file names (the engine's
+    /// DEC-7254): at its bound, since with less room the agent keeps no
+    /// table at all.
+    scripts: Vec<u8>,
 }
 
 impl Storage {
@@ -95,6 +99,7 @@ impl Storage {
             push_head: vec![0; DEFAULT_HEADER_LIMIT],
             push_request: vec![0; DEFAULT_REQUEST_LIMIT],
             push_message: vec![0; DEFAULT_PUSH_LIMIT],
+            scripts: vec![0; neoteletext_web::scripts::MAX_TABLE_BYTES],
         }
     }
 
@@ -107,6 +112,7 @@ impl Storage {
             push_head: &mut self.push_head,
             push_request: &mut self.push_request,
             push_message: &mut self.push_message,
+            scripts: &mut self.scripts,
         }
     }
 }

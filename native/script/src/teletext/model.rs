@@ -192,6 +192,9 @@ pub struct Model {
     pub controls: Vec<Control>,
     /// The page's settings.
     pub settings: PageSettings,
+    /// The colours the sixel bitmap's frame sets under the overlay
+    /// (section 5.7; work package T3).
+    pub bitmap: super::bitmap::Colours,
 }
 
 /// The place of `row` among the plane's rows.
@@ -218,6 +221,7 @@ impl Model {
             overlay: [[OverlayCell::default(); COLUMNS]; PLANE_ROWS],
             controls: Vec::with_capacity(MAX_CONTROLS),
             settings: PageSettings::default(),
+            bitmap: super::bitmap::Colours::default(),
         })
     }
 
@@ -377,6 +381,12 @@ impl Model {
             level_1.set_at(cell.code, colour, black);
             record.set_at(cell.code, colour, black);
             previous = Some(cell.code);
+            // The sixel bitmap's own colour triplets (section 5.7): a
+            // non-spacing colour, which holds along the row as the Level
+            // 1 look does, and which the overlay lies over.
+            let (ink, paper) = self.bitmap.at(row, column);
+            level_1.foreground = ink.unwrap_or(level_1.foreground);
+            level_1.background = paper.unwrap_or(level_1.background);
             // A code that shows a character is read in its run's set, or
             // in the page's when it belongs to no run (the engine's
             // REQ-2180): a row set triplet where the set in force is

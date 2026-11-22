@@ -28,6 +28,7 @@ use neoteletext_core::consts::NIBBLE_MASK;
 mod bookmarks;
 mod frame;
 mod kinds;
+pub mod script;
 mod snapshot;
 #[cfg(test)]
 mod tests;
@@ -223,6 +224,10 @@ pub enum ToDecoder {
         /// The query's identifier.
         identifier: u32,
     },
+    /// About the channel's scripts (the script API's specification
+    /// sections 11.2 and 12.5; TODO-7293): a script's bytes, what the
+    /// channel's contexts are told, and the viewer's own controls of them.
+    Script(script::ScriptOrder),
 }
 
 /// The figures of a decoder's audio receiver (the engine's REQ-AUD-017,
@@ -481,6 +486,10 @@ pub enum FromDecoder {
     },
     /// The open page's counts (RULE-72), for the console.
     RuleCounters(crate::rules::RuleCounters),
+    /// About the channel's scripts (the script API's specification
+    /// sections 4.6 and 11.2; TODO-7293): what they claim, what became of
+    /// each input event, and what a script asked of the browser.
+    Script(script::ScriptReport),
     /// A piece of the snapshot's sub-page source, in a static channel's
     /// sub-page file form with concealed text blanked (REQ-6885 item 4),
     /// in order, before [`FromDecoder::SnapshotDrawn`]. Untrusted, and
@@ -598,6 +607,7 @@ pub fn write_to_decoder(out: &mut dyn Write, message: &ToDecoder) -> Result<(), 
         ToDecoder::PaintGradually(gradual) => push_flag(&mut payload, *gradual, kinds::KIND_PAINT_GRADUALLY),
         ToDecoder::ReducedMotion(reduced) => push_flag(&mut payload, *reduced, kinds::KIND_REDUCED_MOTION),
         ToDecoder::SoundHeard(heard) => push_flag(&mut payload, *heard, kinds::KIND_SOUND_HEARD),
+        ToDecoder::Script(order) => script::push_order(&mut payload, order).map(|()| kinds::KIND_SCRIPT_ORDER)?,
         ToDecoder::PictureFont(part) => {
             crate::regis::push_font_part(&mut payload, part)?;
             kinds::KIND_PICTURE_FONT
@@ -810,6 +820,7 @@ pub fn read_from_core(input: &mut dyn Read) -> Result<Option<ToDecoder>, Protoco
         kinds::KIND_PAINT_GRADUALLY => ToDecoder::PaintGradually(fields.flag("paint gradually")?),
         kinds::KIND_REDUCED_MOTION => ToDecoder::ReducedMotion(fields.flag("reduced motion")?),
         kinds::KIND_SOUND_HEARD => ToDecoder::SoundHeard(fields.flag("sound heard")?),
+        kinds::KIND_SCRIPT_ORDER => ToDecoder::Script(script::read_order(&mut fields)?),
         kinds::KIND_PICTURE_FONT => ToDecoder::PictureFont(crate::regis::read_font_part(&mut fields)?),
         kinds::KIND_SNAPSHOT => {
             let (page, sub) = (fields.u16()?, fields.u16()?);
@@ -974,6 +985,7 @@ pub fn write_to_core(out: &mut dyn Write, message: &FromDecoder) -> Result<(), P
             snapshot::push_refused(&mut payload, *page, *sub, *reason)?;
             kinds::KIND_SNAPSHOT_REFUSED
         }
+        FromDecoder::Script(report) => script::push_report(&mut payload, report).map(|()| kinds::KIND_SCRIPT_REPORT)?,
         // The rule messages (page-rules.md RULE-63).
         rules => push_rules_to_core(&mut payload, rules)?,
     };
@@ -1084,6 +1096,7 @@ pub fn read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, Pr
             read_rules_from_decoder(kind, &mut fields)?
         }
         kinds::KIND_SNAPSHOT_SOURCE | kinds::KIND_SNAPSHOT_DRAWN | kinds::KIND_SNAPSHOT_REFUSED => return snapshot::read_from_decoder(kind, payload).map(Some),
+        kinds::KIND_SCRIPT_REPORT => FromDecoder::Script(script::read_report(&mut fields)?),
         other => return Err(ProtocolError::UnknownKind(other)),
     };
     fields.end()?;

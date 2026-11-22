@@ -43,6 +43,7 @@ mod provided;
 pub mod regis;
 pub mod rules;
 pub mod sample;
+pub mod scripts;
 pub mod snapshot;
 mod title;
 mod voice_sink;
@@ -50,6 +51,7 @@ mod voice_sink;
 pub use changes::Changed;
 #[cfg(feature = "links")]
 pub use engine::Found;
+pub use engine::script::{NotApplied, ScriptPage};
 pub use engine::{ChannelLog, Engine, Exported, Rendered};
 pub use flash::{FlashRates, Flashing};
 #[cfg(feature = "interaction")]

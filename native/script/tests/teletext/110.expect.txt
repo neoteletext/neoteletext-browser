@@ -1,0 +1,471 @@
+format 1
+
+== tick 0
+01 text |                              SCORE 000 |
+01 ink  |7777777777777777777777777777777777777777|
+01 paper|0000000000000000000000000000000000000000|
+01 flash|........................................|
+02 text |                                        |
+02 ink  |7777777777777777777777777777777777777777|
+02 paper|0000000000000000000000000000000000000000|
+02 flash|........................................|
+03 text |                                        |
+03 ink  |7777777777777777777777777777777777777777|
+03 paper|gggggggggggggggggggggggggggggggggggggggg|
+03 flash|........................................|
+04 text |        ##                              |
+04 ink  |7777777733777777777777777777777777777777|
+04 paper|gggggggg00gggggggggggggggggggggggggggggg|
+04 flash|........................................|
+05 text |                                        |
+05 ink  |7777777777777777777777777777777777777777|
+05 paper|gggggggggggggggggggggggggggggggggggggggg|
+05 flash|........................................|
+06 text |                                        |
+06 ink  |7777777777777777777777777777777777777777|
+06 paper|gggggggggggggggggggggggggggggggggggggggg|
+06 flash|........................................|
+07 text |                                        |
+07 ink  |7777777777777777777777777777777777777777|
+07 paper|gggggggggggggggggggggggggggggggggggggggg|
+07 flash|........................................|
+08 text |                                        |
+08 ink  |7777777777777777777777777777777777777777|
+08 paper|gggggggggggggggggggggggggggggggggggggggg|
+08 flash|........................................|
+09 text |                                        |
+09 ink  |7777777777777777777777777777777777777777|
+09 paper|gggggggggggggggggggggggggggggggggggggggg|
+09 flash|........................................|
+10 text |                                        |
+10 ink  |7777777777777777777777777777777777777777|
+10 paper|gggggggggggggggggggggggggggggggggggggggg|
+10 flash|........................................|
+11 text |                                        |
+11 ink  |7777777777777777777777777777777777777777|
+11 paper|gggggggggggggggggggggggggggggggggggggggg|
+11 flash|........................................|
+12 text |                                        |
+12 ink  |7777777777777777777777777777777777777777|
+12 paper|gggggggggggggggggggggggggggggggggggggggg|
+12 flash|........................................|
+13 text |                                        |
+13 ink  |7777777777777777777777777777777777777777|
+13 paper|gggggggggggggggggggggggggggggggggggggggg|
+13 flash|........................................|
+14 text |                                        |
+14 ink  |7777777777777777777777777777777777777777|
+14 paper|gggggggggggggggggggggggggggggggggggggggg|
+14 flash|........................................|
+15 text |                                        |
+15 ink  |7777777777777777777777777777777777777777|
+15 paper|gggggggggggggggggggggggggggggggggggggggg|
+15 flash|........................................|
+16 text |                                        |
+16 ink  |7777777777777777777777777777777777777777|
+16 paper|gggggggggggggggggggggggggggggggggggggggg|
+16 flash|........................................|
+17 text |                                        |
+17 ink  |7777777777777777777777777777777777777777|
+17 paper|gggggggggggggggggggggggggggggggggggggggg|
+17 flash|........................................|
+18 text |                                        |
+18 ink  |7777777777777777777777777777777777777777|
+18 paper|gggggggggggggggggggggggggggggggggggggggg|
+18 flash|........................................|
+19 text |                                        |
+19 ink  |7777777777777777777777777777777777777777|
+19 paper|gggggggggggggggggggggggggggggggggggggggg|
+19 flash|........................................|
+20 text |                                        |
+20 ink  |7777777777777777777777777777777777777777|
+20 paper|gggggggggggggggggggggggggggggggggggggggg|
+20 flash|........................................|
+21 text |                  ###                   |
+21 ink  |7777777777777777777777777777777777777777|
+21 paper|gggggggggggggggggg000ggggggggggggggggggg|
+21 flash|........................................|
+22 text |                  # #                   |
+22 ink  |7777777777777777777777777777777777777777|
+22 paper|gggggggggggggggggg0g0ggggggggggggggggggg|
+22 flash|........................................|
+23 text |                                        |
+23 ink  |7777777777777777777777777777777777777777|
+23 paper|0000000000000000000000000000000000000000|
+23 flash|........................................|
+
+== tick 149
+01 text |                              SCORE 003 |
+01 ink  |7777777777777777777777777777777777777777|
+01 paper|0000000000000000000000000000000000000000|
+01 flash|........................................|
+02 text |                                        |
+02 ink  |7777777777777777777777777777777777777777|
+02 paper|0000000000000000000000000000000000000000|
+02 flash|........................................|
+03 text |                                        |
+03 ink  |7777777777777777777777777777777777777777|
+03 paper|gggggggggggggggggggggggggggggggggggggggg|
+03 flash|........................................|
+04 text |                                        |
+04 ink  |7777777777777777777777777777777777777777|
+04 paper|gggggggggggggggggggggggggggggggggggggggg|
+04 flash|........................................|
+05 text |        ##                              |
+05 ink  |7777777733777777777777777777777777777777|
+05 paper|gggggggg00gggggggggggggggggggggggggggggg|
+05 flash|........................................|
+06 text |                                        |
+06 ink  |7777777777777777777777777777777777777777|
+06 paper|gggggggggggggggggggggggggggggggggggggggg|
+06 flash|........................................|
+07 text |                                        |
+07 ink  |7777777777777777777777777777777777777777|
+07 paper|gggggggggggggggggggggggggggggggggggggggg|
+07 flash|........................................|
+08 text |                                        |
+08 ink  |7777777777777777777777777777777777777777|
+08 paper|gggggggggggggggggggggggggggggggggggggggg|
+08 flash|........................................|
+09 text |            ##                          |
+09 ink  |7777777777773377777777777777777777777777|
+09 paper|gggggggggggg00gggggggggggggggggggggggggg|
+09 flash|........................................|
+10 text |                                        |
+10 ink  |7777777777777777777777777777777777777777|
+10 paper|gggggggggggggggggggggggggggggggggggggggg|
+10 flash|........................................|
+11 text |                                        |
+11 ink  |7777777777777777777777777777777777777777|
+11 paper|gggggggggggggggggggggggggggggggggggggggg|
+11 flash|........................................|
+12 text |                                        |
+12 ink  |7777777777777777777777777777777777777777|
+12 paper|gggggggggggggggggggggggggggggggggggggggg|
+12 flash|........................................|
+13 text |                                        |
+13 ink  |7777777777777777777777777777777777777777|
+13 paper|gggggggggggggggggggggggggggggggggggggggg|
+13 flash|........................................|
+14 text |     ##                                 |
+14 ink  |7777733777777777777777777777777777777777|
+14 paper|ggggg00ggggggggggggggggggggggggggggggggg|
+14 flash|........................................|
+15 text |            ##                          |
+15 ink  |7777777777773377777777777777777777777777|
+15 paper|gggggggggggg00gggggggggggggggggggggggggg|
+15 flash|........................................|
+16 text |                                        |
+16 ink  |7777777777777777777777777777777777777777|
+16 paper|gggggggggggggggggggggggggggggggggggggggg|
+16 flash|........................................|
+17 text |                                        |
+17 ink  |7777777777777777777777777777777777777777|
+17 paper|gggggggggggggggggggggggggggggggggggggggg|
+17 flash|........................................|
+18 text |                                        |
+18 ink  |7777777777777777777777777777777777777777|
+18 paper|gggggggggggggggggggggggggggggggggggggggg|
+18 flash|........................................|
+19 text |                                        |
+19 ink  |7777777777777777777777777777777777777777|
+19 paper|gggggggggggggggggggggggggggggggggggggggg|
+19 flash|........................................|
+20 text |                                        |
+20 ink  |7777777777777777777777777777777777777777|
+20 paper|gggggggggggggggggggggggggggggggggggggggg|
+20 flash|........................................|
+21 text |                       ###              |
+21 ink  |7777777777777777777777777777777777777777|
+21 paper|ggggggggggggggggggggggg000gggggggggggggg|
+21 flash|........................................|
+22 text |              ##       # #              |
+22 ink  |7777777777777733777777777777777777777777|
+22 paper|gggggggggggggg00ggggggg0g0gggggggggggggg|
+22 flash|........................................|
+23 text |                                        |
+23 ink  |7777777777777777777777777777777777777777|
+23 paper|0000000000000000000000000000000000000000|
+23 flash|........................................|
+
+== tick 299
+01 text |                              SCORE 006 |
+01 ink  |7777777777777777777777777777777777777777|
+01 paper|0000000000000000000000000000000000000000|
+01 flash|........................................|
+02 text |                                        |
+02 ink  |7777777777777777777777777777777777777777|
+02 paper|0000000000000000000000000000000000000000|
+02 flash|........................................|
+03 text |                                        |
+03 ink  |7777777777777777777777777777777777777777|
+03 paper|gggggggggggggggggggggggggggggggggggggggg|
+03 flash|........................................|
+04 text |                                        |
+04 ink  |7777777777777777777777777777777777777777|
+04 paper|gggggggggggggggggggggggggggggggggggggggg|
+04 flash|........................................|
+05 text |                                        |
+05 ink  |7777777777777777777777777777777777777777|
+05 paper|gggggggggggggggggggggggggggggggggggggggg|
+05 flash|........................................|
+06 text |                                        |
+06 ink  |7777777777777777777777777777777777777777|
+06 paper|gggggggggggggggggggggggggggggggggggggggg|
+06 flash|........................................|
+07 text |                                        |
+07 ink  |7777777777777777777777777777777777777777|
+07 paper|gggggggggggggggggggggggggggggggggggggggg|
+07 flash|........................................|
+08 text |                                        |
+08 ink  |7777777777777777777777777777777777777777|
+08 paper|gggggggggggggggggggggggggggggggggggggggg|
+08 flash|........................................|
+09 text |                                        |
+09 ink  |7777777777777777777777777777777777777777|
+09 paper|gggggggggggggggggggggggggggggggggggggggg|
+09 flash|........................................|
+10 text |                                        |
+10 ink  |7777777777777777777777777777777777777777|
+10 paper|gggggggggggggggggggggggggggggggggggggggg|
+10 flash|........................................|
+11 text |                                        |
+11 ink  |7777777777777777777777777777777777777777|
+11 paper|gggggggggggggggggggggggggggggggggggggggg|
+11 flash|........................................|
+12 text |                                        |
+12 ink  |7777777777777777777777777777777777777777|
+12 paper|gggggggggggggggggggggggggggggggggggggggg|
+12 flash|........................................|
+13 text |                                        |
+13 ink  |7777777777777777777777777777777777777777|
+13 paper|gggggggggggggggggggggggggggggggggggggggg|
+13 flash|........................................|
+14 text |                                  ##    |
+14 ink  |7777777777777777777777777777777777337777|
+14 paper|gggggggggggggggggggggggggggggggggg00gggg|
+14 flash|........................................|
+15 text |                                        |
+15 ink  |7777777777777777777777777777777777777777|
+15 paper|gggggggggggggggggggggggggggggggggggggggg|
+15 flash|........................................|
+16 text |                                        |
+16 ink  |7777777777777777777777777777777777777777|
+16 paper|gggggggggggggggggggggggggggggggggggggggg|
+16 flash|........................................|
+17 text |                                        |
+17 ink  |7777777777777777777777777777777777777777|
+17 paper|gggggggggggggggggggggggggggggggggggggggg|
+17 flash|........................................|
+18 text |        ##                              |
+18 ink  |7777777733777777777777777777777777777777|
+18 paper|gggggggg00gggggggggggggggggggggggggggggg|
+18 flash|........................................|
+19 text |                                        |
+19 ink  |7777777777777777777777777777777777777777|
+19 paper|gggggggggggggggggggggggggggggggggggggggg|
+19 flash|........................................|
+20 text |                                        |
+20 ink  |7777777777777777777777777777777777777777|
+20 paper|gggggggggggggggggggggggggggggggggggggggg|
+20 flash|........................................|
+21 text |          ###                           |
+21 ink  |7777777777777777777777777777777777777777|
+21 paper|gggggggggg000ggggggggggggggggggggggggggg|
+21 flash|........................................|
+22 text |          # ##                          |
+22 ink  |7777777777777377777777777777777777777777|
+22 paper|gggggggggg0g00gggggggggggggggggggggggggg|
+22 flash|........................................|
+23 text |                                        |
+23 ink  |7777777777777777777777777777777777777777|
+23 paper|0000000000000000000000000000000000000000|
+23 flash|........................................|
+
+== tick 449
+01 text |                              SCORE 006 |
+01 ink  |7777777777777777777777777777777777777777|
+01 paper|0000000000000000000000000000000000000000|
+01 flash|........................................|
+02 text |                                        |
+02 ink  |7777777777777777777777777777777777777777|
+02 paper|0000000000000000000000000000000000000000|
+02 flash|........................................|
+03 text |                                        |
+03 ink  |7777777777777777777777777777777777777777|
+03 paper|gggggggggggggggggggggggggggggggggggggggg|
+03 flash|........................................|
+04 text |                                        |
+04 ink  |7777777777777777777777777777777777777777|
+04 paper|gggggggggggggggggggggggggggggggggggggggg|
+04 flash|........................................|
+05 text |                                        |
+05 ink  |7777777777777777777777777777777777777777|
+05 paper|gggggggggggggggggggggggggggggggggggggggg|
+05 flash|........................................|
+06 text |                                        |
+06 ink  |7777777777777777777777777777777777777777|
+06 paper|gggggggggggggggggggggggggggggggggggggggg|
+06 flash|........................................|
+07 text |                                        |
+07 ink  |7777777777777777777777777777777777777777|
+07 paper|gggggggggggggggggggggggggggggggggggggggg|
+07 flash|........................................|
+08 text |                                        |
+08 ink  |7777777777777777777777777777777777777777|
+08 paper|gggggggggggggggggggggggggggggggggggggggg|
+08 flash|........................................|
+09 text |                                        |
+09 ink  |7777777777777777777777777777777777777777|
+09 paper|gggggggggggggggggggggggggggggggggggggggg|
+09 flash|........................................|
+10 text |                                        |
+10 ink  |7777777777777777777777777777777777777777|
+10 paper|gggggggggggggggggggggggggggggggggggggggg|
+10 flash|........................................|
+11 text |                                        |
+11 ink  |7777777777777777777777777777777777777777|
+11 paper|gggggggggggggggggggggggggggggggggggggggg|
+11 flash|........................................|
+12 text |                                        |
+12 ink  |7777777777777777777777777777777777777777|
+12 paper|gggggggggggggggggggggggggggggggggggggggg|
+12 flash|........................................|
+13 text |                                        |
+13 ink  |7777777777777777777777777777777777777777|
+13 paper|gggggggggggggggggggggggggggggggggggggggg|
+13 flash|........................................|
+14 text |                                  ##    |
+14 ink  |7777777777777777777777777777777777337777|
+14 paper|gggggggggggggggggggggggggggggggggg00gggg|
+14 flash|........................................|
+15 text |                                        |
+15 ink  |7777777777777777777777777777777777777777|
+15 paper|gggggggggggggggggggggggggggggggggggggggg|
+15 flash|........................................|
+16 text |                                        |
+16 ink  |7777777777777777777777777777777777777777|
+16 paper|gggggggggggggggggggggggggggggggggggggggg|
+16 flash|........................................|
+17 text |                                        |
+17 ink  |7777777777777777777777777777777777777777|
+17 paper|gggggggggggggggggggggggggggggggggggggggg|
+17 flash|........................................|
+18 text |        ##                              |
+18 ink  |7777777733777777777777777777777777777777|
+18 paper|gggggggg00gggggggggggggggggggggggggggggg|
+18 flash|........................................|
+19 text |                                        |
+19 ink  |7777777777777777777777777777777777777777|
+19 paper|gggggggggggggggggggggggggggggggggggggggg|
+19 flash|........................................|
+20 text |                                        |
+20 ink  |7777777777777777777777777777777777777777|
+20 paper|gggggggggggggggggggggggggggggggggggggggg|
+20 flash|........................................|
+21 text |          ###                           |
+21 ink  |7777777777777777777777777777777777777777|
+21 paper|gggggggggg000ggggggggggggggggggggggggggg|
+21 flash|........................................|
+22 text |          # ##                          |
+22 ink  |7777777777777377777777777777777777777777|
+22 paper|gggggggggg0g00gggggggggggggggggggggggggg|
+22 flash|........................................|
+23 text |                                        |
+23 ink  |7777777777777777777777777777777777777777|
+23 paper|0000000000000000000000000000000000000000|
+23 flash|........................................|
+
+== tick 599
+01 text |                              SCORE 006 |
+01 ink  |7777777777777777777777777777777777777777|
+01 paper|0000000000000000000000000000000000000000|
+01 flash|........................................|
+02 text |                                        |
+02 ink  |7777777777777777777777777777777777777777|
+02 paper|0000000000000000000000000000000000000000|
+02 flash|........................................|
+03 text |                                        |
+03 ink  |7777777777777777777777777777777777777777|
+03 paper|gggggggggggggggggggggggggggggggggggggggg|
+03 flash|........................................|
+04 text |                                        |
+04 ink  |7777777777777777777777777777777777777777|
+04 paper|gggggggggggggggggggggggggggggggggggggggg|
+04 flash|........................................|
+05 text |                                        |
+05 ink  |7777777777777777777777777777777777777777|
+05 paper|gggggggggggggggggggggggggggggggggggggggg|
+05 flash|........................................|
+06 text |                                        |
+06 ink  |7777777777777777777777777777777777777777|
+06 paper|gggggggggggggggggggggggggggggggggggggggg|
+06 flash|........................................|
+07 text |                                        |
+07 ink  |7777777777777777777777777777777777777777|
+07 paper|gggggggggggggggggggggggggggggggggggggggg|
+07 flash|........................................|
+08 text |                                        |
+08 ink  |7777777777777777777777777777777777777777|
+08 paper|gggggggggggggggggggggggggggggggggggggggg|
+08 flash|........................................|
+09 text |                                        |
+09 ink  |7777777777777777777777777777777777777777|
+09 paper|gggggggggggggggggggggggggggggggggggggggg|
+09 flash|........................................|
+10 text |                                        |
+10 ink  |7777777777777777777777777777777777777777|
+10 paper|gggggggggggggggggggggggggggggggggggggggg|
+10 flash|........................................|
+11 text |                                        |
+11 ink  |7777777777777777777777777777777777777777|
+11 paper|gggggggggggggggggggggggggggggggggggggggg|
+11 flash|........................................|
+12 text |                                        |
+12 ink  |7777777777777777777777777777777777777777|
+12 paper|gggggggggggggggggggggggggggggggggggggggg|
+12 flash|........................................|
+13 text |                                        |
+13 ink  |7777777777777777777777777777777777777777|
+13 paper|gggggggggggggggggggggggggggggggggggggggg|
+13 flash|........................................|
+14 text |                                  ##    |
+14 ink  |7777777777777777777777777777777777337777|
+14 paper|gggggggggggggggggggggggggggggggggg00gggg|
+14 flash|........................................|
+15 text |                                        |
+15 ink  |7777777777777777777777777777777777777777|
+15 paper|gggggggggggggggggggggggggggggggggggggggg|
+15 flash|........................................|
+16 text |                                        |
+16 ink  |7777777777777777777777777777777777777777|
+16 paper|gggggggggggggggggggggggggggggggggggggggg|
+16 flash|........................................|
+17 text |                                        |
+17 ink  |7777777777777777777777777777777777777777|
+17 paper|gggggggggggggggggggggggggggggggggggggggg|
+17 flash|........................................|
+18 text |        ##                              |
+18 ink  |7777777733777777777777777777777777777777|
+18 paper|gggggggg00gggggggggggggggggggggggggggggg|
+18 flash|........................................|
+19 text |                                        |
+19 ink  |7777777777777777777777777777777777777777|
+19 paper|gggggggggggggggggggggggggggggggggggggggg|
+19 flash|........................................|
+20 text |                                        |
+20 ink  |7777777777777777777777777777777777777777|
+20 paper|gggggggggggggggggggggggggggggggggggggggg|
+20 flash|........................................|
+21 text |          ###                           |
+21 ink  |7777777777777777777777777777777777777777|
+21 paper|gggggggggg000ggggggggggggggggggggggggggg|
+21 flash|........................................|
+22 text |          # ##                          |
+22 ink  |7777777777777377777777777777777777777777|
+22 paper|gggggggggg0g00gggggggggggggggggggggggggg|
+22 flash|........................................|
+23 text |                                        |
+23 ink  |7777777777777777777777777777777777777777|
+23 paper|0000000000000000000000000000000000000000|
+23 flash|........................................|
