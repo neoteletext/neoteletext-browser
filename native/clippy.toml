@@ -6,5 +6,5 @@ allow-panic-in-tests = true
 allow-indexing-slicing-in-tests = true
 # Words written as words in documentation, not code: the product's name,
 # and the key European layouts print on their right Alt (clippy's defaults
-# kept with "..").
-doc-valid-idents = ["NeoTeletext", "AltGr", "ReGIS", ".."]
+# kept with ".."), and the script engine's name.
+doc-valid-idents = ["NeoTeletext", "AltGr", "ReGIS", "QuickJS", ".."]

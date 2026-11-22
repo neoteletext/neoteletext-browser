@@ -197,7 +197,10 @@ coded! {
     /// An event given to a context: the kinds of the specification's
     /// section 10.3 that a step carries, by their numbers there. The
     /// network's events (30 to 41) are not among them: they reach a script
-    /// host as the web client's messages (`crate::web`).
+    /// host as the web client's messages (`crate::web`). Nor is the
+    /// script host's own event 22, which tells a context that sound is
+    /// allowed: a step says so with [`StepFlags::sound_allowed`], and the
+    /// script host makes the event.
     EventKind, "event kind" {
         /// A tick.
         Tick = 1,
@@ -247,7 +250,7 @@ coded! {
 /// What a context asked for in its manifest and what it is allowed, as
 /// the decoder read and decided them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[expect(clippy::struct_excessive_bools, reason = "six independent flags of one byte on the wire, each named where it is read")]
+#[expect(clippy::struct_excessive_bools, reason = "seven independent flags of one byte on the wire, each named where it is read")]
 pub struct ContextFlags {
     /// The pointer's presses.
     pub pointer_press: bool,
@@ -261,25 +264,30 @@ pub struct ContextFlags {
     pub network: bool,
     /// The page was opened from disk.
     pub from_disk: bool,
+    /// The viewer has pressed a key or the pointer in this tab, so the
+    /// context's sound and synthesizers sound from its top level on (the
+    /// specification's section 3.5; DEC-7334 item 17). Until it is so,
+    /// they do nothing.
+    pub sound_allowed: bool,
 }
 
 /// The bits of [`ContextFlags`], in its fields' order from bit 0.
-const CONTEXT_FLAG_BITS: u32 = 6;
+const CONTEXT_FLAG_BITS: u32 = 7;
 
 impl ContextFlags {
     fn list(self) -> [bool; CONTEXT_FLAG_BITS as usize] {
-        [self.pointer_press, self.pointer_move, self.wheel, self.text, self.network, self.from_disk]
+        [self.pointer_press, self.pointer_move, self.wheel, self.text, self.network, self.from_disk, self.sound_allowed]
     }
 
     fn of(byte: u8) -> Result<Self, ProtocolError> {
-        let [pointer_press, pointer_move, wheel, text, network, from_disk] = unpack(byte, "context flags")?;
-        Ok(Self { pointer_press, pointer_move, wheel, text, network, from_disk })
+        let [pointer_press, pointer_move, wheel, text, network, from_disk, sound_allowed] = unpack(byte, "context flags")?;
+        Ok(Self { pointer_press, pointer_move, wheel, text, network, from_disk, sound_allowed })
     }
 }
 
 /// What a step is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[expect(clippy::struct_excessive_bools, reason = "four independent flags of one byte on the wire, each named where it is read")]
+#[expect(clippy::struct_excessive_bools, reason = "five independent flags of one byte on the wire, each named where it is read")]
 pub struct StepFlags {
     /// A tick of the page's clock, and not input between ticks.
     pub tick: bool,
@@ -289,19 +297,24 @@ pub struct StepFlags {
     pub resumed: bool,
     /// The contexts are closing.
     pub closing: bool,
+    /// The viewer has pressed a key or the pointer in this tab: said in
+    /// every step from the first after it happened, so that the script
+    /// host raises `allowed` on `nt.sound` once and lets sound through
+    /// (the specification's section 3.5; DEC-7334 item 17).
+    pub sound_allowed: bool,
 }
 
 /// The bits of [`StepFlags`], in its fields' order from bit 0.
-const STEP_FLAG_BITS: u32 = 4;
+const STEP_FLAG_BITS: u32 = 5;
 
 impl StepFlags {
     fn list(self) -> [bool; STEP_FLAG_BITS as usize] {
-        [self.tick, self.pausing, self.resumed, self.closing]
+        [self.tick, self.pausing, self.resumed, self.closing, self.sound_allowed]
     }
 
     fn of(byte: u8) -> Result<Self, ProtocolError> {
-        let [tick, pausing, resumed, closing] = unpack(byte, "step flags")?;
-        Ok(Self { tick, pausing, resumed, closing })
+        let [tick, pausing, resumed, closing, sound_allowed] = unpack(byte, "step flags")?;
+        Ok(Self { tick, pausing, resumed, closing, sound_allowed })
     }
 }
 
