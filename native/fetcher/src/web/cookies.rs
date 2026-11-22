@@ -138,6 +138,8 @@ struct Kept {
     /// The origin that set it, as an address: what a jar written out names
     /// so the cookie can be read back by the same rules.
     origin: String,
+    /// Whether it is a Secure cookie, which makes room last.
+    secure: bool,
 }
 
 /// How long from now until `at`.
@@ -272,6 +274,7 @@ impl Jar {
         }
         let place: Place = (String::from(&cookie.domain), String::from(cookie.path.clone()), cookie.name().to_owned());
         let expired = cookie.is_expired();
+        let secure = cookie.secure().unwrap_or(false);
         let lifetime = cookie.max_age().or_else(|| cookie.expires_datetime().map(lifetime_until));
         let ends_at = lifetime.map(|lifetime| now_unix().saturating_add(lifetime.whole_seconds()));
         if self.store.insert(cookie, url).is_err() {
@@ -286,18 +289,24 @@ impl Jar {
         let origin = url.origin().ascii_serialization();
         // A cookie replaced keeps its place in the order.
         if let Some(kept) = self.created.get_mut(&place) {
-            (kept.expires, kept.origin) = (ends_at, origin);
+            (kept.expires, kept.origin, kept.secure) = (ends_at, origin, secure);
         } else {
-            self.created.insert(place.clone(), Kept { order: self.next, expires: ends_at, origin });
+            self.created.insert(place.clone(), Kept { order: self.next, expires: ends_at, origin, secure });
             self.next = self.next.saturating_add(1);
         }
         self.evict(&place.0);
         true
     }
 
-    /// Removes what has expired, then the oldest cookies of `domain` past
-    /// [`MAX_COOKIES_PER_DOMAIN`] and of the jar past
-    /// [`MAX_COOKIES_PER_JAR`].
+    /// Removes excess cookies in the standard's order (RFC 6265bis-22
+    /// section 5.7, "remove excess cookies"): what has expired; then, of
+    /// `domain` past [`MAX_COOKIES_PER_DOMAIN`], the cookies that are not
+    /// Secure before any that is, so that a plain answer cannot push a
+    /// secure session out by setting many cookies of its own; then of the
+    /// jar past [`MAX_COOKIES_PER_JAR`]. Within each, the earliest kept
+    /// goes first: the standard orders by last access, and a jar here is
+    /// one channel's, read by every request of it, so the order of
+    /// keeping is the one that tells its cookies apart.
     fn evict(&mut self, domain: &str) {
         let gone: Vec<Place> = self
             .store
@@ -312,7 +321,7 @@ impl Jar {
         loop {
             let of_domain = self.created.keys().filter(|place| place.0 == domain).count();
             let oldest = if of_domain > MAX_COOKIES_PER_DOMAIN {
-                self.created.iter().filter(|(place, _)| place.0 == domain).min_by_key(|(_, kept)| kept.order)
+                self.created.iter().filter(|(place, _)| place.0 == domain).min_by_key(|(_, kept)| (kept.secure, kept.order))
             } else if self.created.len() > MAX_COOKIES_PER_JAR {
                 self.created.iter().min_by_key(|(_, kept)| kept.order)
             } else {

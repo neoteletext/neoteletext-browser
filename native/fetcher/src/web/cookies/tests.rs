@@ -270,7 +270,6 @@ fn a_jar_written_out_reads_back() {
 /// Secure ones, so that a plain answer cannot push out a secure session
 /// by setting many cookies of its own.
 #[test]
-#[ignore = "fault TODO-7346 item 1: the oldest cookie of a full domain goes first even when it is Secure and the newer ones are not"]
 fn a_full_domain_loses_its_plain_cookies_before_its_secure_ones() {
     let mut jar = jar();
     assert!(jar.store(&url("https://www.shop.com/"), b"sid=secret; Secure; Path=/", SAME));
