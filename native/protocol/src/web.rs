@@ -107,6 +107,13 @@ pub const MAX_JAR_BYTES: usize = 4 * 1024 * 1024;
 /// used ending first. The trusted core holds to it; a process for each
 /// of the most tabs a window shows.
 pub const MAX_WEB_CLIENTS: usize = crate::MAX_TABS;
+/// The address space of a page opened from disk. The behaviour DEC-7315
+/// follows makes it this computer's own, so its script reaches this
+/// computer and the local network unasked; whether NeoTeletext does the
+/// same is with the owner and not yet decided, and this one value is
+/// where either answer is set ([`AddressSpace::Public`] makes such a
+/// page ask).
+pub const FILE_PAGE_SPACE: AddressSpace = AddressSpace::Loopback;
 /// The longest subprotocol a WebSocket's server chose, in bytes.
 pub const MAX_SUBPROTOCOL: usize = 128;
 
@@ -240,9 +247,8 @@ coded! {
 }
 
 coded! {
-    /// Where an address is, from most public to most private (the Local
-    /// Network Access draft's address spaces, which neoteletext-common's
-    /// DEC-7315 follows).
+    /// Where an address is (the Local Network Access draft's address
+    /// spaces, which neoteletext-common's DEC-7315 follows).
     AddressSpace, "address space" {
         /// The internet.
         Public = 0,
@@ -289,11 +295,11 @@ coded! {
         BadPort = 2,
         /// The method is one the Fetch standard forbids, or no method.
         Method = 3,
-        /// The address is on this computer or the local network, in an
-        /// address space more private than the page's: it needs the
-        /// viewer's permission (neoteletext-common's DEC-7315). Until the
-        /// browser can ask for it, the request is refused; this reason is
-        /// what the trusted core turns into the asking.
+        /// A page from the internet asked an address on the local network:
+        /// it needs the viewer's permission to reach devices there
+        /// (neoteletext-common's DEC-7315). Until the browser can ask for
+        /// it, the request is refused; this reason is what the trusted
+        /// core turns into the asking.
         LocalPermission = 4,
         /// A page loaded securely asked for an address that is not.
         MixedContent = 5,
@@ -337,6 +343,15 @@ coded! {
         Unsupported = 23,
         /// The request itself was malformed.
         Request = 24,
+        /// A page from the internet asked this computer itself: it needs
+        /// the viewer's permission to reach this device's own services, a
+        /// permission apart from the local network's (DEC-7315). Refused
+        /// until the browser can ask, as [`Reason::LocalPermission`] is.
+        DevicePermission = 25,
+        /// A page from the internet that is not a secure context asked
+        /// this computer or the local network, or a local name was asked
+        /// through the proxy: refused, and never asked about.
+        LocalRefused = 26,
     }
 }
 
@@ -406,11 +421,13 @@ pub struct Start {
     /// referrer come; empty for a page with no address, whose origin is
     /// opaque.
     pub client: String,
-    /// The address space the page asking was itself loaded from, as the
-    /// trusted core knows it; for a page the viewer asked for by hand,
-    /// [`AddressSpace::Loopback`], the viewer being at this computer. A
-    /// request to a more private space than this needs the viewer's
-    /// permission (neoteletext-common's DEC-7315).
+    /// The address space the page asking was itself loaded from: that of
+    /// the address its answer came from, as the trusted core noted it;
+    /// for a page the viewer asked for by hand, [`AddressSpace::Loopback`],
+    /// the viewer being at this computer; for a page opened from disk,
+    /// [`FILE_PAGE_SPACE`]. Only a page of [`AddressSpace::Public`] needs
+    /// the viewer's permission for this computer or the local network
+    /// (neoteletext-common's DEC-7315).
     pub client_space: AddressSpace,
     /// The headers the script set.
     pub headers: Vec<Header>,

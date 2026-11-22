@@ -23,6 +23,7 @@ use super::cookies::{self, Jar};
 use super::cors::{self, Allowed, PreflightCache};
 use super::integrity;
 use super::limits::{MAX_DECODED_BODY, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
+use super::local::Asker;
 use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
 use super::referrer::{DEFAULT_POLICY, policy_of, referer};
@@ -285,6 +286,14 @@ impl<'a> Request<'a> {
         }
     }
 
+    /// The page asking, for the rule on this computer and the local
+    /// network: its address space as the trusted core gave it, and
+    /// whether it is a secure context, loaded over `https` or from this
+    /// computer itself.
+    fn asker(&self) -> Asker {
+        Asker { space: self.start.client_space, secure: self.client.as_ref().is_some_and(|client| client.scheme() == "https" || is_loopback(client)) }
+    }
+
     /// Whether the request carries and keeps cookies (the standard's
     /// HTTP-network-or-cache fetch, step 8.4).
     fn with_credentials(&self) -> bool {
@@ -361,7 +370,7 @@ impl<'a> Request<'a> {
         }
         let answer = engine
             .pool
-            .send(&Outgoing { method: &self.method, url: &self.url, headers: &headers, body: self.body.clone(), page: self.start.client_space, credentials })
+            .send(&Outgoing { method: &self.method, url: &self.url, headers: &headers, body: self.body.clone(), page: self.asker(), credentials })
             .await?;
         if answer.status == PROXY_AUTHENTICATION_REQUIRED {
             return Err(Reason::Proxy);
@@ -391,10 +400,8 @@ impl<'a> Request<'a> {
         // A preflight carries the origin whatever its method, and never
         // credentials.
         set(&mut headers, "origin", origin.clone());
-        let answer = engine
-            .pool
-            .send(&Outgoing { method: "OPTIONS", url: &self.url, headers: &headers, body: None, page: self.start.client_space, credentials: false })
-            .await?;
+        let answer =
+            engine.pool.send(&Outgoing { method: "OPTIONS", url: &self.url, headers: &headers, body: None, page: self.asker(), credentials: false }).await?;
         let allowed = (cors::cors_check(&answer.headers, &origin, with_credentials) && (200..300).contains(&answer.status))
             .then(|| Allowed::read(&answer.headers, with_credentials, Instant::now()))
             .flatten()

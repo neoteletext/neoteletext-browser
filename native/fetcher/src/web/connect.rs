@@ -18,14 +18,14 @@ use neoteletext_web::proxy::{
     Proxy, ProxyKind, SOCKS_GREETING, SOCKS_MAX_REPLY, hidden_local, read_connect_reply, read_socks_choice, read_socks_reply, socks_reply_length,
     write_connect, write_socks_connect,
 };
-use protocol::web::{AddressSpace, Reason};
+use protocol::web::Reason;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio::sync::Semaphore;
 use tokio_rustls::client::TlsStream;
 
 use super::limits::{HEAD_TIMEOUT, OPEN_DEADLINE};
-use super::local::{Access, local_access};
+use super::local::{Asker, local_access};
 use crate::transport::MAX_RESOLVING;
 
 /// The protocols offered in the TLS handshake (RFC 7301), HTTP/2 first.
@@ -44,9 +44,9 @@ pub(crate) type Names = Rc<dyn Fn(&str, u16) -> Vec<SocketAddr>>;
 
 /// What every connection is opened with.
 pub(crate) struct Settings {
-    /// The addresses on this computer or the local network the viewer
-    /// has already allowed any page to ask: today, those the browser was
-    /// started with.
+    /// The addresses on this computer or the local network taken as
+    /// public, which any page may ask: those the browser was started
+    /// with (`--allow-local`, an address-space override).
     pub(crate) allowed: Vec<IpAddr>,
     /// The proxy every connection goes through, if one.
     pub(crate) proxy: Option<Proxy>,
@@ -71,10 +71,10 @@ impl Settings {
         Self { allowed: allowed.to_vec(), proxy, tls: Arc::new(tls), names: None, open_deadline: OPEN_DEADLINE, head_timeout: HEAD_TIMEOUT }
     }
 
-    /// Whether a page of the address space `page` needs the viewer's
-    /// permission to ask `ip` (`local::local_access`, DEC-7315).
-    pub(crate) fn needs_permission(&self, ip: IpAddr, page: AddressSpace) -> bool {
-        local_access(page, ip, &self.allowed) == Access::NeedsPermission
+    /// Why the page `page` may not ask `ip`, if it may not
+    /// (`local::local_access`, DEC-7315).
+    pub(crate) fn refusal(&self, ip: IpAddr, page: Asker) -> Option<Reason> {
+        local_access(page, ip, &self.allowed).failure()
     }
 }
 
@@ -234,25 +234,19 @@ async fn tunnel(socket: &mut TcpStream, kind: ProxyKind, host: &str, port: u16) 
     }
 }
 
-/// A socket to `host` and `port` for a page of the address space `page`:
+/// A socket to `host` and `port` for the page `page`:
 /// direct, to an address the page may ask, or a tunnel the proxy opened.
-async fn reach(
-    settings: &Settings,
-    resolving: &Arc<Semaphore>,
-    host: &str,
-    port: u16,
-    page: AddressSpace,
-) -> Result<(Prefixed<TcpStream>, Option<IpAddr>), Reason> {
+async fn reach(settings: &Settings, resolving: &Arc<Semaphore>, host: &str, port: u16, page: Asker) -> Result<(Prefixed<TcpStream>, Option<IpAddr>), Reason> {
     if let Some(proxy) = &settings.proxy {
         // The proxy resolves the name, so the rule is kept on what can be
         // seen here, and more strictly than a direct connection's: a name
         // that is plainly local would be the proxy's own network's, so it
-        // needs permission whatever page asks, and an address is judged
-        // as any is (the engine's REQ-WEB-032). The proxy's own address
-        // may be local: the viewer chose it.
-        let judged = host.parse::<IpAddr>().map_or_else(|_| hidden_local(host), |ip| settings.needs_permission(ip, page));
-        if judged {
-            return Err(Reason::LocalPermission);
+        // is refused whatever page asks, and an address is judged as any
+        // is (the engine's REQ-WEB-032). The proxy's own address may be
+        // local: the viewer chose it.
+        let refusal = host.parse::<IpAddr>().map_or_else(|_| hidden_local(host).then_some(Reason::LocalRefused), |ip| settings.refusal(ip, page));
+        if let Some(reason) = refusal {
+            return Err(reason);
         }
         for target in resolve(settings, resolving, &proxy.host, proxy.port).await.map_err(|_| Reason::Proxy)? {
             let Ok(mut socket) = TcpStream::connect(target).await else { continue };
@@ -261,26 +255,26 @@ async fn reach(
         }
         return Err(Reason::Proxy);
     }
-    let mut refused = false;
+    let mut refused = None;
     for target in resolve(settings, resolving, host, port).await? {
-        if settings.needs_permission(target.ip(), page) {
-            refused = true;
+        if let Some(reason) = settings.refusal(target.ip(), page) {
+            refused.get_or_insert(reason);
             continue;
         }
         let Ok(socket) = TcpStream::connect(target).await else { continue };
         // The address reached is checked as the address asked was.
         let peer = socket.peer_addr().map_err(|_| Reason::Connection)?.ip();
-        if settings.needs_permission(peer, page) {
-            return Err(Reason::LocalPermission);
+        if let Some(reason) = settings.refusal(peer, page) {
+            return Err(reason);
         }
         return Ok((Prefixed { early: Vec::new(), taken: 0, inner: socket }, Some(peer)));
     }
-    Err(if refused { Reason::LocalPermission } else { Reason::Connection })
+    Err(refused.unwrap_or(Reason::Connection))
 }
 
 /// Opens a connection to `host` and `port`, with TLS when `secure`, for a
-/// page of the address space `page`, all within the one deadline.
-pub(crate) async fn open(settings: &Settings, resolving: &Arc<Semaphore>, secure: bool, host: &str, port: u16, page: AddressSpace) -> Result<Opened, Reason> {
+/// page `page`, all within the one deadline.
+pub(crate) async fn open(settings: &Settings, resolving: &Arc<Semaphore>, secure: bool, host: &str, port: u16, page: Asker) -> Result<Opened, Reason> {
     let opening = async {
         let (socket, peer) = reach(settings, resolving, host, port, page).await?;
         socket.inner.set_nodelay(true).map_err(|_| Reason::Connection)?;

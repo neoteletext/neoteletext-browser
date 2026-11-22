@@ -5,7 +5,7 @@
 //! partition a process, the channel as the origin, and its limits.
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -15,60 +15,70 @@ use protocol::web::{AddressSpace, ErrorKind, FromWebClient, MAX_HEADER_VALUE, MA
 use super::support::{Client, HERE, Piece, Reply, as_page, header, raw, serve, serve_tls};
 use crate::web::limits::{MAX_REQUESTS_PER_TAB, START_BURST};
 
-/// neoteletext-common's DEC-7315 and finding F-62: this computer and the
-/// local network are reached as that decision allows. A page loaded from this
-/// computer asks it freely; a page from the internet, or from the local
-/// network asking this computer, needs the viewer's permission, whatever
-/// name resolved to the address, and is refused until it can be asked
-/// for.
+/// neoteletext-common's DEC-7315, the browser's TODO-7316 items 5 and 7,
+/// and finding F-62: this computer and the local network are reached as
+/// that decision allows. A page loaded from this computer or the local
+/// network asks them freely. A page from the internet is refused unless
+/// it is a secure context, and then needs the viewer's permission, one
+/// for this computer and one for the local network, whatever name
+/// resolved to the address; until the browser can ask, that is a refusal
+/// by its own name.
 #[test]
-fn a_more_private_address_is_asked_only_with_permission() {
+fn a_public_page_asks_this_computer_and_the_local_network_only_by_permission() {
     let server = serve(|_| Reply::ok("local"));
     let channel = server.url("/a/");
     let public = |start: &mut protocol::web::Start| start.client_space = AddressSpace::Public;
-    let mut client = Client::new(&channel);
-    // A page loaded from this computer: reached, by name and by address.
-    assert_eq!(client.get(&server.url("/a/x")).text(), "local");
-    assert_eq!(client.get(&server.at("http", "127.0.0.1", "/a/x")).reason(), Reason::Cors, "reached, and another origin");
-    let before = server.asked().len();
-    // A public page: it needs permission, on a new connection and on the
-    // one kept, for the name that resolves here and for the address in
-    // each of its spellings.
-    for address in [
+    let here = [
         server.url("/a/x"),
         server.at("http", "127.0.0.1", "/"),
         server.at("http", "localhost", "/"),
         server.at("http", "[::1]", "/"),
         server.at("http", "[::ffff:127.0.0.1]", "/"),
         server.at("http", "0x7f.1", "/"),
-    ] {
-        assert_eq!(client.fetch(&address, public).reason(), Reason::LocalPermission, "{address}");
+    ];
+    let nearby =
+        ["http://10.0.0.1/", "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/", "http://[fd00::1]/", "http://100.64.0.1/"];
+    let mut client = Client::new(&channel);
+    // A page loaded from this computer: reached, by name and by address.
+    assert_eq!(client.get(&server.url("/a/x")).text(), "local");
+    assert_eq!(client.get(&server.at("http", "127.0.0.1", "/a/x")).reason(), Reason::Cors, "reached, and another origin");
+    // A page on the local network asks this computer freely too.
+    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.client_space = AddressSpace::Local).text(), "local");
+    let before = server.asked().len();
+    // A public page over plain http: refused without asking, on a new
+    // connection and on the one kept, for the name that resolves here
+    // and for the address in each of its spellings.
+    for address in here.iter().map(String::as_str).chain(nearby) {
+        assert_eq!(client.fetch(address, public).reason(), Reason::LocalRefused, "{address}");
     }
-    for address in ["http://10.0.0.1/", "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data/", "http://[fe80::1]/", "http://[fd00::1]/"] {
-        assert_eq!(client.fetch(address, public).reason(), Reason::LocalPermission, "{address}");
-    }
-    // A page on the local network asks this computer only with permission.
-    assert_eq!(client.fetch(&server.url("/a/x"), |start| start.client_space = AddressSpace::Local).reason(), Reason::LocalPermission);
     assert_eq!(server.asked().len(), before, "nothing was connected to");
     client.finish().unwrap();
-    // What the viewer already allowed is open to a public page too.
-    let mut permitted = Client::with(&channel, 0, |setup| setup.settings.allowed = vec![HERE]);
-    assert_eq!(permitted.fetch(&server.url("/a/x"), public).text(), "local");
-    assert_eq!(permitted.fetch("http://192.168.1.1/", public).reason(), Reason::LocalPermission, "and nothing else");
-    permitted.finish().unwrap();
+    // A public page that is a secure context: it needs permission, for
+    // this computer and for the local network apart. A plain address is
+    // mixed content to it before anything else, so each is asked over
+    // https.
+    let secure = serve_tls(&["http/1.1"], |_| Reply::ok("secure"));
+    let mut secure_page = Client::new(&secure.at("https", "localhost", "/a/"));
+    assert_eq!(secure_page.get(&secure.at("https", "localhost", "/a/x")).text(), "secure", "loaded from this computer, it asks it freely");
+    assert_eq!(secure_page.fetch(&secure.at("https", "localhost", "/a/x"), public).reason(), Reason::DevicePermission);
+    assert_eq!(secure_page.fetch(&secure.at("https", "public.test", "/"), public).reason(), Reason::DevicePermission, "a name that resolves here");
+    for address in ["https://10.0.0.1/", "https://192.168.1.1/", "https://[fe80::1]/"] {
+        assert_eq!(secure_page.fetch(address, public).reason(), Reason::LocalPermission, "{address}");
+    }
+    assert_eq!(secure.asked().len(), 1, "nothing more was connected to");
+    secure_page.finish().unwrap();
+    // An address the viewer named when the browser started is taken as
+    // public: open to a public page, and nothing else is.
+    let mut named = Client::with(&channel, 0, |setup| setup.settings.allowed = vec![HERE]);
+    assert_eq!(named.fetch(&server.url("/a/x"), public).text(), "local");
+    assert_eq!(named.fetch("http://192.168.1.1/", public).reason(), Reason::LocalRefused, "and nothing else");
+    named.finish().unwrap();
     // A page on the local network asks the local network freely: no
     // permission is wanted, whatever then becomes of the connection.
     let mut local = Client::with(&channel, 0, |setup| setup.settings.open_deadline = Duration::from_millis(300));
     let outcome = local.fetch("http://10.255.255.1/", |start| start.client_space = AddressSpace::Local);
     assert!(matches!(outcome.reason(), Reason::Timeout | Reason::Connection), "{outcome:?}");
     local.finish().unwrap();
-    // A name with an address here, asked by a public page: the address is
-    // what is judged (a name pointed here after it was first resolved
-    // gains nothing).
-    let port = server.port;
-    let mut rebound = Client::with(&channel, 0, move |setup| setup.settings.names = Some(Rc::new(move |_: &str, _: u16| vec![SocketAddr::new(HERE, port)])));
-    assert_eq!(rebound.fetch("http://public.test/", public).reason(), Reason::LocalPermission);
-    rebound.finish().unwrap();
 }
 
 /// The engine's REQ-SEC-007: no redirect leads from `https` to `http`;
@@ -222,16 +232,16 @@ fn every_connection_goes_through_the_proxy() {
     let mut secure_client = Client::with(&secure.at("https", "localhost", "/a/"), 0, move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
     });
-    assert_eq!(secure_client.get(&secure.at("https", "localhost", "/a/x")).reason(), Reason::LocalPermission, "a local name is not asked of the proxy");
+    assert_eq!(secure_client.get(&secure.at("https", "localhost", "/a/x")).reason(), Reason::LocalRefused, "a local name is not asked of the proxy");
     secure_client.finish().unwrap();
     let mut strict = Client::with(&plain.url("/a/"), 0, move |setup| {
         setup.settings.proxy = Some(Proxy::parse(&format!("http://127.0.0.1:{proxy}")).unwrap());
     });
     for address in ["http://printer.local/", "http://router/", "http://intranet.corp/"] {
-        assert_eq!(strict.get(address).reason(), Reason::LocalPermission, "{address}");
+        assert_eq!(strict.get(address).reason(), Reason::LocalRefused, "{address}");
     }
     for address in ["http://10.0.0.1/", "http://127.0.0.1:8000/"] {
-        assert_eq!(strict.fetch(address, |start| start.client_space = AddressSpace::Public).reason(), Reason::LocalPermission, "{address}");
+        assert_eq!(strict.fetch(address, |start| start.client_space = AddressSpace::Public).reason(), Reason::LocalRefused, "{address}");
     }
     assert!(asked.try_recv().is_err(), "the proxy was asked for none of them");
     strict.finish().unwrap();

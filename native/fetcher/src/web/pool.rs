@@ -18,13 +18,14 @@ use std::time::Instant;
 
 use hyper::body::{Body as _, Bytes, Frame, Incoming, SizeHint};
 use hyper::client::conn::{http1, http2};
-use protocol::web::{AddressSpace, Header, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_RESPONSE_HEADERS, MAX_STATUS_TEXT, Reason};
+use protocol::web::{Header, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_RESPONSE_HEADERS, MAX_STATUS_TEXT, Reason};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::Semaphore;
 use url::Url;
 
 use super::connect::{Settings, open, resolving};
 use super::limits::{IDLE_CONNECTION, MAX_IDLE_PER_PLACE, MAX_POOLED_PLACES, MAX_RESPONSE_HEAD};
+use super::local::Asker;
 
 /// The most read for hyper at once: one TLS record's plaintext, 2^14
 /// bytes (RFC 8446 section 5.1).
@@ -107,8 +108,8 @@ pub(crate) struct Outgoing<'a> {
     pub(crate) headers: &'a [Header],
     /// The body.
     pub(crate) body: Option<Bytes>,
-    /// The address space of the page asking.
-    pub(crate) page: AddressSpace,
+    /// The page asking.
+    pub(crate) page: Asker,
     /// Whether it carries credentials: a connection is kept for requests
     /// with them or for requests without, never both (the Fetch
     /// standard's connection pool key).
@@ -298,10 +299,9 @@ impl Pool {
         }
     }
 
-    /// A kept connection to `place` that a page of the address space
-    /// `page` may use.
-    fn kept(&self, place: &Place, page: AddressSpace) -> Option<Connection> {
-        let usable = |peer: Option<IpAddr>| peer.is_none_or(|peer| !self.settings.needs_permission(peer, page));
+    /// A kept connection to `place` that the page `page` may use.
+    fn kept(&self, place: &Place, page: Asker) -> Option<Connection> {
+        let usable = |peer: Option<IpAddr>| peer.is_none_or(|peer| self.settings.refusal(peer, page).is_none());
         {
             let mut shared = self.shared.borrow_mut();
             match shared.get(place) {
@@ -328,7 +328,7 @@ impl Pool {
     }
 
     /// A new connection to `place`.
-    async fn opened(&self, place: &Place, page: AddressSpace) -> Result<Connection, Reason> {
+    async fn opened(&self, place: &Place, page: Asker) -> Result<Connection, Reason> {
         let opened = open(&self.settings, &self.resolving, place.secure, &place.host, place.port, page).await?;
         let peer = opened.peer;
         if opened.http2 {
