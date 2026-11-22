@@ -1,0 +1,2 @@
+// The security review's finding S-10 (TODO-7276): a page that redefines one colour entry on every tick, so that everything drawn in it flashes thirty times a second.
+const flash = nt.teletext.colours.define("flash", "#000"); nt.teletext.overlay.fill(1, 0, 23, 40, { paper: flash }); let on = false; nt.addEventListener("tick", () => { on = !on; nt.teletext.colours.set(flash, on ? "#fff" : "#000"); });

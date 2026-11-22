@@ -16,9 +16,9 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 
 use crate::limits::{
-    AUDIO_CHANNELS, CONTEXTS, MAX_BATCH_BYTES, MAX_CONSECUTIVE_FAILURES, MAX_GAIN, MAX_HOST_STATE_BYTES, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_LISTEN_KINDS,
-    MAX_LISTENS, MAX_LOG_CHARS, MAX_LOG_LEVEL, MAX_LOG_LINES, MAX_MIDI_DATA, MAX_NAVIGATIONS_PER_SECOND, MAX_NOTE_TICKS, MAX_RANDOM_BYTES, MAX_SCOPE_DEPTH,
-    MAX_SCOPES, MAX_SCRIPT_BYTES, MAX_SHARED_BYTES, MAX_SHARED_KEY_BYTES, MAX_SHARED_KEYS, MAX_SHARED_VALUE_BYTES, MAX_SOUND_NUMBER,
+    AUDIO_CHANNELS, CONTEXTS, MAX_BATCH_BYTES, MAX_CONSECUTIVE_FAILURES, MAX_GAIN, MAX_HOST_STATE_BYTES, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_LABEL_BYTES,
+    MAX_LISTEN_KINDS, MAX_LISTENS, MAX_LOG_CHARS, MAX_LOG_LEVEL, MAX_LOG_LINES, MAX_MIDI_DATA, MAX_NAVIGATIONS_PER_SECOND, MAX_NOTE_TICKS, MAX_RANDOM_BYTES,
+    MAX_SCOPE_DEPTH, MAX_SCOPES, MAX_SCRIPT_BYTES, MAX_SHARED_BYTES, MAX_SHARED_KEY_BYTES, MAX_SHARED_KEYS, MAX_SHARED_VALUE_BYTES, MAX_SOUND_NUMBER,
     MAX_SOUND_OPERATIONS_PER_CALLBACK, MAX_SOUND_OPERATIONS_PER_SECOND, MAX_SOUND_OPERATIONS_PER_STEP, MAX_SYNTH_VARIANT, MAX_TIMER_TICKS, MAX_TIMERS,
     MAX_TITLE_BYTES, MAX_URL_BYTES, QUICKJS_HEAP_BYTES, TICKS_PER_SECOND,
 };
@@ -305,6 +305,8 @@ pub struct Host {
     /// constants, lowered only by this module's own tests.
     state_limit: usize,
     batch_limit: usize,
+    /// The teletext page the page context draws on (work package T1).
+    teletext: crate::teletext::Slot,
 }
 
 /// The whole numbers of a host call, read with their count checked.
@@ -449,6 +451,7 @@ impl Host {
             figures: TimeFigures::default(),
             state_limit: MAX_HOST_STATE_BYTES,
             batch_limit: MAX_BATCH_BYTES,
+            teletext: crate::teletext::Slot::default(),
         }
     }
 
@@ -477,6 +480,7 @@ impl Host {
         }
         self.zone_minutes = open.zone_minutes;
         self.sound_allowed |= open.flags.sound_allowed;
+        self.teletext.open(&open);
         let context = open.context;
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
@@ -488,6 +492,7 @@ impl Host {
     /// goes with the channel context (section 3.6).
     pub fn close(&mut self, context: ContextId) {
         self.release_sound(context);
+        self.teletext.close(context);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             if slot.as_ref().is_some_and(|held| !held.listens.is_empty()) {
                 self.watch_changed = true;
@@ -543,6 +548,7 @@ impl Host {
         self.tick = self.tick.max(tick);
         self.sound_step = 0;
         self.sound_allowed |= sound_allowed;
+        self.teletext.begin_step(self.tick);
         for held in self.contexts.iter_mut().flatten() {
             held.keys_pressed.clear();
             if held.origin.is_none() {
@@ -750,10 +756,8 @@ impl Host {
         let origin = held.origin.unwrap_or(self.tick);
         let timer = held.timers.iter().map(|timer| origin.saturating_add(timer.due)).min();
         let note = self.pending_notes.iter().filter(|note| note.context == context).map(|note| note.due).min();
-        match (timer, note) {
-            (Some(timer), Some(note)) => Some(timer.min(note)),
-            (one, other) => one.or(other),
-        }
+        let renderer = if context == ContextId::Page { self.teletext.next_due(self.tick) } else { None };
+        [timer, note, renderer].into_iter().flatten().min()
     }
 
     /// The next change of the shared store to tell, with the context to tell.
@@ -823,6 +827,7 @@ impl Host {
         bytes = self.shared.iter().fold(bytes, |sum, (key, value)| sum.saturating_add(cost(key)).saturating_add(cost(value)));
         bytes = self.shared_notices.iter().fold(bytes, |sum, (_, key)| sum.saturating_add(cost(key)).saturating_add(size_of::<ContextId>()));
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
+        bytes = bytes.saturating_add(self.teletext.state_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
 
@@ -832,6 +837,7 @@ impl Host {
         let mut bytes = self.log.iter().fold(0_usize, |sum, line| sum.saturating_add(cost(&line.text)).saturating_add(size_of::<LogLine>()));
         bytes = bytes.saturating_add(self.sound.len().saturating_mul(size_of::<SoundOperation>()));
         bytes = bytes.saturating_add(self.title.as_deref().map_or(0, cost));
+        bytes = bytes.saturating_add(self.teletext.batch_bytes());
         bytes.saturating_add(self.navigate.as_deref().map_or(0, cost))
     }
 
@@ -872,6 +878,7 @@ impl Host {
         }
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
+        self.teletext.fill(&mut batch);
         let dropped = core::mem::take(&mut self.log_dropped);
         if dropped > 0 {
             let context = self.log_context(None);
@@ -1049,6 +1056,36 @@ impl Host {
                 no_payload(op, payload)?;
                 self.sound_operation(context, op, ints)
             }
+            Op::TT_PUT
+            | Op::TT_CODES
+            | Op::TT_BLIT
+            | Op::TT_AT
+            | Op::TT_CLEAR
+            | Op::TT_SCROLL
+            | Op::TT_SETTINGS
+            | Op::TT_OVERLAY_PUT
+            | Op::TT_OVERLAY_FILL
+            | Op::TT_OVERLAY_CLEAR
+            | Op::TT_COLOUR_DEFINE
+            | Op::TT_COLOUR_SET
+            | Op::TT_LABEL
+            | Op::TT_ANIMATE
+            | Op::TT_REMOVE
+            | Op::TT_CONTROL
+            | Op::TT_MEASURE
+            | Op::TT_LANGUAGES
+            | Op::TT_LEVEL => {
+                // A label waiting to leave is the one thing teletext stages
+                // whose size a script chooses.
+                self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;
+                let scope = self.context(context).and_then(|held| held.scope_stack.last().copied()).unwrap_or(0);
+                let reply = self.teletext.call(context, op, ints.ints, payload, scope, self.tick)?;
+                // A thing removed has no listeners left to count.
+                if let (Op::TT_REMOVE, Some(removed), Some(held)) = (op, ints.ints.first().copied(), self.context_mut(context)) {
+                    held.listens.retain(|(handle, _)| *handle != removed);
+                }
+                Ok(reply)
+            }
         }
     }
 
@@ -1206,6 +1243,10 @@ impl Host {
             held.scopes.retain(|scope| *scope != id);
             held.scope_stack.retain(|scope| *scope != id);
             held.timers.retain(|timer| timer.scope != id);
+            let removed = self.teletext.scope_end(context, id);
+            if let Some(held) = self.context_mut(context) {
+                held.listens.retain(|(handle, _)| !removed.contains(handle));
+            }
         }
         Ok(Reply::Undefined)
     }
@@ -1299,7 +1340,7 @@ impl Host {
         }
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
-        if Handle::from_number(handle).is_none() {
+        if Handle::from_number(handle).is_none() && !self.teletext.has_thing(context, handle) {
             return Err(type_error("no such thing"));
         }
         self.room(size_of::<(i32, EventKind)>(), 0)?;
@@ -1456,6 +1497,7 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
+        self.teletext.budget(&mut out);
         out.push('}');
         out
     }
