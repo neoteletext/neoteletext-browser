@@ -5,6 +5,8 @@
 
 mod support;
 
+mod addresses;
+
 mod cookies;
 mod fetching;
 mod hostile;
