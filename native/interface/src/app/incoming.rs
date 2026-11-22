@@ -113,6 +113,8 @@ impl App {
                 self.show_typing(&typing, now);
                 self.act(event_loop);
             }
+            #[cfg(feature = "interaction")]
+            Incoming::Program(program) => self.page_program(event_loop, &program, now),
             #[cfg(feature = "links")]
             Incoming::Link(message) => self.link_message(event_loop, message, now),
             Incoming::End(reason) => {

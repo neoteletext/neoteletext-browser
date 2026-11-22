@@ -125,6 +125,8 @@ impl App {
             Output::Bookmark => ToCore::Bookmark,
             Output::Home => ToCore::Home,
             Output::Reload => ToCore::Reload,
+            #[cfg(feature = "interaction")]
+            Output::StopScripts => ToCore::StopScripts,
             Output::PageControl(control) => ToCore::PageControl(control),
             Output::SubPageRows { channel, page, first, count, request } => {
                 ToCore::SubPageRows { channel, page, range: protocol::subpages::SubPageRange { first, count }, request }

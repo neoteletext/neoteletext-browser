@@ -4,6 +4,7 @@
 //! them (`neoteletext_script::ops`, which this process may not link; the
 //! script-host program's tests hold the two equal).
 
+use protocol::decoder::script::PointerKind;
 use protocol::rules::{KeyAction, PointerAction};
 use protocol::script::{Event, EventKind};
 
@@ -34,12 +35,38 @@ pub const POINTER_LEAVE: i32 = 5;
 pub const POINTER_CANCEL: i32 = 6;
 /// Where the button is in a pointer event's first number.
 pub const POINTER_BUTTON_SHIFT: u32 = 4;
-/// The bit that says the pointer is the primary one: bits 8 and 9 hold
-/// its type, 0 for the mouse.
+/// Where the pointer's kind is in a pointer event's first number: two
+/// bits, 0 the mouse, 1 a touch, 2 a pen (`PointerKind::code`).
+pub const POINTER_KIND_SHIFT: u32 = 8;
+/// The bit that says the pointer is the primary one of its kind.
 pub const POINTER_PRIMARY: i32 = 1 << 10;
-/// The one pointer the trusted core gives a page today: the mouse, or
-/// the first contact of a touch.
+/// The mouse's number among the pointers (section 4.2's `pointerId`); a
+/// contact of a touch screen has a later one.
 pub const POINTER_ID: i32 = 1;
+
+/// Which pointer an event is of (section 4.2: `pointerId`, `pointerType`
+/// and `isPrimary`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Which {
+    /// Its number, the same from its press to its release.
+    pub id: i32,
+    /// Its kind.
+    pub kind: PointerKind,
+    /// It is the primary pointer of its kind.
+    pub primary: bool,
+}
+
+impl Which {
+    /// The mouse: what a page's rule table input is of.
+    pub const MOUSE: Self = Self { id: POINTER_ID, kind: PointerKind::Mouse, primary: true };
+
+    /// The kind and the primary bit, as a pointer event's first number
+    /// holds them.
+    fn packed(self) -> i32 {
+        let kind = i32::from(self.kind.code()).checked_shl(POINTER_KIND_SHIFT).unwrap_or(0);
+        kind | if self.primary { POINTER_PRIMARY } else { 0 }
+    }
+}
 
 // The engine's modifier bits, as the trusted core gives them with a key
 // (`neoteletext_input::event`).
@@ -104,7 +131,7 @@ fn ints(numbers: impl IntoIterator<Item = i32>) -> Vec<u8> {
 /// picture's pixel or dot), and the things under it by their handles,
 /// topmost first; the first is the thing hit.
 #[must_use]
-pub fn pointer(action: PointerAction, button: u8, at: (u16, u16), teletext: bool, things: &[i32]) -> Event {
+pub fn pointer(action: PointerAction, button: u8, at: (u16, u16), teletext: bool, things: &[i32], which: Which) -> Event {
     let (x, y) = if teletext {
         let (column, row) = crate::engine::script::cell_at(at.0, at.1);
         (i32::from(column), i32::from(row))
@@ -119,11 +146,11 @@ pub fn pointer(action: PointerAction, button: u8, at: (u16, u16), teletext: bool
         PointerAction::Move => (POINTER_MOVE, 0, i32::from(button)),
         PointerAction::Gone => (POINTER_CANCEL, 0, 0),
     };
-    let packed = what | pressed.checked_shl(POINTER_BUTTON_SHIFT).unwrap_or(0) | POINTER_PRIMARY;
+    let packed = what | pressed.checked_shl(POINTER_BUTTON_SHIFT).unwrap_or(0) | which.packed();
     let (hit, others) = things.split_first().map_or((0, &[][..]), |(hit, others)| (*hit, others));
     // The place within the thing is not known to this process for a
     // drawing or an actor: the pointer's own place stands in.
-    Event { kind: EventKind::Pointer, numbers: [packed, x, y, hit], payload: ints([POINTER_ID, held, x, y].into_iter().chain(others.iter().copied())) }
+    Event { kind: EventKind::Pointer, numbers: [packed, x, y, hit], payload: ints([which.id, held, x, y].into_iter().chain(others.iter().copied())) }
 }
 
 /// The pointer came onto a thing or went off it (section 4.2:

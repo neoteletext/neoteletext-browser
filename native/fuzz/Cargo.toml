@@ -34,7 +34,7 @@ naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps",
 # The script-host program's serving, on the same build of the library.
 script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
-# its manifest reader, expect.json and the files between its two processes.
+# expect.json and the files between its two processes.
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "02a5343081547509509e84e70b9d7d36b73e5fdf" }
@@ -523,13 +523,6 @@ bench = false
 [[bin]]
 name = "runner_expect"
 path = "fuzz_targets/runner_expect.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "runner_manifest"
-path = "fuzz_targets/runner_manifest.rs"
 test = false
 doc = false
 bench = false

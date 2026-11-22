@@ -185,6 +185,9 @@ pub(crate) struct Answer {
     pub(crate) headers: Vec<Header>,
     /// The body.
     pub(crate) body: Body,
+    /// The address the answer came from; none through a proxy, where the
+    /// address connected to is not the server's.
+    pub(crate) peer: Option<IpAddr>,
 }
 
 /// Whether hyper failed on bytes that are not what their framing says,
@@ -339,7 +342,7 @@ impl Pool {
             match shared.get(place) {
                 Some((sender, peer)) if !sender.is_closed() => {
                     if usable(*peer) {
-                        return Some(Connection::Http2(sender.clone()));
+                        return Some(Connection::Http2(sender.clone(), *peer));
                     }
                 }
                 Some(_) => {
@@ -377,7 +380,7 @@ impl Pool {
             if shared.len() < MAX_POOLED_PLACES {
                 shared.insert(place.clone(), (sender.clone(), peer));
             }
-            Ok(Connection::Http2(sender))
+            Ok(Connection::Http2(sender, peer))
         } else {
             let mut builder = http1::Builder::new();
             // The head is read into this buffer, so it bounds the head;
@@ -410,14 +413,14 @@ impl Pool {
             };
             let exchange = async {
                 match connection {
-                    Connection::Http2(mut sender) => {
+                    Connection::Http2(mut sender, peer) => {
                         poll_fn(|context| sender.poll_ready(context)).await?;
-                        Ok((sender.send_request(request(outgoing, true).map_err(Failed::Reason)?).await?, None))
+                        Ok((sender.send_request(request(outgoing, true).map_err(Failed::Reason)?).await?, None, peer))
                     }
                     Connection::Http1(mut sender, peer) => {
                         poll_fn(|context| sender.poll_ready(context)).await?;
                         let response = sender.send_request(request(outgoing, false).map_err(Failed::Reason)?).await?;
-                        Ok((response, Some(Lease { pool: Rc::clone(self), place: place.clone(), sender, peer })))
+                        Ok((response, Some(Lease { pool: Rc::clone(self), place: place.clone(), sender, peer }), peer))
                     }
                 }
             };
@@ -432,10 +435,10 @@ impl Pool {
                     resent = true;
                 }
                 Ok(Err(Failed::Hyper(error))) => return Err(reason_of(&error)),
-                Ok(Ok((response, lease))) => {
+                Ok(Ok((response, lease, peer))) => {
                     let (parts, incoming) = response.into_parts();
                     let (status, status_text, headers) = head(&parts)?;
-                    return Ok(Answer { status, status_text, headers, body: Body { incoming, lease } });
+                    return Ok(Answer { status, status_text, headers, body: Body { incoming, lease }, peer });
                 }
             }
         }
@@ -445,7 +448,7 @@ impl Pool {
 /// A connection to send one request on.
 enum Connection {
     Http1(http1::SendRequest<Sent>, Option<IpAddr>),
-    Http2(http2::SendRequest<Sent>),
+    Http2(http2::SendRequest<Sent>, Option<IpAddr>),
 }
 
 /// Why an exchange failed.

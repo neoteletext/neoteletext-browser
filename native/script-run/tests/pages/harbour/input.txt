@@ -2,4 +2,4 @@
 10 key 2
 20 pointer down 3 4
 21 pointer up 3 4
-30 key 1
+85 key 1
