@@ -426,7 +426,7 @@ fn an_event_stream_without_end_fails_at_its_bound() {
         });
         let mut client = Client::new(&format!("http://site.test:{port}/a/"));
         let id = client.start(&format!("http://site.test:{port}/a/events"), |start| start.kind = RequestKind::EventSource);
-        assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() }, "{what}");
+        assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: format!("http://site.test:{port}/a/events") }, "{what}");
         assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Network, reason: Reason::TooLarge }, "{what}");
         assert_eq!(client.next_within(Duration::from_millis(1500)), None, "{what}: not opened again");
         client.finish().unwrap();

@@ -181,6 +181,7 @@ fn an_event_stream_is_read_and_made_again() {
             ("/a/events", _) => {
                 stream.body(format!("data: again after {}\n\n", asked.header("last-event-id").unwrap_or_default()).as_bytes()).then(Piece::Hang)
             }
+            ("/a/moved", _) => Reply::to(302, "/a/events"),
             ("/a/page", _) => Reply::ok("<html>"),
             ("/a/gone", _) => Reply::new(204),
             _ => Reply::new(404).header("content-type", "text/event-stream"),
@@ -189,12 +190,12 @@ fn an_event_stream_is_read_and_made_again() {
     let mut client = Client::new(&server.url("/a/"));
     let source = |start: &mut protocol::web::Start| start.kind = RequestKind::EventSource;
     let id = client.start(&server.url("/a/events"), source);
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: server.url("/a/events") });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "tick".into(), data: "one".into(), last_id: "7".into() });
     assert_eq!(client.next_event(), FromWebClient::Event { id, event: "message".into(), data: "two".into(), last_id: "7".into() });
     let lost = Instant::now();
     assert_eq!(client.next_event(), FromWebClient::Retrying(id));
-    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new() });
+    assert_eq!(client.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: server.url("/a/events") });
     assert!(lost.elapsed() >= MIN_RETRY.checked_sub(Duration::from_millis(50)).unwrap(), "a stream cannot ask to be made again at once");
     assert_eq!(
         client.next_event(),
@@ -208,6 +209,12 @@ fn an_event_stream_is_read_and_made_again() {
     // The script closes it by aborting.
     client.send(&ToWebClient::Abort(id));
     assert_eq!(client.next_event(), FromWebClient::Failed { id, error: ErrorKind::Abort, reason: Reason::Aborted });
+    // A stream a redirect led to says the address that answered, whose
+    // origin is its events' (TODO-7371 step 1).
+    let moved = client.start(&server.url("/a/moved#part"), source);
+    assert_eq!(client.next_event(), FromWebClient::Opened { id: moved, protocol: String::new(), url: server.url("/a/events") });
+    client.send(&ToWebClient::Abort(moved));
+    while client.next_event() != (FromWebClient::Failed { id: moved, error: ErrorKind::Abort, reason: Reason::Aborted }) {}
     // What is not an event stream fails for good, with no retrying.
     for path in ["/a/page", "/a/gone", "/a/missing"] {
         assert_eq!(client.fetch(&server.url(path), source).reason(), Reason::NotEventStream, "{path}");

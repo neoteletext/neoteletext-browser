@@ -256,7 +256,9 @@ async fn event_source(shared: &Shared, (tab, id): Key, start: &Start, room: &Roo
             Ok(fetched) => {
                 let streams = fetched.status == 200 && is_event_stream(&fetched);
                 let Some(mut reader) = fetched.body.filter(|_| streams) else { return Err(Reason::NotEventStream) };
-                shared.send(tab, FromWebClient::Opened { id, protocol: String::new() }).await;
+                // The address that answered, after redirects: its origin is
+                // each event's (the HTML standard, section 9.2.6).
+                shared.send(tab, FromWebClient::Opened { id, protocol: String::new(), url: fetched.url }).await;
                 // Until the connection ends, however it ends.
                 while let Ok(Some(bytes)) = reader.piece().await {
                     let mut events = Vec::new();
