@@ -24,7 +24,7 @@ fn open() -> ContextOpen {
         level: Level::TwoFive,
         page: 0x100,
         subcode: 0x0001,
-        flags: ContextFlags { pointer_press: true, pointer_move: false, wheel: true, text: false, network: true, from_disk: false },
+        flags: ContextFlags { pointer_press: true, pointer_move: false, wheel: true, text: false, network: true, from_disk: false, sound_allowed: false },
         tick_divisor: 2,
         language: "en-GB".into(),
         channel_url: "https://a.example/news/".into(),
@@ -54,7 +54,7 @@ fn widest_open() -> ContextOpen {
         keys: vec!["k".repeat(MAX_KEY_NAME_BYTES); MAX_KEY_ASKS],
         sounds: vec![7; MAX_SOUND_HANDLES],
         source_bytes: u32::try_from(MAX_SCRIPT_BYTES).unwrap(),
-        flags: ContextFlags { pointer_press: true, pointer_move: true, wheel: true, text: true, network: true, from_disk: true },
+        flags: ContextFlags { pointer_press: true, pointer_move: true, wheel: true, text: true, network: true, from_disk: true, sound_allowed: true },
         ..open()
     }
 }
@@ -68,7 +68,7 @@ fn step() -> Step {
         sequence: 41,
         tick: u64::MAX,
         missed: 3,
-        flags: StepFlags { tick: true, pausing: false, resumed: true, closing: false },
+        flags: StepFlags { tick: true, pausing: false, resumed: true, closing: false, sound_allowed: true },
         events: EventKind::ALL.iter().map(|&kind| Event { kind, ..event() }).collect(),
         painted: vec![1, -1],
         cycle_ended: vec![5],
@@ -87,7 +87,7 @@ fn widest_step() -> Step {
         bounds: vec![Bounds { handle: 3, x: 0, y: 0, width: 1, height: 1 }; MAX_TRACKED_DRAWINGS],
         sound: vec![SoundReport::Cue { voice: 0, cue: 1 }; MAX_STEP_SOUND_REPORTS],
         faults: vec![FaultReport { code: 1, bound: "B".repeat(MAX_BOUND_NAME_BYTES) }; MAX_STEP_FAULTS],
-        flags: StepFlags { tick: true, pausing: true, resumed: true, closing: true },
+        flags: StepFlags { tick: true, pausing: true, resumed: true, closing: true, sound_allowed: true },
         ..step()
     }
 }
@@ -432,7 +432,7 @@ fn an_opening_one_past_a_bound_is_not_read() {
         ("level", Box::new(|raw| raw.fixed[4] = 20)),
         ("page number", Box::new(|raw| raw.fixed[5] = 0x09)),
         ("sub-code", Box::new(|raw| (raw.fixed[7], raw.fixed[8]) = (0x3F, 0x7F))),
-        ("context flags", Box::new(|raw| raw.fixed[9] = 0b0100_0000)),
+        ("context flags", Box::new(|raw| raw.fixed[9] = 0b1000_0000)),
         ("tick divisor", Box::new(|raw| raw.fixed[10] = MAX_TICK_DIVISOR + 1)),
         ("language", Box::new(|raw| raw.texts[0] = vec![b'a'; MAX_LANGUAGE_BYTES + 1])),
         ("channel address", Box::new(|raw| raw.texts[1] = vec![b'c'; MAX_URL_BYTES + 1])),
@@ -544,10 +544,13 @@ fn a_step_one_past_a_bound_is_not_read() {
     assert!(read(0, &with_events(raw_event(21, MAX_EVENT_PAYLOAD_BYTES))).is_ok(), "the longest payload");
     assert!(refused(&read(0, &with_events(raw_event(21, MAX_EVENT_PAYLOAD_BYTES + 1))), "event payload"));
     assert!(refused(&read(0, &with_events(raw_event(0, 0))), "event kind"));
-    // The network's events are the web client's messages, never a step's.
+    // The script host's own event 22 (sound is allowed) is never a
+    // step's: the step's flag says it. The network's events are the web
+    // client's messages.
     assert!(refused(&read(0, &with_events(raw_event(22, 0))), "event kind"));
     assert!(refused(&read(0, &with_events(raw_event(30, 0))), "event kind"));
-    assert!(refused(&read(0b1_0000, &none()), "step flags"));
+    assert!(read(0b1_0000, &none()).is_ok(), "sound is allowed");
+    assert!(refused(&read(0b10_0000, &none()), "step flags"));
     let mut lists = none();
     lists[4] = (1, vec![3, 0]);
     assert!(refused(&read(0, &lists), "sound report"));
@@ -1024,5 +1027,10 @@ fn the_bounds_are_their_owners() {
     assert_eq!(pack(ContextFlags { network: true, ..ContextFlags::default() }.list()), 0b01_0000);
     assert_eq!(pack(ContextFlags { from_disk: true, pointer_press: true, ..ContextFlags::default() }.list()), 0b10_0001);
     assert_eq!(pack(StepFlags { closing: true, tick: true, ..StepFlags::default() }.list()), 0b1001);
+    // Sound allowed is the bit after the specification's own, in each.
+    assert_eq!(pack(ContextFlags { sound_allowed: true, ..ContextFlags::default() }.list()), 0b100_0000);
+    assert_eq!(pack(StepFlags { sound_allowed: true, ..StepFlags::default() }.list()), 0b1_0000);
+    assert_eq!(ContextFlags::of(0b100_0000).unwrap(), ContextFlags { sound_allowed: true, ..ContextFlags::default() });
+    assert_eq!(StepFlags::of(0b1_0000).unwrap(), StepFlags { sound_allowed: true, ..StepFlags::default() });
     assert_eq!(pack([true, false]), 1, "a verdict's bit 0 is the default cancelled");
 }
