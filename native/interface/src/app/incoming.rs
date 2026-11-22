@@ -132,11 +132,13 @@ impl App {
     /// it arrives. A paced frame would leave that channel's page drawn for
     /// up to `CHANGE_FRAME_MILLISECONDS` after the last frame that changed
     /// the window, which the key or click that left the channel, or a page
-    /// that animates, has just drawn (TODO-7206, TODO-7222).
+    /// that animates, has just drawn (TODO-7206, TODO-7222). The strip that
+    /// ends a redirect's notice is drawn as it arrives too, or the same
+    /// pace would lengthen the notice's one second (REQ-1686, TODO-7232).
     fn strip_changed(&mut self, strip: interface_core::browser::StripState) {
-        let clears = self.view.browser.clears_page_area(&strip);
+        let at_once = self.view.browser.drawn_as_it_arrives(&strip);
         self.view.browser.set_strip(strip);
-        if clears {
+        if at_once {
             self.view.pace.awaited();
             self.request_redraw();
         }

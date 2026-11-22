@@ -17,17 +17,25 @@ const WORDS_STYLE: Style = Style { caps: false, ..HEADING };
 
 impl Browser {
     /// Whether `strip`, which the trusted core just sent and is not yet
-    /// set, clears a page area that still shows a channel: such a strip is
-    /// drawn as it arrives, where what else the trusted core changes waits
-    /// for the next paced frame. The words of a tab going to another channel
-    /// clear it (REQ-7164 item 1: the page area clears at once), and so does
-    /// a redirect's notice (REQ-1686 item 5: nothing of the channel being
-    /// left stays drawn); a strip that brings either while the other
-    /// already shows clears nothing more.
+    /// set, is drawn as it arrives, where what else the trusted core changes
+    /// waits for the next paced frame. Two kinds of strip are:
+    /// - one that clears a page area still showing a channel. The words of
+    ///   a tab going to another channel clear it (REQ-7164 item 1: the page
+    ///   area clears at once), and so does a redirect's notice (REQ-1686
+    ///   item 5: nothing of the channel being left stays drawn); a strip
+    ///   that brings either while the other already shows clears nothing
+    ///   more;
+    /// - one that ends a redirect's notice, whatever it shows next. The
+    ///   notice lasts exactly one second (REQ-1686), which the trusted core
+    ///   measures: a paced frame would add to that second up to the pace of
+    ///   a page that animates (TODO-7232).
     #[must_use]
-    pub fn clears_page_area(&self, strip: &StripState) -> bool {
-        let cleared = |strip: &StripState| strip.navigating || !strip.redirecting.is_empty();
-        cleared(strip) && !cleared(&self.strip)
+    pub fn drawn_as_it_arrives(&self, strip: &StripState) -> bool {
+        let redirecting = |strip: &StripState| !strip.redirecting.is_empty();
+        let cleared = |strip: &StripState| strip.navigating || redirecting(strip);
+        let clears = cleared(strip) && !cleared(&self.strip);
+        let ends_notice = redirecting(&self.strip) && !redirecting(strip);
+        clears || ends_notice
     }
 
     /// Clears `area`, the page area, and says in its middle that the tab is
