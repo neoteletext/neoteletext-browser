@@ -417,6 +417,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "script_bitmap_ops"
+path = "fuzz_targets/script_bitmap_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "script_imports"
 path = "fuzz_targets/script_imports.rs"
 test = false
