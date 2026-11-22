@@ -126,11 +126,13 @@ impl App {
         self.view.pace.changed(now);
     }
 
-    /// What the trusted strip shows. REQ-7164 item 1: the strip that clears
-    /// the page area of the channel left is drawn as it arrives. A paced
-    /// frame would leave that channel's page drawn for up to
-    /// `CHANGE_FRAME_MILLISECONDS` after the frame the key or click that
-    /// left it has just drawn (TODO-7206).
+    /// What the trusted strip shows. REQ-7164 item 1 and REQ-1686 item 5:
+    /// the strip that clears the page area of the channel left, for the
+    /// words of a change of channel or for a redirect's notice, is drawn as
+    /// it arrives. A paced frame would leave that channel's page drawn for
+    /// up to `CHANGE_FRAME_MILLISECONDS` after the last frame that changed
+    /// the window, which the key or click that left the channel, or a page
+    /// that animates, has just drawn (TODO-7206, TODO-7222).
     fn strip_changed(&mut self, strip: interface_core::browser::StripState) {
         let clears = self.view.browser.clears_page_area(&strip);
         self.view.browser.set_strip(strip);

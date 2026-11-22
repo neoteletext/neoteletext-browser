@@ -19,11 +19,15 @@ impl Browser {
     /// Whether `strip`, which the trusted core just sent and is not yet
     /// set, clears a page area that still shows a channel: such a strip is
     /// drawn as it arrives, where what else the trusted core changes waits
-    /// for the next paced frame (REQ-7164 item 1: the page area clears at
-    /// once).
+    /// for the next paced frame. The words of a tab going to another channel
+    /// clear it (REQ-7164 item 1: the page area clears at once), and so does
+    /// a redirect's notice (REQ-1686 item 5: nothing of the channel being
+    /// left stays drawn); a strip that brings either while the other
+    /// already shows clears nothing more.
     #[must_use]
     pub fn clears_page_area(&self, strip: &StripState) -> bool {
-        strip.navigating && !self.strip.navigating
+        let cleared = |strip: &StripState| strip.navigating || !strip.redirecting.is_empty();
+        cleared(strip) && !cleared(&self.strip)
     }
 
     /// Clears `area`, the page area, and says in its middle that the tab is

@@ -54,6 +54,29 @@ fn only_the_strip_that_starts_the_words_clears_the_page_area() {
     assert!(browser.clears_page_area(&says(true)), "the next change of channel");
 }
 
+// REQ-1686 item 5 (TODO-7222): the strip that starts a redirect's notice
+// clears a page area showing a channel too, and so is drawn as it arrives.
+// Before, only the words of REQ-7164 did, and the page being left stayed
+// drawn until the next paced frame. A strip that says the redirect again,
+// ends it, or follows it with the words while the area is already cleared
+// (DEC-7166 item 2) clears nothing more.
+#[test]
+fn the_strip_that_starts_a_redirects_notice_clears_the_page_area() {
+    const ELSEWHERE: &str = "https://elsewhere.invalid/";
+    let (mut browser, _) = browser();
+    let says =
+        |redirecting: &str, navigating: bool| StripState { address: NEW_ADDRESS.into(), redirecting: redirecting.into(), navigating, ..StripState::default() };
+    assert!(browser.clears_page_area(&says(ELSEWHERE, false)), "the strip that starts the notice");
+    browser.set_strip(says(ELSEWHERE, false));
+    assert!(!browser.clears_page_area(&says(ELSEWHERE, false)), "the page area is cleared already");
+    assert!(!browser.clears_page_area(&says("", true)), "the words that follow the notice find it cleared");
+    assert!(!browser.clears_page_area(&says("", false)), "the strip that ends the notice");
+    browser.set_strip(says("", true));
+    assert!(!browser.clears_page_area(&says(ELSEWHERE, true)), "a redirect during the words finds it cleared");
+    browser.set_strip(says("", false));
+    assert!(browser.clears_page_area(&says(ELSEWHERE, false)), "the next redirect");
+}
+
 // REQ-7164 items 1 and 2: the pages go, the page area is filled, and the
 // words are drawn once, centred both ways in it.
 #[test]
