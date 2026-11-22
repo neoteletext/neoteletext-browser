@@ -618,6 +618,7 @@ class Nt extends EventTarget {
   get synth() { return synth; }
   get naplps() { return naplpsApi; }
   get teletext() { return teletextApi; }
+  get regis() { return core.regis; }
   now() { return host(OP.NOW); }
   navigate(target) {
     if (typeof target !== "string") throw new TypeError("a navigation's target is a string");
@@ -793,7 +794,8 @@ function dispatch(kind, a, b, c, d, payload) {
       event = withFields(new Event("fault"), { code: a, bound: payload || "" });
       break;
     default:
-      return 0;
+      // A renderer's own events (its part of the prelude).
+      return core.dispatchMore.has(kind) ? core.dispatchMore.get(kind)(a, b, c, d, payload) : 0;
   }
   // The channel context is given the page's input with the same fields
   // and a target of null (section 4.5): things are the page context's.
@@ -810,6 +812,7 @@ setDispatch(function (kind, a, b, c, d, payload) {
 // What the renderers' and components' parts of the prelude build on: a
 // thing is registered with its handle and the thing its events go to next.
 const core = {
-  host, things, handleOf, parentOf, nt, EventTarget, Event, fire, trusted, withFields, whole, report,
+  host, things, handleOf, parentOf, nt, EventTarget, Event, fire, trusted, withFields, whole, report, listenCounts,
+  dispatchMore: new Map(),
   scopeEnds(end) { if (currentScope) currentScope.ends.push(end); },
 };

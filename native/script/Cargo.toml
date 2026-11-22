@@ -38,6 +38,10 @@ neoteletext-rules.workspace = true
 neoteletext-web.workspace = true
 # The synthesizer families' codec numbers, by name (script-api.md section 3.5).
 neoteletext-audio.workspace = true
+# MIT, the project's own, no dependencies: the ReGIS renderer, for its
+# `Validator`, which checks each step's commit before it is sent, and its
+# limits by name (script-api.md sections 6.2 and 11.1).
+regis.workspace = true
 # The bound on the keys a page may claim, by name.
 protocol.workspace = true
 # The NAPLPS renderer (MIT, the project's own, pinned by revision): the

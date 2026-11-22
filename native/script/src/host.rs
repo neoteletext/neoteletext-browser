@@ -311,6 +311,8 @@ pub struct Host {
     naplps: naplps::Naplps,
     /// The teletext page the page context draws on (work package T1).
     teletext: crate::teletext::Slot,
+    /// The page's ReGIS drawings and colours (work package R1).
+    regis: regis::Regis,
 }
 
 /// The whole numbers of a host call, read with their count checked.
@@ -457,6 +459,7 @@ impl Host {
             batch_limit: MAX_BATCH_BYTES,
             naplps: naplps::Naplps::default(),
             teletext: crate::teletext::Slot::default(),
+            regis: regis::Regis::new(),
         }
     }
 
@@ -500,6 +503,8 @@ impl Host {
         self.release_sound(context);
         self.naplps.close(context);
         self.teletext.close(context);
+        // The page's one ReGIS stream ends with the context that drew on it.
+        self.regis_reset();
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             if slot.as_ref().is_some_and(|held| !held.listens.is_empty()) {
                 self.watch_changed = true;
@@ -679,6 +684,7 @@ impl Host {
             | EventKind::FAULT
             | EventKind::UI
             | EventKind::SOUND_ALLOWED
+            | EventKind::RG_COMMIT_FAILED
             | EventKind::CLOSE
             | EventKind::SHARED
             | EventKind::TIMER
@@ -766,7 +772,7 @@ impl Host {
         let timer = held.timers.iter().map(|timer| origin.saturating_add(timer.due)).min();
         let note = self.pending_notes.iter().filter(|note| note.context == context).map(|note| note.due).min();
         let renderer = if context == ContextId::Page { self.teletext.next_due(self.tick) } else { None };
-        [timer, note, renderer].into_iter().flatten().min()
+        [timer, note, renderer, self.regis_wake(context)].into_iter().flatten().min()
     }
 
     /// The next change of the shared store to tell, with the context to tell.
@@ -838,6 +844,7 @@ impl Host {
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
         bytes = bytes.saturating_add(self.naplps.state_bytes());
         bytes = bytes.saturating_add(self.teletext.state_bytes());
+        bytes = bytes.saturating_add(self.regis.held_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
 
@@ -849,6 +856,7 @@ impl Host {
         bytes = bytes.saturating_add(self.title.as_deref().map_or(0, cost));
         bytes = bytes.saturating_add(self.naplps.staged_bytes());
         bytes = bytes.saturating_add(self.teletext.batch_bytes());
+        bytes = bytes.saturating_add(self.regis.batch_bytes());
         bytes.saturating_add(self.navigate.as_deref().map_or(0, cost))
     }
 
@@ -888,6 +896,7 @@ impl Host {
             }
         }
         self.naplps.take_batch(&mut batch);
+        self.regis_take(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
         self.teletext.fill(&mut batch);
@@ -1101,6 +1110,21 @@ impl Host {
                 }
                 Ok(reply)
             }
+            Op::RG_COLOUR_DEFINE
+            | Op::RG_COLOUR_SET
+            | Op::RG_DRAWING
+            | Op::RG_SET
+            | Op::RG_CLIP
+            | Op::RG_FRAMES
+            | Op::RG_LABEL
+            | Op::RG_DEFINE
+            | Op::RG_REMOVE
+            | Op::RG_CLEAR
+            | Op::RG_ANIMATE
+            | Op::RG_MACROGRAPH
+            | Op::RG_MEASURE
+            | Op::RG_BOUNDS
+            | Op::RG_GET => self.regis_operate(context, op, ints, payload),
         }
     }
 
@@ -1356,7 +1380,8 @@ impl Host {
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
         if Handle::from_number(handle).is_none() && !self.naplps.is_thing(context, handle) && !self.teletext.has_thing(context, handle) {
-            return Err(type_error("no such thing"));
+            // Otherwise a ReGIS drawing, by its number, or no thing at all.
+            self.regis_listen(context, handle, kind, on == 1)?;
         }
         self.room(size_of::<(i32, EventKind)>(), 0)?;
         let held = self.context_mut(context).ok_or_else(|| type_error("the context is not open"))?;
@@ -1514,6 +1539,7 @@ impl Host {
         }
         self.naplps.budget(&mut out);
         self.teletext.budget(&mut out);
+        self.regis_budget(context, &mut out);
         out.push('}');
         out
     }
@@ -1535,6 +1561,9 @@ fn is_page_target(target: &str) -> bool {
     let hexadecimal = |text: &str, length: usize| text.len() == length && text.bytes().all(|byte| byte.is_ascii_hexdigit());
     hexadecimal(page, 3) && page.bytes().next().is_some_and(|first| (b'1'..=b'8').contains(&first)) && subpage.is_none_or(|subpage| hexadecimal(subpage, 4))
 }
+
+mod regis;
+pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
 
 #[cfg(test)]
 mod tests;

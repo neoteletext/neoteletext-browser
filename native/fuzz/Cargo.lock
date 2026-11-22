@@ -1369,6 +1369,7 @@ dependencies = [
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
+ "regis",
  "ring",
  "wasmi",
 ]

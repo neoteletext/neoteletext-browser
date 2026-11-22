@@ -244,14 +244,9 @@ const FAILING_STEPS: u32 = 120;
 /// sixteen failures in a row.
 #[test]
 fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
-    for (name, source) in [
-        ("regismem.js", hostile!("regismem")),
-        ("regisstage.js", hostile!("regisstage")),
-        ("fetchabort.js", hostile!("fetchabort")),
-        ("fetchabort2.js", hostile!("fetchabort2")),
-        ("sse.js", hostile!("sse")),
-        ("sse2.js", hostile!("sse2")),
-    ] {
+    for (name, source) in
+        [("fetchabort.js", hostile!("fetchabort")), ("fetchabort2.js", hostile!("fetchabort2")), ("sse.js", hostile!("sse")), ("sse2.js", hostile!("sse2"))]
+    {
         let mut container = opened(name, source);
         // Thirty-one timers that each fail, sixteen failures to stop the
         // context: a few steps on a quiet machine, more where the step's
