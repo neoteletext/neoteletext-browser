@@ -85,6 +85,13 @@ fn written(url: &Url) -> Reply {
 /// Runs an address operation so that a panic inside the library that
 /// parses addresses is a refusal and not the host's end: the library is
 /// not this crate's, and a script chooses its every input.
+///
+/// This is the second layer and nothing rests on it (rdm TODO-7390).
+/// The first is by construction: no address is sliced by position, which
+/// is where the crate's two known panics are and which the commit gate
+/// refuses; an address is read only by getters that do not go through
+/// that code; and a setter is applied once to a freshly parsed address,
+/// whose result is parsed again before it is read.
 fn guarded(operation: impl FnOnce() -> Reply) -> Reply {
     std::panic::catch_unwind(core::panic::AssertUnwindSafe(operation)).unwrap_or_else(|_| Reply::Type("the address could not be handled".to_owned()))
 }
@@ -158,7 +165,19 @@ fn set_unguarded(part: i32, address_bytes: i32, payload: &str) -> Reply {
         Part::Hash => quirks::set_hash(&mut url, value),
     }
     // A value that would take the address past its bound changes nothing.
-    if url.as_str().len() > MAX_URL_BYTES { written(&before) } else { written(&url) }
+    if url.as_str().len() > MAX_URL_BYTES {
+        return written(&before);
+    }
+    // What is given is the setter's text parsed again, never the address
+    // the setter left (rdm TODO-7390). The crate's setters move its
+    // stored positions by their own arithmetic, and can leave an address
+    // whose fields are not those of its text, or whose text is no address
+    // (`x://:p@`, a password before an empty host). Parsed again, every
+    // address a script holds has the parser's own positions, its fields
+    // are its text's, and the next operation, which is given the text,
+    // takes it. A text the parser refuses changes nothing, as a value the
+    // component does not take changes nothing.
+    Url::parse(url.as_str()).map_or_else(|_| written(&before), |parsed| written(&parsed))
 }
 
 #[cfg(test)]
@@ -227,6 +246,36 @@ mod tests {
             let reply = text(parse(-1, address));
             assert_eq!(reply.split('\n').collect::<Vec<_>>(), vec![address, "null", protocol, "", "", "", "", "", "", "", ""]);
         }
+    }
+
+    /// rdm TODO-7390: an address a script holds is always what the parser
+    /// gives for its text. The crate's setters can leave a text that the
+    /// parser refuses (a password before an empty host), which no later
+    /// operation could take, and fields that are not those of the text
+    /// (a path of `//` after no host, written as an empty authority): the
+    /// first changes nothing, as a refused value does, and the second is
+    /// given as its text reads.
+    #[test]
+    fn a_setter_gives_only_what_its_text_parses_to() {
+        let after = |part: i32, address: &str, value: &str| text(set(part, i32::try_from(address.len()).unwrap(), &format!("{address}{value}")));
+        // A host of nothing after a password: the text `x://:p@` is no address.
+        for (part, address, value) in [(4, "x://:p@h", ""), (5, "x://:p@h", ""), (4, "foo://:me@x", "/")] {
+            let reply = after(part, address, value);
+            assert_eq!(reply.split('\n').next(), Some(address), "{reply}");
+        }
+        // Whatever a setter leaves, its fields are those of its text, and
+        // every later setter takes it.
+        for (part, address, value) in
+            [(7, "foo:/", "//"), (4, "foo:/.//p", "x"), (4, "foo:/.//p", ""), (7, "foo://h", ""), (1, "foo://h:1/", "http"), (5, "foo://x", "")]
+        {
+            let reply = after(part, address, value);
+            let href = reply.split('\n').next().unwrap();
+            assert_eq!(reply, text(parse(-1, href)), "{address} with {value:?}");
+            for later in 1..=9 {
+                assert_eq!(after(later, href, "a").split('\n').count(), FIELDS, "{href}");
+            }
+        }
+        assert_eq!(after(4, "foo:/.//p", "x").split('\n').next(), Some("foo://x//p"));
     }
 
     /// URL standard section 4.4: what the parser fails on is undefined to
