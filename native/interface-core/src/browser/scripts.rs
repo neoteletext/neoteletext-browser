@@ -17,7 +17,7 @@ use neoteletext_input::event::{ALT, CONTROL, HYPER, KeyCode, META, SUPER};
 use crate::browser::Browser;
 use crate::canvas::PageKey;
 use crate::controls::FastextKey;
-use crate::theme::{Colour, FIELD_INK};
+use crate::theme::{Colour, FIELD_INK, INSECURE};
 
 /// The words of the trusted indications of a page's program, each in this
 /// one place (section 4.6: "The wording is the owner's"; the owner
@@ -32,6 +32,8 @@ pub mod words {
     /// Beside it while the script claims typed text (section 4.6: "a text
     /// claim shows a typing indication as well").
     pub const TYPING: &str = "Typing";
+    /// Beside it on a plain connection, in the warning colour.
+    pub const NOT_SECURE: &str = "Not secure";
     /// While a page's program runs (section 4.6: "The strip also shows
     /// that a page's script is running"), with the browser's own key that
     /// stops it, which no page can claim, on macOS.
@@ -269,6 +271,12 @@ impl Browser {
             parts.push((format!("{} {}", words::KEYS_GO_TO, self.strip.identity), FIELD_INK));
             if view.text {
                 parts.push((String::from(words::TYPING), FIELD_INK));
+            }
+            // For as long as the badge says keys go to the channel, it
+            // says when the channel's connection is a plain one, by the
+            // strip's own word on it (TODO-7407).
+            if !self.strip.encrypted {
+                parts.push((String::from(words::NOT_SECURE), INSECURE));
             }
         }
         parts.push((String::from(if command { words::RUNNING_COMMAND } else { words::RUNNING_CONTROL }), FIELD_INK));

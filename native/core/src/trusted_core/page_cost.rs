@@ -298,10 +298,30 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_spinning_decoder_shows_its_true_processor_time() {
+        /// The most turns the spinning decoder's loop makes before it ends
+        /// by itself: 3,000,000 took 11.0 seconds of this machine's `dash`
+        /// on 23 November 2026, at a load of about 20 on 20 cores, which is
+        /// nine times the 1.2 seconds this test watches it for; on a
+        /// machine ten times as fast it is still most of the watch.
+        const SPIN_TURNS: u32 = 3_000_000;
         use super::super::test_support::{Sink, stand_in, test_core};
         let mut core = test_core();
         let (sink, _written) = std::sync::mpsc::channel();
-        let spinning = stand_in("/bin/sh", &["-c", "while :; do :; done"], confine::Role::Decoder);
+        // The decoder that spins is a shell's loop that ends by itself,
+        // whatever becomes of this test (TODO-7435): after `SPIN_TURNS`
+        // turns, and at once when the process that started it has gone,
+        // which each turn asks (`kill -0` sends nothing). Both are the
+        // shell's own work, so all of it is this process's processor time.
+        // And each helper is ended and reaped when the core that holds it
+        // is dropped, on a failed assertion too (`confine::broker::Helper`).
+        // Before, a loop without end was stopped only by this test's last
+        // statement, and six of them, left by failed runs, spun on this
+        // machine for up to 27 hours. The share asked of it stays the
+        // tab's own mark, half a core: on a machine so loaded that a
+        // process that only spins is given less than that for a second,
+        // this test fails, and leaves nothing behind.
+        let spin = format!("turn=0; while [ $turn -lt {SPIN_TURNS} ] && kill -0 $PPID 2>/dev/null; do turn=$((turn+1)); done");
+        let spinning = stand_in("/bin/sh", &["-c", &spin], confine::Role::Decoder);
         core.decoders.insert(1, super::super::processes::Decoder::new(spinning, neoteletext::outbox::Outbox::new(Sink(sink.clone())), 1));
         let sleeping = stand_in("/bin/sleep", &["60"], confine::Role::Decoder);
         core.decoders.insert(2, super::super::processes::Decoder::new(sleeping, neoteletext::outbox::Outbox::new(Sink(sink)), 1));

@@ -246,7 +246,11 @@ impl Core {
 
     /// Tab `index` becomes the active one, if there is such a tab.
     fn select_tab(&mut self, index: usize) -> Result<(), String> {
-        if index < self.session.tabs.len() {
+        // The tab already in front chosen again changes nothing: sending
+        // everything afresh would take the keys from its open page and
+        // stop its picture being drawn, and the interface, for which
+        // nothing changed, would say neither again (TODO-7423).
+        if index < self.session.tabs.len() && index != self.session.active {
             self.session.active = index;
             self.send_all()?;
         }

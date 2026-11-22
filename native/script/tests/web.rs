@@ -633,6 +633,66 @@ fn every_option_and_body_of_a_request_reaches_the_web_client() {
     }
 }
 
+/// The Local Network Access draft's `targetAddressSpace` (DEC-7315,
+/// TODO-7316 item 10; TODO-7388 item 6): `fetch`, `Request` and the
+/// `WebSocket` constructor's dictionary take `"public"`, `"local"` or
+/// `"loopback"`, which reaches the web client in the request's start;
+/// the legacy alias `"private"`, `"unknown"` and anything else throw a
+/// `TypeError`; a socket's dictionary carries its subprotocols too.
+#[test]
+fn a_declared_target_address_space_reaches_the_web_client_and_any_other_word_throws() {
+    use protocol::web::AddressSpace::{Local, Loopback, Public};
+    let mock = MockWebClient::new(|requested| match requested.start.kind {
+        RequestKind::WebSocket => Answer::Socket { protocol: String::new(), echo: false, items: Vec::new() },
+        _ => Answer::Response(Response::ok("text/plain", "x".to_owned())),
+    });
+    let (_, mock, _) = checked(
+        r#"
+        (async () => {
+          // Two sockets may be opened in a step (departure D22).
+          new WebSocket("ws://printer.test/g", { targetAddressSpace: "local" });
+          new WebSocket("wss://example.test/h", { protocols: ["chat", "other"], targetAddressSpace: "loopback" });
+          await fetch("http://printer.test/a", { targetAddressSpace: "local" });
+          await fetch(new Request("http://here.test/b", { targetAddressSpace: "loopback" }));
+          await fetch("https://far.test/c", { targetAddressSpace: "public" });
+          await fetch("https://far.test/d");
+          equal("a Request shows it", new Request("/e", { targetAddressSpace: "local" }).targetAddressSpace + new Request("/e").targetAddressSpace, "localunknown");
+          equal("a copy keeps it", new Request(new Request("/e", { targetAddressSpace: "local" })).targetAddressSpace, "local");
+          for (const word of ["private", "unknown", "invalid", ""]) {
+            throws("fetch with '" + word + "'", TypeError, "", () => new Request("/f", { targetAddressSpace: word }));
+            throws("a socket with '" + word + "'", TypeError, "", () => new WebSocket("wss://example.test/s", { targetAddressSpace: word }));
+          }
+          new WebSocket("wss://example.test/i", { protocols: "one" });
+          new WebSocket("wss://example.test/j", {});
+          done();
+        })();
+        "#,
+        mock,
+        30,
+        10,
+    );
+    let starts = mock.starts();
+    let declared: Vec<(String, Option<protocol::web::AddressSpace>, Vec<String>)> =
+        starts.iter().map(|start| (start.url.rsplit('/').next().unwrap().to_owned(), start.target_space, start.protocols.clone())).collect();
+    let names = |names: &[&str]| names.iter().map(|&name| name.to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        declared,
+        vec![
+            ("g".to_owned(), Some(Local), names(&[])),
+            ("h".to_owned(), Some(Loopback), names(&["chat", "other"])),
+            ("a".to_owned(), Some(Local), names(&[])),
+            ("b".to_owned(), Some(Loopback), names(&[])),
+            ("c".to_owned(), Some(Public), names(&[])),
+            ("d".to_owned(), None, names(&[])),
+            ("i".to_owned(), None, names(&["one"])),
+            ("j".to_owned(), None, names(&[])),
+        ]
+    );
+    for message in mock.seen() {
+        protocol::web::write_request(&mut Vec::new(), message).unwrap();
+    }
+}
+
 /// Script-api.md section 9.2 and 11.3: an answer's body crosses under a
 /// credit window, so that a slow script holds the web client back.
 /// Departure D8: a body is unbounded as a stream, but the methods that

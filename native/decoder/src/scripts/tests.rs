@@ -182,11 +182,13 @@ fn a_page_change_ends_the_page_context_and_the_channel_context_lives_on() {
     fixture.show(Some(0x101));
     let (reports, link) = written(&mut fixture.out);
     assert!(matches!(link[0], ToScriptHost::ContextClose(ContextId::Page)), "{link:?}");
-    let ToScriptHost::Step(step) = &link[1] else { panic!("a step for the page's change: {link:?}") };
-    assert_eq!(
-        step.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(),
-        vec![(EventKind::PageHide, 0x100), (EventKind::PageShow, 0x101)]
-    );
+    // `pagehide` in a step of its own, ahead of anything of the next
+    // page: the script host drops the page's renderer state at it, and a
+    // new page's context, opened after, keeps what its top level draws.
+    let ToScriptHost::Step(hidden) = &link[1] else { panic!("a step for the page hidden: {link:?}") };
+    assert_eq!(hidden.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(), vec![(EventKind::PageHide, 0x100)]);
+    let ToScriptHost::Step(step) = &link[2] else { panic!("a step for the page shown: {link:?}") };
+    assert_eq!(step.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(), vec![(EventKind::PageShow, 0x101)]);
     let claims = ScriptClaims { page: at(0x101), running: true, network: true, text: false, pointer: PointerClaim::None, wheel: false, keys: vec!["i".into()] };
     assert_eq!(reports, vec![ScriptReport::Claims(claims)]);
     assert!(fixture.scripts.page_context().is_none());
@@ -227,12 +229,23 @@ fn a_hidden_tab_pauses_the_contexts_and_the_tick_does_not_jump() {
     assert_eq!(ticked.iter().map(|step| (step.tick, step.flags.tick)).collect::<Vec<_>>(), vec![(2, true)], "the page's manifest asked every second tick");
     fixture.answer(Batch::new(2));
 
+    // No page open between two pages pauses nothing and asks no step
+    // (TODO-7405): only a hidden tab does.
     fixture.show(None);
+    assert!(fixture.steps().is_empty() && fixture.scripts.running() && fixture.scripts.stopped().is_none());
+    fixture.show(Some(0x100));
+    assert!(fixture.steps().is_empty(), "the same page named again changes nothing");
+
+    fixture.order(ScriptOrder::TabShown(false));
     let pausing = fixture.steps();
     assert_eq!(pausing.len(), 1);
     assert!(pausing[0].flags.pausing);
+    // The script host makes `visibilitychange` itself from the step's
+    // flag, and refuses the event from the decoder: none is sent.
     let events: Vec<(EventKind, i32)> = pausing[0].events.iter().map(|event| (event.kind, event.numbers[0])).collect();
-    assert_eq!(events, vec![(EventKind::KeyUp, events::KEY_REPEAT_OR_LOST), (EventKind::Visibility, 1)]);
+    assert_eq!(events, vec![(EventKind::KeyUp, events::KEY_REPEAT_OR_LOST)]);
+    fixture.order(ScriptOrder::TabShown(false));
+    assert!(fixture.steps().is_empty(), "hidden twice is hidden once");
     assert_eq!(pausing[0].events[0].payload, b"1");
     fixture.answer(Batch::new(3));
     fixture.at_tick(40);
@@ -240,7 +253,7 @@ fn a_hidden_tab_pauses_the_contexts_and_the_tick_does_not_jump() {
     assert!(fixture.scripts.due_us(&fixture.engine).is_none(), "and nothing to wake for");
 
     fixture.engine.set_now_us(due_after(99));
-    fixture.show(Some(0x100));
+    fixture.order(ScriptOrder::TabShown(true));
     let resumed = fixture.steps();
     assert_eq!(resumed.len(), 1);
     assert!(resumed[0].flags.resumed && !resumed[0].flags.pausing);
@@ -468,8 +481,8 @@ fn a_pointer_is_told_with_its_number_and_kind() {
     let packed: Vec<i32> = steps.iter().flat_map(|step| step.events.iter().map(|event| event.numbers[0])).collect();
     let pen = i32::from(PointerKind::Pen.code()) << events::POINTER_KIND_SHIFT;
     assert_eq!(packed, [events::POINTER_UP | events::POINTER_PRIMARY, events::POINTER_DOWN | pen | events::POINTER_PRIMARY]);
-    // The page's manifest claims presses and not moves: a move is not
-    // sent, and has no verdict to wait for.
+    // The page's manifest claims presses and not moves: a move over
+    // nothing is not sent, and has no verdict to wait for.
     let (mut fixture, _, _) = Fixture::started();
     fixture.answer(Batch::new(0));
     written(&mut fixture.out);
@@ -622,4 +635,183 @@ fn a_fetched_page_files_js_line_is_read_and_a_pushed_ones_is_not() {
     assert!(engine.take_script_names().is_empty(), "a push connection's page bytes name no script");
     engine.feed_whole(false, false, page);
     assert_eq!(engine.take_script_names(), vec![(0x102, 0, Some("pushed.js".to_owned()))]);
+}
+
+/// A batch that makes sprite 1: three cells by two at column 10, row 7,
+/// of two frames, detectable.
+fn sprite_batch(sequence: u32) -> Batch {
+    use protocol::script::batch::{Sprite, TeletextObject, Triplet};
+    let character = neoteletext_core::packet::TripletFunction::G0Character { column: 0, code: b'X' }.to_triplet();
+    let body = vec![Triplet { address: character.address, mode: character.mode, data: character.data }];
+    let sprite = Sprite { number: 1, shown: true, detectable: true, layer: 2, order: 0, column: 10, row: 7, width: 3, height: 2, objects: vec![0, 0] };
+    Batch { teletext_objects: Some(vec![TeletextObject { number: 0, triplets: body }]), sprites: Some(vec![sprite]), ..Batch::new(sequence) }
+}
+
+fn pointer_at(sequence: u32, action: PointerAction, column: u16, row: u16) -> ScriptOrder {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    let (x, y) = (column * 12 + 1, row * 20 + 1);
+    ScriptOrder::Pointer(ScriptPointer { sequence, action, button: 0, x, y, pointer: 1, kind: PointerKind::Mouse, primary: true })
+}
+
+/// Section 4.4's table for teletext (TODO-7382 step 2(f), TODO-7379 item
+/// 3): a pointer event on a sprite carries the cell within the sprite,
+/// from where the sprite stands; and as the pointer comes onto a thing
+/// and goes off it the thing hears `pointerenter` and `pointerleave`,
+/// under a claim of presses alone, with no move event.
+#[test]
+fn a_pointer_on_a_sprite_is_told_its_cell_within_it_and_its_coming_and_going() {
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(sprite_batch(0));
+    written(&mut fixture.out);
+    fixture.order(pointer_at(40, PointerAction::Press, 12, 8));
+    let steps = fixture.steps();
+    let events: Vec<&Event> = steps.iter().flat_map(|step| step.events.iter()).collect();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!((events[0].kind, events[0].numbers[0] & 15, events[0].numbers[3]), (EventKind::Pointer, events::POINTER_ENTER, 1), "it came onto sprite 1");
+    let press = events[1];
+    assert_eq!(
+        (press.numbers[0] & 15, press.numbers[1], press.numbers[2], press.numbers[3]),
+        (events::POINTER_DOWN, 12, 8, 1),
+        "the page's cell and the sprite"
+    );
+    let local: Vec<i32> = press.payload.chunks(4).skip(2).take(2).map(|word| i32::from_be_bytes(word.try_into().unwrap())).collect();
+    assert_eq!(local, [2, 1], "the cell within the sprite");
+    fixture.answer(Batch { verdicts: Some(vec![Verdict::default(), Verdict { cancelled: false, handled: true }]), ..Batch::new(1) });
+    assert_eq!(written(&mut fixture.out).0, vec![ScriptReport::Verdict { sequence: 40, cancelled: false, handled: true }], "only the press is answered");
+    // The pointer moves off the sprite: it hears that, and no move.
+    fixture.order(pointer_at(41, PointerAction::Move, 30, 3));
+    let steps = fixture.steps();
+    let events: Vec<&Event> = steps.iter().flat_map(|step| step.events.iter()).collect();
+    assert_eq!(events.iter().map(|event| (event.numbers[0] & 15, event.numbers[3])).collect::<Vec<_>>(), vec![(events::POINTER_LEAVE, 1)]);
+    // Over nothing, a press is told the page's own cell both ways.
+    fixture.answer(Batch::new(2));
+    fixture.order(pointer_at(42, PointerAction::Press, 30, 3));
+    let steps = fixture.steps();
+    let press = &steps[0].events[0];
+    let local: Vec<i32> = press.payload.chunks(4).skip(2).take(2).map(|word| i32::from_be_bytes(word.try_into().unwrap())).collect();
+    assert_eq!((press.numbers[1], press.numbers[2], press.numbers[3], local), (30, 3, 0, vec![30, 3]));
+}
+
+/// Section 11.2 (TODO-7379 item 3; TODO-7382 step 2(f) and (g)): a step
+/// reports what the decoder's own renderers say of the things a script
+/// asked about: the bounds of a tracked thing as it stands, a cycle that
+/// ran once and has ended, by the thing's handle, and an animation
+/// operation that did nothing as a fault; and the wheel is a script's
+/// only over a thing its batch named to take it.
+#[test]
+fn a_step_reports_tracked_bounds_an_ended_cycle_a_fault_and_the_wheel_only_on_its_things() {
+    use neoteletext_rules::animate::{Operation, OperationKind};
+    use neoteletext_rules::table::Target;
+    use protocol::script::batch::Watch;
+    use protocol::script::{Bounds, FaultReport};
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(sprite_batch(0));
+    written(&mut fixture.out);
+    let wheel = |sequence: u32| ScriptOrder::Wheel { sequence, x: 11 * 12 + 1, y: 7 * 20 + 1, delta_x: 0, delta_y: 1 };
+    // PAGE claims no wheel and the batch named no thing: nothing is sent.
+    fixture.order(wheel(50));
+    assert_eq!(fixture.steps(), vec![], "no wheel event off a thing that takes it");
+    // The script tracks sprite 1, cycles it once and animates a sprite
+    // that does not exist.
+    fixture.at_tick(2);
+    let asked = fixture.steps();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(
+        (asked[0].bounds.as_slice(), asked[0].cycle_ended.as_slice(), asked[0].faults.as_slice()),
+        (&[][..], &[][..], &[][..]),
+        "nothing asked about yet"
+    );
+    let cycle = Operation { target: Target::object(1), kind: OperationKind::Cycle { first: 0, last: 1, period: 2, once: true } };
+    let nothing = Operation { target: Target::object(9), kind: OperationKind::Show };
+    fixture.answer(Batch {
+        animate: Some(vec![cycle, nothing]),
+        watch: Some(Watch { painted: None, tracked: Some(vec![1, 9]), wheel: Some(vec![1]) }),
+        ..Batch::new(asked[0].sequence)
+    });
+    written(&mut fixture.out);
+    assert!(fixture.scripts.due_us(&fixture.engine).is_some(), "the loop wakes to see the cycle end");
+    // The decoder's animation runs on to the cycle's last frame.
+    let now = due_after(40);
+    fixture.engine.animation_showing(&[0x100]);
+    fixture.engine.animation_step(&[0x100], now);
+    fixture.engine.set_now_us(now);
+    fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
+    let told = fixture.steps();
+    assert_eq!(told.len(), 1, "a step is owed for what there is to report");
+    assert_eq!(told[0].cycle_ended, vec![1]);
+    assert_eq!(
+        told[0].bounds,
+        vec![Bounds { handle: 1, x: 120, y: 140, width: 36, height: 40 }],
+        "the sprite's cells in the picture's pixels; a thing that is not there has none"
+    );
+    assert_eq!(told[0].faults, vec![FaultReport { code: limits::FAULT_ANIMATION_SKIPPED.0, bound: limits::FAULT_ANIMATION_SKIPPED.1.to_owned() }]);
+    fixture.answer(Batch::new(told[0].sequence));
+    written(&mut fixture.out);
+    // Told once: the next step says the bounds again and nothing else.
+    fixture.at_tick(60);
+    let later = fixture.steps();
+    assert!(later.iter().all(|step| step.cycle_ended.is_empty() && step.faults.is_empty()), "{later:?}");
+}
+
+/// Section 3.5 (TODO-7379 item 3): a context is told the sounds the
+/// channel's files have announced, which are the decoder's own store's;
+/// and a cue of a voice no script plays on is no script's to hear.
+#[test]
+fn a_context_is_told_the_sounds_announced_and_hears_only_its_own_voices() {
+    let (mut fixture, _, link) = Fixture::started();
+    let announced = fixture.engine.script_sounds();
+    for open in link.iter().filter_map(|message| if let ToScriptHost::ContextOpen(open) = message { Some(open) } else { None }) {
+        assert_eq!(open.sounds, announced);
+    }
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    fixture.scripts.cue(2, 5, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(fixture.steps().is_empty(), "voice 2 plays no sound of a script's");
+    // A script plays on voice 2: a cue heard on it is told in the step
+    // owed at the next tick.
+    fixture.at_tick(2);
+    let asked = fixture.steps();
+    let play = protocol::script::batch::SoundOperation::Play { voice: 2, sound: 1, gain: 100 };
+    fixture.answer(Batch { sound: Some(vec![play]), ..Batch::new(asked[0].sequence) });
+    written(&mut fixture.out);
+    fixture.scripts.cue(2, 5, &mut fixture.engine, &mut fixture.out).unwrap();
+    fixture.at_tick(3);
+    let told = fixture.steps();
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0].sound, vec![protocol::script::SoundReport::Cue { voice: 2, cue: 5 }]);
+}
+
+/// Section 13 item 5 (TODO-7379 item 3): a page file fetched again while
+/// its script runs does not put the file's rows back over what the
+/// script drew: the rows the script wrote are written again at once, and
+/// the rows it never wrote are the file's, new.
+#[test]
+fn a_page_file_fetched_again_does_not_overwrite_what_its_script_drew() {
+    let row = |row: u8, text: &str| {
+        let mut codes = [b' '; 40];
+        codes[..text.len()].copy_from_slice(text.as_bytes());
+        TeletextRow { row, codes }
+    };
+    let shown = |fixture: &Fixture, row: usize| {
+        let pages = fixture.engine.export();
+        let held = pages.iter().find(|held| held.page == 0x100).unwrap();
+        held.rows[row].iter().map(|code| char::from(code & 0x7F)).collect::<String>().trim().to_owned()
+    };
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(Batch { teletext_rows: Some(vec![row(1, "SCRIPT ROW ONE"), row(5, "SCRIPT ROW FIVE")]), ..Batch::new(0) });
+    assert_eq!((shown(&fixture, 1), shown(&fixture, 5)), ("SCRIPT ROW ONE".to_owned(), "SCRIPT ROW FIVE".to_owned()));
+    // The file comes again, with a row the script never wrote.
+    fixture.engine.feed_whole(false, false, b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\nOL,5,FILE ROW FIVE\nOL,9,FILE ROW NINE\n");
+    assert_eq!(shown(&fixture, 1), "FILE ROW ONE", "the file's packets replaced the page's");
+    let names = fixture.engine.take_script_names();
+    assert_eq!(names.last(), Some(&(0x100, 0, None)), "the loop is told the page's file came: {names:?}");
+    let outcome = fixture.scripts.page_file_names(at(0x100), None, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(outcome.applied);
+    assert_eq!(
+        (shown(&fixture, 1), shown(&fixture, 5), shown(&fixture, 9)),
+        ("SCRIPT ROW ONE".to_owned(), "SCRIPT ROW FIVE".to_owned(), "FILE ROW NINE".to_owned())
+    );
+    // Another page's file changes nothing of this one.
+    let outcome = fixture.scripts.page_file_names(at(0x101), None, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(!outcome.applied);
 }

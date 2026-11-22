@@ -67,7 +67,15 @@ impl Core {
             RefusedFile::Contents => (Level::Warning, String::from("its contents file")),
             RefusedFile::Page(page) => (Level::Warning, format!("page {page:03X}")),
         };
-        self.log(level, Some(channel), &format!("channel {channel}: {name} was refused: {answer}"));
+        let line = format!("channel {channel}: {name} was refused: {answer}");
+        // A page file that is not found may be a JavaScript page's, which
+        // has none (script-api.md section 12.3): its script comes next
+        // from the same fetcher, and the warning is held until it does or
+        // does not (TODO-7419).
+        match (file, status) {
+            (RefusedFile::Page(page), Some(super::scripts::NOT_FOUND)) => self.refusal_held(channel, page, line),
+            _ => self.log(level, Some(channel), &line),
+        }
         let failed = match file {
             RefusedFile::Channel => Some((Failed::Channel(status), None)),
             RefusedFile::Page(page) => Some((Failed::Page(status), Some(page))),
