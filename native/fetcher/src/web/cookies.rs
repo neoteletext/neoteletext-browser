@@ -272,6 +272,14 @@ fn take<'a>(bytes: &mut &'a [u8], count: usize) -> Option<&'a [u8]> {
     Some(taken)
 }
 
+/// The milliseconds of a second.
+const MILLIS_PER_SECOND: i64 = 1000;
+
+/// The milliseconds since 1970, now.
+fn now_millis() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|since| i64::try_from(since.as_millis()).ok()).unwrap_or(0)
+}
+
 /// The seconds since 1970, now.
 fn now_unix() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|since| i64::try_from(since.as_secs()).ok()).unwrap_or(0)
@@ -396,7 +404,13 @@ impl Jar {
         let expired = cookie.is_expired();
         let secure = cookie.secure().unwrap_or(false);
         let lifetime = cookie.max_age().or_else(|| cookie.expires_datetime().map(lifetime_until));
-        let ends_at = lifetime.map(|lifetime| now_unix().saturating_add(lifetime.whole_seconds()));
+        // The end is noted in whole seconds, rounded up: cut down, a cookie
+        // set late in a second would be read back from a jar written out
+        // as ended while most of its last second remained.
+        let ends_at = lifetime.map(|lifetime| {
+            let end = now_millis().saturating_add(lifetime.whole_seconds().saturating_mul(MILLIS_PER_SECOND));
+            end.saturating_add(MILLIS_PER_SECOND.saturating_sub(1)).div_euclid(MILLIS_PER_SECOND)
+        });
         if self.store.insert(cookie, url).is_err() {
             return false;
         }

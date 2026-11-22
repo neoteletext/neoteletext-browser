@@ -356,7 +356,6 @@ fn max_age_is_read_as_the_standard_reads_it() {
 /// set late in a second, so that its end, written as whole seconds and
 /// cut down, falls before the moment it is read back.
 #[test]
-#[ignore = "fault TODO-7346 item 4: a written jar's end is cut to the whole second, so a cookie read back ends up to a second early"]
 fn a_cookie_read_back_ends_when_it_ends() {
     let shop = url("https://www.shop.com/");
     let fraction = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_millis();
