@@ -8,8 +8,9 @@ use std::io;
 
 use super::{
     ChooseKind, HEADER_BYTES, KIND_CHOOSE, KIND_DONE, KIND_EXITED, KIND_FAILED, KIND_HEALTHY, KIND_KEY, KIND_KILL, KIND_LOCAL_TIME, KIND_OPEN_WEB,
-    KIND_OPENINGS, KIND_PIPE, KIND_PROCESSOR_TIME, KIND_READ, KIND_READ_FONT, KIND_READ_PICTURE, KIND_SAVE, KIND_SOURCE, KIND_SPAWN, KIND_SPAWNED, KIND_SPENT,
-    KIND_TIME, KIND_UPDATE_STATE, KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program, SEALING_KEY_BYTES,
+    KIND_OPENINGS, KIND_PIPE, KIND_PROCESSOR_TIME, KIND_READ, KIND_READ_FONT, KIND_READ_PICTURE, KIND_READ_SCRIPT, KIND_SAVE, KIND_SOURCE, KIND_SPAWN,
+    KIND_SPAWNED, KIND_SPENT, KIND_TIME, KIND_UPDATE_STATE, KIND_VIEWER_KEYS_KEY, KIND_WAIT, MAX_ARGUMENTS, MAX_REPLY, MAX_SAVE, MAX_TEXT, Program,
+    SEALING_KEY_BYTES,
 };
 use crate::LocalTime;
 
@@ -93,6 +94,17 @@ pub enum Request {
     /// (renderer parity PAR-35): answered with its bytes, at most its
     /// language's bound, which the core passes to the decoders unread.
     ReadFont(String),
+    /// Read the script a page file opened from disk names (the script
+    /// API's specification section 12.7; DEC-7315): the file of that name
+    /// in the page file's own folder and nowhere else, under the page
+    /// file's grant. Answered with its bytes, at most a script's bound,
+    /// which the core passes to the decoder unread.
+    ReadScript {
+        /// The page file, as it was opened.
+        file: String,
+        /// The script's name, as the page file gave it: never a path.
+        name: String,
+    },
     /// The processor time a helper has used, as the operating system
     /// accounts it (REQ-6626 item 1 a): the core may not read another
     /// process's account from its sandbox, and never takes a helper's own
@@ -279,6 +291,11 @@ pub fn encode_request(request: &Request) -> io::Result<Vec<u8>> {
             push_text(&mut payload, path)?;
             KIND_READ_FONT
         }
+        Request::ReadScript { file, name } => {
+            push_text(&mut payload, file)?;
+            push_text(&mut payload, name)?;
+            KIND_READ_SCRIPT
+        }
         Request::Save { kind, bytes } => {
             if !kind.is_save() || bytes.len() > MAX_SAVE {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a save, or too large"));
@@ -330,6 +347,7 @@ pub fn decode_request(kind: u8, payload: &[u8]) -> io::Result<Request> {
         KIND_OPENINGS => Request::Openings,
         KIND_READ_PICTURE => Request::ReadPicture(fields.text()?),
         KIND_READ_FONT => Request::ReadFont(fields.text()?),
+        KIND_READ_SCRIPT => Request::ReadScript { file: fields.text()?, name: fields.text()? },
         KIND_SAVE => {
             let kind = ChooseKind::from_code(fields.u8()?).filter(|kind| kind.is_save());
             let kind = kind.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a kind of save"))?;
@@ -481,6 +499,7 @@ mod tests {
             Request::Choose { kind: ChooseKind::SaveT42, parent: String::new(), keep: true },
             Request::ReadPicture("/home/a/photo.jpg".into()),
             Request::ReadFont("/home/a/mine.regisfont".into()),
+            Request::ReadScript { file: "/home/a/101.tti".into(), name: "own.js".into() },
             Request::Save { kind: ChooseKind::SaveTti, bytes: b"PN,10000\n".to_vec() },
             // Renderer parity PAR-36 item 2: the picture in ReGIS and NAPLPS.
             Request::Choose { kind: ChooseKind::SaveRegis, parent: String::new(), keep: true },

@@ -1,0 +1,140 @@
+# The web-platform-tests' url suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 29 files run, 12 not run here; cases: 2090 pass, 0 fail as a listed departure, 92 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	url/historical.any.js	OK	7	0
+FILE	url/idlharness.any.js	NO-FILE	0	0
+FILE	url/url-constructor.any.js?include=file	OK	101	36
+FILE	url/url-constructor.any.js?include=javascript	OK	13	0
+FILE	url/url-constructor.any.js?include=mailto	OK	14	0
+FILE	url/url-constructor.any.js?exclude=(file|javascript|mailto)	OK	725	24
+FILE	url/url-origin.any.js	OK	417	7
+FILE	url/url-searchparams.any.js	OK	3	1
+FILE	url/url-setters-lone-surrogates.any.js	OK	5	0
+FILE	url/url-setters-stripping.any.js	OK	320	0
+FILE	url/url-setters.any.js?include=file	OK	21	3
+FILE	url/url-setters.any.js?include=javascript	OK	7	0
+FILE	url/url-setters.any.js?include=mailto	OK	7	0
+FILE	url/url-setters.any.js?exclude=(file|javascript|mailto)	OK	232	18
+FILE	url/url-statics-canparse.any.js	OK	8	0
+FILE	url/url-statics-parse.any.js	OK	8	0
+FILE	url/url-tojson.any.js	OK	1	0
+FILE	url/urlencoded-parser.any.js	OK	105	0
+FILE	url/urlsearchparams-append.any.js	OK	4	0
+FILE	url/urlsearchparams-constructor.any.js	OK	32	0
+FILE	url/urlsearchparams-delete.any.js	OK	6	2
+FILE	url/urlsearchparams-foreach.any.js	OK	8	0
+FILE	url/urlsearchparams-get.any.js	OK	2	0
+FILE	url/urlsearchparams-getall.any.js	OK	2	0
+FILE	url/urlsearchparams-has.any.js	OK	4	0
+FILE	url/urlsearchparams-set.any.js	OK	2	0
+FILE	url/urlsearchparams-size.any.js	OK	4	0
+FILE	url/urlsearchparams-sort.any.js	OK	17	0
+FILE	url/urlsearchparams-stringifier.any.js	OK	15	0
+HARNESS	TODO-7372/14b	url/idlharness.any.js	NO-FILE	no file resources/WebIDLParser.js
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:///w|/m> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </> against <file://h/C:/a/b>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:\u{5c}\u{5c}//> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:\u{5c}\u{5c}\u{5c}\u{5c}> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:\u{5c}\u{5c}\u{5c}\u{5c}?fox> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:\u{5c}\u{5c}\u{5c}\u{5c}#guppy> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://spider///> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:\u{5c}\u{5c}localhost//> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://\u{5c}/localhost//cat> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://localhost//a//../..//> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </////mouse> against <file:///elephant>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <\u{5c}/localhost//pig> against <file://lion/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <//localhost//pig> against <file://lion/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </..//localhost//pig> against <file://lion/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|> against <file://host/D:/dir1/dir2/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|#> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|?> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|/> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|\u{a}/> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|\u{5c}> against <file://host/dir/file>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </c:/foo/bar> against <file://host/path>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <C|/> against <file://host/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </C:/> against <file://host/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:C:/> against <file://host/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:/C:/> against <file://host/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://localhost//a//../..//foo> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://localhost////foo> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:////foo> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:////one/two> against <file:///>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <////one/two> against <file:///>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:///.//> against <file:////>
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:.//p> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file:/.//p> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: <file://xn--/p> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?include=file	Parsing: </\u{5c}//\u{5c}/a/../> against <file:///>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <non-special:opaque  ?hi> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <non-special:opaque  #hi> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <non-special:opaque \u{9}\u{9}  \u{9}#hi> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <non-special:opaque \u{9}\u{9}  #hi> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <non-special:opaque\u{9}\u{9}  \u{d} #hi> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://a.b.c.xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://10.0.0.xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://a.b.c.XN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://a.b.c.Xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://10.0.0.XN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <http://10.0.0.xN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <??a=b&c=d> against <http://example.org/foo/bar>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <..> against <abc://x/y/z/C:/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <https://xn--/> without base
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///test> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///\u{5c}//\u{5c}//test> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///example.org/path> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///example.org/../path> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///example.org/../../> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///example.org/../path/../../> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <///example.org/../path/../../path> against <http://example.org/>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <\u{5c}a> against <foo://foo/a>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <\u{5c}/a> against <foo://foo/a>
+FAIL	TODO-7388/1	url/url-constructor.any.js?exclude=(file|javascript|mailto)	Parsing: <\u{5c}\u{5c}a> against <foo://foo/a>
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://a.b.c.xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://10.0.0.xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://a.b.c.XN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://a.b.c.Xn--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://10.0.0.XN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <http://10.0.0.xN--pokxncvks> without base
+FAIL	TODO-7388/1	url/url-origin.any.js	Origin parsing: <https://xn--/> without base
+FAIL	TODO-7388/1	url/url-searchparams.any.js	URL.searchParams and URL.search setters, update propagation
+FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file://monkey/>.pathname = '\u{5c}\u{5c}' File URLs and (back)slashes
+FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file:///unicorn>.pathname = '//\u{5c}/' File URLs and (back)slashes
+FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file:///unicorn>.pathname = '//monkey/..//' File URLs and (back)slashes
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://example.com/>.host = 'xn--'
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//p>.hostname = 'h' Drop /. from path
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//p>.hostname = ''
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://example.com/>.hostname = 'xn--'
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://domain.com:3000>.port = '\u{a}\u{a}\u{9}\u{9}'
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <foo:///some/path>.pathname = '' Non-special URLs with an empty host can have their paths erased
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '/.//p' Serialize /. in path
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '/..//p'
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '//p'
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//>.pathname = 'p' Drop /. from path
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space ?query>.search = '' Trailing spaces and opaque paths
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <sc:space ?query>.search = ''
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space  ?query#fragment>.search = '' Trailing spaces and opaque paths
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <sc:space  ?query#fragment>.search = ''
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space                                                                                                                                  #fragment>.hash = '' Trailing spaces and opaque paths
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <sc:space    #fragment>.hash = ''
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space  ?query#fragment>.hash = '' Trailing spaces and opaque paths
+FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <sc:space  ?query#fragment>.hash = ''
+FAIL	TODO-7388/1	url/urlsearchparams-delete.any.js	Changing the query of a URL with an opaque path with trailing spaces
+FAIL	TODO-7388/1	url/urlsearchparams-delete.any.js	Changing the query of a URL with an opaque path with trailing spaces and a fragment
+SKIP	PAGE	D-9.1	url/IdnaTestV2-removed.any.js
+SKIP	PAGE	D-9.1	url/IdnaTestV2.any.js
+SKIP	PAGE	D-9.1	url/a-element-origin-xhtml.xhtml
+SKIP	PAGE	D-9.1	url/a-element-origin.html
+SKIP	PAGE	D-9.1	url/a-element-xhtml.xhtml
+SKIP	PAGE	D-9.1	url/a-element.html
+SKIP	PAGE	D-9.1	url/data-uri-fragment.html
+SKIP	PAGE	D-9.1	url/failure.html
+SKIP	PAGE	D-9.1	url/javascript-urls.window.js
+SKIP	PAGE	D-9.1	url/percent-encoding.window.js
+SKIP	PAGE	D-9.1	url/toascii.window.js
+SKIP	PAGE	D-9.1	url/url-setters-a-area.window.js

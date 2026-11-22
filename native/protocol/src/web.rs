@@ -734,6 +734,11 @@ pub enum FromWebClient {
         /// For a WebSocket, the subprotocol the server chose; empty for
         /// none, and for an event stream.
         protocol: String,
+        /// For an event stream, the address that answered, after
+        /// redirects and without its fragment, whose origin is each of
+        /// its events' (the HTML standard, section 9.2.6); at most
+        /// [`MAX_URL_BYTES`], and empty for a WebSocket.
+        url: String,
     },
     /// An event of an event stream.
     Event {
@@ -1222,10 +1227,12 @@ impl FromWebClient {
                 payload.extend_from_slice(&[error.code(), reason.code()]);
                 (KIND_FAILED, payload)
             }
-            Self::Opened { id, protocol } => {
+            Self::Opened { id, protocol, url } => {
                 check_protocol(protocol)?;
+                check_url(url, "opened address")?;
                 let mut payload = with_id(*id);
-                payload.extend_from_slice(protocol.as_bytes());
+                push_bytes(&mut payload, protocol.as_bytes())?;
+                payload.extend_from_slice(url.as_bytes());
                 (KIND_OPENED, payload)
             }
             Self::Event { id, event, data, last_id } => {
@@ -1280,9 +1287,11 @@ impl FromWebClient {
             KIND_FAILED => Self::Failed { id: fields.u32()?, error: ErrorKind::of(fields.u8()?)?, reason: Reason::of(fields.u8()?)? },
             KIND_OPENED => {
                 let id = fields.u32()?;
-                let protocol = rest_text(&mut fields, MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
+                let protocol = fields.string(MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
                 check_protocol(&protocol)?;
-                Self::Opened { id, protocol }
+                let url = rest_text(&mut fields, MAX_URL_BYTES, "opened address")?;
+                check_url(&url, "opened address")?;
+                Self::Opened { id, protocol, url }
             }
             KIND_EVENT => {
                 let id = fields.u32()?;

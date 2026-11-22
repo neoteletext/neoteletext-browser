@@ -12,7 +12,8 @@
 //! - `cookies`: the jars, one for each partition;
 //! - `policy`: the channel as the unit of isolation (DEC-7264);
 //! - `cors`, `referrer`, `integrity`, `rules`: the standards' rules;
-//! - `coding`, `sse`: content codings and event streams;
+//! - `coding`, `sse`, `socket`: content codings, event streams and a
+//!   script's `WebSocket`;
 //! - `local`: this computer and the local network, as DEC-7315 allows
 //!   them (DEC-7315);
 //! - `limits`: every bound.
@@ -31,6 +32,7 @@ mod policy;
 mod pool;
 mod referrer;
 mod rules;
+mod socket;
 mod sse;
 
 pub use client::{Partition, run};

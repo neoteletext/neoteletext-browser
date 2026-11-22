@@ -1,0 +1,183 @@
+# The web-platform-tests' fileapi-formdata suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 45 files run, 61 not run here; cases: 430 pass, 68 fail as a listed departure, 2 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	FileAPI/blob/Blob-array-buffer.any.js	OK	5	0
+FILE	FileAPI/blob/Blob-bytes.any.js	OK	5	0
+FILE	FileAPI/blob/Blob-constructor-detached-buffer.any.js	OK	0	4
+FILE	FileAPI/blob/Blob-constructor-endings.any.js	OK	11	0
+FILE	FileAPI/blob/Blob-constructor.any.js	OK	71	2
+FILE	FileAPI/blob/Blob-newobject.any.js	OK	4	0
+FILE	FileAPI/blob/Blob-slice-overflow.any.js	OK	4	0
+FILE	FileAPI/blob/Blob-slice.any.js	OK	150	0
+FILE	FileAPI/blob/Blob-stream.any.js	OK	6	0
+FILE	FileAPI/blob/Blob-text.any.js	OK	16	0
+FILE	FileAPI/blob/Blob-textStream.any.js	OK	8	0
+FILE	FileAPI/file/File-constructor-endings.any.js	OK	11	0
+FILE	FileAPI/file/File-constructor.any.js	OK	49	0
+FILE	FileAPI/file/send-file-formdata-controls.any.js	OK	12	0
+FILE	FileAPI/file/send-file-formdata-punctuation.any.js	OK	27	0
+FILE	FileAPI/file/send-file-formdata-utf-8.any.js	OK	6	0
+FILE	FileAPI/file/send-file-formdata.any.js	OK	1	0
+FILE	FileAPI/fileReader.any.js	OK	0	4
+FILE	FileAPI/idlharness.any.js	NO-FILE	0	0
+FILE	FileAPI/reading-data-section/Determining-Encoding.any.js	OK	0	6
+FILE	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	OK	0	6
+FILE	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	OK	0	9
+FILE	FileAPI/reading-data-section/filereader_abort.any.js	OK	0	3
+FILE	FileAPI/reading-data-section/filereader_error.any.js	OK	0	1
+FILE	FileAPI/reading-data-section/filereader_events.any.js	OK	0	2
+FILE	FileAPI/reading-data-section/filereader_readAsArrayBuffer.any.js	OK	0	1
+FILE	FileAPI/reading-data-section/filereader_readAsBinaryString.any.js	OK	0	1
+FILE	FileAPI/reading-data-section/filereader_readAsDataURL.any.js	OK	0	4
+FILE	FileAPI/reading-data-section/filereader_readAsText.any.js	OK	0	2
+FILE	FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.js	OK	0	3
+FILE	FileAPI/reading-data-section/filereader_readystate.any.js	OK	0	1
+FILE	FileAPI/reading-data-section/filereader_result.any.js	OK	0	12
+FILE	FileAPI/unicode.any.js	OK	4	0
+FILE	FileAPI/url/url-format.any.js	OK	0	6
+FILE	FileAPI/url/url-with-fetch.any.js	NO-REPORT	0	0
+FILE	FileAPI/url/url-with-xhr.any.js	NO-REPORT	0	0
+FILE	xhr/formdata/append.any.js	OK	7	0
+FILE	xhr/formdata/constructor.any.js	OK	1	0
+FILE	xhr/formdata/delete.any.js	OK	3	0
+FILE	xhr/formdata/foreach.any.js	OK	4	0
+FILE	xhr/formdata/get.any.js	OK	6	0
+FILE	xhr/formdata/has.any.js	OK	3	0
+FILE	xhr/formdata/iteration.any.js	OK	3	0
+FILE	xhr/formdata/set-blob.any.js	OK	6	0
+FILE	xhr/formdata/set.any.js	OK	7	0
+FAIL	D-9.1	FileAPI/blob/Blob-constructor-detached-buffer.any.js	Blob from a detached ArrayBufferView should be empty
+FAIL	D-9.1	FileAPI/blob/Blob-constructor-detached-buffer.any.js	Blob from a detached ArrayBufferView with offset should be empty
+FAIL	D-9.1	FileAPI/blob/Blob-constructor-detached-buffer.any.js	Blob from a detached ArrayBuffer should be empty
+FAIL	D-9.1	FileAPI/blob/Blob-constructor-detached-buffer.any.js	Blob from a detached ArrayBufferView mixed with string, detached part ignored
+FAIL	TODO-7388/3	FileAPI/blob/Blob-constructor.any.js	Getters and value conversions should happen in order until an exception is thrown.
+FAIL	D-9.1	FileAPI/blob/Blob-constructor.any.js	Passing a FrozenArray as the blobParts array should work (FrozenArray<MessagePort>).
+FAIL	D-9.1	FileAPI/fileReader.any.js	FileReader interface object
+FAIL	D-9.1	FileAPI/fileReader.any.js	no-argument FileReader constructor
+FAIL	D-9.1	FileAPI/fileReader.any.js	FileReader States -- abort
+FAIL	D-9.1	FileAPI/fileReader.any.js	FileReader States -- events
+HARNESS	TODO-7372/14b	FileAPI/idlharness.any.js	NO-FILE	no file resources/WebIDLParser.js
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding with encoding argument
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding with type attribute
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding with UTF-8 BOM
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding without anything implying charset.
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding with UTF-16BE BOM
+FAIL	D-9.1	FileAPI/reading-data-section/Determining-Encoding.any.js	Blob Determing Encoding with UTF-16LE BOM
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onloadstart: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onprogress: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onload: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onabort: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onerror: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-event-handler-attributes.any.js	FileReader.onloadend: initial value
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test FileReader InvalidStateError exception for readAsText
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test FileReader InvalidStateError exception for readAsDataURL
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test FileReader InvalidStateError exception for readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test FileReader InvalidStateError exception in onloadstart event for readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test FileReader no InvalidStateError exception in loadend event handler for readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	test abort and restart in onloadstart event for readAsText
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	A new read in an abort handler suppresses the old read loadend
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	A new read in an abort handler before loadstart suppresses the old read
+FAIL	D-9.1	FileAPI/reading-data-section/FileReader-multiple-reads.any.js	A new read in a load handler suppresses the old read loadend
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_abort.any.js	Aborting before read
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_abort.any.js	Aborting after read
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_abort.any.js	Aborting a reused reader after a previous read completed
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_error.any.js	filereader_error
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_events.any.js	events are dispatched in the correct order for an empty blob
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_events.any.js	events are dispatched in the correct order for a non-empty blob
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsArrayBuffer.any.js	filereader_readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsBinaryString.any.js	filereader_readAsBinaryString
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsDataURL.any.js	FileReader readyState during readAsDataURL
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsDataURL.any.js	readAsDataURL result for Blob with specified MIME type
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsDataURL.any.js	readAsDataURL result for Blob with unspecified MIME type
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsDataURL.any.js	readAsDataURL result for empty Blob
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsText.any.js	readAsText should correctly read UTF-8.
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsText.any.js	readAsText should correctly read UTF-16.
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.js	readAsText() uses the charset parameter of the Blob's type (windows-1252)
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.js	readAsText() decodes a windows-1252 Blob body using the type's charset
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readAsText_blob_type_charset.any.js	readAsText() encoding argument overrides the Blob type's charset
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_readystate.any.js	filereader_readystate
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	readAsText
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	readAsDataURL
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	readAsBinaryString
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "loadstart" event for readAsText
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "loadstart" event for readAsDataURL
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "loadstart" event for readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "loadstart" event for readAsBinaryString
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "progress" event for readAsText
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "progress" event for readAsDataURL
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "progress" event for readAsArrayBuffer
+FAIL	D-9.1	FileAPI/reading-data-section/filereader_result.any.js	result is null during "progress" event for readAsBinaryString
+FAIL	D11	FileAPI/url/url-format.any.js	Generated Blob URLs are unique
+FAIL	D11	FileAPI/url/url-format.any.js	Blob URL starts with "blob:"
+FAIL	D11	FileAPI/url/url-format.any.js	Blob URL starts with "blob:" for Files
+FAIL	D11	FileAPI/url/url-format.any.js	Origin of Blob URL matches our origin
+FAIL	D11	FileAPI/url/url-format.any.js	Blob URL parses correctly
+FAIL	D11	FileAPI/url/url-format.any.js	Origin of Blob URL matches our origin for Files
+HARNESS	D11	FileAPI/url/url-with-fetch.any.js	NO-REPORT	uncaught: TypeError: not a function     at fetch_tests (<input>:5294:37)     at <eval> (<input>:5367:44)     at eval (native)     at <eval> (http://web-platform
+HARNESS	D11	FileAPI/url/url-with-xhr.any.js	NO-REPORT	uncaught: TypeError: not a function     at fetch_tests (<input>:5294:37)     at <eval> (<input>:5336:40)     at eval (native)     at <eval> (http://web-platform
+SKIP	PAGE	D-9.1	FileAPI/Blob-methods-from-detached-frame.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/cross-partition-navigation.https.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/cross-partition-self-fetch.https.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/cross-partition-worker-creation.https.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/cross-partition.https.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/opaque-origin.html
+SKIP	PAGE	D-9.1	FileAPI/BlobURL/test2-manual.html
+SKIP	PAGE	D-9.1	FileAPI/FileReader/progress_event_bubbles_cancelable.html
+SKIP	PAGE	D-9.1	FileAPI/FileReader/test_errors-manual.html
+SKIP	PAGE	D-9.1	FileAPI/FileReader/test_notreadableerrors-manual.html
+SKIP	PAGE	D-9.1	FileAPI/FileReader/test_securityerrors-manual.html
+SKIP	PAGE	D-9.1	FileAPI/FileReader/workers.html
+SKIP	WORKER-FILE	D-9.1	FileAPI/FileReaderSync.worker.js
+SKIP	PAGE	D-9.1	FileAPI/blob/Blob-array-buffer-data-isolation.html
+SKIP	PAGE	D-9.1	FileAPI/blob/Blob-constructor-dom.window.js
+SKIP	PAGE	D-9.1	FileAPI/blob/Blob-constructor-endings.html
+SKIP	WORKER-FILE	D-9.1	FileAPI/blob/Blob-in-worker.worker.js
+SKIP	PAGE	D-9.1	FileAPI/blob/Blob-stream-byob-crash.html
+SKIP	PAGE	D-9.1	FileAPI/blob/Blob-stream-sync-xhr-crash.html
+SKIP	PAGE	D-9.1	FileAPI/file/File-constructor-endings.html
+SKIP	PAGE	D-9.1	FileAPI/file/File-lastModified.html
+SKIP	WORKER-FILE	D-9.1	FileAPI/file/Worker-read-file-constructor.worker.js
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-controls.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-iso-2022-jp.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-punctuation.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-utf-8.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-windows-1252.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form-x-user-defined.html
+SKIP	PAGE	D-9.1	FileAPI/file/send-file-form.html
+SKIP	PAGE	D-9.1	FileAPI/filelist-section/filelist.html
+SKIP	PAGE	D-9.1	FileAPI/filelist-section/filelist_multiple_selected_files-manual.html
+SKIP	PAGE	D-9.1	FileAPI/filelist-section/filelist_selected_file-manual.html
+SKIP	PAGE	D-9.1	FileAPI/historical.https.html
+SKIP	PAGE	D-9.1	FileAPI/idlharness-manual.html
+SKIP	PAGE	D-9.1	FileAPI/idlharness.html
+SKIP	WORKER-FILE	D-9.1	FileAPI/idlharness.worker.js
+SKIP	PAGE	D-9.1	FileAPI/progress-manual.html
+SKIP	PAGE	D-9.1	FileAPI/reading-data-section/filereader_file-manual.html
+SKIP	PAGE	D-9.1	FileAPI/reading-data-section/filereader_file_img-manual.html
+SKIP	PAGE	D-9.1	FileAPI/reading-data-section/filereader_readAsDataURL.html
+SKIP	PAGE	D-9.1	FileAPI/url/cross-global-revoke.sub.html
+SKIP	PAGE	D-9.1	FileAPI/url/multi-global-origin-serialization.sub.html
+SKIP	PAGE	D-9.1	FileAPI/url/sandboxed-iframe.html
+SKIP	PAGE	D-9.1	FileAPI/url/unicode-origin.sub.html
+SKIP	PAGE	D-9.1	FileAPI/url/url-charset.window.js
+SKIP	PAGE	D-9.1	FileAPI/url/url-in-tags-revoke.window.js
+SKIP	PAGE	D-9.1	FileAPI/url/url-in-tags.window.js
+SKIP	PAGE	D-9.1	FileAPI/url/url-lifetime.html
+SKIP	PAGE	D-9.1	FileAPI/url/url-reload.window.js
+SKIP	PAGE	D-9.1	FileAPI/url/url_createobjecturl_file-manual.html
+SKIP	PAGE	D-9.1	FileAPI/url/url_createobjecturl_file_img-manual.html
+SKIP	PAGE	D-9.1	FileAPI/url/url_xmlhttprequest_img.html
+SKIP	PAGE	D-9.1	xhr/formdata/append-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/constructor-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/constructor-submitter-coordinate.html
+SKIP	PAGE	D-9.1	xhr/formdata/constructor-submitter.html
+SKIP	PAGE	D-9.1	xhr/formdata/delete-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/get-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/has-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/set-formelement.html
+SKIP	PAGE	D-9.1	xhr/formdata/submitter-coordinate-value.html

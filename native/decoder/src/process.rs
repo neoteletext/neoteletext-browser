@@ -521,6 +521,22 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             #[allow(unreachable_patterns, reason = "reachable only when the protocol has links and this crate does not")]
             _ => continue,
         };
+        // What the page files just read say of their scripts (sections
+        // 12.4 to 12.6): one that is named and not held is asked for.
+        for (page, sub, name) in engine.take_script_names() {
+            if sub <= neoteletext_rules::limits::LAST_SUBCODE {
+                let outcome = scripts.page_file_names(protocol::rules::PageSub::new(page, sub), name, &mut engine, &mut output)?;
+                let mut drawing = Drawing {
+                    showing: &showing,
+                    shown_clock: &mut shown_clock,
+                    sent: &mut sent,
+                    spare: &mut spare,
+                    flashing: &mut flashing,
+                    missing: &mut missing,
+                };
+                script_outcome(&mut engine, &outcome, &mut drawing, &mut output)?;
+            }
+        }
         report(&mut engine, &arrived, &mut output)?;
         let pages = changed_pages(&mut engine, &showing, &mut shown_clock, &mut output)?;
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;

@@ -22,7 +22,7 @@ use super::coding::{ACCEPT_ENCODING, Decoder};
 use super::cookies::{self, Jar};
 use super::cors::{self, Allowed, PreflightCache};
 use super::integrity;
-use super::limits::{MAX_DECODED_BODY, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
+use super::limits::{DECODED_RATIO_FLOOR, MAX_DECODED_BODY, MAX_DECOMPRESSED_RATIO, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
 use super::local::Asker;
 use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
@@ -48,7 +48,7 @@ const PROXY_AUTHENTICATION_REQUIRED: u16 = 407;
 /// The browser as it names itself, the channel fetcher's own words
 /// (requirement 5.14): its name, its version and its system's family, and
 /// nothing of the viewer.
-fn user_agent() -> Vec<u8> {
+pub(crate) fn user_agent() -> Vec<u8> {
     neoteletext_web::user_agent::UserAgentString::of(crate::agent::product().as_ref()).as_bytes().to_vec()
 }
 
@@ -65,6 +65,16 @@ pub(crate) struct Engine {
     /// The address space its channel was loaded from, as the trusted core
     /// told the process at its start.
     pub(crate) space: AddressSpace,
+}
+
+impl Engine {
+    /// The channel asking, for the rule on this computer and the local
+    /// network: its address space as the trusted core told the process,
+    /// and whether it is a secure context, loaded over `https` or from
+    /// this computer itself. Nothing of it is a script host's word.
+    pub(crate) fn asker(&self) -> Asker {
+        Asker { space: self.space, secure: self.policy.folder().is_some_and(|folder| folder.scheme() == "https" || is_loopback(folder)) }
+    }
 }
 
 /// An answer, filtered for the script.
@@ -97,6 +107,8 @@ pub(crate) struct Reader {
     decoder: Option<Decoder>,
     /// How many bytes the decoder has written.
     decoded: u64,
+    /// How many coded bytes the decoder has taken.
+    coded: u64,
 }
 
 impl Reader {
@@ -107,9 +119,11 @@ impl Reader {
                 let mut room = vec![0_u8; PIECE];
                 let step = decoder.step(&self.pending, &mut room).map_err(|_| Reason::Coding)?;
                 let _ = self.pending.split_to(step.taken.min(self.pending.len()));
+                self.coded = self.coded.saturating_add(u64::try_from(step.taken).unwrap_or(u64::MAX));
                 if step.written > 0 {
                     self.decoded = self.decoded.saturating_add(u64::try_from(step.written).unwrap_or(u64::MAX));
-                    if self.decoded > MAX_DECODED_BODY {
+                    let past_ratio = self.decoded > DECODED_RATIO_FLOOR && self.decoded > self.coded.saturating_mul(MAX_DECOMPRESSED_RATIO);
+                    if self.decoded > MAX_DECODED_BODY || past_ratio {
                         return Err(Reason::TooLarge);
                     }
                     room.truncate(step.written);
@@ -191,7 +205,7 @@ fn is_web(url: &Url) -> bool {
 /// Whether `url` names this computer itself, to which a request from a
 /// page loaded securely is not mixed content (the W3C Mixed Content
 /// standard's "potentially trustworthy" addresses).
-fn is_loopback(url: &Url) -> bool {
+pub(crate) fn is_loopback(url: &Url) -> bool {
     match url.host() {
         Some(url::Host::Domain(name)) => name == "localhost" || name.ends_with(".localhost"),
         Some(url::Host::Ipv4(address)) => address.is_loopback(),
@@ -274,6 +288,14 @@ impl<'a> Request<'a> {
             Some(client) if !self.tainted_origin => client.origin().ascii_serialization(),
             _ => "null".to_owned(),
         }
+    }
+
+    /// The request's current address as an answer shows it: without its
+    /// fragment.
+    fn shown_url(&self) -> String {
+        let mut url = self.url.clone();
+        url.set_fragment(None);
+        url.into()
     }
 
     /// The channel asking, for the rule on this computer and the local
@@ -498,7 +520,9 @@ impl<'a> Request<'a> {
                 response_type,
                 status: 0,
                 status_text: String::new(),
-                url: String::new(),
+                // The address asked, which the standard keeps in an
+                // opaque-redirect answer's list of addresses.
+                url: self.shown_url(),
                 redirected: false,
                 headers: Vec::new(),
                 body: None,
@@ -522,24 +546,23 @@ impl<'a> Request<'a> {
                 // One coding is decoded; a body coded twice is refused.
                 (Some(_), Some(_)) => return Err(Reason::Coding),
             };
-            let mut reader = Reader { source: Some(body), pending: Bytes::new(), decoder, decoded: 0 };
+            let mut reader = Reader { source: Some(body), pending: Bytes::new(), decoder, decoded: 0, coded: 0 };
             if integrity::asks(&self.start.integrity) {
                 let whole = reader.whole(MAX_INTEGRITY_BODY).await?;
                 if !integrity::matches(&self.start.integrity, &whole) {
                     return Err(Reason::Integrity);
                 }
-                reader = Reader { source: None, pending: Bytes::from(whole), decoder: None, decoded: 0 };
+                reader = Reader { source: None, pending: Bytes::from(whole), decoder: None, decoded: 0, coded: 0 };
             }
             Some(reader)
         };
-        let mut url = self.url.clone();
-        url.set_fragment(None);
+        let url = self.shown_url();
         let headers = if response_type == ResponseType::Cors {
             cors::exposed(&headers, self.start.credentials == Credentials::Include)
         } else {
             headers.into_iter().filter(|(name, _)| !is_forbidden_response_header(name)).collect()
         };
-        Ok(Fetched { response_type, status, status_text, url: url.into(), redirected: self.redirects > 0, headers, body: reader, sent: self.sent.get() })
+        Ok(Fetched { response_type, status, status_text, url, redirected: self.redirects > 0, headers, body: reader, sent: self.sent.get() })
     }
 }
 

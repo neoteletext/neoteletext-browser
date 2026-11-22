@@ -1,0 +1,22 @@
+[package]
+name = "neoteletext-script-wpt"
+description = "The web-platform-tests harness (script-api.md section 9.4, work package W3; DEC-7260 item 9): runs the suite's worker-scope tests of URL, encoding, streams, fetch and the rest in the standalone runner, against expectations kept for each case, whose failing cases are the published list of departures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "script_wpt"
+path = "src/lib.rs"
+
+[dev-dependencies]
+# The standalone runner, in whose stepped run each test file is a page's
+# script, and the script library's mock web client, which answers it.
+script_run = { path = "../script-run", package = "neoteletext-script-run" }
+neoteletext-script = { path = "../script" }
+protocol.workspace = true
+
+[lints]
+workspace = true

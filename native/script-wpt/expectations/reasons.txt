@@ -1,0 +1,84 @@
+# Reasons for the web-platform-tests cases that do not pass.
+#
+# Each line is a reason, a path and what a case holds, tabs between. A
+# case's reason is that of the first line whose path its file's begins
+# with (or is, when the path ends with `$`) and whose third field its
+# name and message together hold (any, when empty). A reason is:
+#
+#   D5, D8, D11, D17  a numbered departure of the specification's section
+#                     9.4 (neoteletext-common docs/script-api.md)
+#   D-9.1             section 9.1: "Nothing else of the web platform
+#                     exists" here: no document, window, worker,
+#                     XMLHttpRequest, WebAssembly, FileReader,
+#                     MessageChannel, Cache, WebSocketStream
+#   DEC-7282/11       the owner's ruling that a script has no shared
+#                     memory: SharedArrayBuffer is removed
+#   TODO-n/i          a fault, or a test this harness cannot yet run, with
+#                     the item of the rdm to-do that owes it
+#
+# A failing case that no line explains is written UNLISTED and fails the
+# harness until it has a departure or a to-do.
+
+# --- Files not run here.
+D-9.1		PAGE
+D-9.1		WORKER-FILE
+TODO-7388/5		LIVE-NETWORK
+
+# --- The interface tests, in every suite: they need the suite's Web IDL
+# files and parser, and what they measure is known to be approximate.
+TODO-7372/14b	url/idlharness
+TODO-7372/14b	encoding/idlharness
+TODO-7372/14b	streams/idlharness
+TODO-7372/14b	fetch/api/idlharness
+TODO-7372/14b	FileAPI/idlharness
+TODO-7372/14b	websockets/idlharness
+TODO-7372/14b	eventsource/idlharness
+TODO-7372/14b	xhr/formdata/idlharness
+
+# --- Departures, wherever they show.
+DEC-7282/11		SharedArrayBuffer
+DEC-7282/11	encoding/streams/decode-utf8.any.js$
+D5		no-cors
+D17		nothing can be transferred
+D-9.1		XMLHttpRequest is not defined
+D-9.1		WebAssembly is not defined
+D-9.1		MessageChannel is not defined
+D-9.1		VideoFrame is not defined
+D-9.1		FileReader
+D-9.1		caches is not defined
+D-9.1		Worker is not defined
+D-9.1		WebSocketStream
+D-9.1		WebSocketError
+D-9.1	websockets/stream/tentative/
+D11	fetch/api/basic/scheme-blob
+D11	FileAPI/url/
+D8	fetch/api/headers/header-values.any.js$	fetch() with all valid values
+
+# --- URL: the url crate's parser and setters against the URL standard.
+TODO-7388/1	url/
+
+# --- Streams: the bundled library against the Streams standard.
+TODO-7388/2	streams/
+
+# --- WebSockets: no connection can be made until the web client has its
+# WebSocket; one option of the constructor is not built.
+TODO-7388/6	websockets/constructor/target-address-space
+TODO-7321	websockets/
+
+# --- Event streams: every case needs the suite's own server.
+TODO-7388/5	eventsource/
+
+# --- Fetch: faults of the prelude.
+TODO-7388/3	fetch/api/response/response-clone
+TODO-7388/3	fetch/api/response/response-stream-with-broken-then
+TODO-7388/3	fetch/api/response/response-consume-empty
+TODO-7388/3	fetch/api/request/request-consume-empty
+TODO-7388/3	fetch/api/headers/headers-record
+TODO-7388/3	fetch/api/abort/general.any.js$	rejects if already aborted
+TODO-7388/3	fetch/api/abort/general.any.js$	Call text() twice on aborted response
+TODO-7388/3	FileAPI/blob/Blob-constructor
+
+# --- Fetch: cases that ask the suite's server (its Python handlers, its
+# second origin, HTTP/2) or test what the web client adds to a request,
+# which the mock network cannot answer.
+TODO-7388/5	fetch/api/

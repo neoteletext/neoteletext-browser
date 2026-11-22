@@ -230,6 +230,55 @@ fn read_file(canonical: &Path, places: &Places, room: u64) -> Option<(Vec<u8>, F
     Some((bytes, identity))
 }
 
+/// The longest script read from a file's folder: a script's own bound
+/// (the script API's specification's `MAX_SCRIPT_BYTES`, the engine's).
+const MAX_SCRIPT_FILE_BYTES: u64 = neoteletext_core::consts::MAX_SCRIPT_BYTES as u64;
+
+/// The script `name` of the page file or folder at `given`, a canonical
+/// path that was given to the browser (the script API's specification
+/// section 12.7; DEC-7315 version 2): the file of that name directly in
+/// the page file's own folder, and nothing else. The name is a script
+/// name as the engine parses it, which has no separator and no dot but
+/// its ending, so that no spelling of it reaches another folder; the file
+/// is an ordinary file, never a symbolic link nor one with a second hard
+/// link, in no refused place, and at most a script's length.
+///
+/// # Errors
+/// [`REFUSAL`], whatever the reason.
+pub fn read_script(given: &Path, name: &str, places: &Places) -> Result<Vec<u8>, &'static str> {
+    let parsed = neoteletext_core::types::ScriptName::parse(name.as_bytes()).ok_or(REFUSAL)?;
+    let name = core::str::from_utf8(parsed.as_bytes()).map_err(|_| REFUSAL)?;
+    let folder = if fs::symlink_metadata(given).map_err(|_| REFUSAL)?.is_dir() { given } else { given.parent().ok_or(REFUSAL)? };
+    let path = folder.join(name);
+    // The name is one component: what it makes lies in the folder itself.
+    if path.parent() != Some(folder) || path.file_name().and_then(|made| made.to_str()) != Some(name) {
+        return Err(REFUSAL);
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(|_| REFUSAL)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_SCRIPT_FILE_BYTES || hard_linked(&metadata) {
+        return Err(REFUSAL);
+    }
+    // One byte past the bound is read, so that a file that grew since it
+    // was measured is refused and not cut.
+    let (bytes, _) = read_file(&path, places, MAX_SCRIPT_FILE_BYTES.saturating_add(1)).ok_or(REFUSAL)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_SCRIPT_FILE_BYTES { Err(REFUSAL) } else { Ok(bytes) }
+}
+
+/// Whether a file has another name besides the one it was found by: a
+/// hard link could be to a file outside the folder.
+fn hard_linked(metadata: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        metadata.nlink() != 1
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        false
+    }
+}
+
 impl Source {
     /// Reads a file, or a folder's files in name order, up to the limit,
     /// for the trusted core (decision 88): nothing in a refused place,
@@ -542,5 +591,71 @@ mod tests {
         assert!(open_no_follow(&resolved).is_none(), "read through the junction");
         let _ = fs::remove_dir(folder.join("real"));
         fs::remove_dir_all(&folder).unwrap();
+    }
+    /// The script API's specification section 12.7 and DEC-7315 version 2
+    /// (TODO-7304 step 6): a page file's script is the file of that name
+    /// in the page file's own folder; a name that reaches outside the
+    /// folder by any spelling, a link, a second hard link, a folder, an
+    /// empty file and a file longer than a script are each refused.
+    #[cfg(unix)]
+    #[test]
+    fn a_files_script_is_read_from_its_own_folder_by_its_name_and_nothing_else() {
+        let root = std::env::temp_dir().join(format!("neoteletext-script-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let folder = root.join("channel");
+        fs::create_dir_all(folder.join("sub")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let folder = root.join("channel");
+        let page = folder.join("101.tti");
+        fs::write(&page, b"PN,10100\nJS,own.js\nOL,1,PAGE\n").unwrap();
+        fs::write(folder.join("own.js"), b"/*! nt {\"api\":1} */").unwrap();
+        fs::write(root.join("outside.js"), b"outside").unwrap();
+        fs::write(folder.join("sub").join("inner.js"), b"inner").unwrap();
+        fs::write(folder.join("empty.js"), b"").unwrap();
+        fs::write(folder.join("long.js"), vec![b' '; neoteletext_core::consts::MAX_SCRIPT_BYTES + 1]).unwrap();
+        fs::write(folder.join("most.js"), vec![b' '; neoteletext_core::consts::MAX_SCRIPT_BYTES]).unwrap();
+        fs::create_dir(folder.join("folder.js")).unwrap();
+        std::os::unix::fs::symlink(root.join("outside.js"), folder.join("link.js")).unwrap();
+        fs::hard_link(root.join("outside.js"), folder.join("hard.js")).unwrap();
+        let places = Places::new(None, Vec::new());
+        assert_eq!(read_script(&page, "own.js", &places).unwrap(), b"/*! nt {\"api\":1} */");
+        assert_eq!(read_script(&folder, "own.js", &places).unwrap().len(), 19, "a folder that was given is its own folder");
+        assert_eq!(read_script(&page, "most.js", &places).unwrap().len(), neoteletext_core::consts::MAX_SCRIPT_BYTES);
+        let outside = [
+            "../outside.js",
+            "..\\outside.js",
+            "./own.js",
+            "sub/inner.js",
+            "sub\\inner.js",
+            "/etc/passwd",
+            "..",
+            ".",
+            "",
+            ".js",
+            "own",
+            "own.JS",
+            "own.js/",
+            "own.js/..",
+            "own.js\0",
+            "own.js ",
+            " own.js",
+            "%2e%2e/outside.js",
+            "..%2foutside.js",
+            "own.js?x",
+            "own.js#x",
+            "file:///etc/passwd",
+            "\u{2025}/outside.js",
+            "o\u{0308}wn.js",
+        ];
+        for name in outside {
+            assert_eq!(read_script(&page, name, &places), Err(REFUSAL), "{name:?}");
+        }
+        for name in ["link.js", "hard.js", "folder.js", "empty.js", "long.js", "absent.js", "outside.js", "inner.js"] {
+            assert_eq!(read_script(&page, name, &places), Err(REFUSAL), "{name}");
+        }
+        // A refused place refuses its scripts too.
+        let refusing = Places::new(None, vec![folder.clone()]);
+        assert_eq!(read_script(&page, "own.js", &refusing), Err(REFUSAL));
+        let _ = fs::remove_dir_all(&root);
     }
 }
