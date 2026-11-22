@@ -58,5 +58,7 @@ fn the_page_of_all_thirteen_kinds_matches_its_kept_run() {
     ] {
         assert!(log.contains(line), "the kept log has no line `{line}`:\n{log}");
     }
-    assert!(all.contains("NOT DRAWN") && all.contains("teletext enhancement"), "{all}");
+    // The decoder's own code draws all of it: the overlay's colours behind
+    // the status line, the chosen row, the button and the field in focus.
+    assert!(!all.contains("NOT DRAWN"), "{all}");
 }

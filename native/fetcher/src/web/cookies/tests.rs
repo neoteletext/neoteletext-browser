@@ -501,3 +501,25 @@ fn the_built_in_list_is_the_recorded_bytes() {
     assert!(bundled_suffixes().unwrap().is_some());
     println!("the list read in {:?}", started.elapsed());
 }
+
+/// DEC-7315 version 2 with DEC-7401: the jar of a page opened from disk
+/// keeps and sends what a cross-site request may, and is never written
+/// out or read back.
+#[test]
+fn a_file_pages_jar_is_a_jar_that_is_never_kept() {
+    let mut kept = jar();
+    assert!(kept.store(&url("https://www.shop.com/"), b"sid=1; Max-Age=600", SAME));
+    let written = kept.write(false);
+    let mut unkept = Jar::unkept(suffixes());
+    unkept.read_written(&written);
+    assert_eq!(unkept.count(), 0, "what the trusted core hands back is not taken");
+    assert!(unkept.store(&url("https://www.shop.com/"), b"open=1; SameSite=None; Secure", CROSS));
+    assert!(!unkept.store(&url("https://www.shop.com/"), b"lax=1", CROSS));
+    assert!(!unkept.store(&url("https://www.shop.com/"), b"strict=1; SameSite=Strict; Secure", CROSS));
+    assert!(!unkept.store(&url("https://www.shop.com/"), b"plain=1; SameSite=None", CROSS), "SameSite=None needs Secure");
+    assert_eq!(unkept.header(&url("https://www.shop.com/"), CROSS).as_deref(), Some("open=1"));
+    assert!(!unkept.take_changed(), "nothing of it is written out");
+    let mut open = jar();
+    open.read_written(&written);
+    assert_eq!(open.count(), 1, "the same bytes are a cookie to a jar that is kept");
+}

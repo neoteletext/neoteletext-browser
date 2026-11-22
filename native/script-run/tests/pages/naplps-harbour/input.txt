@@ -1,0 +1,3 @@
+# the NAPLPS page of section 7.6: the lamp lit by the colour map alone, then set blinking
+100 key l
+150 key b

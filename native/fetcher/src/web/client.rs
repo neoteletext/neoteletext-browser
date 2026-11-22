@@ -643,11 +643,14 @@ pub(crate) fn run_with(
         }
         let _ = output.flush();
     });
+    // A page opened from disk has a jar of its own that is never kept
+    // (DEC-7315 version 2, DEC-7401).
+    let jar = if policy.is_file_page() { Jar::unkept(suffixes) } else { Jar::new(suffixes) };
     let shared = Rc::new(Shared {
         engine: Engine {
             policy,
             pool: Pool::new(settings),
-            jar: RefCell::new(Jar::new(suffixes)),
+            jar: RefCell::new(jar),
             preflights: RefCell::new(PreflightCache::default()),
             space: partition.space,
         },

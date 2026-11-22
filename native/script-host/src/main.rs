@@ -61,6 +61,9 @@ const _: () = assert!(WATCHDOG_EXIT_STATUS != 0 && WATCHDOG_EXIT_STATUS != 1);
 /// Compiles the engine, starts the watchdog and serves the pipes.
 fn run() -> Result<End, String> {
     let engine = Engine::new().map_err(|stop| format!("the script engine's module does not compile: {stop}"))?;
+    // The prelude's bytecode now, while the opening is still arriving,
+    // and not within the first context's opening (rdm TODO-7386).
+    engine.prelude(neoteletext_script::ops::Parts::ALL).map_err(|stop| format!("the script engine's prelude does not compile: {stop}"))?;
     // Every container is given the watchdog: without it only the
     // container's own clock checks hold the limits (section 3.2 rule
     // 5(b); TODO-7338 item 1).

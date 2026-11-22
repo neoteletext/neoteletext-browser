@@ -319,11 +319,27 @@ pub(crate) struct Jar {
     suffixes: Suffixes,
     /// Whether it changed since it was last written out.
     changed: bool,
+    /// Whether it lives in this process alone: the jar of a page opened
+    /// from disk, never written out and never read back.
+    unkept: bool,
 }
 
 impl Jar {
     pub(crate) fn new(suffixes: Suffixes) -> Self {
-        Self { store: CookieStore::new(), created: HashMap::new(), next: 0, suffixes, changed: false }
+        Self { store: CookieStore::new(), created: HashMap::new(), next: 0, suffixes, changed: false, unkept: false }
+    }
+
+    /// The jar of a page opened from disk (DEC-7315 version 2, DEC-7401):
+    /// a jar as any other for the requests its page makes with
+    /// credentials, which are cross-site every one, so that it sends and
+    /// keeps only what a cross-site request may (`SameSite=None; Secure`).
+    /// It is that page's alone and in memory alone: never written out for
+    /// the trusted core to keep, taking nothing handed back, and gone
+    /// with the page's web client. The behaviour followed uses the
+    /// profile's one jar there; a jar for each partition is DEC-7264 and
+    /// DEC-7268.
+    pub(crate) fn unkept(suffixes: Suffixes) -> Self {
+        Self { unkept: true, ..Self::new(suffixes) }
     }
 
     /// The public suffix list the jar keeps to.
@@ -345,7 +361,7 @@ impl Jar {
 
     /// Whether the jar changed since this was last asked.
     pub(crate) fn take_changed(&mut self) -> bool {
-        core::mem::take(&mut self.changed)
+        core::mem::take(&mut self.changed) && !self.unkept
     }
 
     /// Keeps the cookie the `Set-Cookie` value `header` of an answer from
@@ -574,6 +590,9 @@ impl Jar {
     pub(crate) fn read_written(&mut self, mut bytes: &[u8]) {
         /// The cookies as they were kept went with same-site requests.
         const KEPT: Context = Context { same_site: true, navigation: true, safe_method: true };
+        if self.unkept {
+            return;
+        }
         let now = now_unix();
         while !bytes.is_empty() {
             let read = (|| {

@@ -14,6 +14,8 @@
     "sprites": {"used": 0, "limit": 32, "most": 0},
     "spriteFrames": {"used": 0, "limit": 512, "most": 0},
     "objectPageTriplets": {"used": 0, "limit": 8112, "most": 0},
-    "bitmapCellsLossy": {"used": 0, "limit": 920, "most": 0}
+    "bitmapCellsLossy": {"used": 0, "limit": 920, "most": 0},
+    "components": {"used": 0, "limit": 64, "most": 0},
+    "uiNodes": {"used": 0, "limit": 16384, "most": 0}
   }
 }

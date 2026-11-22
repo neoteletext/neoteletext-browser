@@ -34,6 +34,7 @@ use super::connect::Stream;
 use super::cookies;
 use super::fetch::{Engine, is_loopback, user_agent};
 use super::limits::MAX_RESPONSE_HEAD;
+use super::local::{is_as_declared, known_local};
 use super::rules::is_bad_port;
 use crate::agent::Random;
 
@@ -219,8 +220,11 @@ fn target(engine: &Engine, start: &Start) -> Result<Target, Reason> {
     if is_bad_port(port) {
         return Err(Reason::BadPort);
     }
-    let folder = engine.policy.folder().ok_or(Reason::Request)?;
-    if folder.scheme() == "https" && !secure && !is_loopback(&url) {
+    // A page opened from disk has no channel, and opens a plain socket
+    // as it asks a plain address (DEC-7315 version 2).
+    // Nor is an address known to be of the local network held to it
+    // (TODO-7316 item 10).
+    if engine.policy.folder().is_some_and(|folder| folder.scheme() == "https") && !secure && !is_loopback(&url) && !known_local(&url, start.target_space) {
         return Err(Reason::MixedContent);
     }
     if start.protocols.len() > MAX_WS_PROTOCOLS || start.protocols.iter().any(|protocol| protocol.is_empty() || !protocol.bytes().all(is_token_byte)) {
@@ -247,15 +251,20 @@ struct Open {
 /// answer's head once the connection is open.
 async fn open(engine: &Engine, start: &Start) -> Result<Open, Reason> {
     let Target { url, secure, host, port } = target(engine, start)?;
-    let folder = engine.policy.folder().ok_or(Reason::Request)?;
     // A socket carries the channel's cookies as a request with
     // credentials does (the standard's credentials mode `include`), by
-    // the same SameSite rule.
-    let context = cookies::Context { same_site: cookies::same_site(engine.jar.borrow().suffixes(), folder, &url), navigation: false, safe_method: true };
+    // the same SameSite rule. A page opened from disk is of no site.
+    let same_site = engine.policy.folder().is_some_and(|folder| cookies::same_site(engine.jar.borrow().suffixes(), folder, &url));
+    let context = cookies::Context { same_site, navigation: false, safe_method: true };
     let cookie = engine.jar.borrow().header(&url, context);
     let key = new_key(&mut Random::new());
-    let head = request(&url, &folder.origin().ascii_serialization(), &key, &start.protocols, cookie.as_deref()).ok_or(Reason::Address)?;
+    let head = request(&url, &engine.policy.origin(), &key, &start.protocols, cookie.as_deref()).ok_or(Reason::Address)?;
     let opened = engine.pool.open_alone(secure, &host, port, engine.asker()).await?;
+    // The address the script declared the space of is in that space, or
+    // nothing is written to it (TODO-7316 item 10).
+    if !is_as_declared(opened.peer, start.target_space) {
+        return Err(Reason::LocalRefused);
+    }
     let (mut input, mut out) = tokio::io::split(opened.stream);
     let handshake = async {
         out.write_all(&head).await.map_err(|_| Reason::Connection)?;

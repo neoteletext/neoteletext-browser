@@ -97,7 +97,7 @@ impl Item {
 }
 
 /// The bits of a pointer event's first number that hold its action.
-const POINTER_ACTION_MASK: i32 = (1 << POINTER_BUTTON_SHIFT) - 1;
+pub const POINTER_ACTION_MASK: i32 = (1 << POINTER_BUTTON_SHIFT) - 1;
 
 /// An input script, read: its items in the order written, each with its
 /// tick, the ticks never going down.

@@ -100,6 +100,13 @@ const _: () = assert!(TIME_CHECK_MARGIN.as_nanos() <= WATCHDOG_GRACE.as_nanos())
 /// The longest a container may take to be made: the module instantiated,
 /// the C library and QuickJS started. Nothing of a script runs in it.
 pub const CONTAINER_START_LIMIT: Duration = START_TIME_LIMIT;
+/// The longest compiling the prelude to bytecode may take, once for an
+/// engine (rdm TODO-7386). It is the browser's own source and a fixed
+/// amount of work, measured at 0.15 s optimised and 0.6 s unoptimised on
+/// an idle processor, and no script's time: the limit is a ceiling for a
+/// machine with no processor free, far above the work, so that a busy
+/// machine fails no context for it.
+pub const PRELUDE_COMPILE_LIMIT: Duration = Duration::from_secs(60);
 /// The bytes a host call or the module's own memory functions copy or
 /// process between two reads of the clock (rule 6). The module's
 /// `COPY_CHECK_BYTES` (`qjs/mem.c`) is the same number, compared at each
