@@ -73,6 +73,10 @@ neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32
 # gives it to the NAPLPS renderer (MIT, the project's own, pinned by
 # revision): the tests draw what the painter writes.
 naplps-fonts.workspace = true
+# The receiver's font for ReGIS's built-in alphabet 0, as the browser's
+# decoder gives it to the ReGIS renderer (MIT, the project's own, pinned
+# by revision): the tests draw what the painter writes.
+regis-fonts.workspace = true
 
 [lints]
 workspace = true
