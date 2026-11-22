@@ -67,7 +67,7 @@ pub use linux::scheduling;
 pub use process::{Input, Output, Process};
 pub use role::{Report, Role, SCRIPT_MEMORY_BYTES};
 pub use spawn::{Spawn, apply, spawn};
-pub use time::{LocalTime, MAX_OFFSET, local_time};
+pub use time::{LocalTime, MAX_OFFSET, local_time, processor_time};
 #[cfg(unix)]
 pub use unix::{DESCRIPTORS_NEEDED, TERMINATION_SIGNALS, raise_descriptor_limit, termination_requests};
 #[cfg(windows)]

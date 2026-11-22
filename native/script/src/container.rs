@@ -359,8 +359,10 @@ impl Container {
                 return Err(LinkError::Stopped(stop.reason(), stop.to_string()));
             }
         };
+        // The opening's wall-clock time is its cost, for the measurements;
+        // its limit is counted on the scripts' clock.
         let began = Instant::now();
-        let deadline = began.checked_add(self.time.start);
+        let deadline = crate::clock::after(self.time.start);
         let name = if open.script_url.is_empty() { UNNAMED_SCRIPT.to_owned() } else { open.script_url.clone() };
         let seed = math_seed(&open.seed);
         let result = (|| {
@@ -403,7 +405,7 @@ impl Container {
             let _ = self.deliver(context, EventKind::CLOSE, [0; 4], Given::None, self.time.close);
         }
         if self.machine.stopped().is_none()
-            && let Err(stop) = self.machine.close_context(context, Instant::now().checked_add(self.time.close))
+            && let Err(stop) = self.machine.close_context(context, crate::clock::after(self.time.close))
         {
             self.note_stop(&stop, Some(context));
         }
@@ -479,7 +481,7 @@ impl Container {
             return Ok(None);
         }
         self.machine.host().begin_callback(context, Some(kind), numbers[0]);
-        let result = self.machine.event(context, kind.number(), numbers, payload, Instant::now().checked_add(limit));
+        let result = self.machine.event(context, kind.number(), numbers, payload, crate::clock::after(limit));
         self.machine.host().end_callback();
         match result {
             Ok(entry) => {
@@ -829,9 +831,9 @@ impl Container {
         // The step's one ReGIS commit is checked by the renderer's
         // validator here, inside the step's time: host time is the
         // script's time (section 3.2).
-        let began = Instant::now();
+        let began = crate::clock::now();
         self.machine.host().regis_commit();
-        self.step_used = self.step_used.saturating_add(began.elapsed());
+        self.step_used = self.step_used.saturating_add(crate::clock::since(began));
         self.costs.last_step = self.step_used;
         self.costs.longest_step = self.costs.longest_step.max(self.step_used);
         // The budget over a second: this tick's time joins the window.
