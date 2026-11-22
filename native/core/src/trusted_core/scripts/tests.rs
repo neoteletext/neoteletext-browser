@@ -389,6 +389,125 @@ fn a_request_from_a_script_host_without_the_network_is_not_relayed() {
     assert!(test.started(Program::Fetcher).is_empty(), "a web client was started");
 }
 
+/// Section 11.1 and TODO-7420: the viewer leaves a page whose script has
+/// the network for one whose script has none. The decoder reports the
+/// new page's claims while the old page's context is still closing, and
+/// what that context writes to finish with the network (an abort of a
+/// request under way, the close of a socket or an event stream, the word
+/// that the context closes, and a keepalive request started in its
+/// `close` handling) is relayed for [`NETWORK_DRAIN`] and stops nothing.
+/// After it, the web client is told to end what it still holds for the
+/// channel; a message that only ends something is dropped; and one that
+/// starts something is the breach it always was.
+#[test]
+fn a_context_that_had_the_network_finishes_with_it_and_starts_nothing_after() {
+    let said = |message: &ToWebClient| {
+        let mut bytes = Vec::new();
+        write_request(&mut bytes, message).unwrap();
+        read_host_output(&mut bytes.as_slice()).unwrap().unwrap()
+    };
+    let mut test = Test::piped(|helper| match helper.program {
+        Program::ScriptHost => Some(ready()),
+        _ => Some(Vec::new()),
+    });
+    test.decoder_writes(&hello());
+    let channel = test.channel;
+    let generation = test.core.scripts.hosts[&channel].generation;
+    test.core.script_network(channel, true);
+    test.core.script_said(channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.started(Program::Fetcher).len(), 1, "the page's request reached a web client");
+    // The next page's claims: no network.
+    test.core.script_network(channel, false);
+    let finishing = [
+        ToWebClient::Abort(7),
+        ToWebClient::SocketClose { id: 8, code: 1000, reason: String::new() },
+        ToWebClient::ContextCloses(ContextId::Page),
+        ToWebClient::Start(Box::new(Start { keepalive: true, ..start() })),
+    ];
+    for message in &finishing {
+        test.core.script_said(channel, generation, said(message));
+        assert_eq!(test.core.script_state(channel), ScriptState::Running, "{message:?} is the closing context's own");
+    }
+    assert!(test.core.scripts.web.serves(channel), "and was relayed to its web client's tab");
+    assert!(test.core.scripts_due_at().is_some(), "the trusted core wakes when the time to finish is up");
+    // The time to finish is up.
+    let host = test.core.scripts.hosts.get_mut(&channel).unwrap();
+    let left = Instant::now().checked_sub(NETWORK_DRAIN + Duration::from_millis(1)).unwrap();
+    host.network = NetworkClaim::default();
+    host.network.reported(true, left);
+    host.network.reported(false, left);
+    test.core.scripts_tick(Instant::now());
+    assert!(!test.core.scripts.web.serves(channel), "the web client was told to end what it held for the channel");
+    assert_eq!(test.core.scripts_due_at(), None);
+    for message in &finishing[..3] {
+        test.core.script_said(channel, generation, said(message));
+        assert_eq!(test.core.script_state(channel), ScriptState::Running, "{message:?} only ends something: dropped");
+    }
+    assert!(!test.core.scripts.web.serves(channel), "and not relayed");
+    test.core.script_said(channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.core.script_state(channel), ScriptState::Stopped(FailReason::Link), "a context without the network starts nothing");
+    // A page with the network again has it again, at once.
+    let mut test = Test::piped(|helper| match helper.program {
+        Program::ScriptHost => Some(ready()),
+        _ => Some(Vec::new()),
+    });
+    test.decoder_writes(&hello());
+    let generation = test.core.scripts.hosts[&test.channel].generation;
+    test.core.script_network(test.channel, true);
+    test.core.script_network(test.channel, false);
+    test.core.script_network(test.channel, true);
+    test.core.script_said(test.channel, generation, said(&ToWebClient::Start(Box::new(start()))));
+    assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
+}
+
+/// TODO-7419 (section 12.3): a JavaScript page has no page file, and the
+/// "not found" its fetcher reports for it is no fault: the warning is
+/// held, and never said once the page's script comes. It is said when
+/// the script fails to come, when none has come in [`REFUSAL_HELD`], and
+/// at once for any other status.
+#[test]
+fn a_page_file_not_found_is_no_warning_when_its_script_comes() {
+    use protocol::decoder::script::SourcePiece;
+    use protocol::fetcher::{FromFetcher, RefusedFile};
+    use protocol::rules::PageSub;
+    let mut test = Test::piped(|_| Some(Vec::new()));
+    let channel = test.channel;
+    let said = |test: &mut Test| {
+        test.core.console.set_open(true);
+        format!("{:?}", test.core.console.updates(Some(channel)))
+    };
+    let script = |page: u16| {
+        FromFetcher::Script(SourcePiece {
+            level: ContextId::Page,
+            page: PageSub::new(page, 0),
+            name: "p.js".into(),
+            total: 2,
+            offset: 0,
+            bytes: b"//".to_vec(),
+        })
+    };
+    // A JavaScript page: its file is not found, and its script comes.
+    test.core.refused(channel, RefusedFile::Page(0x101), Some(NOT_FOUND)).unwrap();
+    test.core.script_message(channel, script(0x101));
+    test.core.scripts_tick(Instant::now() + REFUSAL_HELD);
+    assert!(!said(&mut test).contains("page 101 was refused"), "nothing is said of a JavaScript page's missing file");
+    // A page whose script could not be fetched either.
+    test.core.refused(channel, RefusedFile::Page(0x102), Some(NOT_FOUND)).unwrap();
+    assert!(test.core.scripts_due_at().is_some(), "the trusted core wakes to say it");
+    test.core.script_message(channel, FromFetcher::ScriptFailed { level: ContextId::Page, page: PageSub::new(0x102, 0), name: "p.js".into() });
+    assert!(said(&mut test).contains("page 102 was refused: status 404"));
+    // A page that is missing and has no script: said when none has come.
+    test.core.refused(channel, RefusedFile::Page(0x103), Some(NOT_FOUND)).unwrap();
+    test.core.scripts_tick(Instant::now());
+    assert!(!said(&mut test).contains("page 103 was refused"), "held for its script");
+    test.core.scripts_tick(Instant::now() + REFUSAL_HELD);
+    assert!(said(&mut test).contains("page 103 was refused: status 404"));
+    assert_eq!(test.core.scripts_due_at(), None);
+    // Any other answer is said at once.
+    test.core.refused(channel, RefusedFile::Page(0x104), Some(500)).unwrap();
+    assert!(said(&mut test).contains("page 104 was refused: status 500"));
+}
+
 /// DEC-7315 version 2 (TODO-7395 step 1): the script of a page opened
 /// from disk has the network. Its request starts a web client of that
 /// page alone, with the origin `null` for its identity and this

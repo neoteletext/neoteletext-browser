@@ -726,6 +726,12 @@ function dispatch(kind, a, b, c, d, payload) {
         pointerId: more[0] | 0, buttons: more[1] | 0, localX: more[2] | 0, localY: more[3] | 0,
         button: (a >> 4) & 15, pointerType: POINTER_KINDS[(a >> 8) & 3], isPrimary: !!(a & 1024), x: b, y: c, things: Object.freeze(under),
       });
+      // Section 4.2: on a teletext page the pointer's place is a cell,
+      // which the event also names as its row and column.
+      if (host(OP.INFO, INFO.PAGE_RENDERER) === "teletext") {
+        Object.defineProperty(event, "row", { value: c, enumerable: true });
+        Object.defineProperty(event, "column", { value: b, enumerable: true });
+      }
       if (thing) target = thing;
       // Presses, releases and moves go outwards from the thing to nt;
       // enter, leave and cancel are the thing's alone.

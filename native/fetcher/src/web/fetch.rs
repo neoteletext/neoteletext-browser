@@ -472,13 +472,13 @@ impl<'a> Request<'a> {
     /// The standard's HTTP-redirect fetch, as far as the next request:
     /// whether `answer` redirects, the request then being the one to
     /// send next.
-    fn redirect(&mut self, answer: &Answer, jar: &Jar) -> Result<bool, Reason> {
+    fn redirect(&mut self, status: u16, answer_headers: &[Header], jar: &Jar) -> Result<bool, Reason> {
         // The standard's "location URL" (section 2.2.6): `Location` allows
         // one header, so two are a failure, a network error. Its value is
         // bytes, each the code point of its number, which the address
         // parser percent-encodes above 0x7F: a `Location` that is not
         // UTF-8 is followed, not refused.
-        let mut locations = answer.headers.iter().filter(|(name, _)| name == "location").map(|(_, value)| value);
+        let mut locations = answer_headers.iter().filter(|(name, _)| name == "location").map(|(_, value)| value);
         let Some(location) = locations.next() else { return Ok(false) };
         if locations.next().is_some() {
             return Err(Reason::Redirect);
@@ -503,10 +503,10 @@ impl<'a> Request<'a> {
             return Err(Reason::Downgrade);
         }
         // A stream cannot be sent twice.
-        if answer.status != 303 && self.body.is_some() && self.start.body == BodySource::Stream {
+        if status != 303 && self.body.is_some() && self.start.body == BodySource::Stream {
             return Err(Reason::Redirect);
         }
-        if (matches!(answer.status, 301 | 302) && self.method == "POST") || (answer.status == 303 && !matches!(self.method.as_str(), "GET" | "HEAD")) {
+        if (matches!(status, 301 | 302) && self.method == "POST") || (status == 303 && !matches!(self.method.as_str(), "GET" | "HEAD")) {
             "GET".clone_into(&mut self.method);
             self.body = None;
             self.headers.retain(|(name, _)| !BODY_HEADERS.contains(&name.as_str()));
@@ -520,7 +520,7 @@ impl<'a> Request<'a> {
         if leaves_origin && !self.is_own(&self.url) {
             self.tainted_origin = true;
         }
-        if let Some(policy) = policy_of(&answer.headers) {
+        if let Some(policy) = policy_of(answer_headers) {
             self.referrer_policy = policy;
         }
         if let Some(client) = &self.client {
@@ -592,6 +592,65 @@ impl<'a> Request<'a> {
     }
 }
 
+/// What a request is after a redirect, for the fuzz targets
+/// (`fuzzing::location`).
+pub(crate) struct Redirected {
+    /// The address asked next.
+    pub(crate) url: Url,
+    /// The method it is asked with.
+    pub(crate) method: String,
+    /// The request's origin as it is then written.
+    pub(crate) origin: String,
+    /// The `Referer` it then carries.
+    pub(crate) referrer: Option<String>,
+    /// Whether the address is the asking channel's own.
+    pub(crate) own: bool,
+    /// Whether the request is still same-site.
+    pub(crate) same_site: bool,
+    /// The names of the headers it still carries.
+    pub(crate) headers: Vec<String>,
+}
+
+/// For the fuzz targets: the request `start` asks of `engine`, as it is
+/// after an answer of `status` and `answer_headers` (names in lower
+/// case) to its first address, with no network: none when the answer
+/// does not redirect.
+///
+/// # Errors
+/// As [`fetch`] fails for the start or the redirect.
+pub(crate) fn redirected(engine: &Engine, start: &Start, status: u16, answer_headers: &[Header]) -> Result<Option<Redirected>, Reason> {
+    let mut request = Request::new(start, engine, None)?;
+    if !is_web(&request.url) {
+        return Err(Reason::Address);
+    }
+    request.determine_referrer();
+    if !request.is_own(&request.url) {
+        request.tainting = ResponseType::Cors;
+    }
+    if !request.redirect(status, answer_headers, &engine.jar.borrow())? {
+        return Ok(None);
+    }
+    request.determine_referrer();
+    Ok(Some(Redirected {
+        own: request.is_own(&request.url),
+        origin: request.origin(),
+        referrer: request.referrer.as_ref().map(ToString::to_string),
+        same_site: request.same_site,
+        headers: request.headers.iter().map(|(name, _)| name.clone()).collect(),
+        method: request.method,
+        url: request.url,
+    }))
+}
+
+impl Reader {
+    /// For the fuzz targets (`fuzzing::body_ratio`): a body of the bytes
+    /// `coded` in the content coding `coding`, with no connection behind
+    /// it; none for a coding not decoded.
+    pub(crate) fn of_bytes(coding: &[u8], coded: &[u8]) -> Option<Self> {
+        Some(Self { source: None, pending: Bytes::copy_from_slice(coded), decoder: Some(Decoder::of(coding)?), decoded: 0, coded: 0 })
+    }
+}
+
 /// Notes in `landed` the space of `peer`, the address an answer came
 /// from, and fails when an earlier one noted there was of another space.
 /// An answer through a proxy has no such address and is not judged.
@@ -646,7 +705,7 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
                 // A script is given an answer it cannot read.
                 RedirectMode::Manual => return request.filtered(answer, ResponseType::OpaqueRedirect).await,
                 RedirectMode::Follow => {
-                    let redirected = request.redirect(&answer, &engine.jar.borrow())?;
+                    let redirected = request.redirect(answer.status, &answer.headers, &engine.jar.borrow())?;
                     if redirected {
                         continue;
                     }

@@ -56,7 +56,7 @@ const TICK_LOW_MASK: u64 = 0x7FFF_FFFF;
 const POINTER_ACTION_MASK: i32 = 0x0F;
 
 /// The log level the host's own notices are written at: a warning.
-const LEVEL_WARN: u8 = 3;
+const LEVEL_WARN: u8 = protocol::script::batch::LOG_WARN;
 /// The sub-code of a page that has no sub-pages (EN 300 706 clause
 /// A.1: sub-code 0000), for which `nt.page.subpage` is null.
 const NO_SUBCODE: u16 = 0;
@@ -497,6 +497,7 @@ impl Host {
         self.teletext.open(&open);
         let context = open.context;
         self.naplps.open(&open);
+        self.regis_opened(context);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
         }
@@ -1215,7 +1216,8 @@ impl Host {
             | Op::RG_MACROGRAPH
             | Op::RG_MEASURE
             | Op::RG_BOUNDS
-            | Op::RG_GET => self.regis_operate(context, op, ints, payload),
+            | Op::RG_GET
+            | Op::RG_SET_MANY => self.regis_operate(context, op, ints, payload),
         }
     }
 

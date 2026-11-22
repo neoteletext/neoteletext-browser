@@ -21,6 +21,8 @@ const MAX_FILES: usize = 4096;
 // DEC-1762: what the broker reads is what the decoder is built to read.
 const _: () = assert!(Format::T42(T42Variant::Plain).is_compiled() && Format::Tti.is_compiled());
 
+/// A channel's data as read from a file or a folder, and how far it has
+/// been handed to the channel's decoder.
 pub struct Source {
     bytes: Vec<u8>,
     sent: usize,
@@ -29,8 +31,11 @@ pub struct Source {
 
 /// What the loader does next with a channel's data.
 pub enum Next<'a> {
+    /// The next piece of the data to hand over.
     Data(&'a [u8]),
+    /// All of it has been handed over: its end is told, once.
     End,
+    /// Nothing more to do.
     Done,
 }
 
@@ -155,7 +160,7 @@ fn teletext(bytes: &[u8]) -> bool {
 /// Whether the bytes are a bookmarks file the trusted core may import:
 /// another browser's (decision 71) or this browser's own.
 fn bookmarks(bytes: &[u8]) -> bool {
-    protocol::decoder::is_netscape_bookmarks(bytes) || neoteletext::bookmarks::is_bookmarks_file(bytes)
+    protocol::decoder::is_netscape_bookmarks(bytes) || crate::bookmarks::is_bookmarks_file(bytes)
 }
 
 /// The signatures of the five picture formats the engine's converter reads
@@ -288,7 +293,9 @@ impl Source {
     ///
     /// # Errors
     /// [`REFUSAL`], whatever the reason.
-    #[cfg(test)]
+    ///
+    /// The broker reads a canonical path with [`Source::read_as`]; this is
+    /// the tests' way in, which the trusted core's own tests share.
     pub fn read(path: &Path, places: &Places) -> Result<Self, &'static str> {
         let canonical = path.canonicalize().map_err(|_| REFUSAL)?;
         Self::read_as(&canonical, places, None).map(|(source, _)| source)

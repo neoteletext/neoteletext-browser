@@ -271,3 +271,67 @@ fn files_between_the_two_processes_are_bounded() {
     }
     assert!(blobs::write(&mut Vec::new(), &made(&[("a/b", b"")])).is_err());
 }
+
+/// A connection that is bytes to read and bytes written, with no port.
+struct Bytes {
+    request: std::io::Cursor<Vec<u8>>,
+    answer: Vec<u8>,
+}
+
+impl std::io::Read for Bytes {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        self.request.read(buffer)
+    }
+}
+
+impl std::io::Write for Bytes {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.answer.write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The local server's reader of a request's first line, given bytes with
+/// no port (rdm TODO-7439; TODO-7361): a file of the folder is served for
+/// a path of plain names, and a path with any other part, a file outside
+/// the folder, another method and a line with no end are all not found.
+#[test]
+fn the_local_server_answers_a_request_line_with_a_file_of_its_folder_or_not_found() {
+    let folder = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("script-run-answer");
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(folder.join("served")).unwrap();
+    std::fs::write(folder.join("served").join("100.tti"), b"PN,10000\n").unwrap();
+    std::fs::write(folder.join("outside.txt"), b"not served").unwrap();
+    let served = folder.join("served");
+    let answer = |request: &[u8]| {
+        let mut connection = Bytes { request: std::io::Cursor::new(request.to_vec()), answer: Vec::new() };
+        script_run::live::answer(&mut connection, &served).unwrap();
+        String::from_utf8_lossy(&connection.answer).into_owned()
+    };
+    let found = answer(b"GET /100.tti?x=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    assert!(found.starts_with("HTTP/1.1 200 OK\r\n") && found.ends_with("\r\n\r\nPN,10000\n"), "{found}");
+    assert!(answer(b"HEAD /100.tti HTTP/1.1\r\n\r\n").ends_with("Connection: close\r\n\r\n"), "a HEAD has no body");
+    let mut endless = b"GET /".to_vec();
+    endless.resize(64 * 1024, b'a');
+    for refused in [
+        &b"GET /../outside.txt HTTP/1.1\r\n\r\n"[..],
+        b"GET //etc/passwd HTTP/1.1\r\n\r\n",
+        b"GET /./100.tti HTTP/1.1\r\n\r\n",
+        b"POST /100.tti HTTP/1.1\r\n\r\n",
+        b"GET / HTTP/1.1\r\n\r\n",
+        b"",
+        b"\xff\xfe GET",
+        &endless,
+    ] {
+        let result = {
+            let mut connection = Bytes { request: std::io::Cursor::new(refused.to_vec()), answer: Vec::new() };
+            script_run::live::answer(&mut connection, &served).map(|()| String::from_utf8_lossy(&connection.answer).into_owned())
+        };
+        // A line that is not text is the connection's own error; every
+        // other is answered, and with nothing of the folder or outside it.
+        assert!(result.as_ref().map_or(true, |answer| answer.starts_with("HTTP/1.1 404 Not Found\r\n")), "{:?}: {result:?}", String::from_utf8_lossy(refused));
+    }
+}

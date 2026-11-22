@@ -138,6 +138,24 @@ fn a_callback_that_never_ends_is_stopped_at_the_callback_limit() {
     });
 }
 
+/// TODO-7431: the line that says a script ran past its time limit is
+/// written under the context whose callback never ended, so that the
+/// channel's author looks in the right file. With a channel script that
+/// does nothing wrong open beside it, the page script's stop was said
+/// under the channel's context.
+#[test]
+fn the_stop_for_a_time_limit_is_logged_under_the_context_that_passed_it() {
+    common::unless_starved(|| {
+        let mut container = limited();
+        container.open_with(opening(ContextId::Channel), b"/*! nt {\"api\":1} */\nnt.log('the channel script is well');").unwrap();
+        container.open_with(opening(ContextId::Page), hostile!("loop").as_bytes()).unwrap();
+        container.step(&tick(1, 0)).unwrap();
+        let batch = container.step(&tick(2, 1)).unwrap();
+        let said: Vec<ContextId> = view(&batch).log.iter().filter(|line| line.text.contains("time limit")).map(|line| line.context).collect();
+        assert_eq!(said, vec![ContextId::Page], "{:?}", lines(&batch));
+    });
+}
+
 /// S-09 item 4 (TODO-7275): the text of what was thrown is taken without
 /// running the page's code after the callback has ended. Thrown inside a
 /// callback, the prelude describes it within the callback's own time: an

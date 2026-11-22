@@ -41,8 +41,26 @@ enum How {
     Local(Process),
 }
 
+/// A helper a test started in its own process is ended and reaped when it
+/// is let go, on every path out of the test, a failed assertion and a
+/// panic among them (TODO-7435): a test that failed before it stopped its
+/// helper left it running, and one that spins left a core spinning for
+/// good. A helper the broker started is the broker's to end, as before:
+/// the core asks for that by name, and the broker ends every helper left
+/// when the core goes.
+impl Drop for Helper {
+    fn drop(&mut self) {
+        if let How::Local(process) = &mut self.how {
+            // One that has ended already, or was waited for, is no error.
+            let _ = process.kill();
+            let _ = process.wait();
+        }
+    }
+}
+
 impl Helper {
     /// A helper started in this process with [`crate::spawn`], for tests.
+    /// It is ended when the value is dropped.
     #[must_use]
     pub fn local(mut process: Process) -> Self {
         let (stdin, stdout) = process.take_files();

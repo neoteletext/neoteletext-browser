@@ -59,23 +59,12 @@ impl From<Fault> for Reply {
     }
 }
 
-/// The bits of a handle that say what kind of thing it names; the rest
-/// are the thing's place in its table (section 10.1 rule 4).
-pub const HANDLE_KIND_SHIFT: u32 = 24;
-/// The kinds of NAPLPS things. The backdrop is the one thing of this
-/// work package; the others are named here so that the two packages'
-/// handles cannot meet.
-pub const KIND_BACKDROP: i32 = 1;
-/// A symbol (work package N2).
-pub const KIND_SYMBOL: i32 = 2;
-/// A DRCS character (work package N2).
-pub const KIND_DRCS: i32 = 3;
-/// A texture (work package N2).
-pub const KIND_TEXTURE: i32 = 4;
-/// An actor or a region (work package N2).
-pub const KIND_ACTOR: i32 = 5;
-/// The backdrop's handle: what `painted` is listened for on and reported by.
-pub const BACKDROP_HANDLE: i32 = KIND_BACKDROP << HANDLE_KIND_SHIFT;
+/// The handles of NAPLPS things: a kind in the bits from
+/// [`HANDLE_KIND_SHIFT`] up, and the thing's place in its table below
+/// (section 10.1 rule 4). The protocol crate's are the one definition,
+/// since the decoder names the thing under the pointer and the backdrop
+/// it reports painted by the same handles (section 4.4).
+pub use protocol::script::naplps::{BACKDROP_HANDLE, HANDLE_KIND_SHIFT, KIND_ACTOR, KIND_BACKDROP, KIND_DRCS, KIND_SYMBOL, KIND_TEXTURE};
 
 /// The colours a script defines: entries 8 to 15.
 const DEFINABLE: usize = (NAPLPS_COLOURS - FIRST_DEFINABLE_COLOUR) as usize;

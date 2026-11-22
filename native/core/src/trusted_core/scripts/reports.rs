@@ -39,17 +39,6 @@ pub(super) struct Kept {
     pieces: Vec<SourcePiece>,
 }
 
-/// The level of the developer log a script's line is shown at: the
-/// script library's 0 is an error and 1 a warning; everything quieter is
-/// information.
-fn console_level(level: u8) -> Level {
-    match level {
-        0 => Level::Error,
-        1 => Level::Warning,
-        _ => Level::Info,
-    }
-}
-
 impl Core {
     /// What `channel`'s scripts last claimed, as its decoder read their
     /// manifests; none when no script of it runs.
@@ -86,11 +75,12 @@ impl Core {
             // none is started until the channel is reloaded.
             ScriptReport::Stopped { reason, text } => {
                 self.scripts.claims.remove(&channel);
+                self.script_stop_explained(channel, reason, &text);
                 self.stop_scripts(channel, reason, &text);
             }
             ScriptReport::Log { level, context, text } => {
                 let who = if context == ContextId::Channel { "channel script" } else { "page script" };
-                self.channel_log(channel, console_level(level), None, &format!("{who}: {text}"));
+                self.channel_log(channel, protocol::script::batch::console_level(level), None, &format!("{who}: {text}"));
             }
             // What became of an event the gate gave: its default is
             // taken unless a script cancelled it (section 4.1).
@@ -190,7 +180,11 @@ impl Core {
     pub(in super::super) fn script_message(&mut self, channel: u32, message: protocol::fetcher::FromFetcher) {
         match message {
             protocol::fetcher::FromFetcher::Script(piece) => self.script_fetched(channel, piece),
-            protocol::fetcher::FromFetcher::ScriptFailed { level, page, name } => self.script_failed(channel, level, page, &name),
+            protocol::fetcher::FromFetcher::ScriptFailed { level, page, name } => {
+                // No script comes for the page: its refusal stands.
+                self.refusal_stands(channel, page.page);
+                self.script_failed(channel, level, page, &name);
+            }
             _ => {}
         }
     }
@@ -204,6 +198,8 @@ impl Core {
         // file's 404 was said just before its script came, since the
         // fetcher asks for the page first: that refusal is withdrawn.
         if piece.level == ContextId::Page && piece.offset == 0 {
+            // The warning held for that 404 is never said (TODO-7419).
+            self.refusal_withdrawn(channel, piece.page.page);
             let refused = self
                 .session
                 .all_tabs_mut()
