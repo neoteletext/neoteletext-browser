@@ -21,7 +21,7 @@ const CHECKOUT_VARIABLE: &str = "NEOTELETEXT_SCRIPTDEMO";
 const CHECKOUT_DEFAULT: &str = "devel/neoteletext-server-channel-scriptdemo-worktrees/reqresp";
 /// The fewest runs the table holds: one for each page the channel had
 /// when this test was written, so that a table cut short does not pass.
-const FEWEST_RUNS: usize = 14;
+const FEWEST_RUNS: usize = 15;
 
 fn checkout() -> PathBuf {
     let checkout = std::env::var_os(CHECKOUT_VARIABLE).map_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(CHECKOUT_DEFAULT), PathBuf::from);

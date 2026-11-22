@@ -92,7 +92,7 @@ const COMPONENT_KEYS: &[&str] =
 
 /// Every page of the channel, with what its manifest claims. The
 /// channel-level script claims nothing, so the claims are the page's own.
-const PAGES: [Page; 14] = [
+const PAGES: [Page; 15] = [
     Page { pointer: PointerClaim::Press, ..page(0x100, "index.js", &[]) },
     Page { pointer: PointerClaim::Press, ..page(0x101, "teletext-page.js", &["1", "2"]) },
     page(0x110, "teletext-game.js", &["ArrowLeft", "ArrowRight", " "]),
@@ -104,6 +104,7 @@ const PAGES: [Page; 14] = [
     page(0x150, "typescript-page.js", &["Enter", " "]),
     Page { pointer: PointerClaim::Press, ..page(0x200, "regis-page.js", &["Enter"]) },
     page(0x210, "regis-game.js", &["ArrowLeft", "ArrowRight"]),
+    Page { text: true, pointer: PointerClaim::Press, ..page(0x230, "components-regis.js", COMPONENT_KEYS) },
     page(0x300, "naplps-page.js", &["l", "b"]),
     page(0x310, "naplps-game.js", &["ArrowUp", "ArrowDown"]),
     Page { text: true, pointer: PointerClaim::Press, ..page(0x330, "components-naplps.js", COMPONENT_KEYS) },
