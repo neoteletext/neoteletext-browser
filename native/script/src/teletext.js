@@ -6,6 +6,9 @@
 // core it only turns objects into flat host calls: every check that
 // matters is the host's.
 let teletextApi;
+// What the sprites' part, which follows, takes from this one and gives it.
+let teletextHelpers;
+let teletextSprites;
 {
   const COLOUR8 = Object.freeze({ black: 0, red: 1, green: 2, yellow: 3, blue: 4, magenta: 5, cyan: 6, white: 7 });
   const LOOKS = Object.freeze([null, "hover", "pressed"]);
@@ -216,8 +219,12 @@ let teletextApi;
     return thing;
   };
 
+  teletextHelpers = Object.freeze({ optionsOf, entryOf, textOf, languageOf });
   const api = {
     page, overlay, colours, control,
+    block(columns, rows) { return teletextSprites.block(columns, rows); },
+    sprite(options) { return teletextSprites.sprite(options); },
+    bitmap: teletextBitmap,
     get level() { return host(OP.TT_LEVEL); },
     measure(text, options) { return host(OP.TT_MEASURE, languageOf(optionsOf(options).language), textOf(text)); },
     languages() { return languageTags().map((language) => ({ tag: language.tag, name: language.name, direction: language.direction })); },

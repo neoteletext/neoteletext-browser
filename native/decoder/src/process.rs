@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 use crate::{Engine, Flashing, Rendered};
 use protocol::ProtocolError;
 use protocol::decoder::{FIRST_STORE_PAGES, FromDecoder, MAX_BOOKMARK_FILE, MAX_STORE_PAGES, ToDecoder, read_from_core, write_frame_to_core, write_to_core};
+use protocol::script::FromScriptHost;
+use protocol::script::relay::{DecoderInput, DecoderInputError, read_decoder_input};
 
 /// Microseconds in a millisecond: the audio receiver keeps milliseconds.
 const MICROSECONDS_PER_MILLISECOND: u64 = 1000;
@@ -211,6 +213,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
     // A message read while rule messages were being taken, of another
     // kind, for the next turn of the loop.
     let mut waiting: Option<Received> = None;
+    // The channel's scripts, which run in a script host of their own
+    // (the script API's specification section 11.2; TODO-7293).
+    let mut scripts = crate::scripts::Scripts::new();
     // RULE-66's hops: when the loop last woke, to mark a wake whose work
     // kept a message waiting.
     #[cfg(feature = "timed-test")]
@@ -229,13 +234,30 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         // before the loop waits for the next tick.
         engine.slew_clock();
         let now = engine.now_us();
-        let deadline = next_deadline(&mut engine, &flashing, &showing, &sent, now);
+        // And for the scripts: the tick a step is due at, and the deadline
+        // of a step that waits for its batch.
+        let deadline = [next_deadline(&mut engine, &flashing, &showing, &sent, now), scripts.due_us(&engine)].into_iter().flatten().min();
         let woken = match waiting.take() {
-            Some(message) => Woken::Message(message),
+            Some(message) => Woken::Message(Incoming::Core(message)),
             None => wait(&incoming, deadline, now),
         };
         let received = match woken {
-            Woken::Message(message) => Some(message),
+            Woken::Message(Incoming::Core(message)) => Some(message),
+            // The script host's message: its batch is applied and drawn
+            // at once, as one frame.
+            Woken::Message(Incoming::Link(message)) => {
+                let outcome = scripts.received(message, &mut engine, &mut output)?;
+                let mut drawing = Drawing {
+                    showing: &showing,
+                    shown_clock: &mut shown_clock,
+                    sent: &mut sent,
+                    spare: &mut spare,
+                    flashing: &mut flashing,
+                    missing: &mut missing,
+                };
+                script_outcome(&mut engine, &outcome, &mut drawing, &mut output)?;
+                continue;
+            }
             Woken::Deadline => {
                 // RULE-98 item 5: how late the loop woke for a deadline it
                 // waited for, so that it wakes that much before its paint
@@ -259,6 +281,17 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         let woke_late_us = if received.is_none() { deadline.map(|deadline| engine.now_us().saturating_sub(deadline)) } else { None };
         #[cfg(feature = "timed-test")]
         let received = held.hold(&engine, received);
+        {
+            let mut drawing = Drawing {
+                showing: &showing,
+                shown_clock: &mut shown_clock,
+                sent: &mut sent,
+                spare: &mut spare,
+                flashing: &mut flashing,
+                missing: &mut missing,
+            };
+            script_sees(&mut scripts, received.as_ref(), &mut engine, &mut drawing, &mut output)?;
+        }
         let received = take_rule_message(&mut engine, received, &mut output)?;
         // RULE-96: the rule messages already waiting behind it, an input
         // among them, are handled now too, before the tick's work and the
@@ -266,6 +299,23 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         // the next turn so that the order of the pipe is kept.
         while received.is_none() {
             let Ok(next) = incoming.try_recv().map(as_read) else { break };
+            let mut drawing = Drawing {
+                showing: &showing,
+                shown_clock: &mut shown_clock,
+                sent: &mut sent,
+                spare: &mut spare,
+                flashing: &mut flashing,
+                missing: &mut missing,
+            };
+            let next = match next {
+                Incoming::Core(next) => next,
+                Incoming::Link(message) => {
+                    let outcome = scripts.received(message, &mut engine, &mut output)?;
+                    script_outcome(&mut engine, &outcome, &mut drawing, &mut output)?;
+                    continue;
+                }
+            };
+            script_sees(&mut scripts, Some(&next), &mut engine, &mut drawing, &mut output)?;
             #[cfg(feature = "timed-test")]
             if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &next {
                 protocol::timed_test::mark("decoder", "input-taken", Instant::now(), format_args!("{sequence}"));
@@ -281,6 +331,9 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
         }
         let now = engine.now_us();
         tick(&mut engine, now, &mut output)?;
+        // A step of the scripts that is due is asked, and a script host
+        // past its deadline is failed.
+        scripts.wake(&mut engine, &mut output)?;
         #[cfg(feature = "timed-test")]
         held.release(&mut engine, now, &mut output)?;
         // RULE-65: what changed the picture is painted at the next paint
@@ -347,7 +400,28 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
                 say_missing(&engine, &showing, now, &mut missing, &mut output)?;
                 continue;
             }
-            ToDecoder::Close => return Ok(()),
+            ToDecoder::Close => {
+                // Each context's one handling of `close`, and the script
+                // host's end (section 3.1).
+                scripts.shutdown(&mut output)?;
+                output.flush()?;
+                return Ok(());
+            }
+            // A script's bytes, what its contexts are told, and input only
+            // a script is given (sections 11.2 and 12.5).
+            ToDecoder::Script(order) => {
+                let outcome = scripts.order(order, &mut engine, &mut output)?;
+                let mut drawing = Drawing {
+                    showing: &showing,
+                    shown_clock: &mut shown_clock,
+                    sent: &mut sent,
+                    spare: &mut spare,
+                    flashing: &mut flashing,
+                    missing: &mut missing,
+                };
+                script_outcome(&mut engine, &outcome, &mut drawing, &mut output)?;
+                continue;
+            }
             // A channel's decoder converts no picture: the trusted core
             // sends choices only to one started with `--picture`.
             ToDecoder::Picture(_) => return Err(ProtocolError::BadValue("a channel's decoder converts no picture")),
@@ -447,6 +521,22 @@ pub fn run(store_pages: usize) -> Result<(), ProtocolError> {
             #[allow(unreachable_patterns, reason = "reachable only when the protocol has links and this crate does not")]
             _ => continue,
         };
+        // What the page files just read say of their scripts (sections
+        // 12.4 to 12.6): one that is named and not held is asked for.
+        for (page, sub, name) in engine.take_script_names() {
+            if sub <= neoteletext_rules::limits::LAST_SUBCODE {
+                let outcome = scripts.page_file_names(protocol::rules::PageSub::new(page, sub), name, &mut engine, &mut output)?;
+                let mut drawing = Drawing {
+                    showing: &showing,
+                    shown_clock: &mut shown_clock,
+                    sent: &mut sent,
+                    spare: &mut spare,
+                    flashing: &mut flashing,
+                    missing: &mut missing,
+                };
+                script_outcome(&mut engine, &outcome, &mut drawing, &mut output)?;
+            }
+        }
         report(&mut engine, &arrived, &mut output)?;
         let pages = changed_pages(&mut engine, &showing, &mut shown_clock, &mut output)?;
         draw(&engine, &pages, now, &mut sent, &mut spare, &mut flashing, &mut output)?;
@@ -687,10 +777,75 @@ fn say_missing(engine: &Engine, showing: &[u16], now_us: u64, said: &mut Vec<u16
 /// error.
 type Received = Result<Option<ToDecoder>, ProtocolError>;
 
+/// What the decoder's input gave: the trusted core's own message, or one
+/// of the script link, which the trusted core relays from the channel's
+/// script host unread (`protocol::script::relay`).
+enum Incoming {
+    /// The trusted core's.
+    Core(Received),
+    /// The script host's, read whole, or why its reader refused it: the
+    /// pipe then stands at the next message, and the scripts are stopped.
+    Link(Result<FromScriptHost, ProtocolError>),
+}
+
+/// The loop's state for drawing pages, borrowed for what the scripts
+/// changed.
+struct Drawing<'a> {
+    showing: &'a [u16],
+    shown_clock: &'a mut Option<[u8; neoteletext_core::consts::CLOCK_BYTES]>,
+    sent: &'a mut BTreeMap<u16, Rendered>,
+    spare: &'a mut Vec<u8>,
+    flashing: &'a mut Flashing,
+    missing: &'a mut Vec<u16>,
+}
+
+/// Shows the scripts the messages of the trusted core that are theirs as
+/// well as the rule table's: the open page, whose contexts begin and end
+/// with it, and the viewer's input (the script API's specification
+/// sections 3.1 and 4.6). The message itself goes on to the rule table.
+fn script_sees(
+    scripts: &mut crate::scripts::Scripts,
+    received: Option<&Received>,
+    engine: &mut Engine,
+    drawing: &mut Drawing<'_>,
+    output: &mut Output<'_>,
+) -> Result<(), ProtocolError> {
+    match received {
+        Some(Ok(Some(ToDecoder::RulesPage(page)))) => {
+            let outcome = scripts.page_opened(*page, engine, output)?;
+            script_outcome(engine, &outcome, drawing, output)
+        }
+        Some(Ok(Some(ToDecoder::RuleInput { page, sequence, input }))) => {
+            scripts.input(*page, *sequence, input, engine, output)?;
+            // A step for input leaves at once, as a rule's sound does
+            // (RULE-96).
+            output.flush()?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Sends what the scripts' last batch produced: its sounds, and the pages
+/// it changed, reported and drawn as after a feed, before anything else
+/// of the page is drawn (section 3.2: one atomic frame).
+fn script_outcome(engine: &mut Engine, outcome: &crate::scripts::Outcome, drawing: &mut Drawing<'_>, output: &mut Output<'_>) -> Result<(), ProtocolError> {
+    send_sounds(engine, output)?;
+    if outcome.arrived.is_empty() && !outcome.applied {
+        return Ok(());
+    }
+    let now = engine.now_us();
+    report(engine, &outcome.arrived, output)?;
+    let pages = changed_pages(engine, drawing.showing, drawing.shown_clock, output)?;
+    draw(engine, &pages, now, drawing.sent, drawing.spare, drawing.flashing, output)?;
+    draw_regis(engine, drawing.showing, drawing.sent, now, output)?;
+    say_missing(engine, drawing.showing, now, drawing.missing, output)
+}
+
 /// What the loop woke for.
 enum Woken {
-    /// A message from the trusted core.
-    Message(Received),
+    /// A message from the trusted core, or of the script link.
+    Message(Incoming),
     /// The deadline passed first.
     Deadline,
     /// The reader of the trusted core's messages ended.
@@ -699,18 +854,27 @@ enum Woken {
 
 /// Reads the trusted core's messages on a thread of their own, until its
 /// pipe ends or a message cannot be read.
-fn read_messages() -> Receiver<(Received, Instant)> {
+fn read_messages() -> Receiver<(Incoming, Instant)> {
     let (messages, incoming) = mpsc::channel();
     std::thread::spawn(move || {
         let mut input = BufReader::new(io::stdin().lock());
         loop {
-            let message = read_from_core(&mut input);
+            // The script link's messages come among the trusted core's
+            // (section 11.1); one of them that is refused is the script
+            // host's fault, and the pipe goes on.
+            let message = match read_decoder_input(&mut input) {
+                Ok(Some(DecoderInput::Core(message))) => Incoming::Core(Ok(Some(message))),
+                Ok(Some(DecoderInput::Link(message))) => Incoming::Link(Ok(message)),
+                Ok(None) => Incoming::Core(Ok(None)),
+                Err(DecoderInputError::Link(error)) => Incoming::Link(Err(error)),
+                Err(DecoderInputError::Pipe(error)) => Incoming::Core(Err(error)),
+            };
             // RULE-66's hops: when the input event was read from the pipe.
             #[cfg(feature = "timed-test")]
-            if let Ok(Some(ToDecoder::RuleInput { sequence, .. })) = &message {
+            if let Incoming::Core(Ok(Some(ToDecoder::RuleInput { sequence, .. }))) = &message {
                 protocol::timed_test::mark("decoder", "input-read", Instant::now(), format_args!("{sequence}"));
             }
-            let last = !matches!(message, Ok(Some(_)));
+            let last = matches!(message, Incoming::Core(Ok(None) | Err(_)));
             if messages.send((message, Instant::now())).is_err() || last {
                 return;
             }
@@ -721,7 +885,7 @@ fn read_messages() -> Receiver<(Received, Instant)> {
 
 /// Waits for a message until `deadline` (microseconds by the engine's
 /// clock, which reads `now`), or with none for as long as it takes.
-fn wait(incoming: &Receiver<(Received, Instant)>, deadline: Option<u64>, now: u64) -> Woken {
+fn wait(incoming: &Receiver<(Incoming, Instant)>, deadline: Option<u64>, now: u64) -> Woken {
     match deadline {
         Some(at) => match incoming.recv_timeout(Duration::from_micros(at.saturating_sub(now))) {
             Ok(read) => Woken::Message(as_read(read)),
@@ -736,11 +900,13 @@ fn wait(incoming: &Receiver<(Received, Instant)>, deadline: Option<u64>, now: u6
 /// told relative to now rather than to its reading, so that the time it
 /// waited for the loop is not counted against the display's phase
 /// (RULE-98 item 2; DEC-6753). Any other message as it is.
-fn as_read((message, read_at): (Received, Instant)) -> Received {
+fn as_read((message, read_at): (Incoming, Instant)) -> Incoming {
     match message {
-        Ok(Some(ToDecoder::FramePhase(phase))) => {
+        Incoming::Core(Ok(Some(ToDecoder::FramePhase(phase)))) => {
             let waited = u64::try_from(read_at.elapsed().as_micros()).unwrap_or(u64::MAX);
-            Ok(Some(ToDecoder::FramePhase(protocol::rules::FramePhase::at(phase.period_us, u64::from(phase.next_in_us), waited).unwrap_or(phase))))
+            Incoming::Core(Ok(Some(ToDecoder::FramePhase(
+                protocol::rules::FramePhase::at(phase.period_us, u64::from(phase.next_in_us), waited).unwrap_or(phase),
+            ))))
         }
         other => other,
     }
@@ -915,10 +1081,12 @@ mod tests {
     fn the_frames_are_told_from_their_reading() {
         let phase = protocol::rules::FramePhase { period_us: 16_667, next_in_us: 10_000 };
         let read_at = Instant::now().checked_sub(Duration::from_millis(3)).unwrap();
-        let Ok(Some(ToDecoder::FramePhase(told))) = as_read((Ok(Some(ToDecoder::FramePhase(phase))), read_at)) else { panic!("a phase") };
+        let Incoming::Core(Ok(Some(ToDecoder::FramePhase(told)))) = as_read((Incoming::Core(Ok(Some(ToDecoder::FramePhase(phase)))), read_at)) else {
+            panic!("a phase")
+        };
         // Three milliseconds and the moments of this test since its reading.
         assert!((6_000..=7_000).contains(&told.next_in_us), "{told:?}");
-        assert!(matches!(as_read((Ok(Some(ToDecoder::End)), read_at)), Ok(Some(ToDecoder::End))));
+        assert!(matches!(as_read((Incoming::Core(Ok(Some(ToDecoder::End))), read_at)), Incoming::Core(Ok(Some(ToDecoder::End)))));
     }
 
     /// ANIM-5: a one-cell change sends a frame of that cell's rectangle

@@ -39,6 +39,9 @@ mod font_tests;
 mod painting_tests;
 mod render;
 mod rules;
+pub mod script;
+#[cfg(test)]
+mod script_tests;
 mod snapshot;
 #[cfg(test)]
 mod snapshot_tests;
@@ -180,6 +183,10 @@ pub struct Engine {
     started_pages: BTreeSet<(u16, u16)>,
     /// The full store was reported.
     full_told: bool,
+    /// What each fetched page file read since the last take says of its
+    /// script: its page, its sub-code, and the name its `JS` line or its
+    /// `SCRIPT_REF` record gives, or none for a TTI page with no line.
+    script_names: Vec<(u16, u16, Option<String>)>,
     /// The channel's log lines read since they were last taken, at most
     /// [`MAX_LOGS_HELD`] (the engine's REQ-INP-026).
     logs: Vec<ChannelLog>,
@@ -306,6 +313,7 @@ impl Engine {
             store_pages,
             started_pages: BTreeSet::new(),
             full_told: false,
+            script_names: Vec::new(),
             logs: Vec::new(),
             #[cfg(test)]
             digests: 0,

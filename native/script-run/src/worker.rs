@@ -6,16 +6,20 @@
 
 use crate::args::{self, NetworkMode, Options};
 use crate::blobs::{Blob, find};
-use crate::network::{Network, Refusing, Table};
+use crate::live::Live;
+use crate::network::{Network, Recorder, Refusing, Table};
 use crate::run::{MESSAGE, STATUS, run};
 use crate::{Failure, Status, files};
 
-/// The network a run's options ask for, of the modes that need no
-/// socket.
+/// The network a run's options ask for. The live modes start the real
+/// web client, which no confined process can: they are for the runner's
+/// unconfined process alone.
 ///
 /// # Errors
-/// Status 4: a network file the reader refuses, or a mode not built.
-pub fn offline_network(options: &Options, given: &[Blob]) -> Result<Box<dyn Network>, Failure> {
+/// Status 4: a network file the reader refuses, or a web client that
+/// cannot be started.
+pub fn network_for(options: &Options, given: &[Blob]) -> Result<Box<dyn Network>, Failure> {
+    let live = || Live::start(&options.channel_url, options.serve.is_some());
     match &options.network {
         NetworkMode::None => Ok(Box::new(Refusing::default())),
         NetworkMode::Mock(_) | NetworkMode::Replay(_) => {
@@ -23,9 +27,8 @@ pub fn offline_network(options: &Options, given: &[Blob]) -> Result<Box<dyn Netw
             let entries = crate::network::parse(bytes).map_err(Failure::usage)?;
             Ok(Box::new(Table::new(entries, matches!(options.network, NetworkMode::Replay(_)))))
         }
-        NetworkMode::Live | NetworkMode::Record(_) => Err(Failure::usage(
-            "--network live and --network record are not built yet: they wait for the script side of the web APIs (work package W2) and are recorded as owed. Use none, mock or replay",
-        )),
+        NetworkMode::Live => Ok(Box::new(live()?)),
+        NetworkMode::Record(_) => Ok(Box::new(Recorder::new(Box::new(live()?)))),
     }
 }
 
@@ -48,8 +51,13 @@ pub fn run_given(given: &[Blob]) -> Vec<Blob> {
             .and_then(|bytes| core::str::from_utf8(bytes).ok())
             .ok_or_else(|| Failure::usage("no arguments were given to the worker"))?;
         let arguments: Vec<String> = arguments.split('\0').map(str::to_owned).collect();
-        let options = args::parse(&arguments)?;
-        let network = offline_network(&options, given)?;
+        let mut options = args::parse(&arguments)?;
+        // A folder served from this computer is the channel: its address
+        // is the server's.
+        if let Some(folder) = &options.serve {
+            options.channel_url = crate::live::serve(folder)?;
+        }
+        let network = network_for(&options, given)?;
         run(&options, given, network)
     })();
     match made {

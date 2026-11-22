@@ -9,13 +9,18 @@
 use std::sync::OnceLock;
 
 use naplps::limits::{RECEIVER_CANVAS_HEIGHT, RECEIVER_CANVAS_WIDTH};
-use naplps::{BitmapSet, Canvas, Event, JoinForm, JoiningType, Player, Rgb, StrokeFont, Terminal};
+use std::collections::BTreeMap;
+
+use naplps::{Animation, BitmapSet, Canvas, Event, JoinForm, JoiningType, Look, Object, ObjectKind, Player, Rgb, StrokeFont, Terminal};
 use neoteletext_core::charset::CharRef;
 use neoteletext_core::glyphs::conformance::FONT_SETS;
 use neoteletext_core::glyphs::{GlyphRows, GlyphSet, JOINED_SETS, JoiningClass, joining_in};
+use neoteletext_rules::animate::OperationKind;
 use neoteletext_script::host::naplps::Fault;
 use neoteletext_script::host::naplps::program::Paint;
 use neoteletext_script::host::naplps::writer::{NoDefinitions, Painter, Target};
+use protocol::script::Batch;
+use protocol::script::batch::NaplpsObjectKind;
 
 /// The canvas's size.
 pub const WIDTH: u32 = RECEIVER_CANVAS_WIDTH;
@@ -190,32 +195,132 @@ impl Program {
     }
 }
 
+/// A frame cycle a receiver runs (animation.md ANIM-14): first, last,
+/// period, once, and the tick it started at.
+type Cycle = (u8, u8, u16, bool, u64);
+
 /// A receiver playing a page's NAPLPS on the presentation clock, as the
 /// decoder does: batches' bytes pushed, WAIT and BLINK played by the
-/// renderer's `Player`.
+/// renderer's `Player`, the objects of a batch given to the renderer,
+/// the animation operations applied to their state (ANIM-6), cycles run
+/// on the clock (ANIM-14), and the shown objects composed over the
+/// stream's picture.
 pub struct Receiver {
     pub terminal: Terminal,
     pub canvas: Canvas,
     pub player: Player,
+    /// The picture presented: the stream's with the objects over it.
+    presented: Canvas,
+    state: BTreeMap<u16, (Animation, Option<Cycle>)>,
+    pub tick: u64,
+    /// The title the objects' record last gave.
+    pub title: String,
 }
 
 impl Receiver {
     pub fn new() -> Self {
-        Self { terminal: terminal(), canvas: canvas(), player: Player::new() }
+        Self { terminal: terminal(), canvas: canvas(), player: Player::new(), presented: canvas(), state: BTreeMap::new(), tick: 0, title: String::new() }
     }
 
     /// Takes a batch's NAPLPS: a new generation is a new terminal, canvas
     /// and player.
     pub fn take(&mut self, new_generation: bool, bytes: &[u8]) {
         if new_generation {
-            *self = Self::new();
+            let (tick, title) = (self.tick, core::mem::take(&mut self.title));
+            *self = Self { tick, title, ..Self::new() };
         }
         self.player.push(&mut self.terminal, &mut self.canvas, bytes);
+    }
+
+    /// Takes everything of a batch that is NAPLPS's: the stream's bytes,
+    /// the objects, then the animation operations.
+    pub fn take_batch(&mut self, batch: &Batch) {
+        if let Some(append) = &batch.naplps {
+            self.take(append.new_generation, &append.bytes);
+        }
+        if let Some(record) = &batch.naplps_objects {
+            let objects: Vec<Object> = record
+                .objects
+                .iter()
+                .map(|object| Object {
+                    number: object.number,
+                    kind: if object.kind == NaplpsObjectKind::Region { ObjectKind::Region } else { ObjectKind::Macro },
+                    shown: object.shown,
+                    detectable: object.detectable,
+                    layer: object.layer,
+                    order: object.order,
+                    x: object.x,
+                    y: object.y,
+                    width: object.width,
+                    height: object.height,
+                    origin_x: object.origin.0,
+                    origin_y: object.origin.1,
+                    cover: object.cover,
+                    hover: object.looks[0],
+                    pressed: object.looks[1],
+                    alternative: object.looks[2],
+                    frames: object.frames.clone(),
+                    label: object.label.clone(),
+                })
+                .collect();
+            if record.one {
+                self.state.remove(&objects[0].number);
+                self.terminal.replace_object(objects[0].clone()).unwrap();
+            } else {
+                self.state.clear();
+                self.title.clone_from(&record.title);
+                self.terminal.set_objects(&objects).unwrap();
+            }
+        }
+        for operation in batch.animate.iter().flatten() {
+            let number = operation.target.number;
+            let Some(object) = self.terminal.object(number).cloned() else { continue };
+            let (animation, cycle) = self.state.entry(number).or_default();
+            match operation.kind {
+                OperationKind::Show => animation.shown = Some(true),
+                OperationKind::Hide => animation.shown = Some(false),
+                OperationKind::Look(look) => animation.look = [Look::Normal, Look::Hover, Look::Pressed, Look::Alternative][usize::from(look)],
+                OperationKind::Move { relative, x, y } => {
+                    let (at_x, at_y) = animation.position.unwrap_or((object.x, object.y));
+                    animation.position = Some(if relative { (at_x.saturating_add(x), at_y.saturating_add(y)) } else { (x, y) });
+                }
+                OperationKind::Order { layer, order } => {
+                    if layer != 255 {
+                        animation.layer = Some(layer);
+                    }
+                    animation.order = Some(order);
+                }
+                OperationKind::Frame(frame) => (animation.frame, *cycle) = (Some(frame), None),
+                OperationKind::Cycle { first, last, period, once } => {
+                    (animation.frame, *cycle) = (Some(first), Some((first, last, period, once, self.tick + 1)));
+                }
+                OperationKind::StopCycle => *cycle = None,
+                OperationKind::Reset => (*animation, *cycle) = (Animation::default(), None),
+            }
+        }
     }
 
     /// Lets `ticks` pass.
     pub fn advance(&mut self, ticks: u32) {
         self.player.advance(&mut self.terminal, &mut self.canvas, ticks);
+        self.tick += u64::from(ticks);
+        for (animation, cycle) in self.state.values_mut() {
+            let Some((first, last, period, once, start)) = *cycle else { continue };
+            let Some(passed) = self.tick.checked_sub(start) else { continue };
+            let (steps, count) = (passed / u64::from(period), u64::from(last - first) + 1);
+            let frame = if once { (u64::from(first) + steps).min(u64::from(last)) } else { u64::from(first) + steps % count };
+            animation.frame = Some(u8::try_from(frame).unwrap());
+        }
+    }
+
+    /// The picture presented now: the objects, as their state stands,
+    /// composed over the stream's picture.
+    pub fn presented(&mut self) -> &Canvas {
+        for (number, (animation, _)) in &self.state {
+            self.terminal.set_animation(*number, *animation);
+        }
+        self.terminal.compose(&self.canvas, &mut self.presented).unwrap();
+        &self.presented
     }
 
     /// The colour map as it shows now, blinks played.
@@ -227,7 +332,7 @@ impl Receiver {
 /// The version of the kept pictures' format: raised, with the pictures
 /// regenerated in the same commit, by any change to what is drawn
 /// (DEVELOPMENT.md section 8).
-pub const PICTURE_FORMAT: u32 = 1;
+pub const PICTURE_FORMAT: u32 = 2;
 
 /// A picture as the text a kept picture is: the format's version, the
 /// size, the colour map as it shows, and each line of the canvas as runs

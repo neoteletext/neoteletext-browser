@@ -80,6 +80,54 @@ pub const MAX_PAINTER_WORDS: usize = 65_536;
 pub const MAX_POINTS: usize = 1024;
 /// The most vertices one `fill` may trace (the renderer's, by name).
 pub const MAX_FILL_VERTICES: usize = regis::limits::MAX_FILL_VERTICES;
+/// The most characters of one string a painter draws: the most the
+/// engine's picture text encoder takes in one run (renderer parity PAR-3).
+pub const MAX_TEXT_CHARS: usize = neoteletext_formats::picture_text::MAX_PART_CHARACTERS;
+/// The largest standard character size (the manual's chapter 7, table
+/// 7-3: sizes 0 to 16).
+pub const MAX_TEXT_SIZE: i32 = 16;
+/// The longest side of a character's display cell or unit cell, in
+/// pixels (the renderer's, by name).
+pub const MAX_CELL_SIDE: i32 = regis::limits::MAX_CELL_SIDE;
+/// The greatest height multiplier of text (the manual's chapter 7,
+/// "Height Multiplier": 1 to 256).
+pub const MAX_TEXT_HEIGHT: i32 = 256;
+/// The step of a string's tilt, in degrees, and the greatest tilt either
+/// way (the manual's chapter 7, "String/Character Tilt").
+pub const TILT_STEP: i32 = 45;
+/// See [`TILT_STEP`].
+pub const MAX_TILT: i32 = 360;
+/// The italic slants ReGIS draws, in degrees either way (the manual's
+/// chapter 7, "Italics").
+pub const ITALIC_ANGLES: [i32; 3] = [0, 22, 45];
+/// The standard patterns of `W(P n)` (the manual's chapter 3, table 3-2:
+/// 0 to 9).
+pub const MAX_STANDARD_PATTERN: i32 = 9;
+/// The greatest pattern of eight bits.
+pub const MAX_PATTERN_BITS: i32 = 0xFF;
+/// The greatest pattern multiplier (the renderer's, by name).
+pub const MAX_PATTERN_MULTIPLIER: i32 = regis::limits::MAX_PATTERN_MULTIPLIER.cast_signed();
+/// The planes a pixel has: a mask of four bits (the manual's chapter 3,
+/// table 3-3).
+pub const MAX_PLANES: i32 = 15;
+/// The directions of a pixel vector: 0, east, anticlockwise to 7 (the
+/// manual's chapter 4, "Pixel Vector").
+pub const PIXEL_VECTOR_DIRECTIONS: i32 = 8;
+/// The greatest arc either way, in degrees: a whole circle.
+pub const MAX_ARC_DEGREES: i32 = 360;
+/// The macrographs of a page: the letters A to Z (the renderer's).
+pub const MACROGRAPHS: usize = regis::limits::MACROGRAPHS;
+/// The bytes all macrographs hold together (the renderer's cap, by name).
+pub const MAX_MACROGRAPH_BYTES: usize = regis::limits::MAX_MACROGRAPH_BYTES;
+/// The macrographs among the 26, and the bytes among theirs, that only
+/// the channel context may hold (work package R2's choice, as
+/// `CHANNEL_SHARE_DRAWINGS` is the specification's for the drawings).
+pub const CHANNEL_SHARE_MACROGRAPHS: usize = 2;
+/// See [`CHANNEL_SHARE_MACROGRAPHS`].
+pub const CHANNEL_SHARE_MACROGRAPH_BYTES: usize = 2048;
+/// What a painter program gives for an option of `text` that was not
+/// given (work package R2's choice: no whole number an option takes).
+pub const OPTION_NOT_GIVEN: i32 = i32::MIN;
 /// The redefinitions of one colour entry that take effect in a second:
 /// three flashes, the most that is safe for viewers (section 10.5). It is
 /// one rule for every renderer, defined once, in the library's limits;
@@ -96,6 +144,7 @@ pub const MAX_PERCENT: i32 = 100;
 /// The greatest colour a `#rrggbb` form gives: 24 bits.
 pub const MAX_RGB24: i32 = 0x00FF_FFFF;
 
+const _: () = assert!(CHANNEL_SHARE_MACROGRAPHS < MACROGRAPHS && CHANNEL_SHARE_MACROGRAPH_BYTES < MAX_MACROGRAPH_BYTES);
 const _: () = assert!(CHANNEL_SHARE_DRAWINGS < REGIS_MAX_DRAWINGS && CHANNEL_SHARE_CONTENTS_BYTES < REGIS_MAX_TOTAL_CONTENTS_BYTES);
 // Every drawing has a number, twice over: a number freed in a step is
 // not given out again in that step, so each context's range holds its

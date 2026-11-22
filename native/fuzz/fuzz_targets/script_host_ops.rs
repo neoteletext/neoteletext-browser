@@ -75,7 +75,8 @@ fn opening(context: ContextId, input: &mut Bytes<'_>) -> ContextOpen {
             pointer_move: flags & 32 != 0,
             wheel: flags & 8 != 0,
             text: flags & 2 != 0,
-            network: false,
+            // With it, the web's operations ask (work package W2).
+            network: flags & 64 != 0,
             from_disk: false,
             sound_allowed: flags & 16 != 0,
         },

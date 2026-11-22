@@ -48,7 +48,7 @@ for tool in Xvfb pipewire wireplumber pw-cli wpctl xdotool python3; do
 done
 
 echo "== building the browser with the timed test's marks and settings"
-(cd "$here/native" && cargo build --release --bins -p neoteletext -p neoteletext-decoder -p neoteletext-interface -p neoteletext-sound -p neoteletext-fetcher -p neoteletext-keyboard \
+(cd "$here/native" && cargo build --release --bins -p neoteletext -p neoteletext-decoder -p neoteletext-interface -p neoteletext-sound -p neoteletext-fetcher -p neoteletext-script-host -p neoteletext-keyboard \
     --features neoteletext/timed-test,neoteletext-decoder/timed-test,neoteletext-interface/timed-test,neoteletext-sound/timed-test)
 browser="$target/release/neoteletext"
 

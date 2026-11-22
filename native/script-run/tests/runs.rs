@@ -111,9 +111,9 @@ fn a_run_says_how_it_ended() {
     // 3: no manifest, and a member the manifest does not have.
     let made = run(&Given { page: Some("console.log(1);"), ..Given::default() });
     assert_eq!(status(&made), Status::Refused, "{}", message(&made));
-    assert!(message(&made).contains("does not begin with its manifest"), "{}", message(&made));
+    assert!(message(&made).contains("does not begin with a manifest"), "{}", message(&made));
     let made = run(&Given { page: Some(r#"/*! nt {"api": 1, "camera": true} */"#), ..Given::default() });
-    assert_eq!((status(&made), message(&made).contains("`camera`")), (Status::Refused, true), "{}", message(&made));
+    assert_eq!((status(&made), message(&made).contains("a member the API does not know")), (Status::Refused, true), "{}", message(&made));
     // 3: a page script whose renderer is not its page file's.
     let tti = "PN,10000\r\nSC,0000\r\nOL,1,HELLO\r\n";
     let made = run(&Given { page: Some(r#"/*! nt {"api": 1, "renderer": "regis"} */"#), page_file: Some(tti), ..Given::default() });

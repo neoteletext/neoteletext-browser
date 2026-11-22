@@ -1,0 +1,19 @@
+{
+  "page": {
+    "scriptBytes": {"used": 979, "limit": 1048576, "most": 979},
+    "timers": {"used": 0, "limit": 32, "most": 0},
+    "listeners": {"used": 1, "limit": 256, "most": 1},
+    "requests": {"used": 0, "limit": 40, "most": 0},
+    "sockets": {"used": 0, "limit": 8, "most": 0},
+    "soundOperations": {"used": 0, "limit": 256, "most": 0},
+    "batchBytes": {"used": 0, "limit": 262144, "most": 0},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "triplets": {"used": 112, "limit": 208, "most": 119},
+    "colours": {"used": 1, "limit": 16, "most": 1},
+    "controls": {"used": 0, "limit": 32, "most": 0},
+    "sprites": {"used": 0, "limit": 32, "most": 0},
+    "spriteFrames": {"used": 0, "limit": 512, "most": 0},
+    "objectPageTriplets": {"used": 0, "limit": 8112, "most": 0},
+    "bitmapCellsLossy": {"used": 2, "limit": 920, "most": 2}
+  }
+}

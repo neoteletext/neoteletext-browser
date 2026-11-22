@@ -35,21 +35,23 @@ pub const MAX_BLOB_BYTES: usize = 64 * 1024 * 1024;
 const _: () = assert!(MAX_TICKS * (SAMPLES_PER_TICK * BYTES_PER_SAMPLE) as u64 + WAV_HEADER_BYTES as u64 <= MAX_BLOB_BYTES as u64);
 /// The most files passed in one direction: every snapshot and the few
 /// fixed files beside them.
-pub const MAX_BLOBS: usize = MAX_SNAPSHOTS + 16;
+pub const MAX_BLOBS: usize = MAX_SNAPSHOTS + MAX_FOLDER_SCRIPTS + 16;
 /// The most bytes of all the files passed in one direction.
 pub const MAX_BLOBS_BYTES: usize = 256 * 1024 * 1024;
-/// The most bytes of a passed file's name.
-pub const MAX_BLOB_NAME_BYTES: usize = 64;
+/// The most bytes of a passed file's name: a script's file name behind
+/// the prefix a folder's scripts are passed under.
+pub const MAX_BLOB_NAME_BYTES: usize = 80;
+const _: () = assert!(neoteletext_core::consts::MAX_SCRIPT_NAME + 3 <= MAX_BLOB_NAME_BYTES);
+/// The most script files of one folder passed to the worker: a channel
+/// file names a script for at most 800 pages and sub-pages, and most
+/// channels share a few between them.
+pub const MAX_FOLDER_SCRIPTS: usize = 256;
 
 /// The most bytes of a command-line argument passed to the worker, and
 /// the most arguments.
 pub const MAX_ARGUMENT_BYTES: usize = 4096;
 /// See [`MAX_ARGUMENT_BYTES`].
 pub const MAX_ARGUMENTS: usize = 64;
-
-/// The most bytes of a script's manifest, from the file's start to the
-/// comment's end (the specification's `MAX_MANIFEST_BYTES`, section 10.6).
-pub const MAX_MANIFEST_BYTES: usize = 4096;
 
 /// The most bytes of an input script, of one of its lines, and the most
 /// events it holds.

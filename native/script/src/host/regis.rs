@@ -31,11 +31,11 @@ use regis::{CommitError, Event as RegisEvent, Validator};
 
 use super::{Host, Ints, LEVEL_WARN, Payload, Reply, cost, has_control, no_payload, range, renderer_name, text_of, type_error};
 use crate::limits::regis::{
-    CHANNEL_SHARE_CONTENTS_BYTES, CHANNEL_SHARE_DRAWINGS, DEFAULT_LAYER, FIRST_DRAWING_NUMBER, LAST_DRAWING_NUMBER, LAST_PAGE_DRAWING_NUMBER, LAYERS,
-    MAX_ANIMATE_OPERATIONS, MAX_ANIMATED_DRAWINGS, MAX_COLOUR_NAME_BYTES, MAX_COLOUR_SETS_PER_SECOND, MAX_COORDINATE, MAX_CYCLE_PERIOD, MAX_CYCLING_OBJECTS,
-    MAX_DRAWING_DEPTH, MAX_FRAME, MAX_HUE, MAX_LOOK, MAX_OBJECT_FRAMES, MAX_PAINT_RATE, MAX_PAINTER_WORDS, MAX_PERCENT, MAX_RGB24, MAX_TRACKED_DRAWINGS,
-    MAX_WATCHED_PAINTINGS, MAX_WHEEL_THINGS, MIN_COORDINATE, OVERLAY_LAYER, PAINT_RATE_UNSET, REGIS_COLOURS, REGIS_MAX_DRAWINGS,
-    REGIS_MAX_TOTAL_CONTENTS_BYTES,
+    CHANNEL_SHARE_CONTENTS_BYTES, CHANNEL_SHARE_DRAWINGS, CHANNEL_SHARE_MACROGRAPH_BYTES, CHANNEL_SHARE_MACROGRAPHS, DEFAULT_LAYER, FIRST_DRAWING_NUMBER,
+    LAST_DRAWING_NUMBER, LAST_PAGE_DRAWING_NUMBER, LAYERS, MACROGRAPHS, MAX_ANIMATE_OPERATIONS, MAX_ANIMATED_DRAWINGS, MAX_COLOUR_NAME_BYTES,
+    MAX_COLOUR_SETS_PER_SECOND, MAX_COORDINATE, MAX_CYCLE_PERIOD, MAX_CYCLING_OBJECTS, MAX_DRAWING_DEPTH, MAX_FRAME, MAX_HUE, MAX_LOOK, MAX_MACROGRAPH_BYTES,
+    MAX_OBJECT_FRAMES, MAX_PAINT_RATE, MAX_PAINTER_WORDS, MAX_PERCENT, MAX_RGB24, MAX_TRACKED_DRAWINGS, MAX_WATCHED_PAINTINGS, MAX_WHEEL_THINGS,
+    MIN_COORDINATE, OPTION_NOT_GIVEN, OVERLAY_LAYER, PAINT_RATE_UNSET, REGIS_COLOURS, REGIS_MAX_DRAWINGS, REGIS_MAX_TOTAL_CONTENTS_BYTES,
 };
 use crate::limits::{CONTEXTS, MAX_LABEL_BYTES, TICKS_PER_SECOND};
 use crate::link::Context as _;
@@ -43,6 +43,10 @@ use crate::ops::{EventKind, Op, Property, RegisField};
 
 mod colour;
 pub(super) mod painter;
+
+use painter::{Setting, TextOptions};
+#[cfg(test)]
+mod painter_tests;
 #[cfg(test)]
 mod tests;
 
@@ -81,6 +85,15 @@ const HELD_FOR_NEW_DRAWING: usize =
 /// a label at its longest (two bytes of UTF-8 for each of ISO 8859-1's
 /// characters) and a frame list at its longest.
 const TABLE_BYTES_A_DRAWING: usize = 2 * (size_of::<Drawing>() + 2 * MAX_LABEL_BYTES + MAX_OBJECT_FRAMES * size_of::<u16>());
+/// The handle of the first macrograph of the first page: macrographs are
+/// handles below it, twenty-six to a generation of the page, so that no
+/// macrograph's handle is a drawing's, `nt`'s or `nt.sound`'s.
+const MACROGRAPH_HANDLE_BASE: i32 = -1000;
+/// The most bytes that wrap a macrograph's definition: `@:A` and `@;`
+/// (the manual's chapter 9).
+const MACROGRAPH_WRAPPER_BYTES: usize = 5;
+/// The letter of the first macrograph.
+const FIRST_MACROGRAPH_LETTER: u8 = b'A';
 /// The flags of operation `RG_DRAWING`: shown, detectable, takes the
 /// wheel, tracked (this work package's packing; section 10.2 says only
 /// "flags").
@@ -106,6 +119,7 @@ pub(crate) fn prelude_bounds() -> Vec<(&'static str, i64)> {
         ("ANIMATE_FRAME", i64::from(code::FRAME)),
         ("ANIMATE_CYCLE", i64::from(code::CYCLE)),
         ("ANIMATE_STOP_CYCLE", i64::from(code::STOP_CYCLE)),
+        ("OPTION_NOT_GIVEN", i64::from(OPTION_NOT_GIVEN)),
     ]
 }
 
@@ -170,8 +184,18 @@ struct Colour {
     written: Vec<u64>,
 }
 
+/// One macrograph as the host holds it: its owner and its body as
+/// written, kept so that a refused commit can give the validator back
+/// the definition the receiver still has.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Macrograph {
+    owner: ContextId,
+    body: Vec<u8>,
+}
+
 /// The tables as a step began, to put back if its commit fails.
 struct Snapshot {
+    macrographs: [Option<Macrograph>; MACROGRAPHS],
     drawings: Vec<Drawing>,
     next: [u16; CONTEXTS],
     contents: [usize; CONTEXTS],
@@ -210,6 +234,8 @@ pub(super) struct Regis {
     /// The step's animation operations.
     animate: Vec<Operation>,
     colours: [Colour; REGIS_COLOURS],
+    /// The macrographs, by letter from A.
+    macrographs: [Option<Macrograph>; MACROGRAPHS],
     /// The tracked drawings' rectangles as of the last step.
     bounds: Vec<Bounds>,
     snapshot: Option<Box<Snapshot>>,
@@ -254,6 +280,7 @@ impl Regis {
             pending: 0,
             animate: Vec::new(),
             colours: Default::default(),
+            macrographs: Default::default(),
             bounds: Vec::new(),
             snapshot: None,
             validator,
@@ -287,7 +314,11 @@ impl Regis {
 
     /// Whether nothing is held: no drawing, nothing staged, no colour named.
     fn is_empty(&self) -> bool {
-        self.drawings.is_empty() && self.out.is_empty() && self.animate.is_empty() && self.colours.iter().all(|colour| *colour == Colour::default())
+        self.drawings.is_empty()
+            && self.out.is_empty()
+            && self.animate.is_empty()
+            && self.colours.iter().all(|colour| *colour == Colour::default())
+            && self.macrographs.iter().all(Option::is_none)
     }
 
     fn get(&self, number: u16) -> Option<&Drawing> {
@@ -316,6 +347,45 @@ impl Regis {
             Some(drawing) if generation == self.generation && drawing.owner == context => Ok(number),
             Some(_) if generation == self.generation => Err(type_error("the drawing belongs to the other context")),
             _ => Err(type_error("the drawing was removed: its handle is stale")),
+        }
+    }
+
+    /// The handle a script holds for the macrograph at `index`.
+    fn macrograph_handle(&self, index: usize) -> i32 {
+        let below = i32::from(self.generation).saturating_mul(i32::try_from(MACROGRAPHS).unwrap_or(i32::MAX)).saturating_add(i32::try_from(index).unwrap_or(0));
+        MACROGRAPH_HANDLE_BASE.saturating_sub(below)
+    }
+
+    /// The macrograph of `context` that `handle` names, by its place.
+    fn macrograph_index(&self, context: ContextId, handle: i32) -> Result<usize, Reply> {
+        let below = MACROGRAPH_HANDLE_BASE.checked_sub(handle).and_then(|below| usize::try_from(below).ok()).ok_or_else(|| type_error("not a macrograph"))?;
+        let (generation, index) = (below.checked_div(MACROGRAPHS).unwrap_or(0), below.checked_rem(MACROGRAPHS).unwrap_or(0));
+        match self.macrographs.get(index).and_then(Option::as_ref) {
+            Some(held) if generation == usize::from(self.generation) && held.owner == context => Ok(index),
+            Some(_) if generation == usize::from(self.generation) => Err(type_error("the macrograph belongs to the other context")),
+            _ => Err(type_error("not a macrograph of this page")),
+        }
+    }
+
+    /// The letter of the macrograph at `index`.
+    fn macrograph_letter(index: usize) -> u8 {
+        FIRST_MACROGRAPH_LETTER.saturating_add(u8::try_from(index).unwrap_or(0))
+    }
+
+    /// How many macrographs `context` holds, and the bytes of their bodies.
+    fn macrographs_of(&self, context: ContextId) -> (usize, usize) {
+        self.macrographs
+            .iter()
+            .flatten()
+            .filter(|held| held.owner == context)
+            .fold((0, 0), |(count, bytes), held| (count.saturating_add(1), bytes.saturating_add(held.body.len())))
+    }
+
+    /// The most macrographs and bytes of their bodies `context` may hold.
+    const fn macrograph_share(context: ContextId) -> (usize, usize) {
+        match context {
+            ContextId::Page => (MACROGRAPHS - CHANNEL_SHARE_MACROGRAPHS, MAX_MACROGRAPH_BYTES - CHANNEL_SHARE_MACROGRAPH_BYTES),
+            ContextId::Channel => (CHANNEL_SHARE_MACROGRAPHS, CHANNEL_SHARE_MACROGRAPH_BYTES),
         }
     }
 
@@ -445,6 +515,12 @@ impl Regis {
         bytes = self.colours.iter().fold(bytes, |sum, colour| {
             sum.saturating_add(colour.name.as_deref().map_or(0, cost)).saturating_add(colour.written.len().saturating_mul(size_of::<u64>()))
         });
+        // The macrographs' bodies, as they are and as the step began.
+        bytes = self
+            .macrographs
+            .iter()
+            .flatten()
+            .fold(bytes, |sum, held| sum.saturating_add(held.body.len().saturating_mul(2)).saturating_add(size_of::<Macrograph>()));
         bytes = bytes.saturating_add(self.bounds.len().saturating_mul(size_of::<Bounds>()));
         bytes = self
             .failures
@@ -607,7 +683,14 @@ impl Host {
         if self.regis.snapshot.is_none() {
             let listens = self.regis_listens();
             let regis = &self.regis;
-            let snapshot = Snapshot { drawings: regis.drawings.clone(), next: regis.next, contents: regis.contents, colours: regis.colours.clone(), listens };
+            let snapshot = Snapshot {
+                macrographs: regis.macrographs.clone(),
+                drawings: regis.drawings.clone(),
+                next: regis.next,
+                contents: regis.contents,
+                colours: regis.colours.clone(),
+                listens,
+            };
             self.regis.snapshot = Some(Box::new(snapshot));
         }
     }
@@ -715,8 +798,7 @@ impl Host {
             ("animated", regis.drawings.iter().filter(|drawing| drawing.animated).count(), MAX_ANIMATED_DRAWINGS),
             ("cycling", regis.drawings.iter().filter(|drawing| drawing.cycling).count(), MAX_CYCLING_OBJECTS),
             ("watched", watched, MAX_WATCHED_PAINTINGS),
-            // Macrographs are work package R2's.
-            ("macrographBytes", 0, regis::limits::MAX_MACROGRAPH_BYTES),
+            ("macrographBytes", regis.macrographs_of(context).1, Regis::macrograph_share(context).1),
             ("colours", regis.colours.iter().filter(|colour| colour.name.is_some()).count(), REGIS_COLOURS.saturating_sub(1)),
             // The validator does not say what a commit's rebuild costs
             // (the renderer's to-do); the limit is the renderer's.
@@ -849,7 +931,10 @@ impl Host {
                 if program.len() > MAX_PAINTER_WORDS {
                     return Err(range("MAX_PAINTER_WORDS", "a painter program is at most 65,536 whole numbers"));
                 }
-                let contents = painter::encode(&program)?;
+                let language = self.context(context).map_or("", |held| held.open.language.as_str());
+                let regis = &self.regis;
+                let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: false };
+                let contents = painter::encode(&program, &setting)?;
                 let before = self.regis.get(number).map_or(0, |drawing| drawing.contents);
                 let held = self.regis.contents.get(slot(context)).copied().unwrap_or(0);
                 let after = held.saturating_sub(before).saturating_add(contents.len());
@@ -912,7 +997,35 @@ impl Host {
                 self.regis_animate(number, operation, [first, second, third, fourth])?;
                 Ok(Reply::Undefined)
             }
-            Op::RG_MACROGRAPH | Op::RG_MEASURE => Err(type_error("macrographs and measuring are not built yet (work package R2)")),
+            Op::RG_MACROGRAPH => {
+                let [existing] = ints.exactly()?;
+                let program = ints_of(op, payload)?;
+                self.regis_macrograph(context, existing, &program)
+            }
+            Op::RG_MEASURE => {
+                let [size, cell_width, cell_height, height, tilt] = ints.exactly()?;
+                let whole = text_of(op, payload)?;
+                // The language's tag, a NUL, then the text.
+                let (tag, text) = whole.split_once('\0').ok_or_else(|| type_error("a language, a NUL and the text to measure"))?;
+                let none = OPTION_NOT_GIVEN;
+                let options = TextOptions::read([size, cell_width, cell_height, none, none, height, tilt, none, none, none])?;
+                let own = self.context(context).map_or("", |held| held.open.language.as_str());
+                let (_, cells) = painter::written_text(text, tag, own)?;
+                // The pixels the text takes: its cells along the string's
+                // direction and one cell across it; on a diagonal, the
+                // square that holds both.
+                let (cell_width, cell_height) = options.cell();
+                let along = cell_width.saturating_mul(cells);
+                let (width, height) = match options.direction().unwrap_or(0) {
+                    0 | 4 => (along, cell_height),
+                    2 | 6 => (cell_height, along),
+                    _ => (along.saturating_add(cell_height), along.saturating_add(cell_height)),
+                };
+                if width > MAX_COORDINATE || height > MAX_COORDINATE {
+                    return Err(range("MAX_COORDINATE", "the text is longer than a drawing's coordinates reach"));
+                }
+                Ok(Reply::Int(width.saturating_add(height.saturating_mul(HANDLE_NUMBERS))))
+            }
             Op::RG_BOUNDS => {
                 let [handle] = ints.exactly()?;
                 no_payload(op, payload)?;
@@ -928,6 +1041,48 @@ impl Host {
             }
             _ => Err(type_error("not a ReGIS operation")),
         }
+    }
+
+    /// Defines a macrograph, or defines one again (section 6.2,
+    /// `macrograph` and `redefine`): `@:x … @;`, written among the step's
+    /// operations and outside every drawing's definition, where the
+    /// renderer takes it at once; drawings use it as it stood at the
+    /// step's commit (`regis-v2.md`, "Rules for contents", rule 4).
+    fn regis_macrograph(&mut self, context: ContextId, existing: i32, program: &[i32]) -> Result<Reply, Reply> {
+        if program.len() > MAX_PAINTER_WORDS {
+            return Err(range("MAX_PAINTER_WORDS", "a painter program is at most 65,536 whole numbers"));
+        }
+        let regis = &self.regis;
+        let (held, held_bytes) = regis.macrographs_of(context);
+        let (most, most_bytes) = Regis::macrograph_share(context);
+        let index = if existing == 0 {
+            if held >= most {
+                return Err(match context {
+                    ContextId::Page => range("MACROGRAPHS", "the page has as many macrographs as it may"),
+                    ContextId::Channel => range("CHANNEL_SHARE_MACROGRAPHS", "the channel context has as many macrographs as it may"),
+                });
+            }
+            regis.macrographs.iter().position(Option::is_none).ok_or_else(|| range("MACROGRAPHS", "every macrograph is defined"))?
+        } else {
+            regis.macrograph_index(context, existing)?
+        };
+        let language = self.context(context).map_or("", |held| held.open.language.as_str());
+        let setting = Setting { language, letter: &|handle| regis.macrograph_index(context, handle).map(Regis::macrograph_letter), macrograph: true };
+        let body = painter::encode(program, &setting)?;
+        let before = regis.macrographs.get(index).and_then(Option::as_ref).map_or(0, |held| held.body.len());
+        if held_bytes.saturating_sub(before).saturating_add(body.len()) > most_bytes {
+            return Err(range("MAX_MACROGRAPH_BYTES", "the macrographs hold as many bytes as they may"));
+        }
+        self.regis_room(body.len().saturating_add(MACROGRAPH_WRAPPER_BYTES), 0)?;
+        let regis = &mut self.regis;
+        let mut text = vec![b'@', b':', Regis::macrograph_letter(index)];
+        text.extend_from_slice(&body);
+        text.extend_from_slice(b"@;");
+        regis.stage(&text);
+        if let Some(slot) = regis.macrographs.get_mut(index) {
+            *slot = Some(Macrograph { owner: context, body });
+        }
+        Ok(Reply::Int(regis.macrograph_handle(index)))
     }
 
     /// Forgets the drawings `removed` (in order) and what the contexts
@@ -1395,6 +1550,18 @@ impl Host {
             None => regis.ready = (!bytes.is_empty()).then_some(bytes),
             Some((error, drawing)) => {
                 if let Some(snapshot) = snapshot {
+                    // A macrograph is the renderer's at once, commit or
+                    // no commit: the validator is given back each
+                    // definition as the receiver, which was sent nothing
+                    // of this step, still has it.
+                    for (index, (now, before)) in regis.macrographs.iter().zip(&snapshot.macrographs).enumerate() {
+                        if now != before {
+                            let mut text = vec![b'@', b':', Regis::macrograph_letter(index)];
+                            text.extend_from_slice(before.as_ref().map_or(&[][..], |held| &held.body));
+                            text.extend_from_slice(b"@;");
+                            let _ = regis.validator.feed_regis(&text);
+                        }
+                    }
                     self.regis_put_back(*snapshot, error, drawing);
                 }
                 let (name, _) = commit_error_name(error);
@@ -1437,6 +1604,7 @@ impl Host {
         // step is not given out again at once.
         regis.contents = snapshot.contents;
         regis.colours = snapshot.colours;
+        regis.macrographs = snapshot.macrographs;
         regis.animate.clear();
         regis.bounds.retain(|bounds| u16::try_from(bounds.handle).is_ok_and(|number| had(&regis.drawings, number)));
         regis.lists_changed = true;
@@ -1490,4 +1658,16 @@ impl Host {
             }
         }
     }
+}
+
+/// What a painter program writes as a drawing's contents, or as a
+/// macrograph's body, in `language`, with every macrograph's handle
+/// taken as naming macrograph A: the encoder alone, for the fuzz target
+/// that gives it arbitrary programs (script-api.md section 11.4, target
+/// 22).
+///
+/// # Errors
+/// The `RangeError` or `TypeError` that refuses the program whole.
+pub fn painter_contents(program: &[i32], language: &str, macrograph: bool) -> Result<Vec<u8>, Reply> {
+    painter::encode(program, &Setting { language, letter: &|_| Ok(FIRST_MACROGRAPH_LETTER), macrograph })
 }

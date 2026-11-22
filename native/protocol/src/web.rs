@@ -159,6 +159,41 @@ pub const MAX_WS_MESSAGE_BYTES: usize = 1024 * 1024;
 /// The bytes of a partition's token.
 pub const PARTITION_TOKEN_BYTES: usize = 16;
 
+// The rates and counts one (tab, channel)'s scripts are held to (the
+// script API's specification, sections 10.5 and 10.6; its departures D8
+// and D22). They are defined once, here, for both sides: the script host
+// holds them first, at the call, so that a script is told at once and a
+// request waits its turn; the web client holds them again and its
+// refusal is the authority, since a script host may be subverted. The
+// script host counts by presentation ticks and the web client by the
+// clock, so what the script host lets through the web client lets
+// through as well, but for the two clocks' drift.
+
+/// The fetches of a (tab, channel) under way at once.
+pub const MAX_REQUESTS_IN_FLIGHT: usize = 8;
+/// The fetches that wait at the script host for a place or for the rate;
+/// one more is refused.
+pub const MAX_REQUESTS_QUEUED: usize = 32;
+/// The requests (fetches, and event streams' openings) started in one
+/// step, aborted or not: the script host's count, which has steps.
+pub const MAX_REQUESTS_PER_STEP: u32 = 8;
+/// The requests started in any second, aborted or not. The web client
+/// holds it as a second's worth saved up and a second's worth each
+/// second, which admits every run of starts that keeps to this in each
+/// second.
+pub const MAX_REQUESTS_PER_SECOND: u32 = 32;
+/// The event streams of a (tab, channel) open at once.
+pub const MAX_EVENT_STREAMS: usize = 4;
+/// The event streams opened in one step, closed or not.
+pub const MAX_EVENT_STREAM_OPENS_PER_STEP: u32 = 2;
+/// The sockets of a (tab, channel) open at once.
+pub const MAX_SOCKETS: usize = 4;
+/// The sockets opened in one step, closed or not.
+pub const MAX_SOCKET_OPENS_PER_STEP: u32 = 2;
+/// The sockets opened in any minute.
+pub const MAX_SOCKET_OPENS_PER_MINUTE: u32 = 16;
+const _: () = assert!(MAX_REQUESTS_PER_STEP <= MAX_REQUESTS_PER_SECOND && MAX_REQUESTS_IN_FLIGHT <= MAX_REQUESTS_QUEUED);
+
 /// The longest payload of a `Start` as a script host writes it: the
 /// trusted core puts the token before it, and the whole is one payload.
 const MAX_HOST_START_BYTES: usize = MAX_PAYLOAD - PARTITION_TOKEN_BYTES;
@@ -699,6 +734,11 @@ pub enum FromWebClient {
         /// For a WebSocket, the subprotocol the server chose; empty for
         /// none, and for an event stream.
         protocol: String,
+        /// For an event stream, the address that answered, after
+        /// redirects and without its fragment, whose origin is each of
+        /// its events' (the HTML standard, section 9.2.6); at most
+        /// [`MAX_URL_BYTES`], and empty for a WebSocket.
+        url: String,
     },
     /// An event of an event stream.
     Event {
@@ -1187,10 +1227,12 @@ impl FromWebClient {
                 payload.extend_from_slice(&[error.code(), reason.code()]);
                 (KIND_FAILED, payload)
             }
-            Self::Opened { id, protocol } => {
+            Self::Opened { id, protocol, url } => {
                 check_protocol(protocol)?;
+                check_url(url, "opened address")?;
                 let mut payload = with_id(*id);
-                payload.extend_from_slice(protocol.as_bytes());
+                push_bytes(&mut payload, protocol.as_bytes())?;
+                payload.extend_from_slice(url.as_bytes());
                 (KIND_OPENED, payload)
             }
             Self::Event { id, event, data, last_id } => {
@@ -1245,9 +1287,11 @@ impl FromWebClient {
             KIND_FAILED => Self::Failed { id: fields.u32()?, error: ErrorKind::of(fields.u8()?)?, reason: Reason::of(fields.u8()?)? },
             KIND_OPENED => {
                 let id = fields.u32()?;
-                let protocol = rest_text(&mut fields, MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
+                let protocol = fields.string(MAX_SUBPROTOCOL_BYTES, "subprotocol")?;
                 check_protocol(&protocol)?;
-                Self::Opened { id, protocol }
+                let url = rest_text(&mut fields, MAX_URL_BYTES, "opened address")?;
+                check_url(&url, "opened address")?;
+                Self::Opened { id, protocol, url }
             }
             KIND_EVENT => {
                 let id = fields.u32()?;

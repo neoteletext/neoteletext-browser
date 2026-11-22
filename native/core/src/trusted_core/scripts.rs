@@ -45,6 +45,7 @@ use protocol::script::{ContextId, FailReason, FromScriptHost, MAX_LOG_CHARS, wri
 use super::processes::{Decoder, end, end_aside, relay, spawn};
 use super::{Core, Event};
 
+mod reports;
 mod web;
 
 /// The most script hosts alive at once, browser-wide (the
@@ -125,6 +126,15 @@ pub(super) struct Scripts {
     /// The channels whose scripts were stopped, and why: none is started
     /// for them again.
     stopped: BTreeMap<u32, FailReason>,
+    /// What each channel's scripts claim, as its decoder last reported.
+    claims: BTreeMap<u32, protocol::decoder::script::ScriptClaims>,
+    /// The decoder of each channel that was told what its scripts'
+    /// contexts are told, by its generation: a decoder that replaces it
+    /// is told again before its first script.
+    told: BTreeMap<u32, u64>,
+    /// The scripts each channel's decoder was given, whole, for a decoder
+    /// that replaces it: the channel's own and its newest pages'.
+    kept: BTreeMap<u32, Vec<reports::Kept>>,
     web: web::WebClients,
 }
 
@@ -183,10 +193,6 @@ impl Core {
     /// while `ChannelPolicy::network_allowed()` holds"). A channel that is
     /// not a web channel, a file opened from disk, has none whatever its
     /// decoder says (section 2, rule P6).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "called when the decoder's report of a script's claims is handled, which work package F4 builds (TODO-7293)")
-    )]
     pub(super) fn script_network(&mut self, channel: u32, reported: bool) {
         let web = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.web.is_some());
         if let Some(host) = self.scripts.hosts.get_mut(&channel) {
@@ -415,5 +421,7 @@ impl Core {
     }
 }
 
+#[cfg(all(test, unix, feature = "interaction"))]
+mod loading_tests;
 #[cfg(all(test, unix))]
 mod tests;

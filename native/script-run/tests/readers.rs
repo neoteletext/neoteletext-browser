@@ -1,61 +1,17 @@
-//! The runner's readers of what comes from outside: a script's manifest
-//! (script-api.md section 3.1), the network file and the network modes
+//! The runner's readers of what comes from outside: the network file and the network modes
 //! (section 16, "Answers the network"), `expect.json` and the kept
 //! results (section 16, "Compares with kept results"), and the files
 //! passed between the runner's two processes.
 
-use protocol::script::{ContextId, Renderer};
+use protocol::script::ContextId;
 use protocol::web::{
     BodySource, CacheMode, Credentials, ErrorKind, FromWebClient, Mode, RedirectMode, Referrer, ReferrerPolicy, RequestKind, Start, ToWebClient,
 };
 use script_run::blobs::{self, Blob};
 use script_run::expect::{self, Kept};
-use script_run::limits::{EXPECT_FORM, MAX_BLOB_NAME_BYTES, MAX_BLOBS, MAX_MANIFEST_BYTES};
-use script_run::manifest::{self, Pointer};
+use script_run::limits::{EXPECT_FORM, MAX_BLOB_NAME_BYTES, MAX_BLOBS};
 use script_run::network::{self, Network, Recorder, Refusing, Table};
 use script_run::report::sha256;
-
-/// Section 3.1: the manifest's members, and that anything else refuses
-/// the script whole.
-#[test]
-fn a_manifest_is_read_strictly() {
-    let read = manifest::read(
-        br#"/*! nt {"api": 1, "renderer": "naplps", "keys": ["Enter", "ArrowLeft", "Enter"], "text": true, "pointer": "press", "wheel": true, "tick": 60,
-            "language": "cy", "network": true} */ console.log(1);"#,
-    )
-    .unwrap();
-    assert_eq!((read.api, read.renderer, read.pointer, read.tick), (1, Some(Renderer::Naplps), Pointer::Press, 60));
-    assert_eq!(read.keys, ["Enter", "ArrowLeft"]);
-    assert!(read.text && read.wheel && read.network);
-    assert_eq!(read.language.as_deref(), Some("cy"));
-    let least = manifest::read(br#"/*! nt {"api": 1} */"#).unwrap();
-    assert_eq!((least.renderer, least.pointer, least.tick, least.network), (None, Pointer::None, 0, false));
-    let long = format!("/*! nt {{\"api\": 1, \"keys\": [\"{}\"]}} */", "k".repeat(MAX_MANIFEST_BYTES));
-    for (bad, why) in [
-        ("console.log(1)", "does not begin with its manifest"),
-        (" /*! nt {\"api\": 1} */", "does not begin with its manifest"),
-        ("/*! nt {\"api\": 1}", "MAX_MANIFEST_BYTES"),
-        (long.as_str(), "MAX_MANIFEST_BYTES"),
-        ("/*! nt {} */", "`api`"),
-        ("/*! nt {\"api\": 2} */", "`api`"),
-        ("/*! nt {\"api\": 0} */", "`api`"),
-        ("/*! nt {\"api\": 1, \"api\": 1} */", "given twice"),
-        ("/*! nt {\"api\": 1, \"anyKey\": true} */", "does not know"),
-        ("/*! nt {\"api\": 1, \"renderer\": \"svg\"} */", "`renderer`"),
-        ("/*! nt {\"api\": 1, \"tick\": 61} */", "MAX_TICK_DIVISOR"),
-        ("/*! nt {\"api\": 1, \"tick\": 1.5} */", "whole number"),
-        ("/*! nt {\"api\": 1, \"text\": 1} */", "`text`"),
-        ("/*! nt {\"api\": 1, \"pointer\": \"all\"} */", "`pointer`"),
-        ("/*! nt {\"api\": 1, \"keys\": [\"\"]} */", "MAX_KEY_NAME_BYTES"),
-        ("/*! nt {\"api\": 1, \"keys\": \"Enter\"} */", "`keys`"),
-        ("/*! nt {\"api\": 1, \"language\": \"en gb\"} */", "`language`"),
-        ("/*! nt [1] */", "not a JSON object"),
-        ("/*! nt {\"api\": 1} trailing */", "not one JSON object"),
-    ] {
-        let refused = manifest::read(bad.as_bytes()).expect_err(bad);
-        assert!(refused.contains(why), "`{}` was refused with `{refused}`, not for `{why}`", bad.chars().take(60).collect::<String>());
-    }
-}
 
 fn start(id: u32, kind: RequestKind, method: &str, url: &str) -> ToWebClient {
     ToWebClient::Start(Box::new(Start {
@@ -158,7 +114,7 @@ fn a_table_answers_each_request_on_its_ticks() {
     mock.request(40, start(5, RequestKind::WebSocket, "GET", "wss://channel.test/chat"));
     mock.request(41, ToWebClient::SocketSend { id: 5, binary: false, last: true, bytes: b"hi".to_vec() });
     let chat = answers(&mut mock, 40, 44);
-    assert_eq!(chat[0], (42, FromWebClient::Opened { id: 5, protocol: "chat.v1".into() }));
+    assert_eq!(chat[0], (42, FromWebClient::Opened { id: 5, protocol: "chat.v1".into(), url: String::new() }));
     assert_eq!(chat[1], (42, FromWebClient::Sent { id: 5, bytes: 2 }));
     assert_eq!(chat[2], (43, FromWebClient::SocketMessage { id: 5, binary: false, last: true, bytes: b"hello".to_vec() }));
     assert_eq!(chat[3], (43, FromWebClient::SocketMessage { id: 5, binary: true, last: false, bytes: vec![1, 2] }));

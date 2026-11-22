@@ -159,25 +159,26 @@ pub enum Target {
 /// The definitions a painter's calls may name by handle (section 7.4),
 /// which work package N2 keeps.
 pub trait Definitions {
-    /// The macro code of the symbol `handle`.
-    fn symbol(&self, handle: i32) -> Option<u8>;
+    /// The macro code of the symbol `handle`, and its height in lines.
+    fn symbol(&self, handle: i32) -> Option<(u8, i32)>;
     /// The code of the DRCS character `handle`.
     fn drcs(&self, handle: i32) -> Option<u8>;
-    /// Which of the programmable patterns A to D, 0 to 3, the texture `handle` is.
-    fn texture(&self, handle: i32) -> Option<u8>;
+    /// Which of the programmable patterns A to D, 0 to 3, the texture
+    /// `handle` is, and its width in dots and height in lines.
+    fn texture(&self, handle: i32) -> Option<(u8, i32, i32)>;
 }
 
 /// No definitions: every handle is stale.
 pub struct NoDefinitions;
 
 impl Definitions for NoDefinitions {
-    fn symbol(&self, _: i32) -> Option<u8> {
+    fn symbol(&self, _: i32) -> Option<(u8, i32)> {
         None
     }
     fn drcs(&self, _: i32) -> Option<u8> {
         None
     }
-    fn texture(&self, _: i32) -> Option<u8> {
+    fn texture(&self, _: i32) -> Option<(u8, i32, i32)> {
         None
     }
 }
@@ -273,6 +274,7 @@ pub struct Painter {
     pen: Pen,
     sent: Sent,
     target: Target,
+    space: Space,
 }
 
 /// What a run of a program did beside writing bytes.
@@ -314,25 +316,66 @@ fn place(x: i64, y: i64) -> Result<(i32, i32), Fault> {
     Ok((x, y))
 }
 
-/// The dot (`x`, `y`) of the canvas as a six-byte operand's axis values (RAS-2).
-fn steps(x: i32, y: i32, rounding: Rounding) -> (i64, i64) {
-    dot_steps(i64::from(x), i64::from(y).saturating_add(i64::from(CANVAS_TOP_LINE)), 1, OPERAND_BYTES, rounding)
+/// One pixel of a definition's bitmap, as an operand's axis value: the
+/// bitmap's longer side is the unit and is `MASK_SIDE` pixels (the
+/// renderer's bound, by name).
+const MASK_PIXEL: i64 = (AXIS_MAX + 1) / naplps::limits::MASK_SIDE as i64;
+
+/// What a painter's dots are dots of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Space {
+    /// The canvas: a dot is written as RAS-2 maps it to the unit screen.
+    Canvas,
+    /// A DRCS character's or a texture's own bitmap of `width` dots by
+    /// `height` lines, each dot shaped as a canvas dot is. The receiver
+    /// draws a definition into a bitmap whose longer side is the whole
+    /// unit, its origin at the lower left (ANSI X3.110-1983 sections
+    /// 6.2.3 and 6.2.4), so a dot is that share of the unit.
+    Pattern { width: i32, height: i32 },
 }
 
-/// `dots` across as an operand's axis value, rounded down: a size that is
-/// a hair under its dots, which the renderer rounds up to exactly them.
-fn across(dots: i32) -> i64 {
-    unit_steps(i64::from(dots), i64::from(RASTER_WIDTH), OPERAND_BYTES, Rounding::Down)
-}
+impl Space {
+    /// One dot across and one line up, each as a fraction of the unit.
+    fn ratios(self) -> ((i64, i64), (i64, i64)) {
+        // A canvas dot is 1/480 of the unit across; a line 25/(32 x 460) up.
+        let line = (DISPLAY_HEIGHT_NUMERATOR.saturating_mul(i64::from(RASTER_WIDTH)), DISPLAY_HEIGHT_DENOMINATOR.saturating_mul(i64::from(DISPLAY_LINES)));
+        match self {
+            Self::Canvas => ((1, i64::from(RASTER_WIDTH)), (DISPLAY_HEIGHT_NUMERATOR, DISPLAY_HEIGHT_DENOMINATOR.saturating_mul(i64::from(DISPLAY_LINES)))),
+            Self::Pattern { width, height } => {
+                let (width, height) = (i64::from(width.max(1)), i64::from(height.max(1)));
+                // Which side is the longer, in the unit's own lengths.
+                if width.saturating_mul(line.1) >= height.saturating_mul(line.0) {
+                    ((1, width), (line.0, line.1.saturating_mul(width)))
+                } else {
+                    ((line.1, line.0.saturating_mul(height)), (1, height))
+                }
+            }
+        }
+    }
 
-/// `lines` up as an operand's axis value, rounded down as [`across`].
-fn up(lines: i32) -> i64 {
-    unit_steps(
-        i64::from(lines).saturating_mul(DISPLAY_HEIGHT_NUMERATOR),
-        DISPLAY_HEIGHT_DENOMINATOR.saturating_mul(i64::from(DISPLAY_LINES)),
-        OPERAND_BYTES,
-        Rounding::Down,
-    )
+    /// `dots` across as an operand's axis value.
+    fn across(self, dots: i32, rounding: Rounding) -> i64 {
+        let ((numerator, denominator), _) = self.ratios();
+        unit_steps(i64::from(dots).saturating_mul(numerator), denominator, OPERAND_BYTES, rounding)
+    }
+
+    /// `lines` up as an operand's axis value.
+    fn up(self, lines: i32, rounding: Rounding) -> i64 {
+        let (_, (numerator, denominator)) = self.ratios();
+        unit_steps(i64::from(lines).saturating_mul(numerator), denominator, OPERAND_BYTES, rounding)
+    }
+
+    /// The dot (`x`, `y`) as a six-byte operand's axis values: on the
+    /// canvas by RAS-2; in a pattern from its lower left.
+    fn steps(self, x: i32, y: i32, rounding: Rounding) -> (i64, i64) {
+        match self {
+            Self::Canvas => dot_steps(i64::from(x), i64::from(y).saturating_add(i64::from(CANVAS_TOP_LINE)), 1, OPERAND_BYTES, rounding),
+            // A pel hangs down from its point (the painter's DOMAIN), so a
+            // dot's point is the top line of its share of the bitmap: the
+            // dot's top edge, less one of the bitmap's own pixels.
+            Self::Pattern { height, .. } => (self.across(x, rounding), self.up(height.saturating_sub(y), rounding).saturating_sub(MASK_PIXEL)),
+        }
+    }
 }
 
 fn operand(across: i64, up: i64, out: &mut Vec<u8>) {
@@ -385,22 +428,104 @@ impl Painter {
                 open: true,
             },
             target: Target::Backdrop,
+            space: Space::Canvas,
         }
     }
 
     /// A painter of a definition's contents (section 7.4), which begin in
-    /// the receiver's power-up state with nothing known: a symbol's
-    /// drawing point is taken as its own origin, the dot (0, 0), and
-    /// every place of it is written as a step from there.
+    /// the receiver's power-up state with nothing known: a symbol whose
+    /// first dot is where the drawing point is, or a pattern of one
+    /// teletext cell.
     #[must_use]
     pub fn definition(target: Target) -> Self {
+        if target == Target::Pattern { Self::pattern(CELL_DOTS, CELL_LINES) } else { Self::symbol(1) }
+    }
+
+    /// A painter of a symbol's macro, `height` lines tall (section 7.4).
+    /// Every place of it is written as a step from where the receiver's
+    /// drawing point is when the macro runs, which is taken as the
+    /// symbol's **lower** left dot, (0, `height` - 1): a macro that an
+    /// object runs starts at the unit screen's origin, its lower left
+    /// (animation.md ANIM-11), and a symbol drawn upwards from there lies
+    /// on the screen, where text and fields are not moved by the
+    /// receiver to keep them on it.
+    #[must_use]
+    pub fn symbol(height: i32) -> Self {
+        let mut painter = Self::unknown(Target::Symbol, Space::Canvas);
+        painter.sent.point = Some(painter.steps(0, height.saturating_sub(1), Rounding::Nearest));
+        painter
+    }
+
+    /// A painter of a DRCS character's or a texture's bitmap of `width`
+    /// dots by `height` lines (section 7.4): places are dots of the
+    /// bitmap from its top left.
+    #[must_use]
+    pub fn pattern(width: i32, height: i32) -> Self {
+        Self::unknown(Target::Pattern, Space::Pattern { width, height })
+    }
+
+    fn unknown(target: Target, space: Space) -> Self {
         let mut painter = Self::backdrop();
         painter.target = target;
-        painter.sent = Sent { point: None, ink: None, pel: None, texture: None, text: None, underline: false, reverse: false, drawing: false, open: false };
-        if target == Target::Symbol {
-            painter.sent.point = Some(steps(0, 0, Rounding::Nearest));
-        }
+        painter.space = space;
+        painter.forget();
         painter
+    }
+
+    /// Forgets what the receiver holds: after bytes this painter did not
+    /// write and the receiver executed (a DRCS character's or a
+    /// texture's definition, a macro), everything is written again when
+    /// next needed.
+    pub fn forget(&mut self) {
+        self.sent = Sent { point: None, ink: None, pel: None, texture: None, text: None, underline: false, reverse: false, drawing: false, open: false };
+    }
+
+    /// Ends a definition's contents: the last PDI ended, and underline
+    /// and reverse turned off if the contents left them on, since what
+    /// follows a definition, or a stamp of it, takes them as off.
+    pub fn close(&mut self, out: &mut Vec<u8>) {
+        self.end(out);
+        if self.sent.underline {
+            out.extend_from_slice(&[ESC, UNDERLINE_OFF]);
+        }
+        if self.sent.reverse {
+            out.extend_from_slice(&[ESC, REVERSE_OFF]);
+        }
+        (self.sent.underline, self.sent.reverse) = (false, false);
+    }
+
+    /// Before DEF DRCS: the character field of one teletext cell, whose
+    /// shape the receiver gives the character's bitmap (section 6.2.3).
+    pub fn before_drcs(&mut self, out: &mut Vec<u8>) {
+        self.pel(self.pen.pel, out);
+        self.text_form(GRID_TEXT, out);
+    }
+
+    /// Before DEF TEXTURE: the mask size of `width` dots by `height`
+    /// lines, whose shape the receiver gives the pattern's bitmap
+    /// (section 6.2.4).
+    pub fn before_texture(&mut self, width: i32, height: i32, out: &mut Vec<u8>) {
+        self.pel(self.pen.pel, out);
+        let (line, fill, highlight, _) = self.sent.texture.unwrap_or((0, 0, false, None));
+        self.pdi(opcode::TEXTURE, out);
+        out.push(OPERAND | (fill << 3) | (u8::from(highlight) << 2) | line);
+        operand(self.across(width), self.up(height), out);
+        self.sent.texture = Some((line, fill, highlight, Some((width, height))));
+    }
+
+    fn steps(&self, x: i32, y: i32, rounding: Rounding) -> (i64, i64) {
+        self.space.steps(x, y, rounding)
+    }
+
+    /// `dots` across as a size: rounded down, a hair under its dots,
+    /// which the renderer rounds up to exactly them.
+    fn across(&self, dots: i32) -> i64 {
+        self.space.across(dots, Rounding::Down)
+    }
+
+    /// `lines` up as a size, rounded down as [`Painter::across`].
+    fn up(&self, lines: i32) -> i64 {
+        self.space.up(lines, Rounding::Down)
     }
 
     /// What starts a generation (section 7.1, RAS-6): the PDI set, RESET
@@ -411,7 +536,7 @@ impl Painter {
         out.push(SO);
         out.push(opcode::RESET);
         out.extend_from_slice(&RESET_EVERYTHING);
-        domain((1, 1), out);
+        domain(Space::Canvas, (1, 1), out);
         for (number, rgb) in (0_u8..).zip(TELETEXT_COLOURS) {
             out.extend_from_slice(&[opcode::SELECT_COLOR, entry_operand(number), opcode::SET_COLOR]);
             colour_operand(rgb, out);
@@ -503,7 +628,7 @@ impl Painter {
             self.pdi(opcode::TEXTURE, out);
             out.push(OPERAND | (self.pen.fill << 3) | (u8::from(self.pen.highlight) << 2) | self.pen.line);
             if let Some((width, height)) = self.pen.mask {
-                operand(across(width), up(height), out);
+                operand(self.across(width), self.up(height), out);
             }
             self.sent.texture = Some(texture);
         }
@@ -515,7 +640,7 @@ impl Painter {
                 out.push(SO);
                 self.sent.drawing = true;
             }
-            domain(pel, out);
+            domain(self.space, pel, out);
             self.sent.open = true;
             self.sent.pel = Some(pel);
         }
@@ -524,7 +649,7 @@ impl Painter {
     /// Dresses the receiver and puts its drawing point on the pen's.
     fn ready(&mut self, out: &mut Vec<u8>) -> Result<(i64, i64), Fault> {
         self.dress(out);
-        let at = steps(self.pen.x, self.pen.y, Rounding::Nearest);
+        let at = self.steps(self.pen.x, self.pen.y, Rounding::Nearest);
         self.point_to(at, false, out)?;
         Ok(at)
     }
@@ -599,7 +724,7 @@ impl Painter {
                 let by = matches!(call, Paint::POINT_BY | Paint::LINE_BY);
                 let line = matches!(call, Paint::LINE_TO | Paint::LINE_BY);
                 let (x, y) = if by { self.stepped(a, b)? } else { Self::named(a, b)? };
-                let to = steps(x, y, Rounding::Nearest);
+                let to = self.steps(x, y, Rounding::Nearest);
                 if line || by || relative {
                     let from = self.ready(out)?;
                     if by || relative {
@@ -645,7 +770,7 @@ impl Painter {
                 if by || relative {
                     let mut operands = Vec::with_capacity(rest.len().saturating_mul(usize::from(OPERAND_BYTES)));
                     for (x, y) in rest {
-                        let to = steps(*x, *y, Rounding::Nearest);
+                        let to = self.steps(*x, *y, Rounding::Nearest);
                         let (dx, dy) = step(from, to)?;
                         operand(dx, dy, &mut operands);
                         from = to;
@@ -661,7 +786,7 @@ impl Painter {
                         if index == 1 {
                             self.pdi(opcode::LINE_ABSOLUTE, out);
                         }
-                        from = steps(*x, *y, Rounding::Nearest);
+                        from = self.steps(*x, *y, Rounding::Nearest);
                         operand(from.0, from.1, out);
                     }
                 }
@@ -687,8 +812,8 @@ impl Painter {
                 // top right, so that it covers exactly its dots.
                 let (left, bottom) = place(i64::from(x), i64::from(y).saturating_add(i64::from(height)).saturating_sub(1))?;
                 let (right, _) = place(i64::from(x).saturating_add(i64::from(width)).saturating_sub(1), i64::from(y))?;
-                let corner = steps(left, bottom, Rounding::Nearest);
-                let size = step(corner, steps(right, y, Rounding::Nearest))?;
+                let corner = self.steps(left, bottom, Rounding::Nearest);
+                let size = step(corner, self.steps(right, y, Rounding::Nearest))?;
                 // Afterwards the pen is one rectangle's width along, for
                 // adjoining rectangles; a pen moved off the places an
                 // operand reaches stays where it was.
@@ -726,11 +851,11 @@ impl Painter {
                     (self.pen.x, self.pen.y) = *first;
                     rest = later;
                 }
-                let start = steps(self.pen.x, self.pen.y, Rounding::Nearest);
+                let start = self.steps(self.pen.x, self.pen.y, Rounding::Nearest);
                 let mut from = start;
                 let mut operands = Vec::with_capacity(rest.len().saturating_mul(usize::from(OPERAND_BYTES)));
                 for (x, y) in rest {
-                    let to = steps(*x, *y, Rounding::Nearest);
+                    let to = self.steps(*x, *y, Rounding::Nearest);
                     let (dx, dy) = step(from, to)?;
                     operand(dx, dy, &mut operands);
                     from = to;
@@ -751,8 +876,8 @@ impl Painter {
                 let [mx, my, ex, ey] = words.words()?;
                 let (middle, end) = (Self::named(mx, my)?, Self::named(ex, ey)?);
                 let from = self.ready(out)?;
-                let through = steps(middle.0, middle.1, Rounding::Nearest);
-                let to = steps(end.0, end.1, Rounding::Nearest);
+                let through = self.steps(middle.0, middle.1, Rounding::Nearest);
+                let to = self.steps(end.0, end.1, Rounding::Nearest);
                 let (first, second) = (step(from, through)?, step(through, to)?);
                 self.pdi(opcode::ARC_OUTLINED | filled_bit(call == Paint::FILL_ARC), out);
                 operand(first.0, first.1, out);
@@ -766,8 +891,8 @@ impl Painter {
                 let (cx, cy) = Self::named(cx, cy)?;
                 let (left, _) = place(i64::from(cx).saturating_sub(i64::from(radius)), i64::from(cy))?;
                 let (right, _) = place(i64::from(cx).saturating_add(i64::from(radius)), i64::from(cy))?;
-                let start = steps(left, cy, Rounding::Nearest);
-                let across = step(start, steps(right, cy, Rounding::Nearest))?;
+                let start = self.steps(left, cy, Rounding::Nearest);
+                let across = step(start, self.steps(right, cy, Rounding::Nearest))?;
                 self.dress(out);
                 self.point_to(start, false, out)?;
                 // Section 5.3.3.3.1: an arc of one step is the circle on
@@ -800,7 +925,9 @@ impl Painter {
                     Ok(named) if named < FIRST_PROGRAMMABLE_FILL => named,
                     Ok(FIRST_PROGRAMMABLE_FILL) => {
                         let [handle] = words.words()?;
-                        let pattern = definitions.texture(handle).ok_or_else(|| kind("no such texture"))?;
+                        let (pattern, width, height) = definitions.texture(handle).ok_or_else(|| kind("no such texture"))?;
+                        // A pattern is tiled at the size it was defined at.
+                        self.pen.mask = Some((width, height));
                         FIRST_PROGRAMMABLE_FILL.saturating_add(pattern).min(LAST_FILL)
                     }
                     _ => return Err(kind("no such fill style")),
@@ -865,7 +992,7 @@ impl Painter {
                 let code = definitions.drcs(handle).ok_or_else(|| kind("no such DRCS character"))?;
                 self.dress(out);
                 self.text_form(self.sent.text.unwrap_or(GRID_TEXT), out);
-                self.point_to(steps(self.pen.x, self.pen.y, Rounding::Nearest), true, out)?;
+                self.point_to(self.steps(self.pen.x, self.pen.y, Rounding::Nearest), true, out)?;
                 // The DRCS set into G2, the character by a single shift,
                 // and the supplementary set back (section 4.3.2).
                 out.extend_from_slice(&[ESC, INTO_G2, DRCS_SET, SS2, code, ESC, INTO_G2, SUPPLEMENTARY_SET]);
@@ -873,16 +1000,18 @@ impl Painter {
             }
             Paint::STAMP => {
                 let [handle, x, y] = words.words()?;
-                let code = definitions.symbol(handle).ok_or_else(|| kind("no such symbol"))?;
+                let (code, height) = definitions.symbol(handle).ok_or_else(|| kind("no such symbol"))?;
                 (self.pen.x, self.pen.y) = Self::named(x, y)?;
-                self.ready(out)?;
+                // A symbol is drawn up from its lower left dot.
+                let (left, bottom) = place(i64::from(self.pen.x), i64::from(self.pen.y).saturating_add(i64::from(height)).saturating_sub(1))?;
+                self.dress(out);
+                self.point_to(self.steps(left, bottom, Rounding::Nearest), false, out)?;
                 // The macro set into G3 and the macro by a single shift
                 // (section 6.2.2). The macro runs in the receiver's state
                 // and leaves it as its own contents do: nothing sent
                 // before it is known afterwards.
                 out.extend_from_slice(&[ESC, INTO_G3, MACRO_SET, SS3, code]);
-                self.sent =
-                    Sent { point: None, ink: None, pel: None, texture: None, text: None, underline: false, reverse: false, drawing: false, open: false };
+                self.forget();
             }
             Paint::WAIT => {
                 let [tenths] = words.words()?;
@@ -914,7 +1043,7 @@ impl Painter {
         out.push(OPERAND | (form.spacing << 4) | (form.path << 2) | form.rotation);
         out.push(OPERAND | POINT_LEADS | form.rows);
         // RAS-8: a field a hair under its dots, rounded down.
-        operand(across(form.width), up(form.height), out);
+        operand(self.across(form.width), self.up(form.height), out);
         self.sent.text = Some(form);
     }
 
@@ -931,7 +1060,7 @@ impl Painter {
         self.pel(self.pen.pel, out);
         self.text_form(form, out);
         self.select(self.pen.ink, out);
-        self.point_to(steps(left, bottom, Rounding::Down), true, out)?;
+        self.point_to(self.steps(left, bottom, Rounding::Down), true, out)?;
         for (now, sent, on, off) in [(underline, self.sent.underline, UNDERLINE_ON, UNDERLINE_OFF), (reverse, self.sent.reverse, REVERSE_ON, REVERSE_OFF)] {
             if now != sent {
                 out.extend_from_slice(&[ESC, if now { on } else { off }]);
@@ -974,10 +1103,8 @@ impl Painter {
         let dy = within(dy, -CANVAS_HEIGHT, CANVAS_HEIGHT, "CANVAS_HEIGHT", "a trace's step down")?;
         let moves = words.list(MAX_TRACE_MOVES, "MAX_VERTICES", "a trace")?;
         // The step as an operand: across, and up for a step down.
-        let nearest = |numerator: i64, denominator: i64| unit_steps(numerator, denominator, OPERAND_BYTES, Rounding::Nearest);
-        let step_x = nearest(i64::from(dx), i64::from(RASTER_WIDTH));
-        let step_y = nearest(i64::from(dy).saturating_mul(DISPLAY_HEIGHT_NUMERATOR), DISPLAY_HEIGHT_DENOMINATOR.saturating_mul(i64::from(DISPLAY_LINES)))
-            .saturating_neg();
+        let step_x = self.space.across(dx, Rounding::Nearest);
+        let step_y = self.space.up(dy, Rounding::Nearest).saturating_neg();
         // Each move as its two bits, the pen and the directions followed
         // as the receiver follows them.
         let mut codes: Vec<u8> = Vec::with_capacity(moves.len().saturating_mul(2));
@@ -1070,8 +1197,8 @@ impl Painter {
         // The pels are one dot across and one line down each, laid from
         // the image's top left: a field exactly its pels wide, and one
         // step taller than its pels, so that the first row lies inside it.
-        let (pel_x, pel_y) = (across(1), up(1));
-        let start = steps(x, y, Rounding::Nearest);
+        let (pel_x, pel_y) = (self.across(1), self.up(1));
+        let start = self.steps(x, y, Rounding::Nearest);
         let bottom = (start.0, start.1.saturating_sub(pel_y.saturating_mul(i64::from(height))));
         let size = (pel_x.saturating_mul(i64::from(width)), pel_y.saturating_mul(i64::from(height)).saturating_add(1));
         if !(AXIS_MIN..=AXIS_MAX).contains(&bottom.1) || size.0 > AXIS_MAX || size.1 > AXIS_MAX {
@@ -1097,9 +1224,9 @@ impl Painter {
 /// DOMAIN (section 5.3.2.2): six-byte operands and the logical pel, which
 /// hangs right and down from the drawing point, as a rectangle's dots do
 /// from its top left: a positive width and a negative height.
-fn domain((width, height): (i32, i32), out: &mut Vec<u8>) {
+fn domain(space: Space, (width, height): (i32, i32), out: &mut Vec<u8>) {
     out.extend_from_slice(&[opcode::DOMAIN, DOMAIN_FORMAT]);
-    operand(across(width), up(height).saturating_neg(), out);
+    operand(space.across(width, Rounding::Down), space.up(height, Rounding::Down).saturating_neg(), out);
 }
 
 /// A stretch of a text as it is written.

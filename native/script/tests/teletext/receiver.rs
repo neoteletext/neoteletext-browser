@@ -58,7 +58,7 @@ impl Receiver {
 
     /// The page's packets: a header, its rows, its packets X/26 and its
     /// packet X/28/0 format 1.
-    fn packets(&self) -> Vec<Packet> {
+    pub fn packets(&self) -> Vec<Packet> {
         let address = PageAddress::from_mpp(PAGE).unwrap();
         let header = |mpp: u16| {
             let address = PageAddress::from_mpp(mpp).unwrap();
@@ -103,7 +103,12 @@ impl Receiver {
 
     /// The page as a Level 2.5 receiver resolves it.
     pub fn grid(&self) -> Box<Grid> {
-        let config = Config { level: PresentationLevel::Level25, ..Config::default() };
+        self.grid_at(PresentationLevel::Level25)
+    }
+
+    /// The page as a receiver of `level` resolves it.
+    pub fn grid_at(&self, level: PresentationLevel) -> Box<Grid> {
+        let config = Config { level, ..Config::default() };
         let mut pages = vec![StoredPage::EMPTY; 16];
         let mut sub_pages = vec![EnhancementSubPage::EMPTY; 16];
         let mut held = vec![EnhancementPacket::EMPTY; 64];
@@ -127,7 +132,11 @@ impl Receiver {
     /// background as a Colour Map entry in base 32, and `F` under a cell
     /// that flashes.
     pub fn picture(&self) -> String {
-        let grid = self.grid();
+        Self::picture_of(&self.grid())
+    }
+
+    /// A resolved page as the text a test keeps.
+    pub fn picture_of(grid: &Grid) -> String {
         let digit = |entry: u8| char::from_digit(u32::from(entry), 32).unwrap();
         let mut out = String::new();
         for (row, cells) in grid.cells.iter().enumerate().skip(usize::from(FIRST_SCRIPT_ROW)).take(MAX_SCRIPT_ROWS) {

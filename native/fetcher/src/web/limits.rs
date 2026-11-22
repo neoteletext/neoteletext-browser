@@ -19,9 +19,22 @@ pub(crate) const HEAD_TIMEOUT: Duration = Duration::from_micros(DEFAULT_RESPONSE
 /// common servers leave between the keep-alive comments of a slow answer.
 /// An event stream has no such limit: silence is its ordinary state.
 pub(crate) const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-/// The requests of one tab under way at once: more than the six
-/// connections a host is commonly given, since HTTP/2 shares one.
-pub(crate) const MAX_REQUESTS_PER_TAB: usize = 16;
+/// How long a keepalive request goes on after its context or tab has
+/// closed: the script API's `KEEPALIVE_SECONDS` (`docs/script-api.md`
+/// section 10.6, departure D9).
+pub(crate) const KEEPALIVE_DEADLINE: Duration = Duration::from_secs(30);
+/// The bytes of the bodies of the keepalive requests under way together:
+/// the Fetch standard's 64 kibibytes (its section 4.5, the "inflight
+/// keep-alive bytes"), which the script host holds too
+/// (`MAX_KEEPALIVE_BODY_BYTES` in its limits) and the web client holds
+/// again, the host's word not being trusted.
+pub(crate) const MAX_KEEPALIVE_BODY_BYTES: usize = 64 * 1024;
+/// The requests of one tab under way at once: every fetch, event stream
+/// and WebSocket its script host may have under way (the script API's
+/// departures D8 and D22, the protocol crate's numbers by name). More
+/// than the six connections a host is commonly given, since HTTP/2
+/// shares one.
+pub(crate) const MAX_REQUESTS_PER_TAB: usize = protocol::web::MAX_REQUESTS_IN_FLIGHT + protocol::web::MAX_EVENT_STREAMS + protocol::web::MAX_SOCKETS;
 /// The requests of one tab that may wait for one of
 /// [`MAX_REQUESTS_PER_TAB`]; one more fails as busy.
 pub(crate) const MAX_WAITING_PER_TAB: usize = 64;
@@ -39,6 +52,17 @@ pub(crate) const MAX_RESPONSE_HEAD: usize = protocol::web::MAX_HEADER_BYTES;
 /// largest request body, past which the answer fails rather than a small
 /// coded body fill the script's memory.
 pub(crate) const MAX_DECODED_BODY: u64 = 64 * 1024 * 1024;
+/// How many times its coded length a coded body may decode to
+/// (`MAX_DECOMPRESSED_RATIO` of neoteletext-common's `docs/script-api.md`
+/// section 10.6): past it the answer fails long before
+/// [`MAX_DECODED_BODY`], since what decodes so is made to fill memory, not
+/// to be read.
+pub(crate) const MAX_DECOMPRESSED_RATIO: u64 = 100;
+/// The decoded bytes below which the ratio is not asked: a short body of
+/// one repeated byte passes the ratio and harms nothing. It is the
+/// longest WebSocket message, the size the script side already holds
+/// whole.
+pub(crate) const DECODED_RATIO_FLOOR: u64 = protocol::web::MAX_WS_MESSAGE_BYTES as u64;
 /// The largest body held whole to check its integrity metadata before any
 /// of it is given to the script: the largest request body's size.
 pub(crate) const MAX_INTEGRITY_BODY: usize = protocol::web::MAX_REQUEST_BODY_BYTES;
@@ -72,14 +96,27 @@ pub(crate) const MAX_COOKIES_PER_JAR: usize = 300;
 // A whole jar, written for the trusted core to keep, fits the pipe's bound
 // on one: each cookie's text, the address that set it and its numbers.
 const _: () = assert!(MAX_COOKIES_PER_JAR * (MAX_COOKIE_BYTES + 3 * MAX_COOKIE_ATTRIBUTE + 512) <= protocol::web::MAX_JAR_BYTES);
-/// The requests a tab may start at once after a pause: one screen of a
-/// page's own files and a script's first burst.
-pub(crate) const START_BURST: u32 = 32;
-/// The requests a tab may start each second once its burst is spent. A
-/// script that starts and aborts requests in a loop is held to this, which
-/// a cap on those under way alone would not do (the security review's
-/// measurement of 1,240 requests in one step of a script).
-pub(crate) const STARTS_PER_SECOND: u32 = 16;
+/// The bytes of the public suffix list built in: three times the 342,871
+/// of the list of 21 November 2026. The build fails on a longer one.
+pub(crate) const MAX_SUFFIX_LIST_BYTES: usize = 1 << 20;
+/// The rules of the public suffix list built in: three times the 10,469
+/// of the list of 21 November 2026. The process does not start on more.
+pub(crate) const MAX_SUFFIX_RULES: usize = 1 << 15;
+/// The requests a tab may start at once after a pause: a second's worth
+/// saved up.
+pub(crate) const START_BURST: u32 = protocol::web::MAX_REQUESTS_PER_SECOND;
+/// The requests a tab may start each second once its burst is spent: the
+/// protocol crate's number, which the script host holds first, counting
+/// by its ticks. Held here by the clock, with a second's worth saved up,
+/// it lets through every run of starts the script host lets through, and
+/// its refusal is the authority: a script that starts and aborts
+/// requests in a loop is held to this, which a cap on those under way
+/// alone would not do (the security review's measurement of 1,240
+/// requests in one step of a script).
+pub(crate) const STARTS_PER_SECOND: u32 = protocol::web::MAX_REQUESTS_PER_SECOND;
+// A run of starts that keeps to the rate in each second never needs more
+// saved up than a second's worth.
+const _: () = assert!(START_BURST >= STARTS_PER_SECOND);
 /// The wait before an event stream is opened again when it names none:
 /// "a few seconds" in the HTML standard (section 9.2.2).
 pub(crate) const DEFAULT_RETRY: Duration = Duration::from_secs(3);

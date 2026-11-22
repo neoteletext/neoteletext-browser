@@ -2,7 +2,6 @@
 //!
 //! ```text
 //! neoteletext-script-run run CHANNEL_OR_FILE [--page NNN[/SSSS]]
-//!     [--script FILE.js] [--channel-script FILE.js]
 //!     [--ticks N] [--pace] [--seed TEXT] [--input FILE]
 //!     [--network none|live] [--network mock|replay|record FILE] [--serve DIR]
 //!     [--out DIR] [--png-every N] [--png-at TICK,...] [--wav FILE]
@@ -19,7 +18,7 @@ use crate::Failure;
 use crate::limits::{DEFAULT_CHANNEL_URL, DEFAULT_SEED, DEFAULT_TICKS, MAX_ARGUMENT_BYTES, MAX_ARGUMENTS, MAX_SNAPSHOTS, MAX_TICKS};
 
 /// What the command line is, for a message that refuses one.
-pub const USAGE: &str = "usage: neoteletext-script-run run CHANNEL_OR_FILE [--page NNN[/SSSS]] [--script FILE.js] [--channel-script FILE.js] \
+pub const USAGE: &str = "usage: neoteletext-script-run run CHANNEL_OR_FILE [--page NNN[/SSSS]] \
 [--ticks N] [--pace] [--seed TEXT] [--input FILE] [--network none|live | --network mock|replay|record FILE] [--serve DIR] \
 [--out DIR] [--png-every N] [--png-at TICK,...] [--wav FILE] [--expect DIR] [--bless] [--report FILE] \
 [--channel-url URL] [--sound-allowed] [--strict-time] [--watch] [--unconfined]";
@@ -57,10 +56,6 @@ pub struct Options {
     pub target: PathBuf,
     /// The page, as three hexadecimal digits, and its sub-code.
     pub page: Option<(u16, Option<u16>)>,
-    /// The page-level script, where the channel file does not name it.
-    pub script: Option<PathBuf>,
-    /// The channel-level script, where the channel file does not name it.
-    pub channel_script: Option<PathBuf>,
     /// The ticks to step.
     pub ticks: u64,
     /// Step on the wall clock, for watching.
@@ -147,8 +142,6 @@ fn valued(options: &mut Options, flag: &str, value: &String, rest: &mut core::sl
     let number = |most: u64| value.parse::<u64>().ok().filter(|number| (1..=most).contains(number));
     match flag {
         "--page" => options.page = Some(page(value).ok_or_else(|| usage("--page takes NNN or NNN/SSSS in hexadecimal, a page from 100 to 8FF"))?),
-        "--script" => options.script = Some(value.into()),
-        "--channel-script" => options.channel_script = Some(value.into()),
         "--ticks" => options.ticks = number(MAX_TICKS).ok_or_else(|| usage(&format!("--ticks takes a whole number from 1 to {MAX_TICKS}")))?,
         "--seed" => options.seed.clone_from(value),
         "--input" => options.input = Some(value.into()),
@@ -210,8 +203,6 @@ pub fn parse(arguments: &[String]) -> Result<Options, Failure> {
     let mut options = Options {
         target: target.into(),
         page: None,
-        script: None,
-        channel_script: None,
         ticks: DEFAULT_TICKS,
         pace: false,
         seed: DEFAULT_SEED.to_owned(),

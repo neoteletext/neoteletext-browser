@@ -91,6 +91,11 @@ pub trait Network {
     fn deterministic(&self) -> bool {
         true
     }
+    /// Whether its answers come in real time, so that a run's ticks must
+    /// be paced on the wall clock for an answer to arrive within them.
+    fn real_time(&self) -> bool {
+        !self.deterministic()
+    }
     /// The file a recording mode has made.
     fn recording(&self) -> Option<Vec<u8>> {
         None
@@ -316,7 +321,7 @@ fn reply(word: &str, rest: &str) -> Result<FromWebClient, String> {
             };
             Ok(FromWebClient::Failed { id: 0, error, reason })
         }
-        "opened" => Ok(FromWebClient::Opened { id: 0, protocol: rest.trim().to_owned() }),
+        "opened" => Ok(FromWebClient::Opened { id: 0, protocol: rest.trim().to_owned(), url: String::new() }),
         "event" => {
             let (kind, after) = rest.split_once(' ').unwrap_or((rest, ""));
             let (last_id, data) = after.split_once(' ').unwrap_or((after, ""));

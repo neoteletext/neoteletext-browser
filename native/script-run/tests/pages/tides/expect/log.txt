@@ -1,0 +1,8 @@
+000001 page warn request 2 failed: Connection
+000001 page log no entry in the table: TypeError Failed to fetch
+000002 page log head 200 OK basic application/json https://channel.test/tides.json
+000003 page log feed open at 3
+000005 page log height 3 at 5
+000006 page log feed first id  from https://channel.test at 6
+000013 page log feed second id 7 from https://channel.test at 13
+000030 page log closed; feed 2 requests {"used":0,"limit":40}

@@ -149,7 +149,6 @@ pub struct Container {
     time: TimeLimits,
     prelude: String,
     queue: VecDeque<Waiting>,
-    network: VecDeque<FromWebClient>,
     /// The script time used at each of the last second's ticks.
     second: VecDeque<(u64, Duration)>,
     /// The script time the step running has used.
@@ -157,8 +156,6 @@ pub struct Container {
     /// Tick events that could not start, for each context's next one.
     missed: [u32; 2],
     told_sound_allowed: bool,
-    /// Whether the log has said that a network answer was dropped.
-    told_no_network: bool,
     costs: Costs,
 }
 
@@ -259,12 +256,10 @@ impl Container {
             time: settings.time,
             prelude: crate::ops::prelude(),
             queue: VecDeque::new(),
-            network: VecDeque::new(),
             second: VecDeque::new(),
             step_used: Duration::ZERO,
             missed: [0; 2],
             told_sound_allowed: false,
-            told_no_network: false,
             costs,
         })
     }
@@ -391,11 +386,6 @@ impl Container {
         }
         self.machine.host().close(context);
         self.queue.retain(|waiting| !(context == ContextId::Channel && waiting.owed == Owed::Channel));
-        // An answer names its request, not its context: which requests a
-        // context made is for work package W2 to keep, with the requests.
-        if !self.is_open(ContextId::Channel) && !self.is_open(ContextId::Page) {
-            self.network.clear();
-        }
         if let Some(missed) = self.missed.get_mut(context.index()) {
             *missed = 0;
         }
@@ -406,19 +396,16 @@ impl Container {
         self.machine.host().take_batch(sequence, &[])
     }
 
-    /// An answer for a script from the web client, for the next step. At
-    /// most [`MAX_QUEUED_EVENTS`] wait; more are dropped.
+    /// An answer for a script from the web client, for the next step.
+    /// The host checks it and holds it within the network's bounds
+    /// (`host::web::Web::arrive`).
     pub fn network(&mut self, event: FromWebClient) {
-        if self.network.len() < MAX_QUEUED_EVENTS {
-            self.network.push_back(event);
-        }
+        self.machine.host().web().arrive(event);
     }
 
-    /// What the scripts asked of the network: nothing, until work package
-    /// W2 adds the operations that ask.
-    #[expect(clippy::missing_const_for_fn, reason = "the interface work package W2 fills in, which will not be constant")]
+    /// What the scripts asked of the network since the last call.
     pub fn take_requests(&mut self) -> Vec<ToWebClient> {
-        Vec::new()
+        self.machine.host().web().take_requests()
     }
 
     /// Whether the step has time left for another callback to start.
@@ -461,7 +448,9 @@ impl Container {
             return Err(stop.clone());
         }
         let host = self.machine.host_ref();
-        if !host.runs(context) || (kind != EventKind::TIMER && !host.listens(context, kind)) {
+        // A timer always has its callback, and so has the network's event:
+        // the prelude's own object for the request it answers.
+        if !host.runs(context) || (kind != EventKind::TIMER && !kind.is_network() && !host.listens(context, kind)) {
             return Ok(None);
         }
         self.machine.host().begin_callback(context, Some(kind), numbers[0]);
@@ -674,19 +663,24 @@ impl Container {
     }
 
     /// The second phase: network events that arrived (item 2), at most
-    /// [`MAX_NETWORK_EVENTS_PER_STEP`]. The shared core has no web API to
-    /// give an answer to (operations 40 to 49 and events 30 to 41 are
-    /// work package W2's), so each is taken from the queue and dropped,
-    /// and the log says so once.
-    fn run_network(&mut self) {
+    /// [`MAX_NETWORK_EVENTS_PER_STEP`], each to the context whose request
+    /// it answers. What the step has no time for waits, in its order.
+    fn run_network(&mut self) -> Result<(), Stop> {
         for _ in 0..MAX_NETWORK_EVENTS_PER_STEP {
-            if !self.has_time() || self.network.pop_front().is_none() {
+            if !self.has_time() {
                 break;
             }
-            if !core::mem::replace(&mut self.told_no_network, true) {
-                self.machine.host().log_line(LEVEL_WARN, None, "an answer from the web client was dropped: this script library has no web API yet");
-            }
+            let Some(event) = self.machine.host().next_network_event() else { break };
+            let payload = match &event.payload {
+                InputPayload::None => Given::None,
+                InputPayload::Text(text) => Given::Text(text),
+                InputPayload::Bytes(bytes) => Given::Bytes(bytes),
+                InputPayload::Ints(ints) => Given::Ints(ints),
+            };
+            self.deliver(event.context, event.kind, event.ints, payload, self.time.callback)?;
+            self.tell_shared()?;
         }
+        Ok(())
     }
 
     /// The third phase: timers that are due, in order of due tick and then
@@ -765,7 +759,7 @@ impl Container {
             }
         }
         self.run_input(step, events, verdicts)?;
-        self.run_network();
+        self.run_network()?;
         self.run_timers()?;
         if step.flags.tick {
             self.run_tick(step)?;
