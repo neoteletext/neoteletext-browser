@@ -604,12 +604,11 @@ class Request {
       // Section 5.4 step 5: parsed against the script's own address.
       const record = parseUrl(input, SCRIPT_URL);
       if (!record) throw new TypeError("'" + input + "' is not a valid address");
-      const places = record.places;
-      if (places[P.USER_END] > places[P.USER] || places[P.PASS_END] > places[P.PASS]) throw new TypeError("a request's address holds no user name or password");
+      if (record.username !== "" || record.password !== "") throw new TypeError("a request's address holds no user name or password");
       state = {
-        method: "GET", url: record.href, origin: record.origin, scheme: record.href.slice(0, places[P.SCHEME]),
+        method: "GET", url: record.href, origin: record.origin, scheme: record.scheme,
         // The address without its fragment, as a response's `url` gives it.
-        bare: places[P.FRAGMENT] > places[P.QUERY_END] ? record.href.slice(0, places[P.FRAGMENT] - 1) : record.href,
+        bare: record.bare,
         mode: "cors", credentials: "same-origin", cache: "default", redirect: "follow", referrer: CLIENT, referrerPolicy: "",
         integrity: "", keepalive: false, headers: null, body: null, signal: null,
       };

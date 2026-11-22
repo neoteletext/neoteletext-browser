@@ -314,12 +314,19 @@ function utf8Bytes(text) {
 }
 
 // What the host says of an address: its serialisation, its origin, and
-// the places its components lie at.
+// what the API gives for each of its components, a line each.
+const URL_FIELD_NAMES = ["href", "origin", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash"];
 function urlRecord(reply) {
   if (reply === undefined) return null;
-  const first = reply.indexOf("\n");
-  const second = reply.indexOf("\n", first + 1);
-  return { places: reply.slice(0, first).split(",").map(Number), origin: reply.slice(first + 1, second), href: reply.slice(second + 1) };
+  const fields = reply.split("\n");
+  const record = {};
+  for (let index = 0; index < WEB_BOUND.URL_FIELDS; index++) record[URL_FIELD_NAMES[index]] = fields[index] || "";
+  // The address without its fragment: a `#` in a serialised address is
+  // its fragment's and nothing else's.
+  const cut = record.href.indexOf("#");
+  record.bare = cut < 0 ? record.href : record.href.slice(0, cut);
+  record.scheme = record.protocol.slice(0, -1);
+  return record;
 }
 
 // The basic URL parser (URL standard section 4.4) on `input` against the
@@ -491,8 +498,6 @@ class URLSearchParams {
   }
 }
 
-const P = { SCHEME: 0, USER: 1, USER_END: 2, PASS: 3, PASS_END: 4, HOST: 5, HOST_END: 6, PORT: 7, PORT_END: 8, PATH: 9, PATH_END: 10, QUERY: 11, QUERY_END: 12, FRAGMENT: 13 };
-
 class URL {
   #record;
   #params = null;
@@ -523,14 +528,13 @@ class URL {
       return null;
     }
   }
-  #cut(from, to) { return this.#record.href.slice(this.#record.places[from], this.#record.places[to]); }
   #set(part, value) {
     const href = this.#record.href;
     this.#record = urlRecord(host(OP.URL_SET, part, href.length, href + usv(value)));
   }
   // Section 6.1: the query object follows the address's query.
   #refresh() {
-    if (this.#params) paramsInternals.replace(this.#params, this.#cut(P.QUERY, P.QUERY_END));
+    if (this.#params) paramsInternals.replace(this.#params, this.#record.search.slice(1));
   }
   get href() { return this.#record.href; }
   set href(value) {
@@ -540,42 +544,33 @@ class URL {
     this.#refresh();
   }
   get origin() { return this.#record.origin; }
-  get protocol() { return this.#record.href.slice(0, this.#record.places[P.SCHEME]) + ":"; }
+  get protocol() { return this.#record.protocol; }
   set protocol(value) { this.#set(URL_PART.PROTOCOL, value); }
-  get username() { return this.#cut(P.USER, P.USER_END); }
+  get username() { return this.#record.username; }
   set username(value) { this.#set(URL_PART.USERNAME, value); }
-  get password() { return this.#cut(P.PASS, P.PASS_END); }
+  get password() { return this.#record.password; }
   set password(value) { this.#set(URL_PART.PASSWORD, value); }
-  get host() {
-    const port = this.#cut(P.PORT, P.PORT_END);
-    return this.#cut(P.HOST, P.HOST_END) + (port === "" ? "" : ":" + port);
-  }
+  get host() { return this.#record.host; }
   set host(value) { this.#set(URL_PART.HOST, value); }
-  get hostname() { return this.#cut(P.HOST, P.HOST_END); }
+  get hostname() { return this.#record.hostname; }
   set hostname(value) { this.#set(URL_PART.HOSTNAME, value); }
-  get port() { return this.#cut(P.PORT, P.PORT_END); }
+  get port() { return this.#record.port; }
   set port(value) { this.#set(URL_PART.PORT, value); }
-  get pathname() { return this.#cut(P.PATH, P.PATH_END); }
+  get pathname() { return this.#record.pathname; }
   set pathname(value) { this.#set(URL_PART.PATHNAME, value); }
-  get search() {
-    const query = this.#cut(P.QUERY, P.QUERY_END);
-    return query === "" ? "" : "?" + query;
-  }
+  get search() { return this.#record.search; }
   set search(value) {
     this.#set(URL_PART.SEARCH, value);
     this.#refresh();
   }
   get searchParams() {
     if (!this.#params) {
-      this.#params = new URLSearchParams(this.#cut(P.QUERY, P.QUERY_END));
+      this.#params = new URLSearchParams(this.#record.search.slice(1));
       paramsInternals.attach(this.#params, this);
     }
     return this.#params;
   }
-  get hash() {
-    const fragment = this.#record.href.slice(this.#record.places[P.FRAGMENT]);
-    return fragment === "" ? "" : "#" + fragment;
-  }
+  get hash() { return this.#record.hash; }
   set hash(value) { this.#set(URL_PART.HASH, value); }
   toString() { return this.#record.href; }
   toJSON() { return this.#record.href; }

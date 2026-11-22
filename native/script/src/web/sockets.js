@@ -170,13 +170,13 @@ class WebSocket extends EventTarget {
     // Section 3.1 steps 1 to 6.
     let record = parseUrl(url, SCRIPT_URL);
     if (!record) throw domException("'" + url + "' is not a valid address", "SyntaxError");
-    let scheme = record.href.slice(0, record.places[P.SCHEME]);
+    let scheme = record.scheme;
     if (scheme === "http" || scheme === "https") {
       record = urlRecord(host(OP.URL_SET, URL_PART.PROTOCOL, record.href.length, record.href + (scheme === "http" ? "ws" : "wss")));
-      scheme = record.href.slice(0, record.places[P.SCHEME]);
+      scheme = record.scheme;
     }
     if (scheme !== "ws" && scheme !== "wss") throw domException("a WebSocket's address is ws: or wss:", "SyntaxError");
-    if (record.places[P.FRAGMENT] > record.places[P.QUERY_END]) throw domException("a WebSocket's address has no fragment", "SyntaxError");
+    if (record.href.indexOf("#") >= 0) throw domException("a WebSocket's address has no fragment", "SyntaxError");
     if (typeof protocols === "string") protocols = [protocols];
     protocols = Array.from(protocols, String);
     // Steps 8 and 9: no protocol twice, each a token.
