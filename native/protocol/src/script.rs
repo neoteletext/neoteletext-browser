@@ -255,6 +255,18 @@ coded! {
     }
 }
 
+/// Whether `tag` has the form of a language tag as a context is told it:
+/// at most [`MAX_LANGUAGE_BYTES`] of ASCII letters, digits and hyphens
+/// (BCP 47's characters), and nothing else. The one definition of that
+/// form: a context's opening is checked by it, and the decoder's reader
+/// of a script's manifest refuses by it, so that what the reader takes
+/// is always an opening the link takes (TODO-7441). Which languages
+/// exist is the engine's list, asked by the manifest's reader.
+#[must_use]
+pub fn is_language_tag(tag: &str) -> bool {
+    tag.len() <= MAX_LANGUAGE_BYTES && tag.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
 /// What a context asked for in its manifest and what it is allowed, as
 /// the decoder read and decided them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -425,7 +437,7 @@ impl ContextOpen {
         if self.tick_divisor > MAX_TICK_DIVISOR {
             return Err(ProtocolError::BadValue("tick divisor"));
         }
-        if self.language.len() > MAX_LANGUAGE_BYTES || !self.language.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') {
+        if !is_language_tag(&self.language) {
             return Err(ProtocolError::BadValue("language"));
         }
         check_address(&self.channel_url, "channel address")?;
