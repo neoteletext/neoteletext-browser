@@ -118,6 +118,18 @@ impl Browser {
         self.pass(&out);
     }
 
+    /// The trusted core says which page is open, or that none is.
+    fn page(&mut self, page: Option<PageSub>) {
+        let mut out = Vec::new();
+        self.scripts.page_opened(page, &mut self.engine, &mut out).unwrap();
+        self.pass(&out);
+    }
+
+    /// The trusted core says the tab is shown, or hidden.
+    fn shown(&mut self, shown: bool) {
+        self.order(ScriptOrder::TabShown(shown));
+    }
+
     fn key(&mut self, page: PageSub, sequence: u32, name: char) {
         let mut out = Vec::new();
         let input = RuleInput::Key { action: KeyAction::Press, named: false, code: u32::from(name), base: None, mods: 0 };
@@ -282,6 +294,66 @@ fn a_script_that_never_returns_is_stopped_and_the_page_file_stays() {
     assert!(browser.reports.iter().any(|report| matches!(report, ScriptReport::Stopped { reason: FailReason::Time, .. })), "{:?}", browser.reports);
     assert!(matches!(browser.reports.last(), Some(ScriptReport::Claims(claims)) if !claims.running), "{:?}", browser.reports);
     assert_eq!((browser.row(0x100, 1), browser.row(0x100, 5)), ("FILE ROW ONE".into(), String::new()));
+}
+
+/// Section 3.1's table of lifetimes, end to end through the real script
+/// host (TODO-7405): a change of the open page inside the channel ends
+/// the page's context after its one handling of `close` and opens the
+/// new page's, while the channel context lives on and hears `pagehide`
+/// then `pageshow`; between the two pages the trusted core tells the
+/// decoder that no page is open, which pauses nothing; and a tab hidden
+/// and shown again pauses and resumes both contexts, each hearing
+/// `visibilitychange` before the pause and after it. Nothing of this
+/// stops a script.
+#[test]
+fn a_change_of_page_and_a_hidden_tab_stop_no_script() {
+    let (first, second) = (PageSub::new(0x100, 0), PageSub::new(0x101, 0));
+    let file = b"PN,10000\nSC,0000\nPS,8000\nOL,1,PAGE ONE\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,PAGE TWO\n";
+    let channel = br#"/*! nt {"api":1} */
+        nt.addEventListener("pageshow", (e) => console.log("channel pageshow " + e.page.number));
+        nt.addEventListener("pagehide", (e) => console.log("channel pagehide " + e.page.number));
+        nt.addEventListener("visibilitychange", () => console.log("channel hidden " + nt.hidden));"#;
+    let page_one = br#"/*! nt {"api":1} */
+        nt.addEventListener("close", () => console.log("one closed"));
+        console.log("one runs");"#;
+    let page_two = br#"/*! nt {"api":1} */
+        nt.addEventListener("visibilitychange", () => console.log("two hidden " + nt.hidden));
+        console.log("two runs");"#;
+    let source = |level: ContextId, page: PageSub, name: &str, bytes: &[u8]| {
+        ScriptOrder::Source(SourcePiece { level, page, name: name.into(), total: u32::try_from(bytes.len()).unwrap(), offset: 0, bytes: bytes.to_vec() })
+    };
+    let said = |browser: &Browser, line: &str| browser.logged().iter().any(|logged| logged == line);
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(file);
+        browser.order(source(ContextId::Channel, first, "channel.js", channel));
+        browser.order(source(ContextId::Page, second, "two.js", page_two));
+        browser.open(first, "one.js", page_one);
+        browser.run_until(|browser| (said(browser, "one runs") && said(browser, "channel pageshow 100")) || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(said(&browser, "one runs") && said(&browser, "channel pageshow 100"), "{:?}", browser.reports);
+    // The page changes: the trusted core says no page is open while the
+    // new one is fetched and drawn, then names it.
+    browser.page(None);
+    browser.page(Some(second));
+    browser.run_until(|browser| (said(browser, "two runs") && said(browser, "channel pageshow 101")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "a change of page stops no script: {:?}", browser.reports);
+    let logged = browser.logged();
+    let place = |line: &str| logged.iter().position(|logged| logged == line).unwrap_or_else(|| panic!("{line} was not logged: {logged:?}"));
+    assert!(place("one closed") < place("two runs"), "the old page's context closes before the new one opens: {logged:?}");
+    assert!(place("channel pagehide 100") < place("channel pageshow 101"), "{logged:?}");
+    assert!(!logged.iter().any(|line| line.contains("hidden")), "a change of page hides no tab: {logged:?}");
+    assert!(browser.scripts.running());
+    // The tab is hidden, then shown again.
+    browser.shown(false);
+    browser.run_until(|browser| (said(browser, "channel hidden true") && said(browser, "two hidden true")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "a hidden tab pauses its scripts and stops none: {:?}", browser.reports);
+    assert!(said(&browser, "channel hidden true") && said(&browser, "two hidden true"), "{:?}", browser.logged());
+    browser.shown(true);
+    browser.run_until(|browser| (said(browser, "channel hidden false") && said(browser, "two hidden false")) || browser.scripts.stopped().is_some());
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
+    assert!(said(&browser, "channel hidden false") && said(&browser, "two hidden false"), "{:?}", browser.logged());
+    assert!(browser.scripts.running());
 }
 
 /// Section 4.1 and principle 5 ("Fail open"), timed end to end through

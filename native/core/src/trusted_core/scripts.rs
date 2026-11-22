@@ -141,6 +141,20 @@ pub(super) struct Scripts {
     web: web::WebClients,
 }
 
+/// Why a channel's scripts stopped, in the browser's own words for the
+/// Log tab (TODO-7410): nothing a page wrote.
+pub(super) const fn reason_words(reason: FailReason) -> &'static str {
+    match reason {
+        FailReason::Time => "a time limit was passed",
+        FailReason::Memory => "a memory limit was passed",
+        FailReason::Stack => "the stack limit was passed",
+        FailReason::Trap => "the script engine stopped",
+        FailReason::Failures => "too many callbacks failed one after another",
+        FailReason::Link => "a message between the browser's own parts was refused, or a bound the browser holds was passed",
+        FailReason::Viewer => "the viewer stopped the page's program",
+    }
+}
+
 /// `text` as a line of the developer log, which a FAILED carries.
 fn log_line(text: &str) -> String {
     text.chars().filter(|character| !character.is_control()).take(MAX_LOG_CHARS).collect()
@@ -337,6 +351,23 @@ impl Core {
         self.scripts_stopped(channel, reason, text, true);
     }
 
+    /// The channel's decoder said why its scripts stopped, in the script
+    /// host's own reason and words (TODO-7410). When the trusted core had
+    /// already noted the stop from the relay, which reads no payload and
+    /// so knows only that a script host said it stopped, the reason is
+    /// the decoder's from now on and the Log tab is told it: the reason
+    /// in the browser's own words, and the script host's text beside it,
+    /// untrusted, cleaned and bounded as a line of the log.
+    pub(super) fn script_stop_explained(&mut self, channel: u32, reason: FailReason, text: &str) {
+        let Some(kept) = self.scripts.stopped.get_mut(&channel) else { return };
+        if *kept == reason {
+            return;
+        }
+        *kept = reason;
+        let said = log_line(text);
+        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} stopped: {}; the script host said: {said}", reason_words(reason)));
+    }
+
     /// Notes that `channel`'s scripts have stopped for good, ends its
     /// script host if it still runs, and, with `tell`, tells its decoder.
     fn scripts_stopped(&mut self, channel: u32, reason: FailReason, text: &str, tell: bool) {
@@ -347,9 +378,10 @@ impl Core {
         if self.scripts.stopped.insert(channel, reason).is_some() {
             return;
         }
-        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} were stopped: {text}"));
+        let text = log_line(text);
+        self.log(Level::Error, Some(channel), &format!("the scripts of channel {channel} were stopped: {}: {text}", reason_words(reason)));
         if tell {
-            self.tell_scripts_stopped_for(channel, reason, text);
+            self.tell_scripts_stopped_for(channel, reason, &text);
         }
     }
 
