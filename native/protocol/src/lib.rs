@@ -50,6 +50,7 @@ mod text;
 #[cfg(feature = "timed-test")]
 pub mod timed_test;
 pub mod viewer_state;
+pub mod web;
 
 pub use bounds::*;
 pub use error::ProtocolError;
