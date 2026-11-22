@@ -73,12 +73,20 @@ neoteletext-formats = { workspace = true, features = ["write-text", "picture-tex
 # without turning on the core's `render` feature that holds it (the
 # engine's TODO-7363, after which the feature goes from this line).
 neoteletext-core = { workspace = true, features = ["render"] }
+# The engine's converter of the teletext sixel bitmap,
+# `neoteletext_picture::bitmap::present` (section 5.7; the owner's
+# DEC-7245, the engine's DEC-7355): the crate without its picture
+# decoders, so that the script host links no decoder of a picture file.
+neoteletext-picture = { workspace = true, default-features = false }
 
 [dev-dependencies]
 # The teletext tests' receiver (tests/teletext/receiver.rs): the engine as
 # the browser's decoder builds it, so that a kept picture is what the
 # browser would show.
 neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
+# The sprite tests write the Object page with the engine's own authoring
+# code, which needs the page writers (work package T2).
+neoteletext-formats = { workspace = true, features = ["write-text", "std"] }
 # The receiver's stroke font for the primary set, as the browser's decoder
 # gives it to the NAPLPS renderer (MIT, the project's own, pinned by
 # revision): the tests draw what the painter writes.

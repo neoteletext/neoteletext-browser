@@ -158,7 +158,7 @@ fn a_table_answers_each_request_on_its_ticks() {
     mock.request(40, start(5, RequestKind::WebSocket, "GET", "wss://channel.test/chat"));
     mock.request(41, ToWebClient::SocketSend { id: 5, binary: false, last: true, bytes: b"hi".to_vec() });
     let chat = answers(&mut mock, 40, 44);
-    assert_eq!(chat[0], (42, FromWebClient::Opened { id: 5, protocol: "chat.v1".into() }));
+    assert_eq!(chat[0], (42, FromWebClient::Opened { id: 5, protocol: "chat.v1".into(), url: String::new() }));
     assert_eq!(chat[1], (42, FromWebClient::Sent { id: 5, bytes: 2 }));
     assert_eq!(chat[2], (43, FromWebClient::SocketMessage { id: 5, binary: false, last: true, bytes: b"hello".to_vec() }));
     assert_eq!(chat[3], (43, FromWebClient::SocketMessage { id: 5, binary: true, last: false, bytes: vec![1, 2] }));

@@ -9,5 +9,6 @@ mod cookies;
 mod fetching;
 mod hostile;
 mod protections;
+mod sockets;
 mod standards;
 mod streams;

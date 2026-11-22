@@ -762,6 +762,9 @@ function dispatch(kind, a, b, c, d, payload) {
       });
       break;
     case EV.PAGE_HIDE:
+      // What a renderer's part drew for the channel context goes with
+      // the page (section 3.1), before a listener hears of it.
+      for (const hidden of core.pageHides) hidden();
       event = withFields(new Event("pagehide"), {
         page: Object.freeze({ number: (a + 0x1000).toString(16).slice(1).toUpperCase(), subpage: b <= 0 ? null : (b + 0x10000).toString(16).slice(1).toUpperCase() }),
       });
@@ -817,4 +820,5 @@ const core = {
   host, things, handleOf, parentOf, nt, EventTarget, Event, fire, trusted, withFields, whole, report, listenCounts,
   dispatchMore: new Map(),
   scopeEnds(end) { if (currentScope) currentScope.ends.push(end); },
+  pageHides: [],
 };

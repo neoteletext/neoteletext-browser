@@ -258,6 +258,11 @@ readonly BROWSER_NAMES_ALLOWED=(
     'native/decoder/tests/confined_bookmarks.rs:/// As Firefox writes it.'
     'native/decoder/tests/confined_bookmarks.rs:const FIREFOX: &str = r#"<!DOCTYPE NETSCAPE-Bookmark-file-1>'
     'native/decoder/tests/confined_bookmarks.rs:    write_to_decoder(&mut input, &ToDecoder::Data(FIREFOX.as_bytes().to_vec())).unwrap();'
+    # The Public Suffix List is its publisher's file, kept unchanged
+    # (DEC-7340), and one of the top-level domains it lists has this name.
+    'native/fetcher/data/public-suffix/public_suffix_list.dat:// chrome : Charleston Road Registry Inc.'
+    'native/fetcher/data/public-suffix/public_suffix_list.dat:// https://www.iana.org/domains/root/db/chrome.html'
+    'native/fetcher/data/public-suffix/public_suffix_list.dat:chrome'
 )
 check_browser_names() {
     step "no source line names Chrome, Chromium or Firefox outside the allow list (TODO-1280)"
@@ -298,7 +303,7 @@ $found"
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js painter_programs script_url_resolve script_web_host script_web_answers)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_bitmap_ops script_imports script_js painter_programs script_url_resolve script_web_host script_web_answers)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
@@ -310,6 +315,13 @@ check_script_engine_committed() {
         [[ -f "native/fuzz/fuzz_targets/$target.rs" ]] && grep -q "^name = \"$target\"$" native/fuzz/Cargo.toml ||
             fail "the fuzz target $target, which script-api.md section 11.4 gives the script library, is missing from native/fuzz"
     done
+}
+# The Public Suffix List built into the web client's cookie jars is the
+# publisher's file, never edited (DEC-7340, TODO-7341;
+# native/fetcher/data/public-suffix/NOTICE.txt).
+check_public_suffix_list() {
+    step "the public suffix list and its licence have their recorded SHA-256 (TODO-7341)"
+    (cd native/fetcher/data/public-suffix && sha256sum --check --quiet SHA256SUMS) || fail "the public suffix list is not the bytes native/fetcher/data/public-suffix/SHA256SUMS records"
 }
 # The compiler the module is built with is wasi-sdk's for x86_64 Linux, so
 # the rebuild runs on Linux: here when this machine is Linux, and always
@@ -338,6 +350,7 @@ check_compiles() {
     (cd native && cargo fmt --check)
     check_no_panic_lists
     check_script_engine_committed
+    check_public_suffix_list
     step "native: Clippy, warnings as errors"
     (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings)
     # The updater's workspace (native/tuf: the updater and the release
