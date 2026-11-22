@@ -36,8 +36,8 @@ script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
 # expect.json and the files between its two processes.
 script-run = { path = "../script-run", package = "neoteletext-script-run" }
-neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "0225a07cb46450dbb9cc3abb20734b6b238a28e5" }
-neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "0225a07cb46450dbb9cc3abb20734b6b238a28e5" }
+neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "427bc51442f3da9bdc5054468274b079586c16d7" }
+neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "427bc51442f3da9bdc5054468274b079586c16d7" }
 
 [workspace]
 members = ["."]
