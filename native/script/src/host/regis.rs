@@ -279,6 +279,10 @@ pub(super) struct Regis {
     wheel_told: Vec<i32>,
     /// What the components of the page are drawn as (section 8).
     ui: ui::Held,
+    /// Whether this state began with the opening of the page context of
+    /// the page now shown, and the channel context has not yet heard that
+    /// the page before it was left.
+    began_with_its_page: bool,
 }
 
 /// Writes text to a vector, which cannot fail.
@@ -319,6 +323,7 @@ impl Regis {
             tracked_told: Vec::new(),
             wheel_told: Vec::new(),
             ui: ui::Held::default(),
+            began_with_its_page: false,
         }
     }
 
@@ -753,6 +758,7 @@ impl Host {
     /// shown was left, and with it the page's one stream. Handles of the
     /// page left are stale from here on.
     pub(super) fn regis_reset(&mut self) {
+        self.regis.began_with_its_page = false;
         if self.regis.is_empty() && self.regis.failures.iter().all(Option::is_none) {
             return;
         }
@@ -763,11 +769,33 @@ impl Host {
         self.regis.generation = generation;
     }
 
+    /// A context opens. The page context's opening begins the page's one
+    /// ReGIS stream. What the channel context drew on a page it was shown
+    /// is of the page before, which is being left, and is forgotten here,
+    /// before the new page's script draws; what it drew before it was
+    /// shown any page is on the page now opening, and stays.
+    pub(super) fn regis_opened(&mut self, context: ContextId) {
+        if context != ContextId::Page {
+            return;
+        }
+        if self.context(ContextId::Channel).is_some_and(|held| held.shown.is_some()) {
+            self.regis_reset();
+        }
+        self.regis.began_with_its_page = true;
+    }
+
     /// Takes in what a step reports of the page's drawings before its
     /// events are given: the page shown was left (the stream ends with
     /// it); a `once` cycle ended; and the tracked drawings' rectangles.
     pub fn regis_reports(&mut self, step: &Step) {
-        if step.events.iter().any(|event| event.kind == Carried::PageHide) {
+        // The channel context hears that a page was left after the page
+        // context of the page now shown has opened (section 4.2), and
+        // that opening began this state: the news is of the page before
+        // and ends nothing here. With no page context since, the page
+        // left is the one the channel context drew on, and its stream
+        // ends with it.
+        let left = step.events.iter().any(|event| event.kind == Carried::PageHide);
+        if left && !core::mem::take(&mut self.regis.began_with_its_page) {
             self.regis_reset();
         }
         self.regis.committed = false;

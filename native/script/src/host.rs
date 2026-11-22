@@ -497,6 +497,7 @@ impl Host {
         self.teletext.open(&open);
         let context = open.context;
         self.naplps.open(&open);
+        self.regis_opened(context);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
         }

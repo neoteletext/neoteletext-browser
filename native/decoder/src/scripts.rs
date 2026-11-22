@@ -561,6 +561,9 @@ impl Scripts {
         {
             let opened = self.open_context(ContextId::Page, open, &script, engine, out)?;
             if let Some((context, at)) = opened {
+                if self.blank.contains(&open) {
+                    engine.script_begins_again(at);
+                }
                 outcome.arrived = engine.script_blank_page(at);
                 self.page = Some(PageContext { context, at, script: open, designated: false, stale: false });
                 self.pages.insert(open, script);

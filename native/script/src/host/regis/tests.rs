@@ -1151,3 +1151,49 @@ fn defining_a_drawing_that_asks_the_renderer_for_the_position_is_measured() {
     let (without, with) = (time(&mut host, &plain), time(&mut host, &asking));
     println!("defining a drawing: {without:?} with a rectangle alone, {with:?} with an arc and a string of five characters the renderer is asked about");
 }
+
+/// Sections 3.1 and 4.2 (rdm TODO-7424): when the viewer goes from one
+/// page with a script to another, the new page's context opens, and its
+/// script draws, before the channel context hears that the page before
+/// was left. That news ends nothing of the new page: its drawings are
+/// still the host's, with their handles, and the step's commit carries
+/// them. What the channel context drew on the page before went with that
+/// page when the new page's context opened.
+#[test]
+fn the_news_that_the_page_before_was_left_takes_nothing_of_the_new_pages_drawing() {
+    let mut host = host();
+    let channel = |host: &mut Host, op: Op, ints: &[i32]| host.call(CHANNEL, op.number(), ints, Payload::None);
+    let clock = made(channel(&mut host, Op::RG_DRAWING, &[0, 0, 3, 0, 0, 0, -1, 1]));
+    let before = drawing(&mut host);
+    assert!(host.take_batch(1, &[]).regis.is_some());
+    // The page changes: its context closes, and the next page's opens
+    // and draws.
+    host.close(ContextId::Page);
+    host.open(opening(ContextId::Page, Renderer::Regis), 200);
+    host.begin_step(1, true);
+    let square = drawing(&mut host);
+    assert_ne!(square, before, "a new page's handles are of its own generation");
+    assert!(matches!(channel(&mut host, Op::RG_SET, &[clock, Property::X.number(), 1]), Reply::Type(_)), "the channel's drawing went with the page before");
+    // The same step then tells the channel context of the page left.
+    host.regis_reports(&Step {
+        events: vec![Event { kind: Carried::PageHide, numbers: [0x1A0, 0, 0, 0], payload: Vec::new() }],
+        flags: StepFlags::default(),
+        ..Step::default()
+    });
+    assert_eq!(call(&mut host, Op::RG_SET, &[square, Property::X.number(), 40]), Reply::Undefined, "the new page's drawing is still its own");
+    let again = made(channel(&mut host, Op::RG_DRAWING, &[0, 0, 3, 0, 0, 0, -1, 1]));
+    let batch = host.take_batch(2, &[]);
+    let sent = String::from_utf8_lossy(batch.regis.as_deref().unwrap_or_default()).into_owned();
+    assert!(sent.contains("X40"), "the new page's drawing is sent: {sent}");
+    assert!(Receiver::new().take(&batch), "a receiver that begins the new page's stream commits its first step");
+    // A page left with no page context since is the channel's page: its
+    // stream ends with it.
+    host.begin_step(3, true);
+    host.close(ContextId::Page);
+    host.regis_reports(&Step {
+        events: vec![Event { kind: Carried::PageHide, numbers: [0x1A0, 0, 0, 0], payload: Vec::new() }],
+        flags: StepFlags::default(),
+        ..Step::default()
+    });
+    assert!(matches!(channel(&mut host, Op::RG_SET, &[again, Property::X.number(), 1]), Reply::Type(_)));
+}
