@@ -350,7 +350,6 @@ fn a_conditional_request_under_force_cache_is_not_made_no_store() {
 /// asks its own channel, the first answer sets `Referrer-Policy: origin`
 /// and redirects, the second sets `unsafe-url` and redirects again.
 #[test]
-#[ignore = "fault TODO-7345 item 6: each hop's Referer is cut from the page's whole address, so a later looser policy gives back the path"]
 fn a_referrer_cut_on_one_hop_stays_cut_on_the_next() {
     let server = serve(|asked| match asked.target.as_str() {
         "/a/one" => Reply::to(302, "/a/two").header("referrer-policy", "origin"),

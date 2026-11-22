@@ -294,6 +294,18 @@ impl<'a> Request<'a> {
         cookies::Context { same_site: self.same_site, navigation: false, safe_method: matches!(self.method.as_str(), "GET" | "HEAD" | "OPTIONS" | "TRACE") }
     }
 
+    /// Main fetch's step "set request's referrer to the result of invoking
+    /// determine request's referrer": the request's referrer becomes what
+    /// its policy lets the current address be told, and stays so. A
+    /// redirect runs it again on what an earlier address was told, so a
+    /// referrer once cut to its origin, or withheld, is never given back
+    /// whole under a later, looser policy.
+    fn determine_referrer(&mut self) {
+        let own = self.is_own(&self.url);
+        self.referrer =
+            self.referrer.as_ref().and_then(|referrer| referer(self.referrer_policy, referrer, &self.url, own)).and_then(|told| Url::parse(&told).ok());
+    }
+
     /// The `Origin` header's value, if the request carries one (the
     /// standard's "append a request `Origin` header").
     fn origin_header(&self) -> Option<String> {
@@ -321,8 +333,9 @@ impl<'a> Request<'a> {
 
     /// The headers every request to the network carries beside its own.
     fn common_headers(&self, headers: &mut Vec<Header>) {
-        if let Some(value) = self.referrer.as_ref().and_then(|referrer| referer(self.referrer_policy, referrer, &self.url, self.is_own(&self.url))) {
-            set(headers, "referer", value);
+        // The referrer as main fetch last determined it for this address.
+        if let Some(referrer) = &self.referrer {
+            set(headers, "referer", referrer.as_str());
         }
         if let Some(origin) = self.origin_header() {
             set(headers, "origin", origin);
@@ -529,6 +542,7 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         if !is_web(&request.url) {
             return Err(Reason::Address);
         }
+        request.determine_referrer();
         if request.url.port_or_known_default().is_none_or(is_bad_port) {
             return Err(Reason::BadPort);
         }
