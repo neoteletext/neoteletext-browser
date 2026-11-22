@@ -34,6 +34,7 @@ use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_bytes, push_count, read_fra
 pub mod batch;
 pub mod link;
 pub mod relay;
+pub mod teletext;
 
 pub use batch::Batch;
 

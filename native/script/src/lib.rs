@@ -43,6 +43,7 @@ pub mod ops;
 pub mod probe;
 pub mod process;
 pub mod random;
+pub mod teletext;
 pub mod watchdog;
 
 /// The API's version: a whole number, raised by every change, never
