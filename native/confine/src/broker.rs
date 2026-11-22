@@ -96,6 +96,9 @@ const KIND_SAVE: u8 = 21;
 /// A font for pictures the user chose (renderer parity PAR-35), in the next
 /// number free.
 const KIND_READ_FONT: u8 = 25;
+/// The script a page file opened from disk names (the script API's
+/// specification section 12.7), in the next number free.
+const KIND_READ_SCRIPT: u8 = 26;
 /// The viewer key file's sealing key (neoteletext-common's
 /// `docs/viewer-state.md` VS-108).
 const KIND_VIEWER_KEYS_KEY: u8 = 22;

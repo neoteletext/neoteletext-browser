@@ -132,6 +132,9 @@ pub(super) struct Scripts {
     /// contexts are told, by its generation: a decoder that replaces it
     /// is told again before its first script.
     told: BTreeMap<u32, u64>,
+    /// The scripts each channel's decoder was given, whole, for a decoder
+    /// that replaces it: the channel's own and its newest pages'.
+    kept: BTreeMap<u32, Vec<reports::Kept>>,
     web: web::WebClients,
 }
 
