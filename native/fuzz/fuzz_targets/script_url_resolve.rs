@@ -3,8 +3,7 @@
 //! input against an arbitrary base, and arbitrary values given to each
 //! setter of the address that results. Nothing panics; what the host
 //! says of an address is within its bounds and is an address the same
-//! parser reads back to itself, with every place it names inside it and
-//! in order; and a setter leaves an address, never something that is
+//! parser reads back to itself, with every component it gives inside it; and a setter leaves an address, never something that is
 //! none.
 #![no_main]
 
@@ -18,9 +17,9 @@ use protocol::script::{ContextFlags, ContextId, ContextOpen, Level, Renderer};
 const PAGE: i32 = 2;
 /// The setters of operation 48: its components' numbers, 1 to 9.
 const SETTERS: u8 = 9;
-/// The places operation 40 writes before an address: thirteen and the
-/// fragment's.
-const PLACES: usize = 14;
+/// The fields operation 40 gives of an address, a line each: the
+/// serialisation, the origin and the API's nine components.
+const FIELDS: usize = 11;
 
 fn opening() -> ContextOpen {
     ContextOpen {
@@ -58,14 +57,13 @@ fn address_of(reply: &Reply) -> Option<String> {
         }
         other => panic!("an address operation answered {other:?}"),
     };
-    let mut lines = text.splitn(3, '\n');
-    let (Some(places), Some(origin), Some(href)) = (lines.next(), lines.next(), lines.next()) else { panic!("not places, an origin and an address: {text:?}") };
+    let fields: Vec<&str> = text.split('\n').collect();
+    assert_eq!(fields.len(), FIELDS, "not the address's fields: {text:?}");
+    let (href, origin) = (fields[0], fields[1]);
     assert!(href.len() <= MAX_URL_BYTES, "an address of {} bytes", href.len());
-    assert!(href.is_ascii() && !href.contains('\n'), "{href:?}");
-    assert!(!origin.is_empty() && origin.is_ascii(), "{origin:?}");
-    let places: Vec<usize> = places.split(',').map(|place| place.parse().unwrap_or_else(|_| panic!("a place that is no number: {places:?}"))).collect();
-    assert_eq!(places.len(), PLACES, "{places:?}");
-    assert!(places.windows(2).all(|pair| pair[0] <= pair[1]) && places.last().is_some_and(|last| *last <= href.len()), "{places:?} in {href:?}");
+    assert!(text.is_ascii() && !origin.is_empty(), "{text:?}");
+    // The serialisation begins with the protocol and holds each other field.
+    assert!(href.starts_with(fields[2]) && fields[3..].iter().all(|field| href.contains(field)), "{fields:?}");
     Some(href.to_owned())
 }
 

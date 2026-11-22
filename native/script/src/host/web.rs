@@ -1056,7 +1056,7 @@ pub(crate) fn prelude_tables() -> Vec<(&'static str, Vec<(&'static str, i64)>)> 
                 ("WS_NO_CODE", i64::from(WS_NO_CODE)),
                 ("WS_TOO_BIG", i64::from(WS_TOO_BIG)),
                 ("WS_ABNORMAL", i64::from(WS_ABNORMAL)),
-                ("URL_PLACES", wide(url::PLACE_COUNT)),
+                ("URL_FIELDS", wide(url::FIELDS)),
                 ("HEAD_REDIRECTED", i64::from(HEAD_REDIRECTED)),
                 ("RESPONSE_BASIC", i64::from(ResponseType::Basic.code())),
                 ("RESPONSE_CORS", i64::from(ResponseType::Cors.code())),

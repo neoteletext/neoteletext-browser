@@ -35,6 +35,56 @@ function concatBytes(chunks, total) {
   return out;
 }
 
+// A dictionary given to a constructor of the platform's own making: with
+// no prototype, so that what a page puts on Object.prototype is never
+// read as one of its members.
+function bare(members) {
+  return Object.assign(Object.create(null), members);
+}
+
+// Web IDL's default iterator object for a pair iterable (section 3.7.9):
+// `entries`, `keys`, `values` and @@iterator on `Class`, each giving an
+// iterator that reads the object's pairs as they are at each step, whose
+// prototype is the class's own iterator prototype over %IteratorPrototype%.
+const IteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+function pairIterable(Class, name, pairsOf) {
+  const state = new WeakMap();
+  const prototype = Object.create(IteratorPrototype, {
+    next: {
+      value: function next() {
+        const at = state.get(this);
+        if (!at) throw new TypeError("next is called on a " + name + " Iterator");
+        const pairs = pairsOf(at.object);
+        if (at.index >= pairs.length) return { value: undefined, done: true };
+        const pair = pairs[at.index++];
+        return { value: at.kind === "key" ? pair[0] : at.kind === "value" ? pair[1] : [pair[0], pair[1]], done: false };
+      },
+      writable: true, enumerable: true, configurable: true,
+    },
+    [Symbol.toStringTag]: { value: name + " Iterator", configurable: true },
+  });
+  const make = (object, kind) => {
+    pairsOf(object);
+    const iterator = Object.create(prototype);
+    state.set(iterator, { object, kind, index: 0 });
+    return iterator;
+  };
+  const methods = {
+    entries() { return make(this, "key+value"); },
+    keys() { return make(this, "key"); },
+    values() { return make(this, "value"); },
+    forEach(callback, thisArg = undefined) {
+      if (typeof callback !== "function") throw new TypeError("forEach takes a function");
+      for (let index = 0; index < pairsOf(this).length; index++) {
+        const pair = pairsOf(this)[index];
+        callback.call(thisArg, pair[1], pair[0], this);
+      }
+    },
+  };
+  for (const key of Object.keys(methods)) Object.defineProperty(Class.prototype, key, { value: methods[key], writable: true, enumerable: true, configurable: true });
+  Object.defineProperty(Class.prototype, Symbol.iterator, { value: methods.entries, writable: true, enumerable: false, configurable: true });
+}
+
 // Streams (Streams standard) --------------------------------------------------
 
 const {
@@ -228,6 +278,11 @@ class TextDecoder {
   }
   #other(bytes, stream, flags) {
     const most = WEB_BOUND.MAX_HOST_BYTES;
+    // An empty piece of a stream changes nothing and gives nothing. It
+    // is not given to the host's decoder, which for some encodings
+    // forgets a lead byte it holds when given no bytes (found by the
+    // web-platform-tests, encoding/textdecoder-mistakes.any.js).
+    if (stream && bytes.byteLength === 0) return "";
     // A whole decoding that fits one call keeps nothing at the host.
     if (!stream && this.#decoder === 0 && bytes.byteLength <= most) return host(OP.DECODE, this.#index, flags, 0, bytes);
     if (this.#decoder === 0) this.#decoder = host(OP.DECODE, this.#index, flags | DECODE_FLAG.OPEN, 0);
@@ -253,7 +308,7 @@ class TextDecoderStream {
   constructor(label = "utf-8", options = undefined) {
     const decoder = new TextDecoder(label, options);
     this.#decoder = decoder;
-    this.#transform = new TransformStream({
+    this.#transform = new TransformStream(bare({
       transform(chunk, controller) {
         const text = decoder.decode(viewOf(chunk, "a TextDecoderStream"), { stream: true });
         if (text !== "") controller.enqueue(text);
@@ -262,7 +317,7 @@ class TextDecoderStream {
         const text = decoder.decode();
         if (text !== "") controller.enqueue(text);
       },
-    });
+    }));
   }
   get encoding() { return this.#decoder.encoding; }
   get fatal() { return this.#decoder.fatal; }
@@ -276,7 +331,7 @@ class TextEncoderStream {
   constructor() {
     // A high surrogate at a chunk's end waits for its low half (section 7.5).
     let pending = "";
-    this.#transform = new TransformStream({
+    this.#transform = new TransformStream(bare({
       transform(chunk, controller) {
         let text = pending + String(chunk);
         pending = "";
@@ -290,7 +345,7 @@ class TextEncoderStream {
       flush(controller) {
         if (pending !== "") controller.enqueue(utf8Encode(usv(pending)));
       },
-    });
+    }));
   }
   get encoding() { return "utf-8"; }
   get readable() { return this.#transform.readable; }
@@ -314,12 +369,19 @@ function utf8Bytes(text) {
 }
 
 // What the host says of an address: its serialisation, its origin, and
-// the places its components lie at.
+// what the API gives for each of its components, a line each.
+const URL_FIELD_NAMES = ["href", "origin", "protocol", "username", "password", "host", "hostname", "port", "pathname", "search", "hash"];
 function urlRecord(reply) {
   if (reply === undefined) return null;
-  const first = reply.indexOf("\n");
-  const second = reply.indexOf("\n", first + 1);
-  return { places: reply.slice(0, first).split(",").map(Number), origin: reply.slice(first + 1, second), href: reply.slice(second + 1) };
+  const fields = reply.split("\n");
+  const record = {};
+  for (let index = 0; index < WEB_BOUND.URL_FIELDS; index++) record[URL_FIELD_NAMES[index]] = fields[index] || "";
+  // The address without its fragment: a `#` in a serialised address is
+  // its fragment's and nothing else's.
+  const cut = record.href.indexOf("#");
+  record.bare = cut < 0 ? record.href : record.href.slice(0, cut);
+  record.scheme = record.protocol.slice(0, -1);
+  return record;
 }
 
 // The basic URL parser (URL standard section 4.4) on `input` against the
@@ -471,17 +533,6 @@ class URLSearchParams {
     this.#list.sort((left, right) => (left[0] < right[0] ? -1 : left[0] > right[0] ? 1 : 0));
     this.#update();
   }
-  forEach(callback, thisArg = undefined) {
-    if (typeof callback !== "function") throw new TypeError("forEach takes a function");
-    for (let index = 0; index < this.#list.length; index++) {
-      const pair = this.#list[index];
-      callback.call(thisArg, pair[1], pair[0], this);
-    }
-  }
-  *entries() { for (let index = 0; index < this.#list.length; index++) yield [this.#list[index][0], this.#list[index][1]]; }
-  *keys() { for (let index = 0; index < this.#list.length; index++) yield this.#list[index][0]; }
-  *values() { for (let index = 0; index < this.#list.length; index++) yield this.#list[index][1]; }
-  [Symbol.iterator]() { return this.entries(); }
   toString() { return formSerialize(this.#list); }
   get [Symbol.toStringTag]() { return "URLSearchParams"; }
   static {
@@ -491,7 +542,10 @@ class URLSearchParams {
   }
 }
 
-const P = { SCHEME: 0, USER: 1, USER_END: 2, PASS: 3, PASS_END: 4, HOST: 5, HOST_END: 6, PORT: 7, PORT_END: 8, PATH: 9, PATH_END: 10, QUERY: 11, QUERY_END: 12, FRAGMENT: 13 };
+pairIterable(URLSearchParams, "URLSearchParams", (params) => {
+  if (!(params instanceof URLSearchParams)) throw new TypeError("not a URLSearchParams");
+  return paramsInternals.list(params);
+});
 
 class URL {
   #record;
@@ -523,14 +577,13 @@ class URL {
       return null;
     }
   }
-  #cut(from, to) { return this.#record.href.slice(this.#record.places[from], this.#record.places[to]); }
   #set(part, value) {
     const href = this.#record.href;
     this.#record = urlRecord(host(OP.URL_SET, part, href.length, href + usv(value)));
   }
   // Section 6.1: the query object follows the address's query.
   #refresh() {
-    if (this.#params) paramsInternals.replace(this.#params, this.#cut(P.QUERY, P.QUERY_END));
+    if (this.#params) paramsInternals.replace(this.#params, this.#record.search.slice(1));
   }
   get href() { return this.#record.href; }
   set href(value) {
@@ -540,42 +593,33 @@ class URL {
     this.#refresh();
   }
   get origin() { return this.#record.origin; }
-  get protocol() { return this.#record.href.slice(0, this.#record.places[P.SCHEME]) + ":"; }
+  get protocol() { return this.#record.protocol; }
   set protocol(value) { this.#set(URL_PART.PROTOCOL, value); }
-  get username() { return this.#cut(P.USER, P.USER_END); }
+  get username() { return this.#record.username; }
   set username(value) { this.#set(URL_PART.USERNAME, value); }
-  get password() { return this.#cut(P.PASS, P.PASS_END); }
+  get password() { return this.#record.password; }
   set password(value) { this.#set(URL_PART.PASSWORD, value); }
-  get host() {
-    const port = this.#cut(P.PORT, P.PORT_END);
-    return this.#cut(P.HOST, P.HOST_END) + (port === "" ? "" : ":" + port);
-  }
+  get host() { return this.#record.host; }
   set host(value) { this.#set(URL_PART.HOST, value); }
-  get hostname() { return this.#cut(P.HOST, P.HOST_END); }
+  get hostname() { return this.#record.hostname; }
   set hostname(value) { this.#set(URL_PART.HOSTNAME, value); }
-  get port() { return this.#cut(P.PORT, P.PORT_END); }
+  get port() { return this.#record.port; }
   set port(value) { this.#set(URL_PART.PORT, value); }
-  get pathname() { return this.#cut(P.PATH, P.PATH_END); }
+  get pathname() { return this.#record.pathname; }
   set pathname(value) { this.#set(URL_PART.PATHNAME, value); }
-  get search() {
-    const query = this.#cut(P.QUERY, P.QUERY_END);
-    return query === "" ? "" : "?" + query;
-  }
+  get search() { return this.#record.search; }
   set search(value) {
     this.#set(URL_PART.SEARCH, value);
     this.#refresh();
   }
   get searchParams() {
     if (!this.#params) {
-      this.#params = new URLSearchParams(this.#cut(P.QUERY, P.QUERY_END));
+      this.#params = new URLSearchParams(this.#record.search.slice(1));
       paramsInternals.attach(this.#params, this);
     }
     return this.#params;
   }
-  get hash() {
-    const fragment = this.#record.href.slice(this.#record.places[P.FRAGMENT]);
-    return fragment === "" ? "" : "#" + fragment;
-  }
+  get hash() { return this.#record.hash; }
   set hash(value) { this.#set(URL_PART.HASH, value); }
   toString() { return this.#record.href; }
   toJSON() { return this.#record.href; }

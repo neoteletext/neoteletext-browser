@@ -170,17 +170,17 @@ class WebSocket extends EventTarget {
     // Section 3.1 steps 1 to 6.
     let record = parseUrl(url, SCRIPT_URL);
     if (!record) throw domException("'" + url + "' is not a valid address", "SyntaxError");
-    let scheme = record.href.slice(0, record.places[P.SCHEME]);
+    let scheme = record.scheme;
     if (scheme === "http" || scheme === "https") {
       record = urlRecord(host(OP.URL_SET, URL_PART.PROTOCOL, record.href.length, record.href + (scheme === "http" ? "ws" : "wss")));
-      scheme = record.href.slice(0, record.places[P.SCHEME]);
+      scheme = record.scheme;
     }
     if (scheme !== "ws" && scheme !== "wss") throw domException("a WebSocket's address is ws: or wss:", "SyntaxError");
-    if (record.places[P.FRAGMENT] > record.places[P.QUERY_END]) throw domException("a WebSocket's address has no fragment", "SyntaxError");
+    if (record.href.indexOf("#") >= 0) throw domException("a WebSocket's address has no fragment", "SyntaxError");
     if (typeof protocols === "string") protocols = [protocols];
     protocols = Array.from(protocols, String);
     // Steps 8 and 9: no protocol twice, each a token.
-    if (new Set(protocols).size !== protocols.length) throw domException("a subprotocol is named twice", "SyntaxError");
+    if (new Set(protocols.map((protocol) => protocol.toLowerCase())).size !== protocols.length) throw domException("a subprotocol is named twice", "SyntaxError");
     for (const protocol of protocols) if (!TOKEN.test(protocol)) throw domException("'" + protocol + "' is not a subprotocol", "SyntaxError");
     if (protocols.length > WEB_BOUND.MAX_WS_PROTOCOLS) throw domException("MAX_WS_PROTOCOLS: too many subprotocols", "SyntaxError");
     state.url = record.href;
@@ -212,7 +212,8 @@ class WebSocket extends EventTarget {
   close(code = undefined, reason = undefined) {
     const state = this.#state;
     if (code !== undefined) {
-      code = Number(code) & 0xffff;
+      // Web IDL's [Clamp] unsigned short.
+      code = Math.min(Math.max(Math.round(Number(code)) || 0, 0), 0xffff);
       if (code !== 1000 && (code < 3000 || code > 4999)) throw domException("a close code is 1000 or 3000 to 4999", "InvalidAccessError");
     }
     let text = "";

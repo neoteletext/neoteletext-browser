@@ -218,6 +218,20 @@ numbered! {
     NP_PAINT = 303,
     /// NAPLPS: starts a new generation with a painter program.
     NP_REPAINT = 304,
+    /// NAPLPS: defines or redefines a symbol from a painter program; gives its handle.
+    NP_SYMBOL = 305,
+    /// NAPLPS: defines a DRCS character from a painter program; gives its handle.
+    NP_DRCS = 306,
+    /// NAPLPS: defines a texture from a painter program; gives its handle.
+    NP_TEXTURE = 307,
+    /// NAPLPS: makes or redefines an actor or a region; gives its handle.
+    NP_ACTOR = 308,
+    /// NAPLPS: labels an actor or a region.
+    NP_LABEL = 309,
+    /// NAPLPS: an animation operation on an actor or a region.
+    NP_ANIMATE = 310,
+    /// NAPLPS: removes an actor, a region or a symbol.
+    NP_REMOVE = 311,
     /// NAPLPS: measures text; gives `width,height` in dots.
     NP_MEASURE = 312,
 }

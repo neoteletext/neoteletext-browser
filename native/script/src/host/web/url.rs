@@ -4,11 +4,9 @@
 //! read one address two ways (DEC-7260 item 5; script-api.md section 9.1).
 //!
 //! The prelude's `URL` object holds what this gives it and nothing more:
-//! the serialised address and where each component lies in it.
+//! the serialised address and each of its components.
 
-use core::fmt::Write as _;
-
-use url::{Position, Url, quirks};
+use url::{Url, quirks};
 
 use super::super::Reply;
 use crate::limits::MAX_URL_BYTES;
@@ -47,48 +45,48 @@ impl Part {
     }
 }
 
-/// The places in a serialised address the prelude cuts it at, in the
-/// order they are written: the end of the scheme, then the start and end
-/// of the user name, the password, the host, the port, the path, the
-/// query and the fragment.
-const PLACES: [Position; 13] = [
-    Position::AfterScheme,
-    Position::BeforeUsername,
-    Position::AfterUsername,
-    Position::BeforePassword,
-    Position::AfterPassword,
-    Position::BeforeHost,
-    Position::AfterHost,
-    Position::BeforePort,
-    Position::AfterPort,
-    Position::BeforePath,
-    Position::AfterPath,
-    Position::BeforeQuery,
-    Position::AfterQuery,
-];
+/// The fields an address is written as for the prelude, a line each.
+pub(super) const FIELDS: usize = 11;
 
-/// The number of places written, for the prelude.
-pub(super) const PLACE_COUNT: usize = PLACES.len();
-
-/// An address as the prelude is given it: the places, a line feed, the
-/// origin's serialisation (URL standard section 4.7, `null` for an opaque
-/// one), a line feed, and the serialised address, which is ASCII and
-/// holds no line feed.
+/// An address as the prelude is given it, a line for each field: the
+/// serialised address, the origin's serialisation (URL standard section
+/// 4.7, `null` for an opaque one), then what the URL standard's API
+/// gives for `protocol`, `username`, `password`, `host`, `hostname`,
+/// `port`, `pathname`, `search` and `hash` (section 6.1). Every field is
+/// ASCII and holds no line feed.
+///
+/// The fields are the crate's own getters'. The crate's slicing by
+/// position is not used: after some setters it indexes past the
+/// address's end (found by the web-platform-tests' setter cases on 22
+/// November 2026, version 2.5.9), and nothing a script gives may make
+/// its host panic.
 fn written(url: &Url) -> Reply {
     let text = url.as_str();
     if text.len() > MAX_URL_BYTES {
         return too_long();
     }
-    let mut out = String::with_capacity(text.len().saturating_add(128));
-    for place in PLACES {
-        let _ = write!(out, "{},", url[..place].len());
-    }
-    // The fragment runs from its place to the end.
-    let _ = writeln!(out, "{}", url[..Position::BeforeFragment].len());
-    out.push_str(&url.origin().ascii_serialization());
-    out.push('\n');
-    out.push_str(text);
-    Reply::Text(out)
+    let origin = url.origin().ascii_serialization();
+    let fields: [&str; FIELDS] = [
+        text,
+        &origin,
+        quirks::protocol(url),
+        quirks::username(url),
+        quirks::password(url),
+        quirks::host(url),
+        quirks::hostname(url),
+        quirks::port(url),
+        quirks::pathname(url),
+        quirks::search(url),
+        quirks::hash(url),
+    ];
+    Reply::Text(fields.join("\n"))
+}
+
+/// Runs an address operation so that a panic inside the library that
+/// parses addresses is a refusal and not the host's end: the library is
+/// not this crate's, and a script chooses its every input.
+fn guarded(operation: impl FnOnce() -> Reply) -> Reply {
+    std::panic::catch_unwind(core::panic::AssertUnwindSafe(operation)).unwrap_or_else(|_| Reply::Type("the address could not be handled".to_owned()))
 }
 
 /// The refusal of an address past its bound. A `TypeError`, as the URL
@@ -109,6 +107,10 @@ fn cut(payload: &str, first: i32) -> Option<(&str, &str)> {
 /// The address as [`written`] gives it, or undefined when the standard's
 /// parser fails.
 pub(super) fn parse(input_bytes: i32, payload: &str) -> Reply {
+    guarded(|| parse_unguarded(input_bytes, payload))
+}
+
+fn parse_unguarded(input_bytes: i32, payload: &str) -> Reply {
     let (input, base) = if input_bytes == -1 {
         (payload, None)
     } else {
@@ -131,6 +133,10 @@ pub(super) fn parse(input_bytes: i32, payload: &str) -> Reply {
 /// `part` is given. The address after the setter ran, which by the
 /// standard is unchanged where the value is not one the component takes.
 pub(super) fn set(part: i32, address_bytes: i32, payload: &str) -> Reply {
+    guarded(|| set_unguarded(part, address_bytes, payload))
+}
+
+fn set_unguarded(part: i32, address_bytes: i32, payload: &str) -> Reply {
     let Some(part) = Part::numbered(part) else { return Reply::Type("no such component of an address".to_owned()) };
     let Some((address, value)) = cut(payload, address_bytes) else { return Reply::Type("a setter takes an address and a value".to_owned()) };
     if address.len() > MAX_URL_BYTES || value.len() > MAX_URL_BYTES {
@@ -167,22 +173,60 @@ mod tests {
         }
     }
 
-    /// URL standard section 4.4 and 4.7: an address is resolved against
-    /// its base and serialised, its origin is its scheme, host and port,
-    /// and the places cut it into its components.
+    /// URL standard sections 4.4, 4.7 and 6.1: an address is resolved
+    /// against its base and serialised, its origin is its scheme, host
+    /// and port, and each field is the API's getter of that name.
     #[test]
-    fn an_address_is_resolved_serialised_and_cut() {
+    fn an_address_is_resolved_serialised_and_given_by_its_fields() {
         let reply = text(parse(10, "../b?q=1#fhttps://user:pw@Example.test:8443/a/c/d"));
-        let mut lines = reply.splitn(3, '\n');
-        let places: Vec<usize> = lines.next().unwrap().split(',').map(|place| place.parse().unwrap()).collect();
-        assert_eq!(places.len(), PLACE_COUNT + 1);
-        assert_eq!(lines.next().unwrap(), "https://example.test:8443");
-        let href = lines.next().unwrap();
-        assert_eq!(href, "https://user:pw@example.test:8443/a/b?q=1#f");
-        let cut = |from: usize, to: usize| &href[places[from]..places[to]];
-        assert_eq!(&href[..places[0]], "https");
-        assert_eq!((cut(1, 2), cut(3, 4), cut(5, 6), cut(7, 8), cut(9, 10), cut(11, 12)), ("user", "pw", "example.test", "8443", "/a/b", "q=1"));
-        assert_eq!(&href[places[13]..], "f");
+        let fields: Vec<&str> = reply.split('\n').collect();
+        assert_eq!(
+            fields,
+            vec![
+                "https://user:pw@example.test:8443/a/b?q=1#f",
+                "https://example.test:8443",
+                "https:",
+                "user",
+                "pw",
+                "example.test:8443",
+                "example.test",
+                "8443",
+                "/a/b",
+                "?q=1",
+                "#f"
+            ]
+        );
+        assert_eq!(fields.len(), FIELDS);
+    }
+
+    /// The setter cases that made the crate's slicing by position index
+    /// past an address's end: each is answered with an address.
+    #[test]
+    fn the_setters_that_broke_position_slicing_give_addresses() {
+        for (part, address, value) in [
+            (1, "http://test@example.net", "file"),
+            (1, "ssh://me@example.net", "http"),
+            (2, "http://example.net", "me"),
+            (3, "sc://x", "pw"),
+            (4, "sc://x/", ""),
+            (5, "foo://x", ""),
+        ] {
+            let payload = format!("{address}{value}");
+            let reply = text(set(part, i32::try_from(address.len()).unwrap(), &payload));
+            assert_eq!(reply.split('\n').count(), FIELDS, "{reply}");
+        }
+    }
+
+    /// An address that ends at an empty authority: the crate's slicing at
+    /// `Position::BeforePassword` indexes past its end in a release build
+    /// (url 2.5.9, lib.rs:2771), and a script's `new URL("foo://")` ended
+    /// the script host. It is an address, given by its fields.
+    #[test]
+    fn an_address_that_ends_at_an_empty_authority_is_given() {
+        for (address, protocol) in [("foo://", "foo:"), ("web://", "web:")] {
+            let reply = text(parse(-1, address));
+            assert_eq!(reply.split('\n').collect::<Vec<_>>(), vec![address, "null", protocol, "", "", "", "", "", "", "", ""]);
+        }
     }
 
     /// URL standard section 4.4: what the parser fails on is undefined to
@@ -201,7 +245,7 @@ mod tests {
     /// the address as it was.
     #[test]
     fn the_setters_are_the_standards() {
-        let href = |reply: Reply| text(reply).splitn(3, '\n').nth(2).unwrap().to_owned();
+        let href = |reply: Reply| text(reply).split('\n').next().unwrap().to_owned();
         assert_eq!(href(set(6, 22, "https://example.test/a8080")), "https://example.test:8080/a");
         assert_eq!(href(set(6, 22, "https://example.test/anonsense")), "https://example.test/a");
         assert_eq!(href(set(7, 22, "https://example.test/a/b c")), "https://example.test/b%20c");

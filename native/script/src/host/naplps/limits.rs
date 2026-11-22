@@ -104,3 +104,42 @@ const _: () = assert!(MAX_PAINTER_WORDS * size_of::<i32>() <= crate::limits::MAX
 const _: () = assert!(NAPLPS_MAX_IMAGE_PELS + NAPLPS_MAX_IMAGE_HEIGHT as usize <= naplps::limits::MAX_PDI_BYTES);
 // A polygon's operands, six bytes a vertex, fit one PDI.
 const _: () = assert!(MAX_POLYGON_VERTICES * 6 < naplps::limits::MAX_PDI_BYTES);
+
+/// The codes a macro or a DRCS character is named by, and so the most
+/// symbols and the most DRCS characters (the renderer's bound, by name).
+pub const DEFINABLE_CODES: usize = naplps::limits::DEFINABLE_CODES;
+/// The longest contents of one symbol, DRCS character or texture (the
+/// renderer's bound on a macro, by name).
+pub const MAX_MACRO_BYTES: usize = naplps::limits::MAX_MACRO_BYTES;
+/// The most bytes of every symbol's contents together (the renderer's
+/// bound, by name).
+pub const MAX_ALL_MACRO_BYTES: usize = naplps::limits::MAX_ALL_MACRO_BYTES;
+/// The most bytes of every DRCS character's and texture's contents
+/// together: eight of the longest. The host keeps them to send again
+/// with each new generation, so they are part of every repaint's cost.
+pub const NAPLPS_MAX_PATTERN_BYTES: usize = 8 * MAX_MACRO_BYTES;
+/// The programmable fill patterns, A to D (the renderer's bound, by name).
+pub const TEXTURE_MASKS: usize = naplps::limits::TEXTURE_MASKS;
+/// The most actors and regions of a page (the renderer's bound, by name).
+pub const MAX_OBJECTS: usize = naplps::limits::MAX_OBJECTS;
+/// The most frames of an actor (the renderer's bound, by name).
+pub const MAX_OBJECT_FRAMES: usize = naplps::limits::MAX_OBJECT_FRAMES;
+/// The most objects cycling their frames at once (the renderer's bound, by name).
+pub const MAX_CYCLING_OBJECTS: usize = naplps::limits::MAX_CYCLING_OBJECTS;
+/// The last frame an object shows (the renderer's bound, by name).
+pub const MAX_FRAME: i32 = naplps::limits::MAX_FRAME_NUMBER as i32;
+/// The longest period of a frame cycle, in ticks (the rule table's bound, by name).
+pub const MAX_CYCLE_PERIOD: i32 = neoteletext_rules::limits::MAX_CYCLE_PERIOD as i32;
+/// The most animation operations one step's batch holds (the rule table's bound, by name).
+pub const MAX_ANIMATE_OPERATIONS: usize = neoteletext_rules::limits::MAX_ANIMATE_OPERATIONS;
+/// The channel context's share of the cast and of the symbols (section
+/// 10.6), so that neither level can starve the other.
+pub const CHANNEL_SHARE_ACTORS: usize = 8;
+/// See [`CHANNEL_SHARE_ACTORS`].
+pub const CHANNEL_SHARE_SYMBOLS: usize = 16;
+
+const _: () = assert!(CHANNEL_SHARE_ACTORS < MAX_OBJECTS && CHANNEL_SHARE_SYMBOLS < DEFINABLE_CODES);
+// The objects of one record are the batch's, and the frames an object's.
+const _: () = assert!(MAX_OBJECTS == protocol::script::batch::MAX_NAPLPS_OBJECTS && MAX_OBJECT_FRAMES == protocol::script::batch::MAX_OBJECT_FRAMES);
+// A symbol's handle holds its slot in eight bits.
+const _: () = assert!(DEFINABLE_CODES <= 256);
