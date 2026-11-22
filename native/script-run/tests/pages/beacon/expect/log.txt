@@ -1,0 +1,10 @@
+000000 page log beacon on page 100 of Beacon at https://channel.test/
+000000 page log tick 0 random 0.555058474
+000005 runner note verdicts C-
+000010 page log tick 10 random 0.803378164
+000020 runner note verdicts C-
+000020 page log a quarter of a second after press 1 at 2027-01-01T00:00:00.333Z
+000020 page log tick 20 random 0.713780575
+000030 page log tick 30 random 0.778904303
+000035 page log a quarter of a second after press 2 at 2027-01-01T00:00:00.583Z
+000040 page log closed after 2 presses; budget {"used":0,"limit":32}

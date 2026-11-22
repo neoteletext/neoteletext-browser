@@ -1,0 +1,10 @@
+# The kept pictures of tests/regis.rs: each a name and the SHA-256 of the
+# picture's 800 by 480 colour-map addresses followed by its sixteen
+# colours, three bytes each. The format's version is raised with any
+# change to what is painted.
+format 1
+page-at-first 25e789e0425a09443f5c32472f158f52ec72d2354f485d56914aeb93acba1ff8
+page-painted 50eb8e09bbf53ced28a81252943f92f7a84418cae7ebbc351279ae5f5e077170
+page-pressed-by-the-viewer 5c7b7b358a05abd3d8698983785ed222430586040a867d22628dbfb6aa1d8fe9
+page-frame-2-and-forced-pressed 17231940b3f5fc21c3854ff2159c59611424459b0bcfd4cb746ef272d7c7612f
+page-sprite-moved 78e74b36ce25f7a9a06438e58ba399a5fdd08ed765c7f4406f88ae044f194800

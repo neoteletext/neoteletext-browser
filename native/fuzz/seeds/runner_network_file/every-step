@@ -1,0 +1,20 @@
+request fetch GET https://channel.test/tides.json
++1 head 200 type=basic url=https://channel.test/t redirected text=All good
+header content-type: application/json
++1 body {"height":3}\n\x00
++2 end
+
+request fetch POST https://channel.test/x
++0 fail timeout 17
+
+request events GET https://channel.test/feed
++1 opened
++3 event message - first
++5 event tide 7 second
++6 retrying
+
+request socket GET wss://channel.test/chat
++1 opened chat.v1
++2 message text hello
++2 message binary-more \x01\x02
++9 closed 1000 clean bye now

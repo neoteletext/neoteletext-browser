@@ -96,6 +96,28 @@ numbered! {
     SYNTH_NOTE = 34,
     /// All notes off and the instrument released.
     SYNTH_STOP = 35,
+    /// Parses an address against a base: the serialised address and where its components lie, or undefined.
+    URL_PARSE = 40,
+    /// Starts a fetch or an event stream: its flags and its body's length; its head. Gives its number.
+    FETCH = 41,
+    /// The next bytes of a request's body.
+    FETCH_BODY = 42,
+    /// Gives up a fetch or an event stream.
+    FETCH_ABORT = 43,
+    /// Makes room for more of an answer's body.
+    FETCH_CREDIT = 44,
+    /// Opens a socket: its address and subprotocols. Gives its number.
+    WS_OPEN = 45,
+    /// A piece of a message for a socket.
+    WS_SEND = 46,
+    /// Closes a socket: its code; its reason.
+    WS_CLOSE = 47,
+    /// Sets a component of an address, as the URL standard's setter of
+    /// that name does (work package W2's number: section 10.2 has none
+    /// for the setters, and 48 was free between the web's operations).
+    URL_SET = 48,
+    /// Decodes bytes in an encoding of the Encoding standard, names a label's encoding, or encodes a string as UTF-8.
+    DECODE = 49,
     /// Teletext: text on the page plane, its style's spacing attributes before it.
     TT_PUT = 100,
     /// Teletext: raw seven-bit codes on a row.
@@ -152,6 +174,48 @@ numbered! {
     BM_TEXT = 137,
     /// The sixel bitmap: shows the back buffer; the cells changed plus 65,536 times the cells that lost detail.
     BM_PRESENT = 138,
+    /// ReGIS: names a colour and sets it; gives its entry.
+    RG_COLOUR_DEFINE = 200,
+    /// ReGIS: sets a colour entry.
+    RG_COLOUR_SET = 201,
+    /// ReGIS: makes a numbered drawing; gives its handle.
+    RG_DRAWING = 202,
+    /// ReGIS: sets a property of a drawing.
+    RG_SET = 203,
+    /// ReGIS: sets or removes a drawing's clip rectangle.
+    RG_CLIP = 204,
+    /// ReGIS: sets or removes a drawing's frame list.
+    RG_FRAMES = 205,
+    /// ReGIS: sets or removes a drawing's label.
+    RG_LABEL = 206,
+    /// ReGIS: defines a drawing's contents from a painter program.
+    RG_DEFINE = 207,
+    /// ReGIS: removes a drawing and its children.
+    RG_REMOVE = 208,
+    /// ReGIS: removes every drawing of the context.
+    RG_CLEAR = 209,
+    /// ReGIS: an animation operation on a drawing.
+    RG_ANIMATE = 210,
+    /// ReGIS: defines a macrograph (work package R2).
+    RG_MACROGRAPH = 211,
+    /// ReGIS: measures text (work package R2).
+    RG_MEASURE = 212,
+    /// ReGIS: a tracked drawing's rectangle as of the last step.
+    RG_BOUNDS = 213,
+    /// ReGIS: a property or other field of a drawing as the host holds it.
+    RG_GET = 214,
+    /// NAPLPS: defines a colour; its 24 bits and its name; gives its entry.
+    NP_COLOUR_DEFINE = 300,
+    /// NAPLPS: redefines a colour entry.
+    NP_COLOUR_SET = 301,
+    /// NAPLPS: an entry blinks to another, or (to -1) is steady.
+    NP_BLINK = 302,
+    /// NAPLPS: appends a painter program to the backdrop.
+    NP_PAINT = 303,
+    /// NAPLPS: starts a new generation with a painter program.
+    NP_REPAINT = 304,
+    /// NAPLPS: measures text; gives `width,height` in dots.
+    NP_MEASURE = 312,
 }
 
 numbered! {
@@ -203,9 +267,44 @@ numbered! {
     UI = 21,
     /// The viewer has pressed a key or the pointer in this tab, so sound is allowed.
     SOUND_ALLOWED = 22,
+    /// An answer's head: the request, the status, the response type and whether redirected; the address, status text and headers.
+    FETCH_HEAD = 30,
+    /// A piece of an answer's body.
+    FETCH_CHUNK = 31,
+    /// An answer's body is complete.
+    FETCH_END = 32,
+    /// A request, an event stream or a socket failed: which error the script is given.
+    FETCH_FAILED = 33,
+    /// Bytes of a request's body were written; with no bytes, the request may send more of its body.
+    FETCH_SENT = 34,
+    /// A socket is open: its subprotocol.
+    WS_OPENED = 35,
+    /// A piece of a socket's message: binary or text, and whether the last.
+    WS_MESSAGE = 36,
+    /// A socket closed: its code and whether cleanly; its reason.
+    WS_CLOSED = 37,
+    /// Bytes of a socket's messages were written.
+    WS_SENT = 38,
+    /// An event stream is open: its final address, or empty.
+    SSE_OPENED = 39,
+    /// An event of an event stream: the lengths of its type and of its last event ID; the type, the ID and the data.
+    SSE_EVENT = 40,
+    /// An event stream was lost and is being reconnected.
+    SSE_RETRYING = 41,
+    /// ReGIS: the last step's commit failed and its changes were
+    /// discarded (section 6.2, "Commit"): the commit error's code and the
+    /// drawing concerned; the drawings that are gone and those that are back.
+    RG_COMMIT_FAILED = 50,
 }
 
 impl EventKind {
+    /// Whether the kind is one of the network's (30 to 41), which the
+    /// host makes from the web client's answers and no step carries.
+    #[must_use]
+    pub const fn is_network(self) -> bool {
+        self.number() >= Self::FETCH_HEAD.number() && self.number() <= Self::SSE_RETRYING.number()
+    }
+
     /// The kind a step's event names. Every kind a step can carry has its
     /// number here, the same number (the crate's tests compare them);
     /// event 22 is the host's own and no step carries it.
@@ -254,7 +353,9 @@ mod tests {
         }
         let own: Vec<EventKind> =
             EventKind::ALL.iter().map(|(_, kind)| *kind).filter(|kind| !Carried::ALL.iter().any(|carried| EventKind::of(*carried) == *kind)).collect();
-        assert_eq!(own, vec![EventKind::SOUND_ALLOWED]);
+        // The network's events are the host's own too: it makes them from the web client's answers.
+        assert_eq!(own.iter().copied().filter(|kind| !kind.is_network()).collect::<Vec<_>>(), vec![EventKind::SOUND_ALLOWED, EventKind::RG_COMMIT_FAILED]);
+        assert!(own.iter().filter(|kind| kind.is_network()).all(|kind| Carried::of(u8::try_from(kind.number()).unwrap()).is_err()));
         assert!(Carried::of(u8::try_from(EventKind::SOUND_ALLOWED.number()).unwrap()).is_err());
     }
 
@@ -334,6 +435,75 @@ numbered! {
     WHEEL = 13,
     /// Whether its bounds are reported.
     TRACK = 14,
+}
+
+numbered! {
+    /// What operation `RG_GET` gives of a drawing beside the properties
+    /// of section 10.4, which it gives by their own numbers (work package
+    /// R1's numbering; the specification has no operation that reads).
+    RegisField:
+    /// Its clip rectangle: text `x,y,width,height`, or undefined.
+    CLIP = 20,
+    /// Its frame list: the frames' handles as text with commas between, or undefined.
+    FRAMES = 21,
+    /// Its label, or undefined.
+    LABEL = 22,
+    /// The frame last set.
+    FRAME = 23,
+    /// The look last forced: 0 none, 1 hover, 2 pressed, 3 alternative.
+    LOOK = 24,
+}
+
+numbered! {
+    /// A call of a ReGIS painter program (sections 6.3 and 10.2): one for
+    /// each call of section 6.3's table, in its order from 1. Work
+    /// package R1 encodes the first eight, `FILL` and `INK`; the rest are
+    /// work package R2's.
+    RegisPaint:
+    /// `moveTo(x, y)`.
+    MOVE_TO = 1,
+    /// `moveBy(dx, dy)`.
+    MOVE_BY = 2,
+    /// `lineTo(x, y)`.
+    LINE_TO = 3,
+    /// `lineBy(dx, dy)`.
+    LINE_BY = 4,
+    /// `dot()`.
+    DOT = 5,
+    /// `polyline(points)`: the count of points, then each point's x and y.
+    POLYLINE = 6,
+    /// `polygon(points)`: as `POLYLINE`.
+    POLYGON = 7,
+    /// `rect(x, y, width, height)`.
+    RECT = 8,
+    /// `vector(digits, { multiplier })`.
+    VECTOR = 9,
+    /// `circle(radius)`.
+    CIRCLE = 10,
+    /// `circleThrough(x, y)`.
+    CIRCLE_THROUGH = 11,
+    /// `arc(cx, cy, degrees)`.
+    ARC = 12,
+    /// `curve(points, { closed })`.
+    CURVE = 13,
+    /// `fill(fn)`: the length of its body in whole numbers, then the body.
+    FILL = 14,
+    /// `ink(entry)`.
+    INK = 15,
+    /// `mode(m)`.
+    MODE = 16,
+    /// `negative(on)`.
+    NEGATIVE = 17,
+    /// `pattern(p, { multiplier })`.
+    PATTERN = 18,
+    /// `planes(mask)`.
+    PLANES = 19,
+    /// `shade(s)`.
+    SHADE = 20,
+    /// `text(string, options)`.
+    TEXT = 21,
+    /// `call(macrograph)`.
+    CALL = 22,
 }
 
 numbered! {
@@ -463,11 +633,20 @@ pub fn prelude() -> String {
         ("MAX_MIDI_BEND", i64::from(limits::MAX_MIDI_BEND)),
     ];
     table("BOUND", &mut bounds.iter().copied());
+    table("NP", &mut crate::host::naplps::program::table());
+    table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
     table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
     table("TTB", &mut crate::teletext::bitmap::prelude_numbers().iter().copied());
+    table("RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table("RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table("RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
     out.push_str(include_str!("prelude.js"));
+    out.push_str(include_str!("host/naplps/prelude.js"));
     out.push_str(crate::teletext::bitmap::PRELUDE);
     out.push_str(crate::teletext::PRELUDE);
+    out.push_str(include_str!("regis.js"));
+    // The web APIs (work package W2), inside the same function.
+    crate::web::write_prelude(&mut out);
     out.push_str("\n})();\n");
     out
 }
