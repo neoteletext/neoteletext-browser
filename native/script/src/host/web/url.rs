@@ -209,10 +209,23 @@ mod tests {
             (2, "http://example.net", "me"),
             (3, "sc://x", "pw"),
             (4, "sc://x/", ""),
+            (5, "foo://x", ""),
         ] {
             let payload = format!("{address}{value}");
             let reply = text(set(part, i32::try_from(address.len()).unwrap(), &payload));
             assert_eq!(reply.split('\n').count(), FIELDS, "{reply}");
+        }
+    }
+
+    /// An address that ends at an empty authority: the crate's slicing at
+    /// `Position::BeforePassword` indexes past its end in a release build
+    /// (url 2.5.9, lib.rs:2771), and a script's `new URL("foo://")` ended
+    /// the script host. It is an address, given by its fields.
+    #[test]
+    fn an_address_that_ends_at_an_empty_authority_is_given() {
+        for (address, protocol) in [("foo://", "foo:"), ("web://", "web:")] {
+            let reply = text(parse(-1, address));
+            assert_eq!(reply.split('\n').collect::<Vec<_>>(), vec![address, "null", protocol, "", "", "", "", "", "", "", ""]);
         }
     }
 
