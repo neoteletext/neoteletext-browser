@@ -7,6 +7,8 @@
 
 use core::time::Duration;
 
+pub mod regis;
+
 /// A byte as the whole number a host call's argument is compared with.
 const fn wide(byte: u8) -> i32 {
     byte as i32

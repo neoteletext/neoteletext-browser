@@ -305,6 +305,8 @@ pub struct Host {
     /// constants, lowered only by this module's own tests.
     state_limit: usize,
     batch_limit: usize,
+    /// The page's ReGIS drawings and colours (work package R1).
+    regis: regis::Regis,
 }
 
 /// The whole numbers of a host call, read with their count checked.
@@ -449,6 +451,7 @@ impl Host {
             figures: TimeFigures::default(),
             state_limit: MAX_HOST_STATE_BYTES,
             batch_limit: MAX_BATCH_BYTES,
+            regis: regis::Regis::new(),
         }
     }
 
@@ -488,6 +491,8 @@ impl Host {
     /// goes with the channel context (section 3.6).
     pub fn close(&mut self, context: ContextId) {
         self.release_sound(context);
+        // The page's one ReGIS stream ends with the context that drew on it.
+        self.regis_reset();
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             if slot.as_ref().is_some_and(|held| !held.listens.is_empty()) {
                 self.watch_changed = true;
@@ -664,6 +669,7 @@ impl Host {
             | EventKind::FAULT
             | EventKind::UI
             | EventKind::SOUND_ALLOWED
+            | EventKind::RG_COMMIT_FAILED
             | EventKind::CLOSE
             | EventKind::SHARED
             | EventKind::TIMER
@@ -750,8 +756,12 @@ impl Host {
         let origin = held.origin.unwrap_or(self.tick);
         let timer = held.timers.iter().map(|timer| origin.saturating_add(timer.due)).min();
         let note = self.pending_notes.iter().filter(|note| note.context == context).map(|note| note.due).min();
-        match (timer, note) {
+        let due = match (timer, note) {
             (Some(timer), Some(note)) => Some(timer.min(note)),
+            (one, other) => one.or(other),
+        };
+        match (due, self.regis_wake(context)) {
+            (Some(due), Some(wake)) => Some(due.min(wake)),
             (one, other) => one.or(other),
         }
     }
@@ -823,6 +833,7 @@ impl Host {
         bytes = self.shared.iter().fold(bytes, |sum, (key, value)| sum.saturating_add(cost(key)).saturating_add(cost(value)));
         bytes = self.shared_notices.iter().fold(bytes, |sum, (_, key)| sum.saturating_add(cost(key)).saturating_add(size_of::<ContextId>()));
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
+        bytes = bytes.saturating_add(self.regis.held_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
 
@@ -832,6 +843,7 @@ impl Host {
         let mut bytes = self.log.iter().fold(0_usize, |sum, line| sum.saturating_add(cost(&line.text)).saturating_add(size_of::<LogLine>()));
         bytes = bytes.saturating_add(self.sound.len().saturating_mul(size_of::<SoundOperation>()));
         bytes = bytes.saturating_add(self.title.as_deref().map_or(0, cost));
+        bytes = bytes.saturating_add(self.regis.batch_bytes());
         bytes.saturating_add(self.navigate.as_deref().map_or(0, cost))
     }
 
@@ -870,6 +882,7 @@ impl Host {
                 batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
             }
         }
+        self.regis_take(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
         let dropped = core::mem::take(&mut self.log_dropped);
@@ -1049,6 +1062,21 @@ impl Host {
                 no_payload(op, payload)?;
                 self.sound_operation(context, op, ints)
             }
+            Op::RG_COLOUR_DEFINE
+            | Op::RG_COLOUR_SET
+            | Op::RG_DRAWING
+            | Op::RG_SET
+            | Op::RG_CLIP
+            | Op::RG_FRAMES
+            | Op::RG_LABEL
+            | Op::RG_DEFINE
+            | Op::RG_REMOVE
+            | Op::RG_CLEAR
+            | Op::RG_ANIMATE
+            | Op::RG_MACROGRAPH
+            | Op::RG_MEASURE
+            | Op::RG_BOUNDS
+            | Op::RG_GET => self.regis_operate(context, op, ints, payload),
         }
     }
 
@@ -1300,7 +1328,8 @@ impl Host {
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
         if Handle::from_number(handle).is_none() {
-            return Err(type_error("no such thing"));
+            // A ReGIS drawing, by its number.
+            self.regis_listen(context, handle, kind, on == 1)?;
         }
         self.room(size_of::<(i32, EventKind)>(), 0)?;
         let held = self.context_mut(context).ok_or_else(|| type_error("the context is not open"))?;
@@ -1456,6 +1485,7 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
+        self.regis_budget(context, &mut out);
         out.push('}');
         out
     }
@@ -1477,6 +1507,9 @@ fn is_page_target(target: &str) -> bool {
     let hexadecimal = |text: &str, length: usize| text.len() == length && text.bytes().all(|byte| byte.is_ascii_hexdigit());
     hexadecimal(page, 3) && page.bytes().next().is_some_and(|first| (b'1'..=b'8').contains(&first)) && subpage.is_none_or(|subpage| hexadecimal(subpage, 4))
 }
+
+mod regis;
+pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
 
 #[cfg(test)]
 mod tests;
