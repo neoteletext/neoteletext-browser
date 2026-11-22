@@ -5,26 +5,30 @@
 
 use crate::limits::{MAX_HOST_BYTES, MAX_HOST_STATE_BYTES, MAX_RESULT_BYTES, TICKS_PER_SECOND};
 
-/// The requests of a container under way at once (D8).
-pub const MAX_REQUESTS_IN_FLIGHT: usize = 8;
-/// The requests of a container that wait for a place or for the rate;
+// The rates and counts of departures D8 and D22 are the protocol crate's,
+// defined once there for this host and for the web client, whose refusal
+// is the authority (section 10.5; `protocol::web`).
+
+/// The fetches of a container under way at once (D8).
+pub const MAX_REQUESTS_IN_FLIGHT: usize = protocol::web::MAX_REQUESTS_IN_FLIGHT;
+/// The fetches of a container that wait for a place or for the rate;
 /// one more is refused (D8).
-pub const MAX_REQUESTS_QUEUED: usize = 32;
+pub const MAX_REQUESTS_QUEUED: usize = protocol::web::MAX_REQUESTS_QUEUED;
 /// The requests a container starts in one step, aborted or not (section
 /// 10.5; the security review's finding of 1,240 requests in one step).
-pub const MAX_REQUESTS_PER_STEP: u32 = 8;
+pub const MAX_REQUESTS_PER_STEP: u32 = protocol::web::MAX_REQUESTS_PER_STEP;
 /// The requests a container starts in any second of ticks, aborted or not.
-pub const MAX_REQUESTS_PER_SECOND: u32 = 32;
+pub const MAX_REQUESTS_PER_SECOND: u32 = protocol::web::MAX_REQUESTS_PER_SECOND;
 /// The event streams of a container open at once (D22).
-pub const MAX_EVENT_STREAMS: usize = 4;
+pub const MAX_EVENT_STREAMS: usize = protocol::web::MAX_EVENT_STREAMS;
 /// The event streams a container opens in one step, closed or not (D22).
-pub const MAX_EVENT_STREAM_OPENS_PER_STEP: u32 = 2;
+pub const MAX_EVENT_STREAM_OPENS_PER_STEP: u32 = protocol::web::MAX_EVENT_STREAM_OPENS_PER_STEP;
 /// The sockets of a container open at once (D22).
-pub const MAX_SOCKETS: usize = 4;
+pub const MAX_SOCKETS: usize = protocol::web::MAX_SOCKETS;
 /// The sockets a container opens in one step, closed or not (D22).
-pub const MAX_SOCKET_OPENS_PER_STEP: u32 = 2;
+pub const MAX_SOCKET_OPENS_PER_STEP: u32 = protocol::web::MAX_SOCKET_OPENS_PER_STEP;
 /// The sockets a container opens in any minute of ticks (D22).
-pub const MAX_SOCKET_OPENS_PER_MINUTE: u32 = 16;
+pub const MAX_SOCKET_OPENS_PER_MINUTE: u32 = protocol::web::MAX_SOCKET_OPENS_PER_MINUTE;
 /// The ticks of that minute.
 pub const TICKS_PER_MINUTE: u64 = 60 * TICKS_PER_SECOND;
 /// The bytes a socket may have accepted and not yet seen written to the
@@ -81,4 +85,3 @@ const _: () = assert!(MAX_HOST_BYTES * 3 + 16 <= MAX_RESULT_BYTES);
 // A whole event of an event stream fits the scratch space an event's
 // payload is written to, which is as long as a result.
 const _: () = assert!(protocol::web::MAX_EVENT_TYPE_BYTES + protocol::web::MAX_EVENT_ID_BYTES + protocol::web::MAX_EVENT_DATA_BYTES <= MAX_RESULT_BYTES);
-const _: () = assert!(MAX_REQUESTS_PER_STEP <= MAX_REQUESTS_PER_SECOND && MAX_REQUESTS_IN_FLIGHT <= MAX_REQUESTS_QUEUED);
