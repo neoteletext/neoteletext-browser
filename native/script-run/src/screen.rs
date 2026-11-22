@@ -170,6 +170,8 @@ pub struct Screen {
     pub output_bytes: u64,
     /// The sections some batch held and the applier left out.
     pub left_out: Vec<&'static str>,
+    /// Whether a batch has carried ReGIS: the page is a ReGIS page.
+    regis: bool,
 }
 
 impl Screen {
@@ -180,7 +182,7 @@ impl Screen {
         let mut engine = Engine::new();
         engine.open_page(Some(place.page));
         engine.set_sound_heard(true);
-        Self { engine, place, applier, shown: Shown::default(), output_bytes: 0, left_out: Vec::new() }
+        Self { engine, place, applier, shown: Shown::default(), output_bytes: 0, left_out: Vec::new(), regis: false }
     }
 
     /// The page and sub-page shown.
@@ -248,6 +250,32 @@ impl Screen {
                 self.left_out.push(name);
             }
         }
+        self.regis |= batch.regis.is_some();
+        if batch.regis.is_some() || batch.animate.is_some() {
+            self.take_regis();
+        }
+    }
+
+    /// Lays over the picture kept every part of the ReGIS page's picture
+    /// that changed since it was last asked for. A repaint is given as the
+    /// rectangles it changed, one or several (the decoder's `Drawn`: the
+    /// first and `more`), and each is given once: a part not taken when
+    /// it is given is missing from every picture kept afterwards. So a
+    /// ReGIS page's picture is taken at every batch that changes it, and
+    /// again before a picture is kept.
+    fn take_regis(&mut self) {
+        if !self.regis {
+            return;
+        }
+        let now = self.engine.now_us();
+        if let (Some(drawn), _) = self.engine.take_pictures(self.place.page, Some(self.place.subcode), now)
+            && drawn.picture.language == PictureLanguage::Regis
+        {
+            self.take(&SnapshotImage::Regis(drawn.picture));
+            for part in drawn.more {
+                self.take(&SnapshotImage::Regis(part));
+            }
+        }
     }
 
     /// The voice operations the page's own records caused since the last
@@ -291,6 +319,7 @@ impl Screen {
     /// # Errors
     /// When the engine holds no complete page to draw, or refuses it.
     pub fn snapshot(&mut self) -> Result<Vec<u8>, String> {
+        self.take_regis();
         let snapshot = self.engine.snapshot(self.place.page, self.place.subcode).map_err(|refusal| format!("the decoder drew no snapshot: {refusal:?}"))?;
         // A picture page with nothing new to send gives its teletext
         // layer alone; the picture last taken is then still the picture.
