@@ -1733,6 +1733,7 @@ dependencies = [
  "neoteletext-audio",
  "neoteletext-core",
  "neoteletext-formats",
+ "neoteletext-picture",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",

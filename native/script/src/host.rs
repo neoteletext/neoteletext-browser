@@ -1074,7 +1074,16 @@ impl Host {
             | Op::TT_CONTROL
             | Op::TT_MEASURE
             | Op::TT_LANGUAGES
-            | Op::TT_LEVEL => {
+            | Op::TT_LEVEL
+            | Op::BM_ROWS
+            | Op::BM_CLEAR
+            | Op::BM_SET
+            | Op::BM_GET
+            | Op::BM_LINE
+            | Op::BM_RECT
+            | Op::BM_BLIT
+            | Op::BM_TEXT
+            | Op::BM_PRESENT => {
                 // A label waiting to leave is the one thing teletext stages
                 // whose size a script chooses.
                 self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;

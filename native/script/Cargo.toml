@@ -48,6 +48,11 @@ neoteletext-core.workspace = true
 # Apache-2.0, pure Rust; the engine's decision E.82, rdm DEC-606), for
 # right-to-left runs.
 neoteletext-formats = { workspace = true, features = ["write-text"] }
+# The engine's converter of the teletext sixel bitmap,
+# `neoteletext_picture::bitmap::present` (section 5.7; the owner's
+# DEC-7245, the engine's DEC-7355): the crate without its picture
+# decoders, so that the script host links no decoder of a picture file.
+neoteletext-picture = { workspace = true, default-features = false }
 
 [dev-dependencies]
 # The teletext tests' receiver (tests/teletext/receiver.rs): the engine as
