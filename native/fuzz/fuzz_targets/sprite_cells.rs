@@ -1,5 +1,5 @@
 //! A sprite's frame as the script host compiles it into a Passive
-//! object's body (script-api.md section 5.6; operation 112 TT_SPRITE;
+//! object's body (script-api.md section 5.6; operation 112 `TT_SPRITE`;
 //! `neoteletext_script::teletext::sprites::object::compile`): the cells
 //! are a script's `Uint8Array`, six bytes each. Whatever the cells, the
 //! body is within an object's bound and every triplet within its

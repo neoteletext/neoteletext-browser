@@ -1,7 +1,7 @@
 //! A script's ReGIS painter program as the script host encodes it into a
 //! drawing's contents or a macrograph's body (script-api.md section 6
-//! and section 11.4, target 22, its ReGIS half; operations 207 RG_DEFINE
-//! and 211 RG_MACROGRAPH; `neoteletext_script::host::
+//! and section 11.4, target 22, its ReGIS half; operations 207 `RG_DEFINE`
+//! and 211 `RG_MACROGRAPH`; `neoteletext_script::host::
 //! regis_painter_contents`). The words are a script's `Int32Array`.
 //! Whatever they are, the encoder does not panic, takes or refuses the
 //! program whole (the same program gives the same answer), and writes

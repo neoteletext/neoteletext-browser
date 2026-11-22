@@ -1,6 +1,6 @@
 //! A script's WebSocket address as the web client turns it into the
-//! address its handshake goes to and the request's head (the WebSockets
-//! standard's "new WebSocket(url)" steps and RFC 6455 section 4.1;
+//! address its handshake goes to and the request's head (the `WebSockets`
+//! standard's `new WebSocket(url)` steps and RFC 6455 section 4.1;
 //! TODO-7390 step 5 item 3; `fetcher::web_fuzzing::socket_address`):
 //! the scheme changed, the fragment cleared, the port and mixed content
 //! checked, the subprotocols' tokens and the head built. The opening

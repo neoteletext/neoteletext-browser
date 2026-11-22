@@ -184,7 +184,7 @@ fuzz_target!(|data: &[u8]| {
                 }
                 tick += u64::from(input.byte() % 70);
                 host.begin_step(tick, input.byte() & 1 != 0);
-                let context = if input.byte() & 3 == 0 { ContextId::Channel } else { ContextId::Page };
+                let context = if input.byte().is_multiple_of(4) { ContextId::Channel } else { ContextId::Page };
                 let kind = EventKind::from_number(i32::from(input.byte() % 24));
                 host.begin_callback(context, kind, input.int());
             }
