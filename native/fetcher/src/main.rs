@@ -7,7 +7,10 @@
 //! trusted core on standard output.
 //!
 //! Usage: `neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>]
-//! [--allow-local <ip>]... [--proxy <url>] [--no-http3]`; one process serves
+//! [--web-client <token> [--page-space <space>]] [--allow-local <ip>]...
+//! [--proxy <url>] [--no-http3]`; with `--web-client` it is the general web
+//! client of the one partition whose channel identity the address is,
+//! speaking only `protocol::web`; otherwise one process serves
 //! every tab of its channel in one jar that the trusted core adds to it,
 //! each message on its pipes naming its tab (REQ-6980), and `--no-http3`
 //! keeps every tab's push connection on HTTP/1.1 (REQ-6982); with `--snapshot` it fetches
@@ -38,7 +41,7 @@
 
 use std::process::ExitCode;
 
-use fetcher::{arguments, run, snapshot};
+use fetcher::{WebPartition, arguments, run, snapshot, web_client};
 
 fn main() -> ExitCode {
     // First, before any thread: the network and nothing else (requirement 3.3).
@@ -58,9 +61,16 @@ fn main() -> ExitCode {
     };
     // A snapshot is fetched by a process started for it alone, speaking
     // only protocol::snapshot (REQ-6884).
-    let ran = match read.snapshot {
-        Some((page, sub)) => snapshot(&read.channel, page, sub, &read.allowed, read.proxy),
-        None => run(&read.channel, &read.allowed, read.proxy, read.http3),
+    // The general web client serves one partition, the channel identity
+    // given as the address with the token and address space the trusted
+    // core gave it, and speaks only protocol::web (the browser's DEC-7268).
+    let ran = match (read.snapshot, read.web_client) {
+        (Some((page, sub)), _) => snapshot(&read.channel, page, sub, &read.allowed, read.proxy),
+        (None, Some(token)) => {
+            let partition = WebPartition { channel: &read.channel, token: protocol::web::PartitionToken::new(token), space: read.page_space };
+            web_client(&read.allowed, read.proxy, &partition)
+        }
+        (None, None) => run(&read.channel, &read.allowed, read.proxy, read.http3),
     };
     match ran {
         Ok(()) => ExitCode::SUCCESS,

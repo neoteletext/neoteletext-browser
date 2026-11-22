@@ -156,6 +156,35 @@ rustls = { version = "=0.23.46", default-features = false, features = ["ring", "
 # fetcher's WebSocket masks from the system's random source (TODO-6472,
 # RFC 6455 section 5.3).
 ring = { version = "=0.17.14", default-features = false }
+# The fetcher's general web client (neoteletext-common's DEC-7260 items 6
+# to 8, adopted by DEC-7262), pure Rust and so under the standing approval
+# of pure-Rust libraries (DEC-6579); the versions the NeoTeletext server
+# pins where it has them. No program links libcurl (DEC-7253).
+# MIT: the single-threaded runtime the web client's connections run on,
+# inside the fetcher process alone.
+tokio = { version = "=1.54.1", default-features = false }
+# MIT: HTTP/1.1, and HTTP/2 through the hyper project's `h2` (MIT).
+hyper = { version = "=1.12.0", default-features = false }
+# MIT or Apache-2.0: rustls on a tokio socket; rustls's features are chosen
+# above.
+tokio-rustls = { version = "=0.26.6", default-features = false }
+# MIT or Apache-2.0: the URL Standard's parser (DEC-7260 item 5); its
+# Unicode tables are under Unicode-3.0, which the owner accepted (DEC-7261).
+url = { version = "=2.5.9", default-features = false, features = ["std"] }
+# MIT or Apache-2.0: the Set-Cookie and Cookie headers and the jar
+# (DEC-7260 item 8).
+cookie = { version = "=0.18.2", default-features = false }
+cookie_store = { version = "=0.22.1", default-features = false }
+# MIT or Apache-2.0: the public suffix list's reader, for the jars' rule
+# that no cookie is set for a public suffix and for what a site is. The
+# list itself is data given to it, not part of the crate.
+publicsuffix = { version = "=2.3.0", default-features = false, features = ["idna"] }
+# MIT or Apache-2.0: gzip and deflate response bodies, inflated by
+# miniz_oxide in Rust, never a C zlib.
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+# BSD-3-Clause or MIT: brotli response bodies, read in Rust, without its
+# `unsafe` feature.
+brotli-decompressor = { version = "=6.3.2", default-features = false, features = ["std"] }
 # MIT, Zlib or Apache-2.0: the release files' DEFLATE, read with a bound
 # on what it writes (installation-and-updates.md section 6). The PNG
 # reader that brought it into the browser left with decision 61.

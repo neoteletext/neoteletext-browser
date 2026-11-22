@@ -28,7 +28,10 @@ mod snapshot;
 mod state;
 mod tabs;
 mod transport;
+mod web;
 
 pub use arguments::{Arguments, arguments};
 pub use process::run;
 pub use snapshot::run as snapshot;
+pub use web::fuzzing as web_fuzzing;
+pub use web::{Partition as WebPartition, run as web_client};
