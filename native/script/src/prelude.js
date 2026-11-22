@@ -616,6 +616,7 @@ class Nt extends EventTarget {
   get shared() { return shared; }
   get sound() { return sound; }
   get synth() { return synth; }
+  get naplps() { return naplpsApi; }
   now() { return host(OP.NOW); }
   navigate(target) {
     if (typeof target !== "string") throw new TypeError("a navigation's target is a string");

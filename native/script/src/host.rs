@@ -29,6 +29,8 @@ use crate::link::{Context as _, context_numbered};
 use crate::ops::{DispatchBit, EventKind, FAMILIES, Handle, Info, KeyBit, Op, PointerAction};
 use crate::random::Generator;
 
+pub mod naplps;
+
 /// MIDI's channel messages a script may send (MIDI 1.0 detailed
 /// specification, Table 1): note off, note on, control change, program
 /// change, pitch bend change.
@@ -305,6 +307,8 @@ pub struct Host {
     /// constants, lowered only by this module's own tests.
     state_limit: usize,
     batch_limit: usize,
+    /// The open page's NAPLPS (work package N1).
+    naplps: naplps::Naplps,
 }
 
 /// The whole numbers of a host call, read with their count checked.
@@ -449,6 +453,7 @@ impl Host {
             figures: TimeFigures::default(),
             state_limit: MAX_HOST_STATE_BYTES,
             batch_limit: MAX_BATCH_BYTES,
+            naplps: naplps::Naplps::default(),
         }
     }
 
@@ -478,6 +483,7 @@ impl Host {
         self.zone_minutes = open.zone_minutes;
         self.sound_allowed |= open.flags.sound_allowed;
         let context = open.context;
+        self.naplps.open(&open);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
         }
@@ -488,6 +494,7 @@ impl Host {
     /// goes with the channel context (section 3.6).
     pub fn close(&mut self, context: ContextId) {
         self.release_sound(context);
+        self.naplps.close(context);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             if slot.as_ref().is_some_and(|held| !held.listens.is_empty()) {
                 self.watch_changed = true;
@@ -543,6 +550,7 @@ impl Host {
         self.tick = self.tick.max(tick);
         self.sound_step = 0;
         self.sound_allowed |= sound_allowed;
+        self.naplps.begin_step(self.tick);
         for held in self.contexts.iter_mut().flatten() {
             held.keys_pressed.clear();
             if held.origin.is_none() {
@@ -584,6 +592,7 @@ impl Host {
             _ => false,
         };
         self.callback = Some((context, Callback { activation, sound_operations: 0 }));
+        self.naplps.begin_callback();
     }
 
     /// Ends the callback: scopes it left open are closed to new things.
@@ -823,6 +832,7 @@ impl Host {
         bytes = self.shared.iter().fold(bytes, |sum, (key, value)| sum.saturating_add(cost(key)).saturating_add(cost(value)));
         bytes = self.shared_notices.iter().fold(bytes, |sum, (_, key)| sum.saturating_add(cost(key)).saturating_add(size_of::<ContextId>()));
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
+        bytes = bytes.saturating_add(self.naplps.state_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
 
@@ -832,6 +842,7 @@ impl Host {
         let mut bytes = self.log.iter().fold(0_usize, |sum, line| sum.saturating_add(cost(&line.text)).saturating_add(size_of::<LogLine>()));
         bytes = bytes.saturating_add(self.sound.len().saturating_mul(size_of::<SoundOperation>()));
         bytes = bytes.saturating_add(self.title.as_deref().map_or(0, cost));
+        bytes = bytes.saturating_add(self.naplps.staged_bytes());
         bytes.saturating_add(self.navigate.as_deref().map_or(0, cost))
     }
 
@@ -870,6 +881,7 @@ impl Host {
                 batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
             }
         }
+        self.naplps.take_batch(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
         let dropped = core::mem::take(&mut self.log_dropped);
@@ -1048,6 +1060,9 @@ impl Host {
             Op::SOUND_PLAY | Op::SOUND_STOP | Op::SYNTH_START | Op::SYNTH_MIDI | Op::SYNTH_NOTE | Op::SYNTH_STOP => {
                 no_payload(op, payload)?;
                 self.sound_operation(context, op, ints)
+            }
+            Op::NP_COLOUR_DEFINE | Op::NP_COLOUR_SET | Op::NP_BLINK | Op::NP_PAINT | Op::NP_REPAINT | Op::NP_MEASURE => {
+                self.naplps_operation(context, op, ints, payload)
             }
         }
     }
@@ -1299,7 +1314,7 @@ impl Host {
         }
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
-        if Handle::from_number(handle).is_none() {
+        if Handle::from_number(handle).is_none() && !self.naplps.is_thing(context, handle) {
             return Err(type_error("no such thing"));
         }
         self.room(size_of::<(i32, EventKind)>(), 0)?;
@@ -1456,6 +1471,7 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
+        self.naplps.budget(&mut out);
         out.push('}');
         out
     }

@@ -58,7 +58,12 @@ fn opening(context: ContextId, input: &mut Bytes<'_>) -> ContextOpen {
     ContextOpen {
         context,
         api: 1,
-        renderer: Renderer::Teletext,
+        // The top two bits choose the page's renderer, so that each
+        // renderer's operations are reached.
+        renderer: match flags >> 6 {
+            3 => Renderer::Naplps,
+            _ => Renderer::Teletext,
+        },
         level: Level::TwoFive,
         page: 0x100,
         subcode: u16::from(flags & 1),

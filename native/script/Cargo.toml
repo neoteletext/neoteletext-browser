@@ -40,6 +40,27 @@ neoteletext-web.workspace = true
 neoteletext-audio.workspace = true
 # The bound on the keys a page may claim, by name.
 protocol.workspace = true
+# The NAPLPS renderer (MIT, the project's own, pinned by revision): the
+# dot mapping every writer of NAPLPS calls (naplps-raster.md RAS-2) and
+# the renderer's limits by name (script-api.md section 7; work package N1).
+naplps.workspace = true
+# The engine's picture text encoder (renderer parity PAR-3 to PAR-5):
+# text in the 55 provided sets, as `nt.naplps` writes it. Its feature
+# `picture-text` brings unicode-bidi 0.3.18 (MIT or Apache-2.0, pure
+# Rust, under the owner's standing approval DEC-6579), the engine's own
+# dependency for right-to-left text.
+neoteletext-formats = { workspace = true, features = ["picture-text"] }
+# The engine's character sets, which the picture text encoder names: its
+# feature `picture-text` uses the core's `glyphs` module without turning
+# on the core's `render` feature that holds it (the engine's TODO-7363,
+# after which this line goes).
+neoteletext-core = { workspace = true, features = ["render"] }
+
+[dev-dependencies]
+# The receiver's stroke font for the primary set, as the browser's decoder
+# gives it to the NAPLPS renderer (MIT, the project's own, pinned by
+# revision): the tests draw what the painter writes.
+naplps-fonts.workspace = true
 
 [lints]
 workspace = true

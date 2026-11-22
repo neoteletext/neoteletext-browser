@@ -96,6 +96,18 @@ numbered! {
     SYNTH_NOTE = 34,
     /// All notes off and the instrument released.
     SYNTH_STOP = 35,
+    /// NAPLPS: defines a colour; its 24 bits and its name; gives its entry.
+    NP_COLOUR_DEFINE = 300,
+    /// NAPLPS: redefines a colour entry.
+    NP_COLOUR_SET = 301,
+    /// NAPLPS: an entry blinks to another, or (to -1) is steady.
+    NP_BLINK = 302,
+    /// NAPLPS: appends a painter program to the backdrop.
+    NP_PAINT = 303,
+    /// NAPLPS: starts a new generation with a painter program.
+    NP_REPAINT = 304,
+    /// NAPLPS: measures text; gives `width,height` in dots.
+    NP_MEASURE = 312,
 }
 
 numbered! {
@@ -407,7 +419,10 @@ pub fn prelude() -> String {
         ("MAX_MIDI_BEND", i64::from(limits::MAX_MIDI_BEND)),
     ];
     table("BOUND", &mut bounds.iter().copied());
+    table("NP", &mut crate::host::naplps::program::table());
+    table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
     out.push_str(include_str!("prelude.js"));
+    out.push_str(include_str!("host/naplps/prelude.js"));
     out.push_str("\n})();\n");
     out
 }
