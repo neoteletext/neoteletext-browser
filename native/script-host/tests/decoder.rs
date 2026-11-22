@@ -186,23 +186,15 @@ impl Drop for Browser {
     }
 }
 
-/// How often a page whose script was stopped for time is tried again:
-/// a script host's limits are on the wall clock, and on a machine with
-/// no processor free a script's start alone can pass its limit, as the
-/// script-host program's own tests allow for.
-const STARVED_TRIES: usize = 5;
-
-/// What `page` gives, tried again while its script was stopped for time
-/// before it drew.
+/// What `page` gives, made once. It was tried again, up to five times,
+/// while its script was stopped for time before it drew: the limits were
+/// on the wall clock, and on a machine with no processor free a start
+/// passed them with no fault of the script's. They are counted on the
+/// script host's own processor time now, and a silent script host is
+/// taken for hung only after `START_HUNG_AFTER` (DEC-7357 as revised), so
+/// a stop here is a stop to look at, and nothing is tried again.
 fn drawn(page: impl Fn() -> Browser) -> Browser {
-    let mut browser = page();
-    for _ in 1..STARVED_TRIES {
-        if browser.scripts.stopped() != Some(FailReason::Time) {
-            break;
-        }
-        browser = page();
-    }
-    browser
+    page()
 }
 
 /// TODO-7293's "done", teletext: a page file is shown first and its
@@ -466,10 +458,13 @@ fn a_scripts_log_lines_keep_their_levels() {
 /// the real script host (work package F5, TODO-7294): a script that
 /// takes a key and never answers does not hold it. Its handler never
 /// returns; the script host is ended for time, and the decoder reports
-/// the key as not cancelled, so the trusted core takes its default. From
-/// the key to that report is less than the trusted core's own deadline
-/// for an answer, twice [`STEP_DEADLINE`] (`script_gate::VERDICT_DEADLINE`,
-/// which holds whatever a decoder does), and the page file stays.
+/// the key as not cancelled, so the trusted core takes its default. How
+/// long that took is printed and not held to a bound here: the script
+/// host stops the handler after `CALLBACK_TIME_LIMIT` of its own
+/// processor time, which on a busy machine is longer on the wall clock,
+/// and the bound the viewer has is the trusted core's own, twice
+/// [`STEP_DEADLINE`] (`script_gate::VERDICT_DEADLINE`), which holds
+/// whatever a decoder or a script host does and has its own test.
 #[test]
 fn a_key_a_script_takes_and_never_answers_keeps_its_default_in_time() {
     use protocol::script::relay::STEP_DEADLINE;
@@ -477,34 +472,26 @@ fn a_key_a_script_takes_and_never_answers_keeps_its_default_in_time() {
     let script = br#"/*! nt {"api":1,"keys":["1"]} */
         nt.addEventListener("keydown", () => { for (;;) {} });
         console.log("listening");"#;
-    let mut waits = Vec::new();
-    for _ in 0..STARVED_TRIES {
-        let mut browser = drawn(|| {
-            let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
-            browser.open(page, "100.js", script);
-            browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
-            browser
-        });
-        assert!(browser.scripts.stopped().is_none(), "the script never started: {:?}", browser.reports);
-        let pressed = Instant::now();
-        browser.key(page, 77, '1');
-        let answered = |browser: &mut Browser| browser.reports.iter().any(|report| matches!(report, ScriptReport::Verdict { sequence: 77, .. }));
-        assert!(browser.run_until(answered), "the key was never answered: {:?}", browser.reports);
-        let waited = pressed.elapsed();
-        assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 77, cancelled: false, handled: false }), "{:?}", browser.reports);
-        assert!(browser.run_until(|browser| browser.scripts.stopped().is_some()));
-        assert_eq!(browser.scripts.stopped(), Some(FailReason::Time));
-        assert_eq!(browser.row(0x100, 1), "FILE ROW ONE");
-        // A key after it is answered at once: nothing is the script's.
-        browser.key(page, 78, '1');
-        assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 78, cancelled: false, handled: false }));
-        println!("from the key to its default: {waited:?}");
-        waits.push(waited);
-        if waited < 2 * STEP_DEADLINE {
-            return;
-        }
-    }
-    panic!("a key waited past the trusted core's deadline in every try, on a machine with no processor free: {waits:?}");
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "listening") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "the script never started: {:?}", browser.reports);
+    let pressed = Instant::now();
+    browser.key(page, 77, '1');
+    let answered = |browser: &mut Browser| browser.reports.iter().any(|report| matches!(report, ScriptReport::Verdict { sequence: 77, .. }));
+    assert!(browser.run_until(answered), "the key was never answered: {:?}", browser.reports);
+    let waited = pressed.elapsed();
+    assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 77, cancelled: false, handled: false }), "{:?}", browser.reports);
+    assert!(browser.run_until(|browser| browser.scripts.stopped().is_some()));
+    assert_eq!(browser.scripts.stopped(), Some(FailReason::Time));
+    assert_eq!(browser.row(0x100, 1), "FILE ROW ONE");
+    // A key after it is answered at once: nothing is the script's.
+    browser.key(page, 78, '1');
+    assert!(browser.reports.contains(&ScriptReport::Verdict { sequence: 78, cancelled: false, handled: false }));
+    println!("from the key to its default: {waited:?} (the trusted core takes the default itself at {:?})", 2 * STEP_DEADLINE);
 }
 
 /// Sections 4.2 and 4.4 (TODO-7294), through the real script host: a

@@ -34,7 +34,7 @@ use protocol::decoder::script::{ChannelFacts, PointerClaim, PointerKind, ScriptC
 use protocol::decoder::{FromDecoder, write_to_core};
 use protocol::rules::{KeyAction, PageSub, PointerAction, RuleInput};
 use protocol::script::link::{Asked, HostLink, Received, Stopped};
-use protocol::script::relay::{START_DEADLINE, STEP_DEADLINE};
+use protocol::script::relay::Silence;
 use protocol::script::{
     Batch, ContextFlags, ContextId, ContextOpen, Event, EventKind, FailReason, FromScriptHost, Level, MAX_EVENT_PAYLOAD_BYTES, MAX_SCRIPT_BYTES, Renderer,
     Step, StepFlags,
@@ -171,7 +171,6 @@ struct Waiting {
     asked: Asked,
     /// The container tick it was asked at.
     tick: u64,
-    at: Instant,
     /// Which open page it was asked for.
     epoch: u64,
     /// The trusted core's numbers of its events, in order.
@@ -229,9 +228,9 @@ pub struct Scripts {
     sound_allowed: bool,
     sequence: u32,
     waiting: VecDeque<Waiting>,
-    /// When the last piece of an opening was written, while anything
-    /// waits ([`START_DEADLINE`]).
-    opening: Option<Instant>,
+    /// What the script host owes and since when, by which it is taken
+    /// for hung (`protocol::script::relay::Silence`).
+    silence: Silence,
     queue: VecDeque<Queued>,
     /// The keys held down, by name, for the releases a script is owed
     /// when the page loses the keyboard (section 4.7).
@@ -298,7 +297,7 @@ impl Scripts {
             sound_allowed: false,
             sequence: 0,
             waiting: VecDeque::new(),
-            opening: None,
+            silence: Silence::default(),
             queue: VecDeque::new(),
             down: Vec::new(),
             base: None,
@@ -779,7 +778,7 @@ impl Scripts {
             Err(protocol::script::link::Refusal::Message(ProtocolError::Io(error))) => return Err(ProtocolError::Io(error)),
             Err(refusal) => return refuse(out, &refusal.to_string()),
         }
-        self.opening = Some(Instant::now());
+        self.silence.opening(Instant::now());
         if self.base.is_none() {
             self.base = Some(tick_at(engine.now_us()));
         }
@@ -803,10 +802,10 @@ impl Scripts {
         self.reports.page_left();
         match self.link.close(out, ContextId::Page) {
             Ok(()) => {
+                self.silence.asked(Instant::now());
                 self.waiting.push_back(Waiting {
                     asked: Asked::Close(ContextId::Page),
                     tick: self.last_tick.unwrap_or(0),
-                    at: Instant::now(),
                     epoch: self.epoch,
                     events: Vec::new(),
                 });
@@ -1049,27 +1048,33 @@ impl Scripts {
         [deadline, step, watching].into_iter().flatten().min()
     }
 
-    /// When the oldest thing asked must have been answered (section 3.2
-    /// rule 5(b)): [`STEP_DEADLINE`] after it was asked, or
-    /// [`START_DEADLINE`] after the last piece of an opening when that is
-    /// later, as the trusted core counts it.
+    /// When the script host is taken for hung (section 3.2 rule 5(b);
+    /// DEC-7357 as revised): it owes an answer and has said nothing for
+    /// `STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an opening, as the
+    /// trusted core, which ends the process, counts it. A script that
+    /// merely runs too long is stopped by the script host itself, within
+    /// its own limits, and says so; a busy machine stops none.
     fn deadline(&self) -> Option<Instant> {
-        let asked = self.waiting.front()?.at.checked_add(STEP_DEADLINE)?;
-        let opening = self.opening.and_then(|at| at.checked_add(START_DEADLINE));
-        Some(opening.map_or(asked, |opening| asked.max(opening)))
+        self.silence.hung_at()
     }
 
-    /// The loop woke: the script host is failed when it has not answered
-    /// by its deadline, and a step is asked when one is due.
+    /// The loop woke: the script host is failed when it is taken for
+    /// hung, and a step is asked when one is due.
     ///
     /// # Errors
     /// When the decoder's output cannot be written.
     pub fn wake(&mut self, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        self.wake_at(Instant::now(), engine, out)
+    }
+
+    /// [`Self::wake`] at `now`, the wall clock's instant the silence of
+    /// the script host is counted to.
+    fn wake_at(&mut self, now: Instant, engine: &mut Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
         if self.link.stopped().is_some() || !self.running() {
             return Ok(());
         }
-        if self.deadline().is_some_and(|deadline| Instant::now() >= deadline) {
-            return self.fail(FailReason::Time, "STEP_DEADLINE: the script host did not answer in time", out);
+        if self.deadline().is_some_and(|deadline| now >= deadline) {
+            return self.fail(FailReason::Time, "STEP_HUNG_AFTER: the script host answered nothing for too long and is taken for hung", out);
         }
         if self.paused {
             return Ok(());
@@ -1143,7 +1148,8 @@ impl Scripts {
             // fault; its events keep their defaults.
             Err(_) => return Self::defaults(&numbers, out),
         }
-        self.waiting.push_back(Waiting { asked: Asked::Step(sequence), tick, at: Instant::now(), epoch: self.epoch, events: numbers });
+        self.silence.asked(Instant::now());
+        self.waiting.push_back(Waiting { asked: Asked::Step(sequence), tick, epoch: self.epoch, events: numbers });
         if ticking || self.owed {
             self.last_tick = Some(tick);
         }
@@ -1187,7 +1193,7 @@ impl Scripts {
         self.channel = None;
         self.page = None;
         self.down.clear();
-        self.opening = None;
+        self.silence.forget();
         self.epoch = self.epoch.wrapping_add(1);
         report(out, ScriptReport::Stopped { reason: stopped.reason, text: log_line(&stopped.text) })?;
         self.say_claims(out)
@@ -1214,9 +1220,7 @@ impl Scripts {
                     self.fail(FailReason::Link, "the script host's answer is not to what this decoder asked", out)?;
                     return Ok(outcome);
                 };
-                if self.waiting.is_empty() {
-                    self.opening = None;
-                }
+                self.silence.answered(Instant::now());
                 outcome = self.take_batch(&waiting, &batch, engine, out)?;
                 self.wake(engine, out)?;
             }

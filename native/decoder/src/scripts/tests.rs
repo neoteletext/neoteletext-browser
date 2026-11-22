@@ -8,7 +8,7 @@
 use super::*;
 use protocol::decoder::script::SourcePiece;
 use protocol::script::batch::{ContextState, TeletextRow, Verdict};
-use protocol::script::relay::{DecoderOutput, HostInput, read_decoder_output, read_host_input};
+use protocol::script::relay::{DecoderOutput, HostInput, START_HUNG_AFTER, STEP_DEADLINE, STEP_HUNG_AFTER, read_decoder_output, read_host_input};
 use protocol::script::{LINK_VERSION, ToScriptHost};
 
 const TTI: &[u8] = b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,Sport results\n";
@@ -361,12 +361,18 @@ fn a_broken_link_or_a_late_answer_stops_the_scripts() {
 
     let (mut fixture, _, _) = Fixture::started();
     assert!(fixture.scripts.due_us(&fixture.engine).is_some(), "the loop wakes for the deadline");
-    std::thread::sleep(START_DEADLINE + std::time::Duration::from_millis(20));
-    fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
+    // A script host that has just been opened and answers nothing is not
+    // stopped for a step's time, which a start on a busy machine passes
+    // without any fault (DEC-7357 as revised): only once it has been
+    // silent for `START_HUNG_AFTER` is it taken for hung.
+    let opened = Instant::now();
+    fixture.scripts.wake_at(opened + 2 * STEP_HUNG_AFTER, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert_eq!(fixture.scripts.stopped(), None, "stopped while it may still be starting");
+    fixture.scripts.wake_at(opened + START_HUNG_AFTER, &mut fixture.engine, &mut fixture.out).unwrap();
     assert_eq!(fixture.scripts.stopped(), Some(FailReason::Time));
     let (reports, _) = written(&mut fixture.out);
     assert!(
-        reports.iter().any(|report| matches!(report, ScriptReport::Stopped { reason: FailReason::Time, text } if text.starts_with("STEP_DEADLINE"))),
+        reports.iter().any(|report| matches!(report, ScriptReport::Stopped { reason: FailReason::Time, text } if text.starts_with("STEP_HUNG_AFTER"))),
         "{reports:?}"
     );
 }
@@ -534,7 +540,10 @@ fn the_scripts_hear_navigate_before_the_tab_goes() {
 /// Section 4.1 and principle 5 (TODO-7294), the decoder's half of "a
 /// script that does not answer never holds a key": a claimed key whose
 /// step is never answered is reported as not cancelled when the script
-/// host passes its deadline, [`STEP_DEADLINE`] after the step was asked.
+/// host is taken for hung, [`STEP_HUNG_AFTER`] after the step was asked
+/// and not at [`STEP_DEADLINE`], which a busy machine passes (DEC-7357 as
+/// revised). The key itself is not held that long: the trusted core
+/// takes its default at `VERDICT_DEADLINE` whatever the decoder says.
 #[test]
 fn a_key_whose_step_is_never_answered_is_reported_as_not_cancelled_at_the_deadline() {
     let (mut fixture, _, _) = Fixture::started();
@@ -547,8 +556,9 @@ fn a_key_whose_step_is_never_answered_is_reported_as_not_cancelled_at_the_deadli
     assert!(fixture.scripts.due_us(&fixture.engine).is_some());
     fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
     assert!(written(&mut fixture.out).0.is_empty(), "the script host still has time");
-    std::thread::sleep((pressed + STEP_DEADLINE).saturating_duration_since(Instant::now()));
-    fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
+    fixture.scripts.wake_at(pressed + 2 * STEP_DEADLINE, &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(written(&mut fixture.out).0.is_empty(), "a step's time passed stops no script");
+    fixture.scripts.wake_at(Instant::now() + STEP_HUNG_AFTER, &mut fixture.engine, &mut fixture.out).unwrap();
     let reports = written(&mut fixture.out).0;
     assert_eq!(reports.first(), Some(&ScriptReport::Verdict { sequence: 31, cancelled: false, handled: false }), "{reports:?}");
     assert!(reports.iter().any(|report| matches!(report, ScriptReport::Stopped { reason: FailReason::Time, .. })), "{reports:?}");

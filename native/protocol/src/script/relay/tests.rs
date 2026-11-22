@@ -180,9 +180,51 @@ fn a_decoders_input_survives_a_script_hosts_malformed_message() {
     assert!(matches!(read_decoder_input(&mut step.as_slice()), Err(DecoderInputError::Pipe(ProtocolError::UnknownKind(_)))));
 }
 
-/// Section 10.6: `STEP_DEADLINE` is the specification's 250 ms.
+/// Section 10.6: `STEP_DEADLINE` is the specification's 250 ms, and the
+/// bounds after which a silent script host is taken for hung are far
+/// past it.
 #[test]
-fn the_step_deadline_is_the_specifications() {
+fn the_step_deadline_is_the_specifications_and_hung_is_far_past_it() {
     assert_eq!(STEP_DEADLINE, Duration::from_millis(250));
     assert_eq!(MAX_STEPS_UNANSWERED, 60);
+    assert_eq!((STEP_HUNG_AFTER, START_HUNG_AFTER), (Duration::from_secs(10), Duration::from_secs(30)));
+}
+
+/// DEC-7357 as revised: a script host is taken for hung when it has owed
+/// an answer and said nothing for `STEP_HUNG_AFTER`, from the oldest thing
+/// asked or from its last answer when that is later, so that one working
+/// through a queue slowly is not; and no sooner than `START_HUNG_AFTER`
+/// after an opening, until something asked after the opening is answered,
+/// and not merely until what was asked before it is.
+#[test]
+fn a_script_host_is_hung_only_after_a_long_silence_while_it_owes_an_answer() {
+    let began = std::time::Instant::now();
+    let at = |milliseconds: u64| began + Duration::from_millis(milliseconds);
+    let mut silence = Silence::default();
+    assert_eq!(silence.hung_at(), None, "nothing is owed");
+    silence.opening(at(0));
+    assert_eq!(silence.hung_at(), None, "an opening alone is answered by nothing");
+    silence.asked(at(10));
+    assert_eq!(silence.hung_at(), Some(at(0) + START_HUNG_AFTER));
+    silence.answered(at(900));
+    assert_eq!((silence.owed(), silence.hung_at()), (0, None));
+    // Steps queue; each answer is a sign of life.
+    silence.asked(at(1_000));
+    silence.asked(at(1_016));
+    assert_eq!(silence.hung_at(), Some(at(1_000) + STEP_HUNG_AFTER));
+    silence.answered(at(9_000));
+    assert_eq!(silence.hung_at(), Some(at(9_000) + STEP_HUNG_AFTER), "from its last answer, not from the step asked long before");
+    silence.answered(at(9_001));
+    // A close is asked, the next page opens, and the close's answer
+    // comes: the opening still has its time.
+    silence.asked(at(20_000));
+    silence.opening(at(20_001));
+    silence.answered(at(20_002));
+    silence.asked(at(20_003));
+    assert_eq!(silence.hung_at(), Some(at(20_001) + START_HUNG_AFTER), "the answer to what was asked before the opening did not end the opening's time");
+    silence.answered(at(21_000));
+    silence.asked(at(21_001));
+    assert_eq!(silence.hung_at(), Some(at(21_001) + STEP_HUNG_AFTER));
+    silence.forget();
+    assert_eq!(silence.hung_at(), None);
 }

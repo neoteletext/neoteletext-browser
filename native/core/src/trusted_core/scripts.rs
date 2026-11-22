@@ -14,9 +14,11 @@
 //!   ended or replaced (its channel sleeps, or leaves its tab), and when
 //!   the browser ends.
 //! - **Killed** when it writes a kind it may not, when what it asks of
-//!   the network was not allowed it, when a step or a close is not
-//!   answered by its deadline ([`STEP_DEADLINE`], or [`START_DEADLINE`]
-//!   after an opening), when more than [`MAX_STEPS_UNANSWERED`] wait, when
+//!   the network was not allowed it, when it owes an answer to a step or
+//!   a close and has said nothing for so long that it is taken for hung
+//!   (`STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an opening: a
+//!   backstop on the wall clock, far past any time a busy machine makes
+//!   an honest one take), when more than [`MAX_STEPS_UNANSWERED`] wait, when
 //!   it stops reading and what waits for it passes the bound on a
 //!   process's pipe (`neoteletext::outbox::MAX_QUEUED_BYTES`), and when
 //!   it says FAILED, after which a script host has nothing more to do.
@@ -26,11 +28,11 @@
 //!   told with a FAILED of the trusted core's own, the only message of
 //!   the script link the core ever writes.
 //!
-//! The deadlines are counted by kind: every STEP and every
+//! What a script host owes is counted by kind: every STEP and every
 //! `CONTEXT_CLOSE` relayed to a script host is answered by exactly one
 //! BATCH (`native/script-host/src/lib.rs`).
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
@@ -42,7 +44,7 @@ use neoteletext::outbox::Outbox;
 pub(super) use neoteletext::script_network::NETWORK_DRAIN;
 use neoteletext::script_network::{Asked, NetworkClaim};
 use protocol::console::Level;
-use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, START_DEADLINE, STEP_DEADLINE, read_host_output};
+use protocol::script::relay::{HostOutput, LinkKind, MAX_STEPS_UNANSWERED, Relayed, STEP_DEADLINE, Silence, read_host_output};
 use protocol::script::{ContextId, FailReason, FromScriptHost, MAX_LOG_CHARS, write_to_decoder};
 
 use super::processes::{Decoder, end, end_aside, relay, spawn};
@@ -91,12 +93,10 @@ struct ScriptHost {
     decoder: u64,
     /// It has said READY.
     ready: bool,
-    /// When each step and close relayed to it and not yet answered was
-    /// relayed, oldest first.
-    asked: VecDeque<Instant>,
-    /// When the last piece of an opening was relayed to it, while
-    /// anything waits: a context's start may take [`START_DEADLINE`].
-    opening: Option<Instant>,
+    /// The steps and closes relayed to it and not yet answered, the
+    /// opening it may still be starting, and when it last answered: by
+    /// which it is taken for hung (`protocol::script::relay::Silence`).
+    silence: Silence,
     /// Whether the decoder reported that a context of it has the network
     /// (section 11.1), without which none of its requests is relayed, and
     /// the drain after the claim went (TODO-7420).
@@ -104,12 +104,14 @@ struct ScriptHost {
 }
 
 impl ScriptHost {
-    /// When it must have answered the oldest thing asked, if anything
-    /// waits.
+    /// When it is taken for hung, if it owes an answer: it has said
+    /// nothing for `STEP_HUNG_AFTER`, or `START_HUNG_AFTER` after an
+    /// opening (DEC-7357 as revised). A backstop on the wall clock, for
+    /// a script host that can no longer say anything: one whose script
+    /// runs too long stops it itself and says so, and one that is given
+    /// no processor on a busy machine is not at fault.
     fn due(&self) -> Option<Instant> {
-        let asked = self.asked.front()?.checked_add(STEP_DEADLINE)?;
-        let opening = self.opening.and_then(|at| at.checked_add(START_DEADLINE));
-        Some(opening.map_or(asked, |opening| asked.max(opening)))
+        self.silence.hung_at()
     }
 
     /// Ends it at once.
@@ -211,7 +213,7 @@ fn start_host(broker: &Arc<Broker>, channel: u32, generation: u64, decoder: u64,
         move |said| Event::ScriptSaid(channel, generation, said),
         move |end| Event::ScriptHostEnded(channel, generation, end),
     );
-    Ok(ScriptHost { child, input, generation, decoder, ready: false, asked: VecDeque::new(), opening: None, network: NetworkClaim::default() })
+    Ok(ScriptHost { child, input, generation, decoder, ready: false, silence: Silence::default(), network: NetworkClaim::default() })
 }
 
 impl Core {
@@ -273,11 +275,11 @@ impl Core {
         let Some(host) = self.scripts.hosts.get_mut(&channel) else { return };
         let now = Instant::now();
         match kind {
-            Some(LinkKind::Step | LinkKind::ContextClose) => host.asked.push_back(now),
-            Some(LinkKind::ContextOpen | LinkKind::Source) => host.opening = Some(now),
+            Some(LinkKind::Step | LinkKind::ContextClose) => host.silence.asked(now),
+            Some(LinkKind::ContextOpen | LinkKind::Source) => host.silence.opening(now),
             _ => {}
         }
-        let behind = host.asked.len() > MAX_STEPS_UNANSWERED;
+        let behind = host.silence.owed() > MAX_STEPS_UNANSWERED;
         let passed = host.input.write_all(asked.frame()).and_then(|()| host.input.flush());
         if behind {
             return self.stop_scripts(channel, FailReason::Time, "the script host fell too many steps behind and was ended");
@@ -298,12 +300,7 @@ impl Core {
             HostOutput::ToDecoder(relayed) => {
                 match relayed.link_kind() {
                     Some(LinkKind::Ready) => host.ready = true,
-                    Some(LinkKind::Batch) => {
-                        host.asked.pop_front();
-                        if host.asked.is_empty() {
-                            host.opening = None;
-                        }
-                    }
+                    Some(LinkKind::Batch) => host.silence.answered(Instant::now()),
                     _ => {}
                 }
                 let decoder = host.decoder;
@@ -530,7 +527,7 @@ impl Core {
         }
         let late: Vec<u32> = self.scripts.hosts.iter().filter(|(_, host)| host.due().is_some_and(|due| now >= due)).map(|(&channel, _)| channel).collect();
         for channel in late {
-            self.stop_scripts(channel, FailReason::Time, "STEP_DEADLINE: the script host did not answer in time and was ended");
+            self.stop_scripts(channel, FailReason::Time, "STEP_HUNG_AFTER: the script host answered nothing for too long, was taken for hung and was ended");
         }
         let orphaned: Vec<u32> = self
             .scripts
