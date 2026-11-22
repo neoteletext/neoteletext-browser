@@ -121,6 +121,9 @@ impl std::fmt::Display for Split {
     }
 }
 
+/// What one tab gave: its answers divided, and its READY.
+type Ran = (Vec<Split>, Option<(Duration, Account)>);
+
 /// A message of the script host, when it arrived and the host's account
 /// then.
 type Arrived = (Result<FromScriptHost, ProtocolError>, Instant, Account);
@@ -134,12 +137,20 @@ struct Tab {
     asked: std::collections::VecDeque<Asked>,
     opening: bool,
     splits: Vec<Split>,
+    /// When the script host was started.
+    started: Instant,
+    /// Its READY: how long after its start, and its account then, which
+    /// is of the process's whole life. Before READY it confines itself
+    /// and compiles the engine's module and the prelude's bytecode;
+    /// after it come the container, the prelude's run and the script.
+    ready: Option<(Duration, Account)>,
 }
 
 impl Tab {
     fn new() -> Self {
         // The program confines itself on Linux, so it is started as any
         // program, for its process number.
+        let started = Instant::now();
         let mut host =
             Command::new(env!("CARGO_BIN_EXE_neoteletext-script-host")).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
         let pid = host.id();
@@ -158,7 +169,18 @@ impl Tab {
         engine.feed(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
         engine.finish();
         let to_host = host.stdin.take().unwrap();
-        Self { scripts: Scripts::new(), engine, host, to_host, from_host, asked: std::collections::VecDeque::new(), opening: false, splits: Vec::new() }
+        Self {
+            scripts: Scripts::new(),
+            engine,
+            host,
+            to_host,
+            from_host,
+            asked: std::collections::VecDeque::new(),
+            opening: false,
+            splits: Vec::new(),
+            started,
+            ready: None,
+        }
     }
 
     fn pass(&mut self, out: &[u8]) -> bool {
@@ -234,6 +256,9 @@ impl Tab {
                     if matches!(message, Ok(FromScriptHost::Batch(_))) {
                         arrived = Some((at, host));
                     }
+                    if matches!(message, Ok(FromScriptHost::Ready { .. })) {
+                        self.ready = Some((at.duration_since(self.started), host));
+                    }
                     self.scripts.received(message, &mut self.engine, &mut out).unwrap();
                 }
                 Err(RecvTimeoutError::Timeout) => {}
@@ -274,13 +299,13 @@ fn where_a_steps_time_goes() {
     let tabs = number("MEASURE_TABS", 1);
     let time = Duration::from_secs(number("MEASURE_SECONDS", 10));
     let before = load();
-    let ran: Vec<Vec<Split>> = std::thread::scope(|scope| {
+    let ran: Vec<Ran> = std::thread::scope(|scope| {
         let running: Vec<_> = (0..tabs)
             .map(|_| {
                 scope.spawn(move || {
                     let mut tab = Tab::new();
                     tab.run(time);
-                    tab.splits
+                    (tab.splits, tab.ready)
                 })
             })
             .collect();
@@ -292,6 +317,8 @@ fn where_a_steps_time_goes() {
         load(),
         std::thread::available_parallelism().map_or(0, usize::from)
     );
+    let readies: Vec<(Duration, Account)> = ran.iter().filter_map(|(_, ready)| *ready).collect();
+    let ran: Vec<Vec<Split>> = ran.into_iter().map(|(splits, _)| splits).collect();
     let mut steps: Vec<Split> = ran.iter().flatten().copied().filter(|split| !split.start).collect();
     let starts: Vec<Split> = ran.iter().flatten().copied().filter(|split| split.start).collect();
     steps.sort_by_key(|split| split.total);
@@ -325,7 +352,19 @@ fn where_a_steps_time_goes() {
             share(|split| split.unread),
         );
     }
-    println!("starts (the opening's first answer):");
+    println!("from the process's start to its READY (confined, the engine's module and the prelude's bytecode compiled):");
+    for (after, account) in &readies {
+        let (running, waiting) = account.since(Account::default());
+        println!(
+            "  {:8.1} ms = host waiting {:7.1} + host running {:7.1}",
+            after.as_secs_f64() * 1000.0,
+            waiting.as_secs_f64() * 1000.0,
+            running.as_secs_f64() * 1000.0
+        );
+    }
+    println!(
+        "starts (the opening, sent at the process's start, to its first answer: READY's time above, then the container, the prelude's run and the script):"
+    );
     for split in &starts {
         println!("  {split}");
     }
