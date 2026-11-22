@@ -139,13 +139,24 @@ pub struct InProcess {
     /// Network answers waiting for the next step, at most
     /// [`MAX_NETWORK_EVENTS_PER_STEP`] times the steps they wait.
     waiting: Vec<FromWebClient>,
+    /// What the last context's `close` handling staged, drained from the
+    /// container before it was dropped: there is no later step to carry
+    /// it (TODO-7338 item 3).
+    closing: Option<Batch>,
 }
 
 impl InProcess {
     /// A link whose containers are made in `engine` with `settings`.
     #[must_use]
     pub const fn new(engine: Engine, settings: Settings) -> Self {
-        Self { engine, settings, container: None, waiting: Vec::new() }
+        Self { engine, settings, container: None, waiting: Vec::new(), closing: None }
+    }
+
+    /// What the last context's `close` handling staged (its log lines,
+    /// its sound stops), once: the batch that follows no step, numbered
+    /// with `sequence`.
+    pub fn take_closing(&mut self, sequence: u32) -> Option<Batch> {
+        self.closing.take().map(|batch| Batch { sequence, ..batch })
     }
 
     /// The container, once a context has been opened.
@@ -178,6 +189,7 @@ impl ScriptLink for InProcess {
         if let Some(container) = self.container.as_mut() {
             container.close(context);
             if !container.is_open(ContextId::Channel) && !container.is_open(ContextId::Page) {
+                self.closing = Some(container.drain(0));
                 self.container = None;
             }
         }

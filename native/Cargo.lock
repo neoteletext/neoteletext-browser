@@ -682,6 +682,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1741,7 +1750,10 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
 dependencies = [
+ "naplps",
  "neoteletext-core",
+ "regis",
+ "unicode-bidi",
 ]
 
 [[package]]
@@ -1874,12 +1886,44 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev
 name = "neoteletext-script"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
+ "naplps",
+ "naplps-fonts",
  "neoteletext-audio",
+ "neoteletext-core",
+ "neoteletext-formats",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
+ "regis",
  "ring",
+ "url",
  "wasmi",
+]
+
+[[package]]
+name = "neoteletext-script-host"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-script",
+ "protocol",
+ "ring",
+]
+
+[[package]]
+name = "neoteletext-script-run"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-script",
+ "neoteletext-sound",
+ "neoteletext-web",
+ "protocol",
+ "ring",
 ]
 
 [[package]]
@@ -3322,6 +3366,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-ident"

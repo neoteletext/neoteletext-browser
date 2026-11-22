@@ -108,7 +108,11 @@ const SHIM_LIMITS: [(i32, usize, &str); 5] = [
 ];
 /// The bytes of the scratch space the host keeps in the module's memory
 /// for an event's payload and an error's text.
-const SCRATCH_BYTES: usize = if MAX_EVENT_PAYLOAD_BYTES > MAX_ERROR_BYTES { MAX_EVENT_PAYLOAD_BYTES } else { MAX_ERROR_BYTES };
+const SCRATCH_BYTES: usize = {
+    let step = if MAX_EVENT_PAYLOAD_BYTES > MAX_ERROR_BYTES { MAX_EVENT_PAYLOAD_BYTES } else { MAX_ERROR_BYTES };
+    // The network's events are the longest (work package W2).
+    if crate::host::web::MAX_NETWORK_EVENT_BYTES > step { crate::host::web::MAX_NETWORK_EVENT_BYTES } else { step }
+};
 /// The longest name a script is run under, in bytes.
 const MAX_SCRIPT_NAME_BYTES: usize = 256;
 

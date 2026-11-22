@@ -243,7 +243,7 @@ impl Server {
                     let real = self
                         .programs
                         .as_ref()
-                        .filter(|_| matches!(program, Program::Decoder | Program::Fetcher))
+                        .filter(|_| matches!(program, Program::Decoder | Program::Fetcher | Program::ScriptHost))
                         .map(|programs| programs.join(program.file_name()));
                     self.keep(request);
                     return match real {

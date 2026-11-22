@@ -51,8 +51,8 @@ pub fn apply(role: Role, writable: Option<&Path>) -> Result<Report, String> {
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = (role, writable);
-        Ok(crate::macos::apply())
+        let _ = writable;
+        crate::macos::apply(role)
     }
     #[cfg(windows)]
     {

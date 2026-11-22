@@ -16,9 +16,9 @@ use std::collections::VecDeque;
 use std::fmt::Write as _;
 
 use crate::limits::{
-    AUDIO_CHANNELS, CONTEXTS, MAX_BATCH_BYTES, MAX_CONSECUTIVE_FAILURES, MAX_GAIN, MAX_HOST_STATE_BYTES, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_LISTEN_KINDS,
-    MAX_LISTENS, MAX_LOG_CHARS, MAX_LOG_LEVEL, MAX_LOG_LINES, MAX_MIDI_DATA, MAX_NAVIGATIONS_PER_SECOND, MAX_NOTE_TICKS, MAX_RANDOM_BYTES, MAX_SCOPE_DEPTH,
-    MAX_SCOPES, MAX_SCRIPT_BYTES, MAX_SHARED_BYTES, MAX_SHARED_KEY_BYTES, MAX_SHARED_KEYS, MAX_SHARED_VALUE_BYTES, MAX_SOUND_NUMBER,
+    AUDIO_CHANNELS, CONTEXTS, MAX_BATCH_BYTES, MAX_CONSECUTIVE_FAILURES, MAX_GAIN, MAX_HOST_STATE_BYTES, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_LABEL_BYTES,
+    MAX_LISTEN_KINDS, MAX_LISTENS, MAX_LOG_CHARS, MAX_LOG_LEVEL, MAX_LOG_LINES, MAX_MIDI_DATA, MAX_NAVIGATIONS_PER_SECOND, MAX_NOTE_TICKS, MAX_RANDOM_BYTES,
+    MAX_SCOPE_DEPTH, MAX_SCOPES, MAX_SCRIPT_BYTES, MAX_SHARED_BYTES, MAX_SHARED_KEY_BYTES, MAX_SHARED_KEYS, MAX_SHARED_VALUE_BYTES, MAX_SOUND_NUMBER,
     MAX_SOUND_OPERATIONS_PER_CALLBACK, MAX_SOUND_OPERATIONS_PER_SECOND, MAX_SOUND_OPERATIONS_PER_STEP, MAX_SYNTH_VARIANT, MAX_TIMER_TICKS, MAX_TIMERS,
     MAX_TITLE_BYTES, MAX_URL_BYTES, QUICKJS_HEAP_BYTES, TICKS_PER_SECOND,
 };
@@ -28,6 +28,8 @@ use protocol::script::{Batch, ContextId, ContextOpen, FailReason, MAX_WATCHED_PA
 use crate::link::{Context as _, context_numbered};
 use crate::ops::{DispatchBit, EventKind, FAMILIES, Handle, Info, KeyBit, Op, PointerAction};
 use crate::random::Generator;
+
+pub mod naplps;
 
 /// MIDI's channel messages a script may send (MIDI 1.0 detailed
 /// specification, Table 1): note off, note on, control change, program
@@ -305,6 +307,14 @@ pub struct Host {
     /// constants, lowered only by this module's own tests.
     state_limit: usize,
     batch_limit: usize,
+    /// The network: requests, event streams, sockets and decoders (work package W2).
+    web: web::Web,
+    /// The open page's NAPLPS (work package N1).
+    naplps: naplps::Naplps,
+    /// The teletext page the page context draws on (work package T1).
+    teletext: crate::teletext::Slot,
+    /// The page's ReGIS drawings and colours (work package R1).
+    regis: regis::Regis,
 }
 
 /// The whole numbers of a host call, read with their count checked.
@@ -449,6 +459,10 @@ impl Host {
             figures: TimeFigures::default(),
             state_limit: MAX_HOST_STATE_BYTES,
             batch_limit: MAX_BATCH_BYTES,
+            web: web::Web::default(),
+            naplps: naplps::Naplps::default(),
+            teletext: crate::teletext::Slot::default(),
+            regis: regis::Regis::new(),
         }
     }
 
@@ -477,7 +491,9 @@ impl Host {
         }
         self.zone_minutes = open.zone_minutes;
         self.sound_allowed |= open.flags.sound_allowed;
+        self.teletext.open(&open);
         let context = open.context;
+        self.naplps.open(&open);
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
         }
@@ -488,6 +504,10 @@ impl Host {
     /// goes with the channel context (section 3.6).
     pub fn close(&mut self, context: ContextId) {
         self.release_sound(context);
+        self.naplps.close(context);
+        self.teletext.close(context);
+        // The page's one ReGIS stream ends with the context that drew on it.
+        self.regis_reset();
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             if slot.as_ref().is_some_and(|held| !held.listens.is_empty()) {
                 self.watch_changed = true;
@@ -495,6 +515,8 @@ impl Host {
             *slot = None;
         }
         self.shared_notices.retain(|(to, _)| *to != context);
+        let any_open = self.contexts.iter().any(Option::is_some);
+        self.web.close(context, any_open);
         if context == ContextId::Channel {
             self.shared.clear();
             self.shared_notices.clear();
@@ -541,8 +563,11 @@ impl Host {
     /// start again, and notes due are released.
     pub fn begin_step(&mut self, tick: u64, sound_allowed: bool) {
         self.tick = self.tick.max(tick);
+        self.web.begin_step(self.tick);
         self.sound_step = 0;
         self.sound_allowed |= sound_allowed;
+        self.naplps.begin_step(self.tick);
+        self.teletext.begin_step(self.tick);
         for held in self.contexts.iter_mut().flatten() {
             held.keys_pressed.clear();
             if held.origin.is_none() {
@@ -583,7 +608,9 @@ impl Host {
             Some(EventKind::POINTER) => first & POINTER_ACTION_MASK == PointerAction::UP.number(),
             _ => false,
         };
+        self.web.closing = kind == Some(EventKind::CLOSE);
         self.callback = Some((context, Callback { activation, sound_operations: 0 }));
+        self.naplps.begin_callback();
     }
 
     /// Ends the callback: scopes it left open are closed to new things.
@@ -664,10 +691,15 @@ impl Host {
             | EventKind::FAULT
             | EventKind::UI
             | EventKind::SOUND_ALLOWED
+            | EventKind::RG_COMMIT_FAILED
             | EventKind::CLOSE
             | EventKind::SHARED
             | EventKind::TIMER
             | EventKind::TICK => true,
+            // The network's events are the host's own, made for the
+            // context whose request they answer.
+            kind if kind.is_network() => true,
+            _ => false,
         }
     }
 
@@ -750,10 +782,8 @@ impl Host {
         let origin = held.origin.unwrap_or(self.tick);
         let timer = held.timers.iter().map(|timer| origin.saturating_add(timer.due)).min();
         let note = self.pending_notes.iter().filter(|note| note.context == context).map(|note| note.due).min();
-        match (timer, note) {
-            (Some(timer), Some(note)) => Some(timer.min(note)),
-            (one, other) => one.or(other),
-        }
+        let renderer = if context == ContextId::Page { self.teletext.next_due(self.tick) } else { None };
+        [timer, note, renderer, self.regis_wake(context)].into_iter().flatten().min()
     }
 
     /// The next change of the shared store to tell, with the context to tell.
@@ -823,6 +853,10 @@ impl Host {
         bytes = self.shared.iter().fold(bytes, |sum, (key, value)| sum.saturating_add(cost(key)).saturating_add(cost(value)));
         bytes = self.shared_notices.iter().fold(bytes, |sum, (_, key)| sum.saturating_add(cost(key)).saturating_add(size_of::<ContextId>()));
         bytes = bytes.saturating_add(self.pending_notes.len().saturating_mul(size_of::<PendingNote>()));
+        bytes = bytes.saturating_add(self.web.state_bytes());
+        bytes = bytes.saturating_add(self.naplps.state_bytes());
+        bytes = bytes.saturating_add(self.teletext.state_bytes());
+        bytes = bytes.saturating_add(self.regis.held_bytes());
         bytes.saturating_add(self.batch_bytes())
     }
 
@@ -832,6 +866,9 @@ impl Host {
         let mut bytes = self.log.iter().fold(0_usize, |sum, line| sum.saturating_add(cost(&line.text)).saturating_add(size_of::<LogLine>()));
         bytes = bytes.saturating_add(self.sound.len().saturating_mul(size_of::<SoundOperation>()));
         bytes = bytes.saturating_add(self.title.as_deref().map_or(0, cost));
+        bytes = bytes.saturating_add(self.naplps.staged_bytes());
+        bytes = bytes.saturating_add(self.teletext.batch_bytes());
+        bytes = bytes.saturating_add(self.regis.batch_bytes());
         bytes.saturating_add(self.navigate.as_deref().map_or(0, cost))
     }
 
@@ -870,8 +907,11 @@ impl Host {
                 batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
             }
         }
+        self.naplps.take_batch(&mut batch);
+        self.regis_take(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
+        self.teletext.fill(&mut batch);
         let dropped = core::mem::take(&mut self.log_dropped);
         if dropped > 0 {
             let context = self.log_context(None);
@@ -1049,6 +1089,64 @@ impl Host {
                 no_payload(op, payload)?;
                 self.sound_operation(context, op, ints)
             }
+            Op::URL_PARSE
+            | Op::FETCH
+            | Op::FETCH_BODY
+            | Op::FETCH_ABORT
+            | Op::FETCH_CREDIT
+            | Op::WS_OPEN
+            | Op::WS_SEND
+            | Op::WS_CLOSE
+            | Op::URL_SET
+            | Op::DECODE => self.web_operation(context, op, ints, payload),
+            Op::NP_COLOUR_DEFINE | Op::NP_COLOUR_SET | Op::NP_BLINK | Op::NP_PAINT | Op::NP_REPAINT | Op::NP_MEASURE => {
+                self.naplps_operation(context, op, ints, payload)
+            }
+            Op::TT_PUT
+            | Op::TT_CODES
+            | Op::TT_BLIT
+            | Op::TT_AT
+            | Op::TT_CLEAR
+            | Op::TT_SCROLL
+            | Op::TT_SETTINGS
+            | Op::TT_OVERLAY_PUT
+            | Op::TT_OVERLAY_FILL
+            | Op::TT_OVERLAY_CLEAR
+            | Op::TT_COLOUR_DEFINE
+            | Op::TT_COLOUR_SET
+            | Op::TT_LABEL
+            | Op::TT_ANIMATE
+            | Op::TT_REMOVE
+            | Op::TT_CONTROL
+            | Op::TT_MEASURE
+            | Op::TT_LANGUAGES
+            | Op::TT_LEVEL => {
+                // A label waiting to leave is the one thing teletext stages
+                // whose size a script chooses.
+                self.room(MAX_LABEL_BYTES, if op == Op::TT_LABEL { MAX_LABEL_BYTES } else { 0 })?;
+                let scope = self.context(context).and_then(|held| held.scope_stack.last().copied()).unwrap_or(0);
+                let reply = self.teletext.call(context, op, ints.ints, payload, scope, self.tick)?;
+                // A thing removed has no listeners left to count.
+                if let (Op::TT_REMOVE, Some(removed), Some(held)) = (op, ints.ints.first().copied(), self.context_mut(context)) {
+                    held.listens.retain(|(handle, _)| *handle != removed);
+                }
+                Ok(reply)
+            }
+            Op::RG_COLOUR_DEFINE
+            | Op::RG_COLOUR_SET
+            | Op::RG_DRAWING
+            | Op::RG_SET
+            | Op::RG_CLIP
+            | Op::RG_FRAMES
+            | Op::RG_LABEL
+            | Op::RG_DEFINE
+            | Op::RG_REMOVE
+            | Op::RG_CLEAR
+            | Op::RG_ANIMATE
+            | Op::RG_MACROGRAPH
+            | Op::RG_MEASURE
+            | Op::RG_BOUNDS
+            | Op::RG_GET => self.regis_operate(context, op, ints, payload),
         }
     }
 
@@ -1206,6 +1304,10 @@ impl Host {
             held.scopes.retain(|scope| *scope != id);
             held.scope_stack.retain(|scope| *scope != id);
             held.timers.retain(|timer| timer.scope != id);
+            let removed = self.teletext.scope_end(context, id);
+            if let Some(held) = self.context_mut(context) {
+                held.listens.retain(|(handle, _)| !removed.contains(handle));
+            }
         }
         Ok(Reply::Undefined)
     }
@@ -1299,8 +1401,9 @@ impl Host {
         }
         // The shared core has two things, `nt` and `nt.sound`; a renderer's
         // things are added to this check with the renderer.
-        if Handle::from_number(handle).is_none() {
-            return Err(type_error("no such thing"));
+        if Handle::from_number(handle).is_none() && !self.naplps.is_thing(context, handle) && !self.teletext.has_thing(context, handle) {
+            // Otherwise a ReGIS drawing, by its number, or no thing at all.
+            self.regis_listen(context, handle, kind, on == 1)?;
         }
         self.room(size_of::<(i32, EventKind)>(), 0)?;
         let held = self.context_mut(context).ok_or_else(|| type_error("the context is not open"))?;
@@ -1428,7 +1531,8 @@ impl Host {
     }
 
     /// The budget report (section 3.7), as JSON text.
-    fn budget(&self, context: ContextId) -> String {
+    #[must_use]
+    pub fn budget(&self, context: ContextId) -> String {
         let held = self.context(context);
         let count = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
         let mut second = RateWindow { counts: self.sound_second.counts.clone() };
@@ -1437,9 +1541,9 @@ impl Host {
             ("heapBytes", count(self.heap_bytes), u64::from(QUICKJS_HEAP_BYTES.unsigned_abs())),
             ("timers", held.map_or(0, |held| count(held.timers.len())), count(MAX_TIMERS)),
             ("listeners", held.map_or(0, |held| count(held.listens.len())), count(MAX_LISTENS)),
-            // The network is work package W2's: the core has no request and no socket.
-            ("requests", 0, 0),
-            ("sockets", 0, 0),
+            // Fetches under way and waiting; sockets and event streams.
+            ("requests", count(self.web.budget().0), count(web::limits::MAX_REQUESTS_IN_FLIGHT + web::limits::MAX_REQUESTS_QUEUED)),
+            ("sockets", count(self.web.budget().1), count(web::limits::MAX_SOCKETS + web::limits::MAX_EVENT_STREAMS)),
             ("soundOperations", u64::from(second.count(self.tick)), u64::from(MAX_SOUND_OPERATIONS_PER_SECOND)),
             ("callbackPercent", u64::from(self.figures.callback_percent), PERCENT),
             ("callbackPercentMax", u64::from(self.figures.callback_percent_max), PERCENT),
@@ -1456,6 +1560,9 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
+        self.naplps.budget(&mut out);
+        self.teletext.budget(&mut out);
+        self.regis_budget(context, &mut out);
         out.push('}');
         out
     }
@@ -1478,5 +1585,9 @@ fn is_page_target(target: &str) -> bool {
     hexadecimal(page, 3) && page.bytes().next().is_some_and(|first| (b'1'..=b'8').contains(&first)) && subpage.is_none_or(|subpage| hexadecimal(subpage, 4))
 }
 
+mod regis;
+pub(crate) use regis::prelude_bounds as regis_prelude_bounds;
+
 #[cfg(test)]
 mod tests;
+pub mod web;
