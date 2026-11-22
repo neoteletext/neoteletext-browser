@@ -108,6 +108,7 @@ mod linux {
                 forbid_namespaces();
                 Role::Decoder
             }
+            "script" => Role::Script,
             "network" => Role::Network,
             "updater" => Role::Updater { port: UPDATER_PORT },
             "sound" => Role::Sound,
@@ -185,8 +186,15 @@ mod linux {
             Err(error) if error.kind() == ErrorKind::PermissionDenied => String::from("refused"),
             Err(error) => format!("failed ({error})"),
         };
+        // More than a script host may hold, asked for in one piece
+        // (`script-api.md` section 10.6), and a thread, which its
+        // watchdog is (section 3.2 rule 5(b)).
+        let mut room: Vec<u8> = Vec::new();
+        let memory = room.try_reserve_exact(confine::SCRIPT_MEMORY_BYTES).map_or("refused", |()| "reserved");
+        drop(room);
+        let thread = std::thread::Builder::new().spawn(|| ()).map_or("refused", |thread| if thread.join().is_ok() { "ran" } else { "failed" });
         println!(
-            "PROBE report={report}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
+            "PROBE report={report}; memory={memory}; thread={thread}; file={file}; program={program}; tcp={tcp}; write={write}; other-port={other_port}; own-folder={own}; \
              bus={bus}; display={display}; sound={sound}; user-bus={user_bus}; system-bus={system_bus}; netlink-route={netlink_route}; \
              netlink-audit={netlink_audit}; resolve={resolve}; steal={steal}; shared-memory={shared_memory}; x32={x32}; terminal={typed}; signal-parent={signal}; own-signal={own_signal}"
         );

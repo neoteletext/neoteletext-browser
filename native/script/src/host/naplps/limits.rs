@@ -41,9 +41,9 @@ pub const NAPLPS_COLOURS: i32 = 1 << PALETTE_BITS;
 pub const FIRST_DEFINABLE_COLOUR: i32 = 8;
 /// The longest name of a defined colour, in bytes.
 pub const MAX_COLOUR_NAME_BYTES: usize = 32;
-/// The most redefinitions of one colour entry in a second: three flashes,
-/// above which a flashing picture is unsafe for viewers (section 10.5).
-pub const MAX_COLOUR_SETS_PER_SECOND: u32 = 6;
+/// The most redefinitions of one colour entry in a second (section 10.5),
+/// which every renderer holds: the script library's one definition.
+pub use crate::limits::MAX_COLOUR_SETS_PER_SECOND;
 /// The most blink processes (the renderer's bound, by name).
 pub const MAX_BLINKS: usize = naplps::limits::MAX_BLINKS;
 /// The longest interval of a blink, in tenths of a second: an operand

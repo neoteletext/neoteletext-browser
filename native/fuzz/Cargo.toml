@@ -31,6 +31,8 @@ neoteletext-script = { path = "../script", features = ["portable-dispatch"] }
 # The NAPLPS renderer the browser pins, which reads what the script
 # library's NAPLPS painter writes (painter_programs).
 naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
+# The script-host program's serving, on the same build of the library.
+script-host = { path = "../script-host", package = "neoteletext-script-host" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
 
@@ -418,6 +420,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "script_teletext_ops"
+path = "fuzz_targets/script_teletext_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "script_imports"
 path = "fuzz_targets/script_imports.rs"
 test = false
@@ -427,6 +436,34 @@ bench = false
 [[bin]]
 name = "script_js"
 path = "fuzz_targets/script_js.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cors_response"
+path = "fuzz_targets/cors_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_relay_pipes"
+path = "fuzz_targets/script_relay_pipes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "integrity_metadata"
+path = "fuzz_targets/integrity_metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_host_serve"
+path = "fuzz_targets/script_host_serve.rs"
 test = false
 doc = false
 bench = false

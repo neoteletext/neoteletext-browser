@@ -96,6 +96,44 @@ numbered! {
     SYNTH_NOTE = 34,
     /// All notes off and the instrument released.
     SYNTH_STOP = 35,
+    /// Teletext: text on the page plane, its style's spacing attributes before it.
+    TT_PUT = 100,
+    /// Teletext: raw seven-bit codes on a row.
+    TT_CODES = 101,
+    /// Teletext: the whole plane, rows 1 to 23.
+    TT_BLIT = 102,
+    /// Teletext: the code of a cell of the host's plane.
+    TT_AT = 103,
+    /// Teletext: fills rows with spaces.
+    TT_CLEAR = 104,
+    /// Teletext: moves the rows of a band up or down.
+    TT_SCROLL = 105,
+    /// Teletext: the default screen and row colours and black background substitution.
+    TT_SETTINGS = 106,
+    /// Teletext: characters with non-spacing attributes on the overlay.
+    TT_OVERLAY_PUT = 107,
+    /// Teletext: colours a rectangle of the overlay.
+    TT_OVERLAY_FILL = 108,
+    /// Teletext: removes the overlay, wholly or in a rectangle.
+    TT_OVERLAY_CLEAR = 109,
+    /// Teletext: defines the next free Colour Map entry of 16 to 31.
+    TT_COLOUR_DEFINE = 110,
+    /// Teletext: redefines a Colour Map entry.
+    TT_COLOUR_SET = 111,
+    /// Teletext: labels a sprite or a control.
+    TT_LABEL = 113,
+    /// Teletext: an animation operation on a sprite or a control.
+    TT_ANIMATE = 114,
+    /// Teletext: removes a sprite or a control.
+    TT_REMOVE = 115,
+    /// Teletext: declares a control.
+    TT_CONTROL = 116,
+    /// Teletext: the cells a text takes.
+    TT_MEASURE = 117,
+    /// Teletext: the languages the engine writes, as JSON text.
+    TT_LANGUAGES = 118,
+    /// Teletext: the receiver's presentation level.
+    TT_LEVEL = 119,
     /// NAPLPS: defines a colour; its 24 bits and its name; gives its entry.
     NP_COLOUR_DEFINE = 300,
     /// NAPLPS: redefines a colour entry.
@@ -421,8 +459,10 @@ pub fn prelude() -> String {
     table("BOUND", &mut bounds.iter().copied());
     table("NP", &mut crate::host::naplps::program::table());
     table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
+    table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
     out.push_str(include_str!("prelude.js"));
     out.push_str(include_str!("host/naplps/prelude.js"));
+    out.push_str(crate::teletext::PRELUDE);
     out.push_str("\n})();\n");
     out
 }

@@ -315,7 +315,7 @@ impl Naplps {
         while colour.changes.front().is_some_and(|at| at.saturating_add(TICKS_PER_SECOND) <= tick) {
             colour.changes.pop_front();
         }
-        u32::try_from(colour.changes.len()).unwrap_or(u32::MAX) < MAX_COLOUR_SETS_PER_SECOND
+        colour.changes.len() < MAX_COLOUR_SETS_PER_SECOND
     }
 
     /// Counts a change of colour `index` now.

@@ -44,6 +44,7 @@ readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs na
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-raster/src/lib.rs native/draw-embedded/src/lib.rs
     native/web-opener/src/lib.rs native/dock-menu/src/lib.rs native/dbus/src/lib.rs native/secret-store/src/lib.rs native/dialog/src/lib.rs
     native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs native/script/src/lib.rs
+    native/script-host/src/lib.rs native/script-host/src/main.rs
     native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
 
@@ -138,7 +139,7 @@ readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-form
 readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
 # The packages that may hold the script engine's interpreter, and the one
 # interpreter they may hold.
-readonly SCRIPT_PACKAGES=(neoteletext-script)
+readonly SCRIPT_PACKAGES=(neoteletext-script neoteletext-script-host)
 readonly SCRIPT_INTERPRETER='wasmi'
 # Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
 # user interface or graphics toolkit; those are the interface's alone.
@@ -291,12 +292,12 @@ $found"
 # every script runs in, built by native/script/qjs/build.sh from pinned
 # sources with a pinned compiler. The commit gate holds the committed file
 # to the SHA-256 recorded beside it, and the fuzz crate's list of targets
-# to the three the script library owes (script-api.md section 11.4). The
+# to those the script library owes (script-api.md section 11.4). The
 # full gate builds the module again from its sources and requires the
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js painter_programs)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js painter_programs)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
@@ -474,6 +475,9 @@ fuzz_options() {
         # A whole script, and a memory image of a page.
         script_js | script_imports) echo "-max_len=65536" ;;
         script_link_to_host | script_link_to_decoder | web_to_client | web_from_client) echo "-max_len=262149" ;;
+        # The same messages on the pipes they share, and a script host's
+        # whole input (TODO-7292).
+        script_relay_pipes | script_host_serve) echo "-max_len=262149" ;;
     esac
 }
 

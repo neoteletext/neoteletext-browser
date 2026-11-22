@@ -27,7 +27,7 @@ const SOUND_HOME_PATHS: &[&str] = &[".asoundrc", ".config/pulse", ".config/pipew
 /// The socket families a role may open.
 pub(super) fn families(role: Role) -> &'static [u64] {
     match role {
-        Role::Decoder | Role::Core => &[],
+        Role::Decoder | Role::Script | Role::Core => &[],
         // The resolver uses routing netlink to ask which address families
         // the host has (seccomp refuses every other netlink protocol). No
         // local-domain socket (decision 86): a path socket reaches the
@@ -46,7 +46,7 @@ pub(super) fn families(role: Role) -> &'static [u64] {
 /// The paths a role may read, of those that exist.
 pub(super) fn readable(role: Role) -> Vec<PathBuf> {
     let mut paths: Vec<PathBuf> = match role {
-        Role::Decoder | Role::Core => Vec::new(),
+        Role::Decoder | Role::Script | Role::Core => Vec::new(),
         Role::Network | Role::Updater { .. } => RESOLVER_PATHS.iter().map(PathBuf::from).collect(),
         Role::Sound => {
             let mut paths: Vec<PathBuf> = SOUND_PATHS.iter().map(PathBuf::from).collect();

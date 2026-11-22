@@ -1890,6 +1890,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-script-host"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-script",
+ "protocol",
+ "ring",
+]
+
+[[package]]
 name = "neoteletext-secret-store"
 version = "0.1.0"
 dependencies = [
