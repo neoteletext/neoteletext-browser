@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cookie::time::{Duration, OffsetDateTime};
+use cookie::time::{Date, Duration, Month, OffsetDateTime};
 use cookie::{Cookie as RawCookie, SameSite};
 use cookie_store::{Cookie, CookieDomain, CookieStore};
 use publicsuffix::{List, Psl};
@@ -139,18 +139,100 @@ fn max_age(value: &str) -> Option<i64> {
     Some(value.parse::<i64>().unwrap_or(if value.starts_with('-') || digits.is_empty() { 0 } else { i64::MAX }))
 }
 
-/// `text` without its `Max-Age` attributes, and the seconds the last of
-/// them that the standard reads asks for. The `cookie` crate reads the
-/// attribute otherwise than the standard (an empty value as the longest
-/// life), so it is read here and the crate never sees it.
-fn lifetime_attributes(text: &str) -> (String, Option<i64>) {
+/// Whether `byte` parts the tokens of a cookie date (RFC 6265bis-22
+/// section 5.1.1, `delimiter`).
+const fn is_date_delimiter(byte: u8) -> bool {
+    matches!(byte, 0x09 | 0x20..=0x2F | 0x3B..=0x40 | 0x5B..=0x60 | 0x7B..=0x7E)
+}
+
+/// The number `token` starts with, of `least` to `most` digits and then
+/// no digit: the standard's `1*2DIGIT [ non-digit *OCTET ]` and its like.
+fn leading_number(token: &[u8], least: usize, most: usize) -> Option<u16> {
+    let digits = token.iter().take_while(|byte| byte.is_ascii_digit()).count();
+    if digits < least || digits > most {
+        return None;
+    }
+    std::str::from_utf8(token.get(..digits)?).ok()?.parse().ok()
+}
+
+/// The hours, minutes and seconds of a `time` token: three numbers of one
+/// or two digits with colons between, and then no digit.
+fn time_of_day(token: &[u8]) -> Option<(u16, u16, u16)> {
+    let mut fields = token.splitn(3, |&byte| byte == b':');
+    let (hour, minute, second) = (fields.next()?, fields.next()?, fields.next()?);
+    let whole = |field: &[u8]| (field.len() <= 2).then(|| leading_number(field, 1, 2)).flatten().filter(|_| field.iter().all(u8::is_ascii_digit));
+    Some((whole(hour)?, whole(minute)?, leading_number(second, 1, 2)?))
+}
+
+/// The months' names as a cookie date writes them, in order.
+const MONTHS: [&[u8; 3]; 12] = [b"jan", b"feb", b"mar", b"apr", b"may", b"jun", b"jul", b"aug", b"sep", b"oct", b"nov", b"dec"];
+/// The year before which a cookie date is no date (RFC 6265bis-22 section
+/// 5.1.1 step 5), and the two-digit years that are 19xx and 20xx (steps 3
+/// and 4).
+const FIRST_COOKIE_YEAR: u16 = 1601;
+const TWO_DIGIT_1900S: core::ops::RangeInclusive<u16> = 70..=99;
+const TWO_DIGIT_2000S: core::ops::RangeInclusive<u16> = 0..=69;
+
+/// The moment a cookie date names, in seconds since 1970, read by the
+/// standard's own algorithm (RFC 6265bis-22 section 5.1.1): its tokens in
+/// any order, between any delimiters, the first of each kind taken. The
+/// `cookie` crate reads only a few fixed forms, and what it does not read
+/// would leave a cookie a server meant to end as a session cookie.
+fn cookie_date(value: &str) -> Option<i64> {
+    let (mut time, mut day, mut month, mut year) = (None, None, None, None);
+    for token in value.as_bytes().split(|&byte| is_date_delimiter(byte)).filter(|token| !token.is_empty()) {
+        if time.is_none() && time_of_day(token).is_some() {
+            time = time_of_day(token);
+        } else if day.is_none() && leading_number(token, 1, 2).is_some() {
+            day = leading_number(token, 1, 2);
+        } else if month.is_none() && token.get(..3).is_some_and(|start| MONTHS.iter().any(|name| start.eq_ignore_ascii_case(*name))) {
+            month = MONTHS.iter().position(|name| token.get(..3).is_some_and(|start| start.eq_ignore_ascii_case(*name)));
+        } else if year.is_none() && leading_number(token, 2, 4).is_some() {
+            year = leading_number(token, 2, 4);
+        }
+    }
+    let ((hour, minute, second), day, month, mut year) = (time?, day?, month?, year?);
+    if TWO_DIGIT_1900S.contains(&year) {
+        year = year.saturating_add(1900);
+    } else if TWO_DIGIT_2000S.contains(&year) {
+        year = year.saturating_add(2000);
+    }
+    if year < FIRST_COOKIE_YEAR {
+        return None;
+    }
+    // The calendar refuses what is no date: a day past its month's, an
+    // hour past 23, a minute or second past 59.
+    let month = Month::try_from(u8::try_from(month.saturating_add(1)).ok()?).ok()?;
+    let date = Date::from_calendar_date(i32::from(year), month, u8::try_from(day).ok()?).ok()?;
+    let moment = date.with_hms(u8::try_from(hour).ok()?, u8::try_from(minute).ok()?, u8::try_from(second).ok()?).ok()?;
+    Some(moment.assume_utc().unix_timestamp())
+}
+
+/// What a `Set-Cookie` asks of its cookie's life.
+#[derive(Default)]
+struct Asked {
+    /// The seconds the last `Max-Age` the standard reads asks for.
+    max_age: Option<i64>,
+    /// The moment the last `Expires` the standard reads names, in seconds
+    /// since 1970.
+    expires: Option<i64>,
+}
+
+/// `text` without its `Max-Age` and `Expires` attributes, and what they
+/// ask. The `cookie` crate reads both otherwise than the standard (an
+/// empty `Max-Age` as the longest life; only a few forms of date), so
+/// they are read here and the crate never sees them.
+fn lifetime_attributes(text: &str) -> (String, Asked) {
     let mut parts = text.split(';');
     let mut kept = parts.next().unwrap_or_default().to_owned();
-    let mut asked = None;
+    let mut asked = Asked::default();
     for attribute in parts {
         let (name, value) = attribute.split_once('=').unwrap_or((attribute, ""));
-        if name.trim().eq_ignore_ascii_case("max-age") {
-            asked = max_age(value.trim()).or(asked);
+        let name = name.trim();
+        if name.eq_ignore_ascii_case("max-age") {
+            asked.max_age = max_age(value.trim()).or(asked.max_age);
+        } else if name.eq_ignore_ascii_case("expires") {
+            asked.expires = cookie_date(value).or(asked.expires);
         } else {
             kept.push(';');
             kept.push_str(attribute);
@@ -250,17 +332,14 @@ impl Jar {
         if name.trim().len().saturating_add(value.trim().len()) > MAX_COOKIE_BYTES {
             return None;
         }
-        let (text, max_age) = lifetime_attributes(&without_long_attributes(text));
+        let (text, asked) = lifetime_attributes(&without_long_attributes(text));
         let mut raw = RawCookie::parse(text).ok()?.into_owned();
         // `Max-Age` goes before `Expires` (RFC 6265bis-22 section 5.7 step
         // 4), and no cookie outlives the cap, whichever attribute asked.
-        // Zero or less has already ended.
-        let asked = max_age.map(|seconds| if seconds > 0 { Duration::seconds(seconds.min(MAX_COOKIE_LIFETIME_SECONDS)) } else { ENDED });
-        let cap = Duration::seconds(MAX_COOKIE_LIFETIME_SECONDS);
-        match asked.or_else(|| raw.expires_datetime().map(lifetime_until)) {
-            Some(asked) if asked > cap => raw.set_max_age(cap),
-            Some(asked) if max_age.is_some() => raw.set_max_age(asked),
-            _ => {}
+        // A life of zero or less has already ended.
+        let seconds = asked.max_age.or_else(|| asked.expires.map(|at| at.saturating_sub(now_unix())));
+        if let Some(seconds) = seconds {
+            raw.set_max_age(if seconds > 0 { Duration::seconds(seconds.min(MAX_COOKIE_LIFETIME_SECONDS)) } else { ENDED });
         }
         let secure_origin = url.scheme() == "https";
         let secure = raw.secure().unwrap_or(false);

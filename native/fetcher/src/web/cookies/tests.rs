@@ -288,7 +288,6 @@ fn a_full_domain_loses_its_plain_cookies_before_its_secure_ones() {
 /// so a cookie set with it is removed, as a server removes one; read as
 /// no date, it would stay as a session cookie instead.
 #[test]
-#[ignore = "fault TODO-7346 item 2: the cookie crate reads only its fixed date formats, so four of the standard's (01 Jan 1970 00:00:01 and others) are no date"]
 fn a_cookie_date_in_each_form_the_standard_reads_removes_the_cookie() {
     let shop = url("https://www.shop.com/");
     let past = [
@@ -371,4 +370,57 @@ fn a_cookie_read_back_ends_when_it_ends() {
     let mut read = Jar::new(suffixes());
     read.read_written(&jar.write(false));
     assert_eq!(sent(&read, "https://www.shop.com/").as_deref(), Some("short=1"), "and so it has read back");
+}
+
+/// RFC 6265bis-22 section 5.1.1, step by step: the first token of each
+/// kind is the one taken, a year of two digits is of the century the
+/// standard gives it, and what is no date is none (a part missing, a day
+/// or a time out of its range, a day its month does not have, a year
+/// before 1601).
+#[test]
+fn a_cookie_date_is_read_by_the_standards_algorithm() {
+    for (date, at) in [
+        ("Thu, 01 Jan 1970 00:00:01 GMT", 1),
+        ("Sun, 06 Nov 1994 08:49:37 GMT", 784_111_777),
+        ("Sunday, 06-Nov-94 08:49:37 GMT", 784_111_777),
+        ("Sun Nov  6 08:49:37 1994", 784_111_777),
+        ("1994 nov 6 8:49:37", 784_111_777),
+        ("08:49:37 6 NOVEMBER 1994 and more 1 2 3", 784_111_777),
+        ("06 Nov 94 08:49:37junk", 784_111_777),
+        ("01 Jan 00 00:00:00", 946_684_800),
+        ("01 Jan 69 00:00:00", 3_124_224_000),
+        ("29 Feb 2000 12:00:00", 951_825_600),
+        ("31 Dec 9999 23:59:59", 253_402_300_799),
+    ] {
+        assert_eq!(cookie_date(date), Some(at), "{date}");
+    }
+    for no_date in [
+        "",
+        "junk",
+        "06 Nov 1994",
+        "Nov 1994 08:49:37",
+        "06 1994 08:49:37",
+        "06 Nov 08:49:37",
+        "32 Nov 1994 08:49:37",
+        "00 Nov 1994 08:49:37",
+        "31 Nov 1994 08:49:37",
+        "29 Feb 1999 08:49:37",
+        "06 Nov 1994 24:00:00",
+        "06 Nov 1994 08:60:00",
+        "06 Nov 1994 08:49:60",
+        "06 Nov 1600 08:49:37",
+        "06 Nov 1994 08:49",
+        "06 Nov 1994 008:49:37",
+        "06 Nov 1994 08:4x:37",
+    ] {
+        assert_eq!(cookie_date(no_date), None, "{no_date}");
+    }
+    // A cookie's life from its date is capped as any is, and a date that
+    // is none leaves a session cookie.
+    let jar = jar();
+    let shop = url("https://www.shop.com/");
+    let life = |header: &str| jar.read(&shop, header.as_bytes(), SAME).unwrap().max_age();
+    assert_eq!(life("a=1; Expires=31 Dec 9999 23:59:59"), Some(Duration::seconds(MAX_COOKIE_LIFETIME_SECONDS)));
+    assert_eq!(life("a=1; Expires=never"), None);
+    assert_eq!(life("a=1; Expires=01 Jan 1970 00:00:01; Max-Age=60"), Some(Duration::seconds(60)), "Max-Age goes before Expires");
 }
