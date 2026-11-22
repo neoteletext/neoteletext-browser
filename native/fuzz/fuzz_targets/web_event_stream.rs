@@ -5,7 +5,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use protocol::web::{MAX_EVENT_DATA, MAX_EVENT_ID, MAX_EVENT_TYPE};
+use protocol::web::{MAX_EVENT_DATA_BYTES, MAX_EVENT_ID_BYTES, MAX_EVENT_TYPE_BYTES};
 
 fuzz_target!(|data: &[u8]| {
     let Some((&cut, stream)) = data.split_first() else { return };
@@ -13,7 +13,7 @@ fuzz_target!(|data: &[u8]| {
     let pieces = fetcher::web_fuzzing::events(stream, usize::from(cut) + 1);
     assert_eq!(whole, pieces, "the same events however the bytes are cut");
     for (kind, data, last_id) in whole.unwrap_or_default() {
-        assert!(!kind.is_empty() && kind.len() <= MAX_EVENT_TYPE && data.len() <= MAX_EVENT_DATA && last_id.len() <= MAX_EVENT_ID);
+        assert!(!kind.is_empty() && kind.len() <= MAX_EVENT_TYPE_BYTES && data.len() <= MAX_EVENT_DATA_BYTES && last_id.len() <= MAX_EVENT_ID_BYTES);
         assert!(!last_id.contains('\0'));
     }
 });
