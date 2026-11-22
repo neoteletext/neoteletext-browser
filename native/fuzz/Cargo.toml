@@ -408,6 +408,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "script_teletext_ops"
+path = "fuzz_targets/script_teletext_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "script_imports"
 path = "fuzz_targets/script_imports.rs"
 test = false

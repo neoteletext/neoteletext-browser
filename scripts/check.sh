@@ -291,12 +291,12 @@ $found"
 # every script runs in, built by native/script/qjs/build.sh from pinned
 # sources with a pinned compiler. The commit gate holds the committed file
 # to the SHA-256 recorded beside it, and the fuzz crate's list of targets
-# to the three the script library owes (script-api.md section 11.4). The
+# to those the script library owes (script-api.md section 11.4). The
 # full gate builds the module again from its sources and requires the
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_teletext_ops script_imports script_js)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
