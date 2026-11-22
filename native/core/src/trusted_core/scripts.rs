@@ -430,5 +430,7 @@ impl Core {
 
 #[cfg(all(test, unix, feature = "interaction"))]
 mod loading_tests;
+#[cfg(all(test, unix, feature = "interaction"))]
+mod scriptdemo_tests;
 #[cfg(all(test, unix))]
 mod tests;
