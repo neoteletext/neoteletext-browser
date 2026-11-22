@@ -75,7 +75,7 @@ const WRITE_TIMEOUT: Duration = CONNECT_DEADLINE;
 /// until the resolver gives up; a name whose servers never answer, tried
 /// again at the agent's rate, held a thread more at every try. A
 /// resolution beyond this fails at once, as one out of time.
-const MAX_RESOLVING: usize = 3;
+pub(crate) const MAX_RESOLVING: usize = 3;
 
 /// Wakes the fetcher's loop.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;

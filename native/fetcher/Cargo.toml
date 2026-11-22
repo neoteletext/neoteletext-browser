@@ -41,8 +41,22 @@ ring.workspace = true
 # The reader thread, the TLS pump and the handshake, shared with the
 # engine's own clients.
 neoteletext-transport.workspace = true
+# The general web client (`src/web`, neoteletext-common's DEC-7260): its
+# runtime, HTTP/1.1 and HTTP/2, TLS on a tokio socket, URLs, cookies and
+# content codings.
+tokio = { workspace = true, features = ["rt", "net", "time", "sync", "io-util", "macros"] }
+hyper = { workspace = true, features = ["client", "http1", "http2"] }
+tokio-rustls.workspace = true
+url.workspace = true
+cookie.workspace = true
+cookie_store.workspace = true
+publicsuffix.workspace = true
+flate2.workspace = true
+brotli-decompressor.workspace = true
 
 [dev-dependencies]
+# The web client's tests play its servers with hyper's own.
+hyper = { workspace = true, features = ["server"] }
 # A rule's report, written as the engine writes it, for the tests of what
 # the fetcher sends on (page-rules.md RULE-46).
 neoteletext-rules.workspace = true

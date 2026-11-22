@@ -21,6 +21,11 @@ pub struct Arguments {
     /// setting that turns sharing off (REQ-6982), and whenever a proxy is
     /// given, since QUIC would go direct (requirement 19.10).
     pub http3: bool,
+    /// In web client mode, the jar of windows of the partition to serve,
+    /// 0 the ordinary windows' (the browser's DEC-7268): `--web-client
+    /// <jar of windows>`. The channel's address is then the channel
+    /// identity, and the process speaks only `protocol::web`.
+    pub web_client: Option<u32>,
 }
 
 /// The digits of a page number and of a sub-code on the command line.
@@ -51,7 +56,8 @@ fn snapshot_place(page: &str, sub: &str) -> Result<(u16, u16), String> {
 }
 
 /// Reads the fetcher's arguments, `<channel address> [--snapshot <PPP>
-/// <SSSS>] [--allow-local <ip>]... [--proxy <url>] [--no-http3]`.
+/// <SSSS>] [--web-client <jar of windows>] [--allow-local <ip>]...
+/// [--proxy <url>] [--no-http3]`.
 ///
 /// # Errors
 /// The usage or what is wrong, when the arguments are not these.
@@ -59,7 +65,7 @@ pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, S
     let mut given = given.into_iter();
     let channel =
         given.next().ok_or("usage: neoteletext-fetcher <channel address> [--snapshot <PPP> <SSSS>] [--allow-local <ip>]... [--proxy <url>] [--no-http3]")?;
-    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None, snapshot: None, http3: true };
+    let mut read = Arguments { channel, allowed: Vec::new(), proxy: None, snapshot: None, http3: true, web_client: None };
     while let Some(argument) = given.next() {
         // The one argument without a value, once.
         if argument == "--no-http3" && read.http3 {
@@ -68,9 +74,12 @@ pub fn arguments(given: impl IntoIterator<Item = String>) -> Result<Arguments, S
         }
         let value = given.next().ok_or_else(|| format!("{argument} needs a value"))?;
         match argument.as_str() {
-            "--snapshot" if read.snapshot.is_none() => {
+            "--snapshot" if read.snapshot.is_none() && read.web_client.is_none() => {
                 let sub = given.next().ok_or("--snapshot needs a page and a sub-code")?;
                 read.snapshot = Some(snapshot_place(&value, &sub)?);
+            }
+            "--web-client" if read.web_client.is_none() && read.snapshot.is_none() => {
+                read.web_client = Some(value.parse::<u32>().map_err(|_| format!("{value}: not a jar of windows"))?);
             }
             "--allow-local" => read.allowed.push(value.parse::<IpAddr>().map_err(|_| format!("{value}: not an IP address"))?),
             "--proxy" if read.proxy.is_none() => read.proxy = Some(Proxy::parse(&value).map_err(|error| error.to_string())?),
@@ -117,6 +126,24 @@ mod tests {
         assert!(!read(&["https://a.example/", "--proxy", "http://p.example:3128"]).unwrap().http3, "nothing goes direct");
         assert!(read(&["https://a.example/", "--no-http3", "--no-http3"]).is_err(), "once");
         assert!(read(&["https://a.example/", "--no-http3=1"]).is_err());
+    }
+
+    /// The browser's DEC-7268: `--web-client <jar of windows>` starts the
+    /// general web client for one partition, once, and never with a
+    /// snapshot.
+    #[test]
+    fn the_web_client_argument_names_its_jar_of_windows() {
+        assert!(read(&["https://a.example/home/"]).unwrap().web_client.is_none());
+        assert_eq!(read(&["https://a.example/home/", "--web-client", "0"]).unwrap().web_client, Some(0));
+        let given = read(&["https://a.example/home/", "--allow-local", "10.0.0.2", "--web-client", "7", "--proxy", "http://p.example:3128"]).unwrap();
+        assert_eq!((given.web_client, given.allowed.len(), given.proxy.is_some()), (Some(7), 1, true));
+        for wrong in [&["--web-client"][..], &["--web-client", "-1"], &["--web-client", "x"], &["--web-client", "0", "--web-client", "1"]] {
+            let mut arguments = vec!["https://a.example/home/"];
+            arguments.extend_from_slice(wrong);
+            assert!(read(&arguments).is_err(), "{wrong:?}");
+        }
+        assert!(read(&["https://a.example/", "--web-client", "0", "--snapshot", "100", "3F7F"]).is_err());
+        assert!(read(&["https://a.example/", "--snapshot", "100", "3F7F", "--web-client", "0"]).is_err());
     }
 
     /// REQ-6884: `--snapshot <PPP> <SSSS>` is read strictly: three
