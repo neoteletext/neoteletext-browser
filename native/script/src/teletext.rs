@@ -39,6 +39,7 @@ pub mod bitmap;
 pub mod colours;
 pub mod limits;
 pub mod model;
+pub mod sprites;
 pub mod text;
 
 use std::fmt::Write as _;
@@ -50,8 +51,8 @@ use neoteletext_core::consts::{
 use neoteletext_rules::animate::{Operation, OperationKind, code};
 use neoteletext_rules::table::Target;
 use protocol::script::batch::{Label, MAX_ROW_CODE, TeletextRow, TeletextSettings, Triplet};
-use protocol::script::teletext::{control_cell, control_handle};
-use protocol::script::{Batch, ContextId, ContextOpen, Renderer};
+use protocol::script::teletext::{CONTROL_HANDLE_BASE, control_cell, control_handle};
+use protocol::script::{Batch, ContextId, ContextOpen, Level, Renderer};
 
 use self::colours::ColourMap;
 use self::limits::{
@@ -59,6 +60,8 @@ use self::limits::{
     PLANE_ROWS, TELETEXT_DEFINABLE_COLOURS,
 };
 use self::model::{Control, Model, OverlayCell, PageSettings, PlaneCell, Rect, foreground_at};
+use self::sprites::Sprites;
+use self::sprites::limits::MAX_ANIMATED_OBJECTS;
 use self::text::Languages;
 use crate::host::{Payload, Reply};
 use crate::limits::MAX_LABEL_BYTES;
@@ -66,7 +69,7 @@ use crate::ops::Op;
 
 /// The script-side half of the teletext API, which follows the shared
 /// core's in the prelude.
-pub const PRELUDE: &str = include_str!("teletext.js");
+pub const PRELUDE: &str = concat!(include_str!("teletext.js"), include_str!("teletext_sprites.js"));
 
 /// How a style member that is on or off crosses the host call, two bits
 /// each of an operation's `flags` (this session's packing; section 10.2
@@ -96,8 +99,8 @@ const NONE: i32 = -1;
 /// in front of the prelude as the table `TT` (section 10.1: defined once,
 /// in Rust).
 #[must_use]
-pub fn prelude_numbers() -> [(&'static str, i64); 14] {
-    [
+pub fn prelude_numbers() -> Vec<(&'static str, i64)> {
+    let mut numbers = vec![
         ("NOT_GIVEN", i64::from(NOT_GIVEN)),
         ("OFF", i64::from(OFF)),
         ("ON", i64::from(ON)),
@@ -112,7 +115,9 @@ pub fn prelude_numbers() -> [(&'static str, i64); 14] {
         ("FIRST_ROW", i64::from(FIRST_ROW)),
         ("LAST_ROW", i64::from(LAST_ROW)),
         ("LAST_COLUMN", i64::from(LAST_COLUMN)),
-    ]
+    ];
+    numbers.extend(sprites::prelude_numbers());
+    numbers
 }
 
 /// A `RangeError` naming `bound`.
@@ -310,8 +315,23 @@ pub struct Teletext {
     stream_told: Vec<Triplet>,
     settings_told: TeletextSettings,
     looks_told: [u8; MAX_CONTROLS],
-    /// Labels not yet told, one at most for a control.
+    /// Labels not yet told, one at most for a control or a sprite.
     labels: Vec<Label>,
+    /// The page's sprites and the Object page their frames are on (work
+    /// package T2).
+    sprites: Sprites,
+    /// The control numbers the receiver holds an animation state for: it
+    /// keeps one from a number's first look on (ANIM-6), and the page's
+    /// sprites share its few.
+    control_states: [bool; MAX_CONTROLS],
+    /// The page and sub-code the state is of.
+    shown: (u16, u16),
+    /// Whether the page context is open on it, and whether the channel
+    /// context has been shown it: each may draw only then.
+    page_open: bool,
+    channel_shown: bool,
+    /// The presentation tick of the step.
+    tick: u64,
     /// The sixel bitmap's two buffers (section 5.7).
     bitmap: Box<bitmap::Bitmap>,
 }
@@ -320,17 +340,31 @@ impl Teletext {
     /// A blank page for the context `open` opens: the decoder shows the
     /// script a blank plane, no enhancement and the default settings.
     fn new(open: &ContextOpen) -> Box<Self> {
+        let mut page = Self::blank((open.page, open.subcode), &open.language, open.level);
+        page.page_open = true;
+        page
+    }
+
+    /// A blank page for the page and sub-code `shown`, in `language`, on
+    /// a receiver of `level`.
+    fn blank(shown: (u16, u16), language: &str, level: Level) -> Box<Self> {
         Box::new(Self {
             model: Model::new(),
             used: 0,
             colours: ColourMap::default(),
-            languages: Languages::new(&open.language),
-            level: open.level.code(),
+            languages: Languages::new(language),
+            level: level.code(),
             rows_told: Box::new([[SPACE; COLUMNS]; PLANE_ROWS]),
             stream_told: Vec::new(),
             settings_told: TeletextSettings::default(),
             looks_told: [0; MAX_CONTROLS],
             labels: Vec::new(),
+            sprites: Sprites::default(),
+            control_states: [false; MAX_CONTROLS],
+            shown,
+            page_open: false,
+            channel_shown: false,
+            tick: 0,
             bitmap: bitmap::Bitmap::new(),
         })
     }
@@ -344,13 +378,26 @@ impl Teletext {
             .saturating_add(size_of::<[[u8; COLUMNS]; PLANE_ROWS]>())
             .saturating_add(LOCAL_TRIPLETS.saturating_mul(size_of::<Triplet>()).saturating_mul(2))
             .saturating_add(self.languages.state_bytes())
+            .saturating_add(Sprites::state_bytes())
             .saturating_add(size_of::<bitmap::Bitmap>());
         fixed.saturating_add(self.batch_bytes())
     }
 
-    /// The bytes of the labels waiting to leave.
+    /// The bytes of the labels waiting to leave, and of the sprites'
+    /// sections.
     fn batch_bytes(&self) -> usize {
-        self.labels.iter().fold(0, |sum, label| sum.saturating_add(size_of::<Label>()).saturating_add(label.label.len()))
+        self.labels.iter().fold(self.sprites.batch_bytes(), |sum, label| sum.saturating_add(size_of::<Label>()).saturating_add(label.label.len()))
+    }
+
+    /// The animation states the receiver holds, or will after this step,
+    /// for the page's controls: one for each control number that has
+    /// ever been told a look or now has one (ANIM-6).
+    fn control_states(&self) -> usize {
+        let mut held = self.control_states;
+        for (slot, control) in held.iter_mut().zip(self.model.controls_in_order()) {
+            *slot |= control.look != 0;
+        }
+        held.iter().filter(|held| **held).count()
     }
 
     /// Makes a change to a copy of the page and keeps the copy only when
@@ -625,15 +672,25 @@ impl Teletext {
         control_handle(first.0, first.1).map(Reply::Int).ok_or_else(|| type_error("no such thing"))
     }
 
-    /// `TT_LABEL`, `TT_ANIMATE` and `TT_REMOVE` for a control (sections
-    /// 5.4 and 3.9). Sprites, which share these operations, are work
-    /// package T2's.
-    fn thing(&mut self, op: Op, ints: &[i32], payload: Payload<'_>) -> Result<Reply, Reply> {
+    /// `TT_LABEL`, `TT_ANIMATE` and `TT_REMOVE` for a control or a sprite
+    /// (sections 5.3, 5.4 and 3.9). A handle below every control's is a
+    /// sprite's number; a control is the page context's.
+    fn thing(&mut self, op: Op, ints: &[i32], payload: Payload<'_>, context: ContextId) -> Result<Reply, Reply> {
+        let sprite = ints.first().is_some_and(|handle| *handle < CONTROL_HANDLE_BASE);
+        if !sprite && context != ContextId::Page {
+            return Err(type_error("no such thing"));
+        }
         match op {
             Op::TT_LABEL => {
                 let [handle] = exactly(op, ints)?;
                 let label = text_of(op, payload)?;
-                self.control_of(handle)?;
+                if sprite {
+                    if !self.sprites.owns(context, handle) {
+                        return Err(type_error("no such thing"));
+                    }
+                } else {
+                    self.control_of(handle)?;
+                }
                 if label.len() > MAX_LABEL_BYTES {
                     return Err(range("MAX_LABEL_BYTES", &format!("a label is at most {MAX_LABEL_BYTES} bytes of UTF-8")));
                 }
@@ -646,18 +703,40 @@ impl Teletext {
             Op::TT_ANIMATE => {
                 let [handle, operation, look, second, third, fourth] = exactly(op, ints)?;
                 no_payload(op, payload)?;
+                if sprite {
+                    let states = self.control_states();
+                    self.sprites.animate(context, handle, [operation, look, second, third, fourth], states, self.tick)?;
+                    return Ok(Reply::Undefined);
+                }
                 let place = self.control_of(handle)?;
                 if operation != i32::from(code::LOOK) || (second, third, fourth) != (0, 0, 0) {
                     return Err(type_error("a control takes the animation operation look alone"));
                 }
                 let look = within(look, 0, LAST_CONTROL_LOOK, "MAX_LOOK", "a control's look")?;
+                let before = self.model.controls.get(place).map_or(0, |control| control.look);
                 if let Some(control) = self.model.controls.get_mut(place) {
                     control.look = look;
+                }
+                // The control's animation state is one of the few the
+                // page's sprites and controls share (ANIM-6).
+                if self.control_states().saturating_add(self.sprites.lasting_states()) > MAX_ANIMATED_OBJECTS {
+                    if let Some(control) = self.model.controls.get_mut(place) {
+                        control.look = before;
+                    }
+                    return Err(range(
+                        "MAX_ANIMATED_OBJECTS",
+                        &format!("a page's sprites and controls hold at most {MAX_ANIMATED_OBJECTS} animation states, and a control's look is one"),
+                    ));
                 }
             }
             _ => {
                 let [handle] = exactly(op, ints)?;
                 no_payload(op, payload)?;
+                if sprite {
+                    self.sprites.remove(context, handle)?;
+                    self.labels.retain(|staged| staged.handle != handle);
+                    return Ok(Reply::Undefined);
+                }
                 let place = self.control_of(handle)?;
                 self.labels.retain(|staged| staged.handle != handle);
                 self.change(|model| {
@@ -669,8 +748,21 @@ impl Teletext {
         Ok(Reply::Undefined)
     }
 
-    /// One operation of the page context.
-    fn operate(&mut self, op: Op, ints: &[i32], payload: Payload<'_>, scope: i32, tick: u64) -> Result<Reply, Reply> {
+    /// One operation of a context that may draw: any of the page
+    /// context's, and of the channel context's those of sprites alone
+    /// (section 3.1).
+    fn operate(&mut self, context: ContextId, op: Op, ints: &[i32], payload: Payload<'_>, scope: i32, tick: u64) -> Result<Reply, Reply> {
+        self.tick = tick;
+        match op {
+            Op::TT_SPRITE => return self.sprites.create(op, ints, payload, context, scope),
+            Op::TT_LABEL | Op::TT_ANIMATE | Op::TT_REMOVE => return self.thing(op, ints, payload, context),
+            // Renderer state belongs to the page: the plane, the overlay,
+            // the Colour Map and the controls are the page context's.
+            _ if context != ContextId::Page => {
+                return Err(type_error("only the page context draws on the page plane, the overlay, the Colour Map and the controls"));
+            }
+            _ => {}
+        }
         // The page plane writes no row the sixel bitmap owns (section 5.7).
         if let Some(why) = self.bitmap.refuses(op, ints) {
             return Err(Reply::Type(why));
@@ -699,7 +791,6 @@ impl Teletext {
                 self.colours.set(entry, colour, tick).map(|()| Reply::Undefined)
             }
             Op::TT_CONTROL => self.control(op, ints, payload, scope),
-            Op::TT_LABEL | Op::TT_ANIMATE | Op::TT_REMOVE => self.thing(op, ints, payload),
             _ => Err(Reply::Type(format!("operation {op:?} is not the teletext page's"))),
         }
     }
@@ -714,6 +805,7 @@ impl Teletext {
                 let cells = self.languages.measure(text_of(op, payload)?, language)?;
                 Ok(Reply::Int(i32::try_from(cells).unwrap_or(i32::MAX)))
             }),
+            Op::TT_BLOCK_TEXT => exactly(op, ints).and_then(|[language]| sprites::block_text(&self.languages, text_of(op, payload)?, language)),
             _ => return None,
         })
     }
@@ -760,6 +852,9 @@ impl Teletext {
             if look != *told {
                 *told = look;
                 operations.push(Operation { target: Target::control(number), kind: OperationKind::Look(look) });
+                if let Some(held) = self.control_states.get_mut(usize::from(number.saturating_sub(1))) {
+                    *held = true;
+                }
             }
         }
         if !operations.is_empty() {
@@ -768,50 +863,141 @@ impl Teletext {
         if !self.labels.is_empty() {
             batch.labels.get_or_insert_default().append(&mut self.labels);
         }
+        let states = self.control_states();
+        self.sprites.fill(batch, states, self.tick);
     }
 }
 
-/// The teletext state of a container's host: there while its page context
-/// is open on a teletext page, and gone with that context, since a page's
-/// renderer state belongs to the page (section 3.1).
+/// The teletext state of a container's host: the state of the teletext
+/// page shown, since a page's renderer state belongs to the page (section
+/// 3.1). It is there while the page context is open on the page, and
+/// while the channel context has been shown the page and not yet told it
+/// is hidden, so that a channel-level script can draw its sprites on a
+/// page that has no script of its own.
+///
+/// The decoder opens and closes the page context and shows and hides the
+/// page to the channel context in an order of its own, so the state says
+/// which page it is of: a context opened on, or shown, the page the state
+/// is of joins it, and one opened on or shown another page starts a blank
+/// state, which the contexts of the page before then cannot draw on.
 #[derive(Default)]
 pub struct Slot(Option<Box<Teletext>>);
 
 impl Slot {
-    /// A context opens: the page context of a teletext page starts a
-    /// blank page.
+    /// A context opens: the page context of a teletext page draws on the
+    /// state of that page, which is blank unless the channel context was
+    /// shown the page first.
     pub fn open(&mut self, open: &ContextOpen) {
-        if open.context == ContextId::Page {
-            self.0 = (open.renderer == Renderer::Teletext).then(|| Teletext::new(open));
+        if open.context != ContextId::Page {
+            return;
+        }
+        if open.renderer != Renderer::Teletext {
+            self.0 = None;
+            return;
+        }
+        match self.0.as_mut().filter(|held| held.shown == (open.page, open.subcode) && !held.page_open) {
+            Some(held) => {
+                // The page context's own opening names the page's
+                // language and level, which text is encoded for.
+                held.languages = Languages::new(&open.language);
+                held.level = open.level.code();
+                held.page_open = true;
+            }
+            None => self.0 = Some(Teletext::new(open)),
         }
     }
 
-    /// A context closes: the page's state goes with the page context.
+    /// A context closes: the page's state goes with the page context that
+    /// drew on it. A state the channel context has since been shown, of
+    /// another page, stays.
     pub fn close(&mut self, context: ContextId) {
-        if context == ContextId::Page {
+        match context {
+            ContextId::Page => {
+                if self.0.as_ref().is_some_and(|held| held.page_open) {
+                    self.0 = None;
+                }
+            }
+            ContextId::Channel => {
+                self.page_hidden();
+            }
+        }
+    }
+
+    /// The channel context is shown the page `page`, sub-code `subcode`
+    /// (its `pageshow`): when that is a teletext page it may draw its
+    /// sprites there, on the state the page context has, or on a blank
+    /// one of its own made for the language and level of `open`, the
+    /// channel context's opening.
+    /// The handles of what it had drawn on a page it was never told was
+    /// hidden are given.
+    pub fn page_shown(&mut self, renderer: Renderer, page: u16, subcode: u16, open: &ContextOpen) -> Vec<i32> {
+        let removed = self.page_hidden();
+        if renderer != Renderer::Teletext {
+            if self.0.as_ref().is_some_and(|held| held.shown != (page, subcode)) {
+                self.0 = None;
+            }
+            return removed;
+        }
+        if let Some(held) = self.0.as_mut().filter(|held| held.shown == (page, subcode)) {
+            held.channel_shown = true;
+        } else {
+            let mut held = Teletext::blank((page, subcode), &open.language, open.level);
+            held.channel_shown = true;
+            self.0 = Some(held);
+        }
+        removed
+    }
+
+    /// The page is hidden from the channel context (its `pagehide`), or
+    /// the channel context ends: everything it drew is dropped with the
+    /// page (section 3.1), and the handles of what it drew are given.
+    pub fn page_hidden(&mut self) -> Vec<i32> {
+        let Some(held) = self.0.as_mut().filter(|held| held.channel_shown) else { return Vec::new() };
+        held.channel_shown = false;
+        let handles = held.sprites.remove_context(ContextId::Channel);
+        held.labels.retain(|staged| !handles.contains(&staged.handle));
+        if !held.page_open {
             self.0 = None;
         }
+        handles
+    }
+
+    /// The state `context` may draw on, when it has one.
+    fn drawn_by(&self, context: ContextId) -> Option<&Teletext> {
+        self.0.as_deref().filter(|held| match context {
+            ContextId::Page => held.page_open,
+            ContextId::Channel => held.channel_shown,
+        })
     }
 
     /// A step begins at the presentation tick `tick`: colours that waited
-    /// for their rate are applied.
+    /// for their rate are applied, and cycles that ran once have ended.
     pub fn begin_step(&mut self, tick: u64) {
         if let Some(held) = self.0.as_mut() {
+            held.tick = tick;
             held.colours.begin_step(tick);
+            held.sprites.begin_step(tick);
         }
     }
 
-    /// The scope `scope` of `context` ends: its controls are removed, and
-    /// their handles given.
+    /// The scope `scope` of `context` ends: its controls and sprites are
+    /// removed, and their handles given.
     pub fn scope_end(&mut self, context: ContextId, scope: i32) -> Vec<i32> {
-        let (ContextId::Page, Some(held)) = (context, self.0.as_mut()) else { return Vec::new() };
-        let handles: Vec<i32> =
-            held.model.controls.iter().filter(|control| control.scope == scope).filter_map(|control| control_handle(control.row, control.column)).collect();
-        if !handles.is_empty() {
-            held.labels.retain(|staged| !handles.contains(&staged.handle));
-            held.model.controls.retain(|control| control.scope != scope);
-            held.used = held.model.stream(held.languages.page_value()).len();
+        if self.drawn_by(context).is_none() {
+            return Vec::new();
         }
+        let Some(held) = self.0.as_mut() else { return Vec::new() };
+        let mut handles = held.sprites.remove_scope(context, scope);
+        if context == ContextId::Page {
+            let controls: Vec<i32> =
+                held.model.controls.iter().filter(|control| control.scope == scope).filter_map(|control| control_handle(control.row, control.column)).collect();
+            if !controls.is_empty() {
+                held.model.controls.retain(|control| control.scope != scope);
+                held.used = held.model.stream(held.languages.page_value()).len();
+            }
+            handles.extend(controls);
+        }
+        held.labels.retain(|staged| !handles.contains(&staged.handle));
         handles
     }
 
@@ -819,7 +1005,7 @@ impl Slot {
     /// `LISTEN` accepts beside the shared core's two.
     #[must_use]
     pub fn has_thing(&self, context: ContextId, handle: i32) -> bool {
-        context == ContextId::Page && self.0.as_ref().is_some_and(|held| held.control_of(handle).is_ok())
+        self.drawn_by(context).is_some_and(|held| held.sprites.owns(context, handle) || (context == ContextId::Page && held.control_of(handle).is_ok()))
     }
 
     /// The bytes held for the page.
@@ -861,6 +1047,7 @@ impl Slot {
                 held.colours.defined(),
                 held.model.controls.len(),
             );
+            held.sprites.budget(out);
             let _ = write!(out, ",\"bitmapCellsLossy\":{{\"used\":{},\"limit\":{}}}", held.bitmap.lossy(), bitmap::CELLS);
         }
     }
@@ -878,12 +1065,23 @@ impl Slot {
         if let Some(reply) = held.ask(op, ints, payload) {
             return reply;
         }
-        // Renderer state belongs to the page (section 3.1): the plane, the
-        // overlay, the Colour Map and the controls are the page context's.
-        if context != ContextId::Page {
-            return Err(type_error("only the page context draws on the page plane, the overlay, the Colour Map and the controls"));
+        // A context draws on the page it was opened on or shown, and on
+        // no other: the state may by now be another page's.
+        let may = match context {
+            ContextId::Page => held.page_open,
+            ContextId::Channel => held.channel_shown,
+        };
+        if !may {
+            // Of the page, the channel context draws sprites alone, shown
+            // the page or not.
+            let sprites = matches!(op, Op::TT_SPRITE | Op::TT_LABEL | Op::TT_ANIMATE | Op::TT_REMOVE);
+            return Err(type_error(if context == ContextId::Channel && !sprites {
+                "only the page context draws on the page plane, the overlay, the Colour Map and the controls"
+            } else {
+                "the page shown is not a teletext page this context has been opened on or shown"
+            }));
         }
-        held.operate(op, ints, payload, scope, tick)
+        held.operate(context, op, ints, payload, scope, tick)
     }
 }
 

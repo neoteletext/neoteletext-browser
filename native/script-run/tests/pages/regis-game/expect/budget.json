@@ -1,0 +1,21 @@
+{
+  "page": {
+    "scriptBytes": {"used": 1416, "limit": 1048576, "most": 1416},
+    "timers": {"used": 0, "limit": 32, "most": 0},
+    "listeners": {"used": 2, "limit": 256, "most": 2},
+    "requests": {"used": 0, "limit": 40, "most": 0},
+    "sockets": {"used": 0, "limit": 8, "most": 0},
+    "soundOperations": {"used": 0, "limit": 256, "most": 1},
+    "batchBytes": {"used": 0, "limit": 262144, "most": 0},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "drawings": {"used": 8, "limit": 1984, "most": 8},
+    "contentBytes": {"used": 160, "limit": 983040, "most": 160},
+    "stagedBytes": {"used": 0, "limit": 262144, "most": 0},
+    "animated": {"used": 0, "limit": 64, "most": 0},
+    "cycling": {"used": 0, "limit": 16, "most": 0},
+    "watched": {"used": 0, "limit": 32, "most": 0},
+    "macrographBytes": {"used": 0, "limit": 14336, "most": 0},
+    "colours": {"used": 3, "limit": 15, "most": 3},
+    "rebuildWork": {"used": 0, "limit": 100000000, "most": 0}
+  }
+}

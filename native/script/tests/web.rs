@@ -806,6 +806,37 @@ fn without_the_manifests_network_everything_fails_at_once() {
     assert_eq!(mock.seen(), Vec::new());
 }
 
+/// HTML section 9.2.6: each event of a stream has the origin of the
+/// stream's final address, which the web client says as it opens
+/// (TODO-7371 step 1); a stream a redirect led to another origin gives
+/// its events that origin, and one the web client names no address for
+/// keeps the origin it was asked at.
+#[test]
+fn an_event_streams_events_have_its_final_origin() {
+    let event = || vec![Item::Event { event: String::new(), data: "x".into(), last_id: String::new() }];
+    let mock = MockWebClient::new(move |requested| match path(requested).as_str() {
+        "/chan/moved" => Answer::EventStreamAt("https://other.test:8443/stream".into(), event()),
+        _ => Answer::EventStream(event()),
+    });
+    let body = format!(
+        "{WAIT}{}",
+        r#"
+        (async () => {
+          const seen = [];
+          for (const name of ["moved", "stayed"]) {
+            const stream = new EventSource(name);
+            stream.onmessage = (event) => seen.push(name + " " + event.origin + " " + stream.url);
+          }
+          await wait(4);
+          equal("each event's origin", seen.sort().join("\n"), ["moved https://other.test:8443 https://example.test/chan/moved",
+            "stayed https://example.test https://example.test/chan/stayed"].join("\n"));
+          done();
+        })();
+        "#
+    );
+    checked(&body, mock, 10, 1);
+}
+
 /// What each test script that waits starts with: `wait(ticks)`.
 const WAIT: &str = "const wait = (ticks) => new Promise((resolve) => setTimeout(resolve, ticks * 1000 / 60));\n";
 

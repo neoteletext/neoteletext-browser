@@ -25,7 +25,7 @@ use crate::host::Reply;
 /// another set than the page's", which the encoder writes for Level 3.5
 /// and below as a triplet for each character and no code in the row: the
 /// form an overlay cell holds, since it must not touch the plane.
-const NO_PAGE_SET: u8 = 0xFF;
+pub(super) const NO_PAGE_SET: u8 = 0xFF;
 /// The row the encoder is given a run on when only its cells are wanted.
 const ANY_ROW: u8 = neoteletext_core::consts::PACKET_FIRST_ROW;
 

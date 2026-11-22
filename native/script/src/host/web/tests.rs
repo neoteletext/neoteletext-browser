@@ -211,7 +211,7 @@ fn an_answer_that_breaks_the_protocol_fails_its_request_alone() {
         ("two heads", vec![head(1), head(1)]),
         ("a body past the room", vec![head(1), body(1, 65_536), body(1, 65_536), body(1, 65_536), body(1, 65_536), body(1, 1)]),
         ("an event for a fetch", vec![FromWebClient::Event { id: 1, event: "x".into(), data: "y".into(), last_id: String::new() }]),
-        ("a socket's opening for a fetch", vec![FromWebClient::Opened { id: 1, protocol: "chat".into() }]),
+        ("a socket's opening for a fetch", vec![FromWebClient::Opened { id: 1, protocol: "chat".into(), url: String::new() }]),
         ("a socket's message for a fetch", vec![FromWebClient::SocketMessage { id: 1, binary: true, last: true, bytes: vec![1] }]),
         ("a head with a status that is none", vec![head_with(1, 99)]),
         ("a body piece of no bytes", vec![head(1), body(1, 0)]),
@@ -265,7 +265,7 @@ fn a_web_client_that_floods_is_held_to_the_networks_bound() {
     // A socket's messages have no window: past the bound on answers waiting the socket fails.
     let Reply::Int(socket) = text(&mut host, PAGE, Op::WS_OPEN, &[19], "wss://example.test/") else { panic!() };
     let socket = u32::try_from(socket).unwrap();
-    host.web().arrive(FromWebClient::Opened { id: socket, protocol: String::new() });
+    host.web().arrive(FromWebClient::Opened { id: socket, protocol: String::new(), url: String::new() });
     for _ in 0..MAX_ANSWERS_WAITING + 10 {
         host.web().arrive(FromWebClient::SocketMessage { id: socket, binary: true, last: true, bytes: vec![1] });
     }
@@ -298,7 +298,7 @@ fn a_sockets_operations_are_held_to_the_standard_and_the_bounds() {
     let mut host = host();
     let Reply::Int(id) = text(&mut host, PAGE, Op::WS_OPEN, &[19], "wss://example.test/chat,other") else { panic!() };
     assert_type(&bytes(&mut host, PAGE, Op::WS_SEND, &[id, 1, 1], b"early"));
-    host.web().arrive(FromWebClient::Opened { id: 1, protocol: "chat".into() });
+    host.web().arrive(FromWebClient::Opened { id: 1, protocol: "chat".into(), url: String::new() });
     assert_eq!(kinds(&events(&mut host)), vec![EventKind::WS_OPENED]);
     for code in [0, 999, 1001, 1006, 2999, 5000, 70_000, -1] {
         assert_type(&text(&mut host, PAGE, Op::WS_CLOSE, &[id, code], ""));

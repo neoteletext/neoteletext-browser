@@ -316,7 +316,7 @@ fn reply(word: &str, rest: &str) -> Result<FromWebClient, String> {
             };
             Ok(FromWebClient::Failed { id: 0, error, reason })
         }
-        "opened" => Ok(FromWebClient::Opened { id: 0, protocol: rest.trim().to_owned() }),
+        "opened" => Ok(FromWebClient::Opened { id: 0, protocol: rest.trim().to_owned(), url: String::new() }),
         "event" => {
             let (kind, after) = rest.split_once(' ').unwrap_or((rest, ""));
             let (last_id, data) = after.split_once(' ').unwrap_or((after, ""));
