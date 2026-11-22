@@ -8,8 +8,8 @@ mod common;
 
 use std::time::Instant;
 
-use common::{claiming, limited as container, opening, tick};
-use neoteletext_script::ContextId;
+use common::{Opens as _, claim, limited as container, opening, tick};
+use protocol::script::ContextId;
 
 const WORK: &[(&str, &str)] = &[
     ("empty loop", "for(;;){}"),
@@ -77,7 +77,7 @@ fn throughput() {
         let best = (0..5)
             .map(|_| {
                 let mut container = container();
-                let (opened, took) = common::timed(|| container.open(opening(ContextId::Page), source.as_bytes()));
+                let (opened, took) = common::timed(|| container.open_with(opening(ContextId::Page), source.as_bytes()));
                 (took.running, container.costs().slices, opened.is_ok())
             })
             .min()
@@ -93,7 +93,7 @@ fn slices() {
     for (name, source) in WORK {
         let mut container = container();
         let began = Instant::now();
-        let result = container.open(opening(ContextId::Page), source.as_bytes());
+        let result = container.open_with(opening(ContextId::Page), source.as_bytes());
         let ran = began.elapsed();
         let costs = container.costs();
         println!("{name:22} ran {:>9.3?} longest slice {:>10.3?} stop {:?}", ran, costs.longest_slice, result.err().map(|error| error.to_string()));
@@ -107,9 +107,9 @@ fn trivial_page() {
     for _ in 0..3 {
         let mut container = container();
         let mut open = opening(ContextId::Page);
-        open.claims = claiming(&[]);
+        claim(&mut open, &[]);
         let began = Instant::now();
-        container.open(open, b"let n = 0; nt.addEventListener('tick', () => { n++; });").unwrap();
+        container.open_with(open, b"let n = 0; nt.addEventListener('tick', () => { n++; });").unwrap();
         let opened = began.elapsed();
         let mut steps: Vec<std::time::Duration> = (0..600_u32)
             .map(|at| {
@@ -130,7 +130,7 @@ fn trivial_page() {
         );
         let mut idle = container;
         idle.close(ContextId::Page);
-        idle.open(opening(ContextId::Page), b"").unwrap();
+        idle.open_with(opening(ContextId::Page), b";").unwrap();
         let mut steps: Vec<std::time::Duration> = (0..600_u32)
             .map(|at| {
                 let began = Instant::now();

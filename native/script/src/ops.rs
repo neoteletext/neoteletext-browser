@@ -149,6 +149,68 @@ numbered! {
     SOUND_ALLOWED = 22,
 }
 
+impl EventKind {
+    /// The kind a step's event names. Every kind a step can carry has its
+    /// number here, the same number (the crate's tests compare them);
+    /// event 22 is the host's own and no step carries it.
+    #[must_use]
+    pub const fn of(kind: protocol::script::EventKind) -> Self {
+        use protocol::script::EventKind as Carried;
+        match kind {
+            Carried::Tick => Self::TICK,
+            Carried::KeyDown => Self::KEY_DOWN,
+            Carried::KeyUp => Self::KEY_UP,
+            Carried::Text => Self::TEXT,
+            Carried::Pointer => Self::POINTER,
+            Carried::Wheel => Self::WHEEL,
+            Carried::Focus => Self::FOCUS,
+            Carried::Blur => Self::BLUR,
+            Carried::Visibility => Self::VISIBILITY,
+            Carried::Timer => Self::TIMER,
+            Carried::Navigate => Self::NAVIGATE,
+            Carried::PageShow => Self::PAGE_SHOW,
+            Carried::PageHide => Self::PAGE_HIDE,
+            Carried::Close => Self::CLOSE,
+            Carried::Shared => Self::SHARED,
+            Carried::Painted => Self::PAINTED,
+            Carried::CycleEnd => Self::CYCLE_END,
+            Carried::SoundCue => Self::SOUND_CUE,
+            Carried::SoundEnded => Self::SOUND_ENDED,
+            Carried::Fault => Self::FAULT,
+            Carried::Ui => Self::UI,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The two crates number the events of section 10.3 alike: each kind
+    /// a step can carry has the number the script library gives it, and
+    /// the library's one further kind, `SOUND_ALLOWED`, is the first
+    /// number after them, which the message's reader refuses.
+    #[test]
+    fn a_steps_event_kinds_are_the_librarys_numbers() {
+        use protocol::script::EventKind as Carried;
+        for carried in Carried::ALL {
+            assert_eq!(EventKind::of(*carried).number(), i32::from(carried.code()), "{carried:?}");
+        }
+        let own: Vec<EventKind> =
+            EventKind::ALL.iter().map(|(_, kind)| *kind).filter(|kind| !Carried::ALL.iter().any(|carried| EventKind::of(*carried) == *kind)).collect();
+        assert_eq!(own, vec![EventKind::SOUND_ALLOWED]);
+        assert!(Carried::of(u8::try_from(EventKind::SOUND_ALLOWED.number()).unwrap()).is_err());
+    }
+
+    /// The families a script may start are the ones the batch's reader
+    /// takes: the rule table's first to its last.
+    #[test]
+    fn the_families_are_the_batchs() {
+        let codes: Vec<u8> = FAMILIES.iter().map(|(_, codec)| codec.code()).collect();
+        assert_eq!(codes, (neoteletext_rules::limits::FIRST_FAMILY..=neoteletext_rules::limits::LAST_FAMILY).collect::<Vec<u8>>());
+    }
+}
+
 numbered! {
     /// A field operation `INFO` gives (this session's numbering; section
     /// 10.2 names the fields without numbering them).

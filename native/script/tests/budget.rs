@@ -7,10 +7,11 @@ mod common;
 
 use std::time::Duration;
 
-use common::{all_lines, claiming, limited, lines, opening, tick, timed, with_events};
+use common::{Opens as _, all_lines, claim, key, limited, lines, opening, tick, timed, view, with_events};
+use neoteletext_script::LinkError;
 use neoteletext_script::limits::{CALLBACK_TIME_LIMIT, SECOND_TIME_BUDGET, STEP_TIME_BUDGET, TICKS_PER_SECOND, TIME_CHECK_MARGIN};
-use neoteletext_script::ops::{EventKind, KeyBit};
-use neoteletext_script::{ContextId, EventPayload, LinkError, StepEvent, StopReason};
+use neoteletext_script::ops::KeyBit;
+use protocol::script::{ContextId, EventKind, FailReason};
 
 /// How many turns of a script's busy loop take about `target` on this
 /// machine now: measured by running the loop at a top level, since a
@@ -20,7 +21,7 @@ fn turns_for(target: Duration) -> u64 {
     let burn = |turns: u64| {
         let mut container = limited();
         let source = format!("(function () {{ let x = 0; for (let j = 0; j < {turns}; j++) {{ x += j; }} }})();");
-        timed(|| container.open(opening(ContextId::Page), source.as_bytes()).unwrap()).1.running
+        timed(|| container.open_with(opening(ContextId::Page), source.as_bytes()).unwrap()).1.running
     };
     let empty = (0..3).map(|_| burn(0)).min().unwrap();
     let probe = (0..3).map(|_| burn(PROBE_TURNS)).min().unwrap().saturating_sub(empty).max(Duration::from_micros(50));
@@ -42,8 +43,8 @@ fn busy_timers_are_held_to_the_step_and_stopped_by_the_second() {
     );
     let mut container = limited();
     let mut open = opening(ContextId::Page);
-    open.claims = claiming(&[]);
-    container.open(open, source.as_bytes()).unwrap();
+    claim(&mut open, &[]);
+    container.open_with(open, source.as_bytes()).unwrap();
     let mut log = Vec::new();
     let mut total = Duration::ZERO;
     let mut stopped_at = None;
@@ -65,8 +66,8 @@ fn busy_timers_are_held_to_the_step_and_stopped_by_the_second() {
             assert!(ran < 8, "tick {at}: {ran} callbacks ran in one step");
         }
         log.extend(lines(&batch));
-        if batch.states[0].stopped.is_some() {
-            assert_eq!(batch.states[0].stopped, Some(StopReason::Time));
+        if view(&batch).states[0].stopped.is_some() {
+            assert_eq!(view(&batch).states[0].stopped, Some(FailReason::Time));
             stopped_at = Some(at);
             break;
         }
@@ -77,11 +78,7 @@ fn busy_timers_are_held_to_the_step_and_stopped_by_the_second() {
     // The tick event itself could not start while the timers used the
     // budget: no tick was heard after the first.
     assert!(!log.iter().any(|line| line.starts_with("tick 1 ")), "{log:?}");
-    assert!(matches!(container.step(&tick(999, 999)), Err(LinkError::Stopped(StopReason::Time, _))));
-}
-
-fn key(kind: EventKind, name: &str, bits: i32) -> StepEvent {
-    StepEvent { kind, ints: [bits, 0, 0, 0], payload: EventPayload::Text(name.into()) }
+    assert!(matches!(container.step(&tick(999, 999)), Err(LinkError::Stopped(FailReason::Time, _))));
 }
 
 /// Section 3.2 rule 2 and section 4.7: input a step has no time for stays
@@ -99,14 +96,14 @@ fn input_a_step_has_no_time_for_waits_but_lost_releases_never_do() {
     );
     let mut container = limited();
     let mut open = opening(ContextId::Page);
-    open.claims = claiming(&["a", "Enter", "ArrowLeft"]);
-    container.open(open, source.as_bytes()).unwrap();
+    claim(&mut open, &["a", "Enter", "ArrowLeft"]);
+    container.open_with(open, source.as_bytes()).unwrap();
     assert_eq!(lines(&container.step(&tick(1, 0)).unwrap()), vec!["tick 0 missed 0"]);
     let events = vec![
-        key(EventKind::KEY_DOWN, "a", 0),
-        key(EventKind::KEY_DOWN, "Enter", 0),
-        key(EventKind::KEY_DOWN, "ArrowLeft", KeyBit::REPEAT_OR_LOST.number()),
-        key(EventKind::KEY_UP, "Enter", KeyBit::REPEAT_OR_LOST.number()),
+        key(EventKind::KeyDown, "a", 0),
+        key(EventKind::KeyDown, "Enter", 0),
+        key(EventKind::KeyDown, "ArrowLeft", KeyBit::REPEAT_OR_LOST.number()),
+        key(EventKind::KeyUp, "Enter", KeyBit::REPEAT_OR_LOST.number()),
     ];
     let first = container.step(&with_events(2, 1, events)).unwrap();
     // The lost release came last and is delivered first; "a" uses the
@@ -114,11 +111,11 @@ fn input_a_step_has_no_time_for_waits_but_lost_releases_never_do() {
     assert_eq!(lines(&first), vec!["up Enter lost true at 1", "down a at 1"]);
     // "a" was cancelled and heard; the release was heard; the two that
     // waited have no verdict, so their defaults are taken.
-    assert_eq!(first.verdicts, vec![3, 0, 0, 2]);
+    assert_eq!(view(&first).verdicts, vec![3, 0, 0, 2]);
     let second = container.step(&tick(3, 2)).unwrap();
     // The repeat that waited is dropped; Enter is heard a step late; the
     // tick says one was missed.
     assert_eq!(lines(&second), vec!["down Enter at 2", "tick 2 missed 1"]);
-    assert_eq!(second.verdicts, Vec::<u8>::new());
+    assert_eq!(view(&second).verdicts, Vec::<u8>::new());
     assert_eq!(all_lines(&[container.step(&tick(4, 3))]), vec!["tick 3 missed 0"]);
 }

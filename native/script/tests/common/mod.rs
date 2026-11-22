@@ -4,7 +4,11 @@
 
 use std::sync::OnceLock;
 
-use neoteletext_script::{Batch, Claims, Container, ContextId, ContextOpen, Engine, LinkError, PointerClaim, Renderer, Settings, Step, StepEvent, TimeLimits};
+use neoteletext_script::{Container, Engine, LinkError, Settings, TimeLimits};
+use protocol::script::batch::{ContextState, LogLine, SoundOperation};
+use protocol::script::{
+    Batch, ContextFlags, ContextId, ContextOpen, Event, EventKind, FromScriptHost, Level, Renderer, Step, StepFlags, read_to_decoder, write_to_decoder,
+};
 
 /// The seed the tests give a context unless they give their own.
 pub const SEED: [u8; 32] = [42; 32];
@@ -17,15 +21,18 @@ pub fn engine() -> &'static Engine {
     ENGINE.get_or_init(|| Engine::new().expect("the module compiles"))
 }
 
-/// A `CONTEXT_OPEN` for `context` with nothing claimed.
+/// A context's opening for `context` with nothing claimed. Its script's
+/// length is set when it is opened ([`Opens::open_with`]).
 pub fn opening(context: ContextId) -> ContextOpen {
     ContextOpen {
         context,
         api: 1,
-        renderer: Some(Renderer::Teletext),
+        renderer: Renderer::Teletext,
+        level: Level::TwoFive,
         page: 0x100,
-        subcode: None,
-        claims: Claims::default(),
+        subcode: 0,
+        flags: ContextFlags { sound_allowed: true, ..ContextFlags::default() },
+        tick_divisor: 0,
         language: "en".into(),
         channel_url: CHANNEL.into(),
         page_url: format!("{CHANNEL}100.tti"),
@@ -34,14 +41,31 @@ pub fn opening(context: ContextId) -> ContextOpen {
         seed: SEED,
         epoch_seconds: 1_800_000_000,
         zone_minutes: 600,
+        keys: Vec::new(),
         sounds: vec![1, 2],
-        sound_allowed: true,
+        source_bytes: 1,
     }
 }
 
-/// Everything claimed: the keys named, text, pointer moves, the wheel and every tick.
-pub fn claiming(keys: &[&str]) -> Claims {
-    Claims { keys: keys.iter().map(|key| (*key).to_owned()).collect(), text: true, pointer: PointerClaim::Move, wheel: true, tick_divisor: 1, network: false }
+/// Claims everything for `open`: the keys named, text, pointer moves, the
+/// wheel and every tick.
+pub fn claim(open: &mut ContextOpen, keys: &[&str]) {
+    open.keys = keys.iter().map(|key| (*key).to_owned()).collect();
+    open.flags = ContextFlags { pointer_press: true, pointer_move: true, wheel: true, text: true, ..open.flags };
+    open.tick_divisor = 1;
+}
+
+/// Opening a context with a script, the opening's length made the script's.
+pub trait Opens {
+    /// Opens `open` with `source` as its script.
+    fn open_with(&mut self, open: ContextOpen, source: &[u8]) -> Result<(), LinkError>;
+}
+
+impl Opens for Container {
+    fn open_with(&mut self, mut open: ContextOpen, source: &[u8]) -> Result<(), LinkError> {
+        open.source_bytes = u32::try_from(source.len()).unwrap();
+        self.open(open, source)
+    }
 }
 
 /// A new container whose scripts no clock hurries: for the tests of what
@@ -60,14 +84,14 @@ pub fn limited() -> Container {
 pub fn page(source: &str) -> Container {
     let mut container = container();
     let mut open = opening(ContextId::Page);
-    open.claims = claiming(&["Enter", "a", "ArrowLeft"]);
-    container.open(open, source.as_bytes()).expect("the page opens");
+    claim(&mut open, &["Enter", "a", "ArrowLeft"]);
+    container.open_with(open, source.as_bytes()).expect("the page opens");
     container
 }
 
 /// A tick step.
 pub fn tick(sequence: u32, tick: u64) -> Step {
-    Step { sequence, tick, is_tick: true, sound_allowed: true, ..Step::default() }
+    Step { sequence, tick, flags: StepFlags { tick: true, sound_allowed: true, ..StepFlags::default() }, ..Step::default() }
 }
 
 /// Steps `container` through the ticks `from..to`, giving each batch.
@@ -76,13 +100,13 @@ pub fn run(container: &mut Container, from: u64, to: u64) -> Vec<Result<Batch, L
 }
 
 /// A tick step carrying `events`.
-pub fn with_events(sequence: u32, at: u64, events: Vec<StepEvent>) -> Step {
+pub fn with_events(sequence: u32, at: u64, events: Vec<Event>) -> Step {
     Step { events, ..tick(sequence, at) }
 }
 
 /// Every log line of `batch`, as text.
 pub fn lines(batch: &Batch) -> Vec<String> {
-    batch.log.iter().map(|line| line.text.clone()).collect()
+    view(batch).log.iter().map(|line| line.text.clone()).collect()
 }
 
 /// Every log line of a run's batches that were answered.
@@ -151,4 +175,56 @@ pub fn timed<T>(work: impl FnOnce() -> T) -> (T, Took) {
     let result = work();
     let wall = began.elapsed();
     (result, Took { wall, running: wall.saturating_sub(waited_for_a_processor().saturating_sub(waited)) })
+}
+
+/// An event with text for its payload: a key's name, typed text, an address.
+pub fn text_event(kind: EventKind, numbers: [i32; 4], text: &str) -> Event {
+    Event { kind, numbers, payload: text.as_bytes().to_vec() }
+}
+
+/// An event with whole numbers for its payload, four bytes each,
+/// big-endian as the message writes every number.
+pub fn ints_event(kind: EventKind, numbers: [i32; 4], ints: &[i32]) -> Event {
+    Event { kind, numbers, payload: ints.iter().flat_map(|number| number.to_be_bytes()).collect() }
+}
+
+/// An event with no payload.
+pub fn plain_event(kind: EventKind, numbers: [i32; 4]) -> Event {
+    Event { kind, numbers, payload: Vec::new() }
+}
+
+/// A key event: its name, and its modifier bits.
+pub fn key(kind: EventKind, name: &str, bits: i32) -> Event {
+    text_event(kind, [bits, 0, 0, 0], name)
+}
+
+/// A batch's sections as plain lists, an absent section an empty one.
+pub struct View {
+    /// Each event's verdict: bit 0 cancelled, bit 1 handled.
+    pub verdicts: Vec<u8>,
+    /// The sound operations.
+    pub sound: Vec<SoundOperation>,
+    /// The log.
+    pub log: Vec<LogLine>,
+    /// Each context's state.
+    pub states: Vec<ContextState>,
+}
+
+/// A batch's sections as lists. Every batch a test looks at is also
+/// written as the message a script host sends and read back as the
+/// decoder reads it: what the library makes is always a message the
+/// link takes, whole.
+#[track_caller]
+pub fn view(batch: &Batch) -> View {
+    let mut written = Vec::new();
+    write_to_decoder(&mut written, &FromScriptHost::Batch(Box::new(batch.clone())))
+        .unwrap_or_else(|error| panic!("the batch is not a message the link takes: {error:?}\n{batch:#?}"));
+    let read = read_to_decoder(&mut written.as_slice()).unwrap();
+    assert_eq!(read, Some(FromScriptHost::Batch(Box::new(batch.clone()))), "the batch is not read back as it was written");
+    View {
+        verdicts: batch.verdicts.iter().flatten().map(|verdict| u8::from(verdict.cancelled) | (u8::from(verdict.handled) << 1)).collect(),
+        sound: batch.sound.clone().unwrap_or_default(),
+        log: batch.log.clone().unwrap_or_default(),
+        states: batch.state.clone().unwrap_or_default(),
+    }
 }

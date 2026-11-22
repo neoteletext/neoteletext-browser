@@ -41,7 +41,9 @@ use crate::limits::{
     MAX_ERROR_BYTES, MAX_EVENT_PAYLOAD_BYTES, MAX_HOST_BYTES, MAX_HOST_INTS, MAX_RESULT_BYTES, MAX_SCRIPT_BYTES, MAX_WRITE_BYTES, MAX_WRITE_VECTORS,
     QUICKJS_HEAP_BYTES, QUICKJS_STACK_BYTES, WASM_MAX_RECURSION, WASM_MEMORY_BYTES,
 };
-use crate::link::{ContextId, StopReason};
+use protocol::script::{ContextId, FailReason};
+
+use crate::link::Context as _;
 use crate::watchdog::Watchdog;
 
 /// The module: QuickJS, the host-boundary shim and the module's own
@@ -129,12 +131,12 @@ pub enum Stop {
 impl Stop {
     /// The reason, as the `FAILED` message gives it.
     #[must_use]
-    pub const fn reason(&self) -> StopReason {
+    pub const fn reason(&self) -> FailReason {
         match self {
-            Self::Time => StopReason::Time,
-            Self::Memory => StopReason::Memory,
-            Self::Stack => StopReason::Stack,
-            Self::Trap(_) | Self::Container(_) => StopReason::Trap,
+            Self::Time => FailReason::Time,
+            Self::Memory => FailReason::Memory,
+            Self::Stack => FailReason::Stack,
+            Self::Trap(_) | Self::Container(_) => FailReason::Trap,
         }
     }
 }

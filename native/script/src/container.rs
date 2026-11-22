@@ -23,14 +23,16 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use protocol::script::{Batch, ContextId, ContextOpen, Event, FailReason, SoundReport, Step};
+use protocol::web::{FromWebClient, ToWebClient};
+
 use crate::host::{Host, percent};
+use crate::host::{Input, InputPayload};
 use crate::limits::{
     CALLBACK_TIME_LIMIT, CLOSE_TIME_LIMIT, MAX_EVENTS_PER_TICK, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_NETWORK_EVENTS_PER_STEP, MAX_POINTER_OBJECTS,
     MAX_QUEUED_EVENTS, MAX_TEXT_EVENT_BYTES, MAX_URL_BYTES, SECOND_TIME_BUDGET, START_TIME_LIMIT, STEP_TIME_BUDGET, TICKS_PER_SECOND,
 };
-use crate::link::{
-    Batch, ContextId, ContextOpen, EventPayload, FromFetcher, LinkError, SoundReport, Step, StepEvent, StopReason, ToFetcher, check_open, check_step,
-};
+use crate::link::{Context as _, DISPATCH_ORDER, LinkError, check_open};
 use crate::machine::{Engine, Entry, Given, Machine, Stop};
 use crate::ops::{DispatchBit, EventKind, Handle, KeyBit, NavigateCause, PointerAction};
 use crate::random::math_seed;
@@ -44,10 +46,6 @@ const POINTER_ACTION_MASK: i32 = 0x0F;
 /// The whole numbers a pointer event's payload starts with: the pointer's
 /// number, its buttons, and its place within the thing hit.
 const POINTER_PAYLOAD_INTS: usize = 4;
-/// The network events of section 10.3, 30 to 41, which the core carries
-/// for work package W2.
-const FIRST_NETWORK_EVENT: i32 = 30;
-const LAST_NETWORK_EVENT: i32 = 41;
 /// The low 31 bits of a tick count, as a tick event carries it.
 const TICK_MASK: u64 = 0x7FFF_FFFF;
 /// The name a script is run under when it has no address.
@@ -137,7 +135,7 @@ enum Owed {
 /// An input event waiting for a step with time for it (section 4.7).
 #[derive(Debug, Clone)]
 struct Waiting {
-    event: StepEvent,
+    event: Input,
     /// The step it came in and its place there, for its verdict.
     origin: Option<(u32, usize)>,
     owed: Owed,
@@ -151,7 +149,7 @@ pub struct Container {
     time: TimeLimits,
     prelude: String,
     queue: VecDeque<Waiting>,
-    network: VecDeque<FromFetcher>,
+    network: VecDeque<FromWebClient>,
     /// The script time used at each of the last second's ticks.
     second: VecDeque<(u64, Duration)>,
     /// The script time the step running has used.
@@ -159,6 +157,8 @@ pub struct Container {
     /// Tick events that could not start, for each context's next one.
     missed: [u32; 2],
     told_sound_allowed: bool,
+    /// Whether the log has said that a network answer was dropped.
+    told_no_network: bool,
     costs: Costs,
 }
 
@@ -181,36 +181,58 @@ const fn is_input(kind: EventKind) -> bool {
     )
 }
 
-/// Checks the events of a step: each of a kind a step may carry, with the
-/// payload that kind has, within its bound.
-fn check_events(step: &Step) -> Result<(), LinkError> {
-    for event in &step.events {
-        if !is_input(event.kind) {
-            return Err(LinkError::Refused("a step carried an event only the host makes"));
-        }
-        let ok = match (event.kind, &event.payload) {
-            (EventKind::KEY_DOWN | EventKind::KEY_UP, EventPayload::Text(name)) => !name.is_empty() && name.len() <= MAX_KEY_NAME_BYTES,
-            (EventKind::TEXT, EventPayload::Text(text)) => text.len() <= MAX_TEXT_EVENT_BYTES,
-            (EventKind::POINTER, EventPayload::Ints(ints)) => {
-                ints.len() >= POINTER_PAYLOAD_INTS && ints.len() <= POINTER_PAYLOAD_INTS.saturating_add(MAX_POINTER_OBJECTS)
-            }
-            (EventKind::NAVIGATE | EventKind::PAGE_SHOW, EventPayload::Text(url)) => url.len() <= MAX_URL_BYTES,
-            (EventKind::WHEEL | EventKind::FOCUS | EventKind::BLUR | EventKind::PAGE_HIDE, EventPayload::None)
-            | (EventKind::UI, EventPayload::None | EventPayload::Text(_)) => true,
-            _ => false,
-        };
-        if !ok {
-            return Err(LinkError::Refused("a step carried an event with the wrong payload for its kind"));
-        }
+/// A step's event as the host gives it to a context: of a kind a step
+/// may carry, its bytes read as that kind's payload (a key's name, text
+/// and addresses as UTF-8; a pointer's whole numbers, four bytes each,
+/// big-endian as every number of the message is), within its bound.
+fn input_of(event: &Event) -> Result<Input, LinkError> {
+    let kind = EventKind::of(event.kind);
+    if !is_input(kind) {
+        return Err(LinkError::Refused("event kind: only the host makes it"));
     }
-    Ok(())
+    let wrong = LinkError::Refused("event payload");
+    let text = || core::str::from_utf8(&event.payload).map(str::to_owned).map_err(|_| LinkError::Refused("event payload"));
+    let payload = match kind {
+        EventKind::KEY_DOWN | EventKind::KEY_UP => {
+            let name = text()?;
+            if name.is_empty() || name.len() > MAX_KEY_NAME_BYTES {
+                return Err(wrong);
+            }
+            InputPayload::Text(name)
+        }
+        EventKind::TEXT => {
+            let typed = text()?;
+            if typed.len() > MAX_TEXT_EVENT_BYTES {
+                return Err(wrong);
+            }
+            InputPayload::Text(typed)
+        }
+        EventKind::NAVIGATE | EventKind::PAGE_SHOW => {
+            let address = text()?;
+            if address.len() > MAX_URL_BYTES {
+                return Err(wrong);
+            }
+            InputPayload::Text(address)
+        }
+        EventKind::POINTER => {
+            let (words, rest) = event.payload.as_chunks::<4>();
+            if !rest.is_empty() || words.len() < POINTER_PAYLOAD_INTS || words.len() > POINTER_PAYLOAD_INTS.saturating_add(MAX_POINTER_OBJECTS) {
+                return Err(wrong);
+            }
+            InputPayload::Ints(words.iter().map(|word| i32::from_be_bytes(*word)).collect())
+        }
+        EventKind::UI if !event.payload.is_empty() => InputPayload::Text(text()?),
+        _ if event.payload.is_empty() => InputPayload::None,
+        _ => return Err(wrong),
+    };
+    Ok(Input { kind, ints: event.numbers, payload })
 }
 
 /// Whether a script may cancel the default action of this event (section
 /// 4.2). The host decides, not the prelude: an event whose default is the
 /// viewer leaving, or that the browser's own controls caused, cannot be
 /// stopped by any script.
-fn cancelable(event: &StepEvent) -> bool {
+fn cancelable(event: &Input) -> bool {
     let [first, ..] = event.ints;
     match event.kind {
         EventKind::KEY_DOWN | EventKind::UI => true,
@@ -242,6 +264,7 @@ impl Container {
             step_used: Duration::ZERO,
             missed: [0; 2],
             told_sound_allowed: false,
+            told_no_network: false,
             costs,
         })
     }
@@ -360,7 +383,11 @@ impl Container {
         }
         self.machine.host().close(context);
         self.queue.retain(|waiting| !(context == ContextId::Channel && waiting.owed == Owed::Channel));
-        self.network.retain(|event| event.context != context);
+        // An answer names its request, not its context: which requests a
+        // context made is for work package W2 to keep, with the requests.
+        if !self.is_open(ContextId::Channel) && !self.is_open(ContextId::Page) {
+            self.network.clear();
+        }
         if let Some(missed) = self.missed.get_mut(context.index()) {
             *missed = 0;
         }
@@ -368,12 +395,13 @@ impl Container {
 
     /// The staged output outside a step: what a `close` handling left.
     pub fn drain(&mut self, sequence: u32) -> Batch {
-        self.machine.host().take_batch(sequence, Vec::new())
+        self.machine.host().take_batch(sequence, &[])
     }
 
-    /// An answer for a script from the web client, for the next step.
-    pub fn network(&mut self, event: FromFetcher) {
-        if (FIRST_NETWORK_EVENT..=LAST_NETWORK_EVENT).contains(&event.kind) && self.network.len() < MAX_QUEUED_EVENTS {
+    /// An answer for a script from the web client, for the next step. At
+    /// most [`MAX_QUEUED_EVENTS`] wait; more are dropped.
+    pub fn network(&mut self, event: FromWebClient) {
+        if self.network.len() < MAX_QUEUED_EVENTS {
             self.network.push_back(event);
         }
     }
@@ -381,7 +409,7 @@ impl Container {
     /// What the scripts asked of the network: nothing, until work package
     /// W2 adds the operations that ask.
     #[expect(clippy::missing_const_for_fn, reason = "the interface work package W2 fills in, which will not be constant")]
-    pub fn take_requests(&mut self) -> Vec<ToFetcher> {
+    pub fn take_requests(&mut self) -> Vec<ToWebClient> {
         Vec::new()
     }
 
@@ -455,9 +483,9 @@ impl Container {
     }
 
     /// Adds an input event to those waiting, by the rules of section 4.7.
-    fn enqueue(&mut self, event: StepEvent, origin: Option<(u32, usize)>) {
+    fn enqueue(&mut self, event: Input, origin: Option<(u32, usize)>) {
         let [first, second, third, fourth] = event.ints;
-        let is_move = |event: &StepEvent| event.kind == EventKind::POINTER && event.ints[0] & POINTER_ACTION_MASK == PointerAction::MOVE.number();
+        let is_move = |event: &Input| event.kind == EventKind::POINTER && event.ints[0] & POINTER_ACTION_MASK == PointerAction::MOVE.number();
         if is_move(&event) {
             // Waiting moves for one target become the latest.
             if let Some(waiting) =
@@ -507,18 +535,15 @@ impl Container {
     fn lose_everything_down(&mut self) {
         let keys = self.machine.host_ref().keys_held();
         for name in keys.into_iter().take(MAX_KEYS_DOWN.saturating_mul(2)) {
-            if self.queue.iter().any(|waiting| waiting.lost && waiting.event.payload == EventPayload::Text(name.clone())) {
+            if self.queue.iter().any(|waiting| waiting.lost && waiting.event.payload == InputPayload::Text(name.clone())) {
                 continue;
             }
-            let event = StepEvent { kind: EventKind::KEY_UP, ints: [KeyBit::REPEAT_OR_LOST.number(), 0, 0, 0], payload: EventPayload::Text(name) };
+            let event = Input { kind: EventKind::KEY_UP, ints: [KeyBit::REPEAT_OR_LOST.number(), 0, 0, 0], payload: InputPayload::Text(name) };
             self.queue.push_front(Waiting { event, origin: None, owed: Owed::Both, lost: true });
         }
         if self.machine.host_ref().pointer_pressed() && !self.queue.iter().any(|waiting| waiting.lost && waiting.event.kind == EventKind::POINTER) {
-            let event = StepEvent {
-                kind: EventKind::POINTER,
-                ints: [PointerAction::CANCEL.number(), 0, 0, 0],
-                payload: EventPayload::Ints(vec![0; POINTER_PAYLOAD_INTS]),
-            };
+            let event =
+                Input { kind: EventKind::POINTER, ints: [PointerAction::CANCEL.number(), 0, 0, 0], payload: InputPayload::Ints(vec![0; POINTER_PAYLOAD_INTS]) };
             self.queue.push_front(Waiting { event, origin: None, owed: Owed::Both, lost: true });
         }
     }
@@ -533,7 +558,7 @@ impl Container {
         // Reports about a thing go to the context that listens to it, and
         // sound's to whoever listens to `nt.sound`.
         let about_thing = matches!(event.kind, EventKind::PAINTED | EventKind::CYCLE_END | EventKind::UI);
-        for context in ContextId::DISPATCH_ORDER {
+        for context in DISPATCH_ORDER {
             if waiting.owed == Owed::Channel && context == ContextId::Page {
                 continue;
             }
@@ -557,10 +582,10 @@ impl Container {
             let mut numbers = event.ints;
             let mut ints_given: Vec<i32> = Vec::new();
             let payload = match &event.payload {
-                EventPayload::None => Given::None,
-                EventPayload::Text(text) => Given::Text(text),
-                EventPayload::Bytes(bytes) => Given::Bytes(bytes),
-                EventPayload::Ints(ints) => {
+                InputPayload::None => Given::None,
+                InputPayload::Text(text) => Given::Text(text),
+                InputPayload::Bytes(bytes) => Given::Bytes(bytes),
+                InputPayload::Ints(ints) => {
                     ints_given.extend(ints);
                     Given::Ints(&[])
                 }
@@ -580,7 +605,7 @@ impl Container {
                     _ => {}
                 }
             }
-            let payload = if matches!(event.payload, EventPayload::Ints(_)) { Given::Ints(&ints_given) } else { payload };
+            let payload = if matches!(event.payload, InputPayload::Ints(_)) { Given::Ints(&ints_given) } else { payload };
             if let Some(entry) = self.deliver(context, event.kind, numbers, payload, self.time.callback)? {
                 bits |= entry.dispatch & (DispatchBit::CANCELLED.number() | DispatchBit::HANDLED.number());
             }
@@ -593,28 +618,28 @@ impl Container {
     }
 
     /// The step's first phase: the input events (section 3.2 item 1).
-    fn run_input(&mut self, step: &Step, verdicts: &mut [u8]) -> Result<(), Stop> {
+    fn run_input(&mut self, step: &Step, events: Vec<Input>, verdicts: &mut [u8]) -> Result<(), Stop> {
         // Waiting key repeats are dropped: one an earlier step had no time
         // for is not worth more than the repeat that follows it.
         self.queue.retain(|waiting| !(waiting.event.kind == EventKind::KEY_DOWN && waiting.event.ints[0] & KeyBit::REPEAT_OR_LOST.number() != 0));
-        for (index, event) in step.events.iter().enumerate() {
-            self.enqueue(event.clone(), Some((step.sequence, index)));
+        for (index, event) in events.into_iter().enumerate() {
+            self.enqueue(event, Some((step.sequence, index)));
         }
         // What the decoder reports of things and of sound joins the queue
         // behind the input, as events the host makes.
         let reports = step
             .painted
             .iter()
-            .map(|handle| (EventKind::PAINTED, [*handle, 0, 0, 0], EventPayload::None))
-            .chain(step.cycle_ended.iter().map(|handle| (EventKind::CYCLE_END, [*handle, 0, 0, 0], EventPayload::None)))
+            .map(|handle| (EventKind::PAINTED, [*handle, 0, 0, 0], InputPayload::None))
+            .chain(step.cycle_ended.iter().map(|handle| (EventKind::CYCLE_END, [*handle, 0, 0, 0], InputPayload::None)))
             .chain(step.sound.iter().map(|report| match report {
-                SoundReport::Cue { voice, cue } => (EventKind::SOUND_CUE, [i32::from(*voice), i32::from(*cue), 0, 0], EventPayload::None),
-                SoundReport::Ended { voice } => (EventKind::SOUND_ENDED, [i32::from(*voice), 0, 0, 0], EventPayload::None),
+                SoundReport::Cue { voice, cue } => (EventKind::SOUND_CUE, [i32::from(*voice), *cue, 0, 0], InputPayload::None),
+                SoundReport::Ended { voice } => (EventKind::SOUND_ENDED, [i32::from(*voice), 0, 0, 0], InputPayload::None),
             }))
-            .chain(step.faults.iter().map(|fault| (EventKind::FAULT, [fault.code, 0, 0, 0], EventPayload::Text(fault.bound.clone()))));
+            .chain(step.faults.iter().map(|fault| (EventKind::FAULT, [fault.code, 0, 0, 0], InputPayload::Text(fault.bound.clone()))));
         for (kind, ints, payload) in reports {
             if self.queue.len() < MAX_QUEUED_EVENTS {
-                self.queue.push_back(Waiting { event: StepEvent { kind, ints, payload }, origin: None, owed: Owed::Both, lost: false });
+                self.queue.push_back(Waiting { event: Input { kind, ints, payload }, origin: None, owed: Owed::Both, lost: false });
             }
         }
         let mut handled = 0_usize;
@@ -640,38 +665,26 @@ impl Container {
         Ok(())
     }
 
-    /// The second phase: network events that arrived (item 2).
-    fn run_network(&mut self) -> Result<(), Stop> {
+    /// The second phase: network events that arrived (item 2), at most
+    /// [`MAX_NETWORK_EVENTS_PER_STEP`]. The shared core has no web API to
+    /// give an answer to (operations 40 to 49 and events 30 to 41 are
+    /// work package W2's), so each is taken from the queue and dropped,
+    /// and the log says so once.
+    fn run_network(&mut self) {
         for _ in 0..MAX_NETWORK_EVENTS_PER_STEP {
-            if !self.has_time() {
+            if !self.has_time() || self.network.pop_front().is_none() {
                 break;
             }
-            let Some(event) = self.network.pop_front() else { break };
-            let Some(kind) = EventKind::from_number(event.kind) else {
-                // The network's kinds are work package W2's to number in
-                // `ops.rs`; until then none can be delivered.
-                continue;
-            };
-            let ints: Vec<i32>;
-            let payload = match &event.payload {
-                EventPayload::None => Given::None,
-                EventPayload::Text(text) => Given::Text(text),
-                EventPayload::Bytes(bytes) => Given::Bytes(bytes),
-                EventPayload::Ints(given) => {
-                    ints = given.clone();
-                    Given::Ints(&ints)
-                }
-            };
-            self.deliver(event.context, kind, event.ints, payload, self.time.callback)?;
-            self.tell_shared()?;
+            if !core::mem::replace(&mut self.told_no_network, true) {
+                self.machine.host().log_line(LEVEL_WARN, None, "an answer from the web client was dropped: this script library has no web API yet");
+            }
         }
-        Ok(())
     }
 
     /// The third phase: timers that are due, in order of due tick and then
     /// of creation (item 3). A timer that cannot start stays due.
     fn run_timers(&mut self) -> Result<(), Stop> {
-        for context in ContextId::DISPATCH_ORDER {
+        for context in DISPATCH_ORDER {
             if !self.machine.host_ref().runs(context) {
                 continue;
             }
@@ -694,7 +707,7 @@ impl Container {
     /// asked for this tick (item 4). One that cannot start is counted in
     /// the next one's `missed`.
     fn run_tick(&mut self, step: &Step) -> Result<(), Stop> {
-        for context in ContextId::DISPATCH_ORDER {
+        for context in DISPATCH_ORDER {
             let host = self.machine.host_ref();
             let divisor = u64::from(host.tick_divisor(context));
             let now = host.now(context);
@@ -721,33 +734,33 @@ impl Container {
 
     /// Tells both contexts something with one whole number.
     fn tell_both(&mut self, kind: EventKind, first: i32) -> Result<(), Stop> {
-        for context in ContextId::DISPATCH_ORDER {
+        for context in DISPATCH_ORDER {
             self.deliver(context, kind, [first, 0, 0, 0], Given::None, self.time.callback)?;
         }
         Ok(())
     }
 
-    fn run_phases(&mut self, step: &Step, verdicts: &mut [u8]) -> Result<(), Stop> {
+    fn run_phases(&mut self, step: &Step, events: Vec<Input>, verdicts: &mut [u8]) -> Result<(), Stop> {
         if self.machine.host_ref().sound_allowed() && !self.told_sound_allowed {
             self.told_sound_allowed = true;
             self.tell_both(EventKind::SOUND_ALLOWED, 1)?;
         }
-        if step.resumed {
+        if step.flags.resumed {
             self.machine.host().set_hidden(false);
             self.tell_both(EventKind::VISIBILITY, 0)?;
         }
-        self.run_input(step, verdicts)?;
-        self.run_network()?;
+        self.run_input(step, events, verdicts)?;
+        self.run_network();
         self.run_timers()?;
-        if step.is_tick {
+        if step.flags.tick {
             self.run_tick(step)?;
         }
-        if step.pausing {
+        if step.flags.pausing {
             // Told before the pause, then every held note and playing
             // sound is released (section 3.1's table, section 3.5).
             self.machine.host().set_hidden(true);
             self.tell_both(EventKind::VISIBILITY, 1)?;
-            for context in ContextId::DISPATCH_ORDER {
+            for context in DISPATCH_ORDER {
                 self.machine.host().release_sound(context);
             }
         }
@@ -763,16 +776,16 @@ impl Container {
     /// When a field is past its bound, or the container was stopped
     /// before this step.
     pub fn step(&mut self, step: &Step) -> Result<Batch, LinkError> {
-        check_step(step)?;
-        check_events(step)?;
+        step.check().map_err(|error| LinkError::of(&error))?;
+        let events = step.events.iter().map(input_of).collect::<Result<Vec<Input>, LinkError>>()?;
         if let Some(error) = self.stopped_error() {
             return Err(error);
         }
         self.step_used = Duration::ZERO;
-        self.machine.host().begin_step(step.tick, step.sound_allowed);
+        self.machine.host().begin_step(step.tick, step.flags.sound_allowed);
         let mut verdicts = vec![0_u8; step.events.len()];
         // A stop is noted where it happens; the step is answered either way.
-        let _ = self.run_phases(step, &mut verdicts);
+        let _ = self.run_phases(step, events, &mut verdicts);
         self.costs.last_step = self.step_used;
         self.costs.longest_step = self.costs.longest_step.max(self.step_used);
         // The budget over a second: this tick's time joins the window.
@@ -793,12 +806,12 @@ impl Container {
             self.machine.host().log_line(LEVEL_WARN, None, "SECOND_TIME_BUDGET: the scripts used more time in a second than they may");
             self.note_stop(&Stop::Time);
         }
-        Ok(self.machine.host().take_batch(step.sequence, verdicts))
+        Ok(self.machine.host().take_batch(step.sequence, &verdicts))
     }
 
     /// Why each context is stopped, for a `FAILED` message.
     #[must_use]
-    pub fn stop_reason(&self) -> Option<StopReason> {
+    pub fn stop_reason(&self) -> Option<FailReason> {
         self.machine.stopped().map(Stop::reason)
     }
 }

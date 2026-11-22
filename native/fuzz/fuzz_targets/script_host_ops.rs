@@ -8,10 +8,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use neoteletext_script::host::{Host, Payload};
-use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_INTS, MAX_HOST_STATE_BYTES, MAX_LOG_CHARS, MAX_LOG_LINES, MAX_SOUND_OPERATIONS_PER_STEP, MAX_TITLE_BYTES, MAX_URL_BYTES};
+use neoteletext_script::host::{Host, Input as HostInput, InputPayload, Payload};
+use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_INTS, MAX_HOST_STATE_BYTES};
 use neoteletext_script::ops::{EventKind, Op};
-use neoteletext_script::{Claims, ContextId, ContextOpen, EventPayload, PointerClaim, Renderer, StepEvent};
+use protocol::script::{ContextFlags, ContextId, ContextOpen, FromScriptHost, Level, Renderer, write_to_decoder};
 
 /// The most commands one input gives.
 const MAX_COMMANDS: usize = 512;
@@ -22,9 +22,9 @@ const MAX_PAYLOAD: usize = 20_000;
 const EDGES: [i32; 12] = [0, 1, -1, 2, 3, 4, 64, 127, 128, 255, i32::MAX, i32::MIN];
 
 /// Reads the input a piece at a time; past its end every read is zero.
-struct Input<'a>(&'a [u8]);
+struct Bytes<'a>(&'a [u8]);
 
-impl Input<'_> {
+impl Bytes<'_> {
     fn byte(&mut self) -> u8 {
         let Some((first, rest)) = self.0.split_first() else { return 0 };
         self.0 = rest;
@@ -53,22 +53,25 @@ impl Input<'_> {
     }
 }
 
-fn opening(context: ContextId, input: &mut Input<'_>) -> ContextOpen {
+fn opening(context: ContextId, input: &mut Bytes<'_>) -> ContextOpen {
     let flags = input.byte();
     ContextOpen {
         context,
         api: 1,
-        renderer: Some(Renderer::Teletext),
+        renderer: Renderer::Teletext,
+        level: Level::TwoFive,
         page: 0x100,
-        subcode: (flags & 1 != 0).then_some(1),
-        claims: Claims {
-            keys: vec!["Enter".into(), "a".into()],
-            text: flags & 2 != 0,
-            pointer: if flags & 4 != 0 { PointerClaim::Move } else { PointerClaim::None },
+        subcode: u16::from(flags & 1),
+        flags: ContextFlags {
+            pointer_press: flags & 4 != 0,
+            pointer_move: flags & 32 != 0,
             wheel: flags & 8 != 0,
-            tick_divisor: 1,
+            text: flags & 2 != 0,
             network: false,
+            from_disk: false,
+            sound_allowed: flags & 16 != 0,
         },
+        tick_divisor: 1,
         language: "en".into(),
         channel_url: "https://example.test/chan/".into(),
         page_url: "https://example.test/chan/100.tti".into(),
@@ -77,8 +80,9 @@ fn opening(context: ContextId, input: &mut Input<'_>) -> ContextOpen {
         seed: [flags; 32],
         epoch_seconds: 1_800_000_000,
         zone_minutes: 0,
+        keys: vec!["Enter".into(), "a".into()],
         sounds: vec![1, 2, 255],
-        sound_allowed: flags & 16 != 0,
+        source_bytes: 10,
     }
 }
 
@@ -87,7 +91,7 @@ fn context_of(byte: u8) -> ContextId {
 }
 
 fuzz_target!(|data: &[u8]| {
-    let mut input = Input(data);
+    let mut input = Bytes(data);
     let mut host = Host::new();
     host.open(opening(ContextId::Channel, &mut input), 10);
     host.open(opening(ContextId::Page, &mut input), 10);
@@ -103,13 +107,13 @@ fuzz_target!(|data: &[u8]| {
                 host.begin_step(tick, input.byte() & 1 != 0);
             }
             1 => {
-                let batch = host.take_batch(1, Vec::new());
-                assert!(batch.log.len() <= MAX_LOG_LINES && batch.log.iter().all(|line| line.text.chars().count() <= MAX_LOG_CHARS));
-                // A step's own operations and its releases are within the
-                // bound; stops for a context that ended are the host's own.
-                assert!(batch.sound.len() <= MAX_SOUND_OPERATIONS_PER_STEP as usize + 16, "{} sound operations", batch.sound.len());
-                assert!(batch.title.as_ref().is_none_or(|title| title.len() <= MAX_TITLE_BYTES));
-                assert!(batch.navigate.as_ref().is_none_or(|target| target.len() <= MAX_URL_BYTES));
+                // Whatever the calls were, what leaves is a message the
+                // link takes whole: every section within its bounds.
+                let batch = host.take_batch(1, &[]);
+                let mut written = Vec::new();
+                if let Err(error) = write_to_decoder(&mut written, &FromScriptHost::Batch(Box::new(batch.clone()))) {
+                    panic!("the batch is not a message the link takes: {error:?}\n{batch:#?}");
+                }
             }
             2 => {
                 let context = context_of(input.byte());
@@ -130,12 +134,12 @@ fuzz_target!(|data: &[u8]| {
                 let Some(kind) = EventKind::from_number(i32::from(input.byte() % 24)) else { continue };
                 let ints = [input.int(), input.int(), input.int(), input.int()];
                 let payload = match input.byte() % 4 {
-                    0 => EventPayload::None,
-                    1 => EventPayload::Text(String::from_utf8_lossy(&input.bytes()).chars().take(64).collect()),
-                    2 => EventPayload::Text(if input.byte() & 1 == 0 { "Enter".into() } else { "a".into() }),
-                    _ => EventPayload::Ints(vec![input.int(), input.int(), input.int(), input.int()]),
+                    0 => InputPayload::None,
+                    1 => InputPayload::Text(String::from_utf8_lossy(&input.bytes()).chars().take(64).collect()),
+                    2 => InputPayload::Text(if input.byte() & 1 == 0 { "Enter".into() } else { "a".into() }),
+                    _ => InputPayload::Ints(vec![input.int(), input.int(), input.int(), input.int()]),
                 };
-                let _ = host.take_in(context, &StepEvent { kind, ints, payload });
+                let _ = host.take_in(context, &HostInput { kind, ints, payload });
             }
             6 => {
                 let context = context_of(input.byte());

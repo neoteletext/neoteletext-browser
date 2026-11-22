@@ -15,7 +15,7 @@ use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use ring::hkdf::{HKDF_SHA256, KeyType, Salt};
 
 /// A context's seed, in bytes.
-pub const SEED_BYTES: usize = 32;
+pub const SEED_BYTES: usize = protocol::script::SEED_BYTES;
 /// The salt of the extraction: the purpose of every key derived here.
 const SALT: &[u8] = b"neoteletext script random v1";
 /// The label `Math.random`'s starting state is derived under.

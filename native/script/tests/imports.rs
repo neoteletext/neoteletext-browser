@@ -10,11 +10,12 @@ mod common;
 use std::time::Duration;
 
 use common::timed;
+use neoteletext_script::Stop;
 use neoteletext_script::host::Host;
 use neoteletext_script::limits::{MAX_HOST_BYTES, MAX_LOG_CHARS, MAX_LOG_LINES, MAX_WRITE_VECTORS};
 use neoteletext_script::machine::{IMPORTS, Probe};
 use neoteletext_script::probe::PAGE_BYTES;
-use neoteletext_script::{ContextId, Stop};
+use protocol::script::ContextId;
 
 const CALL: usize = 0;
 const CHECK: usize = 1;
@@ -66,8 +67,12 @@ fn fd_write_reads_no_more_than_the_log_could_keep() {
     // The module is told all of every buffer looked at was taken.
     let told = u32::from_le_bytes(probe.memory()[size - 4..].try_into().unwrap());
     assert_eq!(u64::from(told), (MAX_WRITE_VECTORS * size) as u64);
-    let batch = probe.host().take_batch(1, Vec::new());
-    assert!(batch.log.len() <= MAX_LOG_LINES && batch.log.iter().all(|line| line.text.chars().count() <= MAX_LOG_CHARS), "{} lines", batch.log.len());
+    let batch = probe.host().take_batch(1, &[]);
+    assert!(
+        common::view(&batch).log.len() <= MAX_LOG_LINES && common::view(&batch).log.iter().all(|line| line.text.chars().count() <= MAX_LOG_CHARS),
+        "{} lines",
+        common::view(&batch).log.len()
+    );
     // Any other descriptor is refused; a negative count, a table or a
     // buffer outside the memory, and a count that cannot be written back
     // are traps.

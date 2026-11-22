@@ -19,11 +19,14 @@ use crate::limits::{
     AUDIO_CHANNELS, CONTEXTS, MAX_BATCH_BYTES, MAX_CONSECUTIVE_FAILURES, MAX_GAIN, MAX_HOST_STATE_BYTES, MAX_KEY_NAME_BYTES, MAX_KEYS_DOWN, MAX_LISTEN_KINDS,
     MAX_LISTENS, MAX_LOG_CHARS, MAX_LOG_LEVEL, MAX_LOG_LINES, MAX_MIDI_DATA, MAX_NAVIGATIONS_PER_SECOND, MAX_NOTE_TICKS, MAX_RANDOM_BYTES, MAX_SCOPE_DEPTH,
     MAX_SCOPES, MAX_SCRIPT_BYTES, MAX_SHARED_BYTES, MAX_SHARED_KEY_BYTES, MAX_SHARED_KEYS, MAX_SHARED_VALUE_BYTES, MAX_SOUND_NUMBER,
-    MAX_SOUND_OPERATIONS_PER_CALLBACK, MAX_SOUND_OPERATIONS_PER_SECOND, MAX_SOUND_OPERATIONS_PER_STEP, MAX_TIMER_TICKS, MAX_TIMERS, MAX_TITLE_BYTES,
-    MAX_URL_BYTES, QUICKJS_HEAP_BYTES, TICKS_PER_SECOND,
+    MAX_SOUND_OPERATIONS_PER_CALLBACK, MAX_SOUND_OPERATIONS_PER_SECOND, MAX_SOUND_OPERATIONS_PER_STEP, MAX_SYNTH_VARIANT, MAX_TIMER_TICKS, MAX_TIMERS,
+    MAX_TITLE_BYTES, MAX_URL_BYTES, QUICKJS_HEAP_BYTES, TICKS_PER_SECOND,
 };
-use crate::link::{Batch, ContextId, ContextOpen, ContextState, EventPayload, LogLine, PointerClaim, SoundOperation, StepEvent, StopReason, Watch};
-use crate::ops::{EventKind, FAMILIES, Handle, Info, KeyBit, Op, PointerAction};
+use protocol::script::batch::{ContextState, LogLine, MAX_SOUND_OPERATIONS, SoundOperation, Verdict, Watch};
+use protocol::script::{Batch, ContextId, ContextOpen, FailReason, MAX_WATCHED_PAINTINGS, Renderer};
+
+use crate::link::{Context as _, context_numbered};
+use crate::ops::{DispatchBit, EventKind, FAMILIES, Handle, Info, KeyBit, Op, PointerAction};
 use crate::random::Generator;
 
 /// MIDI's channel messages a script may send (MIDI 1.0 detailed
@@ -36,8 +39,6 @@ const MIDI_PROGRAM: u8 = 0xC0;
 const MIDI_BEND: u8 = 0xE0;
 /// The most notes waiting for their release.
 const MAX_PENDING_NOTES: usize = 256;
-/// The largest variant of a synthesizer family: one byte.
-const MAX_SYNTH_VARIANT: i32 = 255;
 /// The most shared-store changes waiting to be told to the other context:
 /// one for each key, each way.
 const MAX_SHARED_NOTICES: usize = MAX_SHARED_KEYS * CONTEXTS;
@@ -51,6 +52,48 @@ const TICK_LOW_MASK: u64 = 0x7FFF_FFFF;
 /// The bits of a pointer event's first whole number that hold the action
 /// (see [`PointerAction`]).
 const POINTER_ACTION_MASK: i32 = 0x0F;
+
+/// The log level the host's own notices are written at: a warning.
+const LEVEL_WARN: u8 = 3;
+/// The sub-code of a page that has no sub-pages (EN 300 706 clause
+/// A.1: sub-code 0000), for which `nt.page.subpage` is null.
+const NO_SUBCODE: u16 = 0;
+
+/// The name the API gives a renderer.
+const fn renderer_name(renderer: Renderer) -> &'static str {
+    match renderer {
+        Renderer::Teletext => "teletext",
+        Renderer::Regis => "regis",
+        Renderer::Naplps => "naplps",
+    }
+}
+
+/// The payload of an event as the host gives it to a context: what the
+/// step's bytes are for the event's kind.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum InputPayload {
+    /// None.
+    #[default]
+    None,
+    /// A string.
+    Text(String),
+    /// Bytes.
+    Bytes(Vec<u8>),
+    /// Whole numbers.
+    Ints(Vec<i32>),
+}
+
+/// One event for a context: a kind of section 10.3 with its four whole
+/// numbers and its payload, read from a step's event or made by the host.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Input {
+    /// Its kind.
+    pub kind: EventKind,
+    /// Its four whole numbers.
+    pub ints: [i32; 4],
+    /// Its payload.
+    pub payload: InputPayload,
+}
 
 /// A host call's payload, as the shim found it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +224,7 @@ struct ContextHost {
     listens: Vec<(i32, EventKind)>,
     generator: Generator,
     failures: u32,
-    stopped: Option<StopReason>,
+    stopped: Option<FailReason>,
     navigations: RateWindow,
     /// A channel context's page shown; none before the first `pageshow`.
     shown: Option<PageShown>,
@@ -242,6 +285,8 @@ pub struct Host {
     title: Option<String>,
     navigate: Option<String>,
     watch_changed: bool,
+    /// The paintings the decoder was last asked to watch.
+    painted_told: Vec<i32>,
     /// The presentation tick of the step running, or of the last one.
     tick: u64,
     /// The clock a script is given: milliseconds since 1970 at `clock_tick`.
@@ -359,7 +404,7 @@ impl ContextHost {
     fn state_bytes(&self) -> usize {
         let strings = [&self.open.language, &self.open.channel_url, &self.open.page_url, &self.open.script_url, &self.open.channel_title, &self.title];
         let mut bytes = strings.iter().fold(size_of::<Self>(), |sum, text| sum.saturating_add(cost(text)));
-        bytes = self.open.claims.keys.iter().chain(&self.keys_down).chain(&self.keys_pressed).fold(bytes, |sum, key| sum.saturating_add(cost(key)));
+        bytes = self.open.keys.iter().chain(&self.keys_down).chain(&self.keys_pressed).fold(bytes, |sum, key| sum.saturating_add(cost(key)));
         bytes = bytes.saturating_add(self.open.sounds.len());
         bytes = bytes.saturating_add(self.timers.len().saturating_mul(size_of::<Timer>()));
         bytes = bytes.saturating_add(self.scopes.len().saturating_add(self.scope_stack.len()).saturating_mul(size_of::<i32>()));
@@ -391,6 +436,7 @@ impl Host {
             title: None,
             navigate: None,
             watch_changed: false,
+            painted_told: Vec::new(),
             tick: 0,
             clock_ms: 0,
             clock_tick: 0,
@@ -430,7 +476,7 @@ impl Host {
             self.clock_tick = self.tick;
         }
         self.zone_minutes = open.zone_minutes;
-        self.sound_allowed |= open.sound_allowed;
+        self.sound_allowed |= open.flags.sound_allowed;
         let context = open.context;
         if let Some(slot) = self.contexts.get_mut(context.index()) {
             *slot = Some(ContextHost::new(open, script_bytes));
@@ -553,13 +599,13 @@ impl Host {
     /// held and the pointer's place follow it whether or not a listener
     /// hears it. False when the context's manifest did not claim it, so
     /// that it is never given (section 4.3).
-    pub fn take_in(&mut self, context: ContextId, event: &StepEvent) -> bool {
+    pub fn take_in(&mut self, context: ContextId, event: &Input) -> bool {
         let Some(held) = self.context_mut(context) else { return false };
         let [first, second, third, fourth] = event.ints;
         match event.kind {
             EventKind::KEY_DOWN | EventKind::KEY_UP => {
-                let EventPayload::Text(name) = &event.payload else { return false };
-                if !held.open.claims.keys.iter().any(|claimed| claimed == name) {
+                let InputPayload::Text(name) = &event.payload else { return false };
+                if !held.open.keys.iter().any(|claimed| claimed == name) {
                     return false;
                 }
                 held.keys_down.retain(|down| down != name);
@@ -573,17 +619,16 @@ impl Host {
                 }
                 true
             }
-            EventKind::TEXT => held.open.claims.text,
+            EventKind::TEXT => held.open.flags.text,
             EventKind::POINTER => {
                 let action = first & POINTER_ACTION_MASK;
-                let claimed = match held.open.claims.pointer {
-                    PointerClaim::None => false,
-                    PointerClaim::Press => action != PointerAction::MOVE.number(),
-                    PointerClaim::Move => true,
-                };
+                // The manifest's `pointer`: "move" claims everything, "press"
+                // everything but moves.
+                let flags = held.open.flags;
+                let claimed = flags.pointer_move || (flags.pointer_press && action != PointerAction::MOVE.number());
                 if claimed {
                     let buttons = match &event.payload {
-                        EventPayload::Ints(ints) => ints.get(1).copied().unwrap_or(0),
+                        InputPayload::Ints(ints) => ints.get(1).copied().unwrap_or(0),
                         _ => 0,
                     };
                     let gone = action == PointerAction::CANCEL.number() || (action == PointerAction::LEAVE.number() && fourth == Handle::NT.number());
@@ -591,21 +636,20 @@ impl Host {
                 }
                 claimed
             }
-            EventKind::WHEEL => held.open.claims.wheel,
+            EventKind::WHEEL => held.open.flags.wheel,
             EventKind::PAGE_SHOW => {
                 if context != ContextId::Channel {
                     return false;
                 }
                 let url = match &event.payload {
-                    EventPayload::Text(url) => url.clone(),
+                    InputPayload::Text(url) => url.clone(),
                     _ => String::new(),
                 };
-                let renderer = match third {
-                    1 => "regis",
-                    2 => "naplps",
-                    _ => "teletext",
-                };
-                held.shown = Some(PageShown { page: u16::try_from(first).unwrap_or(0), subcode: u16::try_from(second).ok(), renderer, url });
+                // The renderer by the code the messages give it; a page with
+                // no sub-page has the sub-code 0, as a context's opening has.
+                let renderer = renderer_name(u8::try_from(third).ok().and_then(|code| Renderer::of(code).ok()).unwrap_or(Renderer::Teletext));
+                let subcode = u16::try_from(second).ok().filter(|subcode| *subcode != NO_SUBCODE);
+                held.shown = Some(PageShown { page: u16::try_from(first).unwrap_or(0), subcode, renderer, url });
                 true
             }
             EventKind::PAGE_HIDE => context == ContextId::Channel,
@@ -666,7 +710,7 @@ impl Host {
     /// The manifest's tick divisor of `context`.
     #[must_use]
     pub fn tick_divisor(&self, context: ContextId) -> u8 {
-        self.context(context).map_or(0, |held| held.open.claims.tick_divisor)
+        self.context(context).map_or(0, |held| held.open.tick_divisor)
     }
 
     /// The timers of `context` due now, in order of due tick and then of
@@ -728,7 +772,7 @@ impl Host {
         }
         held.failures = held.failures.saturating_add(1);
         if held.failures >= MAX_CONSECUTIVE_FAILURES {
-            held.stopped = Some(StopReason::Failures);
+            held.stopped = Some(FailReason::Failures);
             return true;
         }
         false
@@ -741,22 +785,34 @@ impl Host {
     }
 
     /// Marks every context stopped for `reason`.
-    pub fn stop_all(&mut self, reason: StopReason) {
+    pub fn stop_all(&mut self, reason: FailReason) {
         for held in self.contexts.iter_mut().flatten() {
             held.stopped.get_or_insert(reason);
         }
     }
 
     /// Adds a line to the log, cut to [`MAX_LOG_CHARS`] and with its
-    /// control characters made spaces; past [`MAX_LOG_LINES`] a step it is
-    /// counted and dropped.
+    /// control characters made spaces. A step's log keeps one line fewer
+    /// than [`MAX_LOG_LINES`]; more are counted and dropped, and the last
+    /// line of the batch says how many. A line of no context (the
+    /// engine's own, or the container's) is given to the context whose
+    /// callback is running, or else to the first that is open.
     pub fn log_line(&mut self, level: u8, context: Option<ContextId>, text: &str) {
-        if self.log.len() >= MAX_LOG_LINES {
+        if self.log.len() >= MAX_LOG_LINES.saturating_sub(1) {
             self.log_dropped = self.log_dropped.saturating_add(1);
             return;
         }
+        let context = self.log_context(context);
         let text: String = text.chars().take(MAX_LOG_CHARS).map(|character| if character.is_control() { ' ' } else { character }).collect();
         self.log.push(LogLine { level, context, text });
+    }
+
+    /// The context a log line is written under.
+    fn log_context(&self, context: Option<ContextId>) -> ContextId {
+        context
+            .or(self.callback.map(|(running, _)| running))
+            .or_else(|| [ContextId::Channel, ContextId::Page].into_iter().find(|open| self.is_open(*open)))
+            .unwrap_or(ContextId::Page)
     }
 
     /// The bytes held for the container outside the WebAssembly memory:
@@ -792,10 +848,39 @@ impl Host {
     }
 
     /// Everything the step changed, as its batch; the staged output is
-    /// then empty.
-    pub fn take_batch(&mut self, sequence: u32, verdicts: Vec<u8>) -> Batch {
-        let watch = core::mem::take(&mut self.watch_changed).then(|| self.watch_list());
-        let states = [ContextId::Channel, ContextId::Page]
+    /// then empty. `verdicts` holds the dispatch bits of each event of
+    /// the step. A batch holds at most [`MAX_SOUND_OPERATIONS`] sound
+    /// operations: the host's own stops for a context that ended, if they
+    /// would pass that, leave in the next batch.
+    pub fn take_batch(&mut self, sequence: u32, verdicts: &[u8]) -> Batch {
+        let mut batch = Batch::new(sequence);
+        if !verdicts.is_empty() {
+            let cancelled = u8::try_from(DispatchBit::CANCELLED.number()).unwrap_or(0);
+            let handled = u8::try_from(DispatchBit::HANDLED.number()).unwrap_or(0);
+            batch.verdicts = Some(verdicts.iter().map(|bits| Verdict { cancelled: bits & cancelled != 0, handled: bits & handled != 0 }).collect());
+        }
+        if !self.sound.is_empty() {
+            let later = self.sound.split_off(self.sound.len().min(MAX_SOUND_OPERATIONS));
+            batch.sound = Some(core::mem::replace(&mut self.sound, later));
+        }
+        if core::mem::take(&mut self.watch_changed) {
+            let painted = self.watched_paintings();
+            if painted != self.painted_told {
+                self.painted_told.clone_from(&painted);
+                batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
+            }
+        }
+        batch.title = self.title.take();
+        batch.navigate = self.navigate.take();
+        let dropped = core::mem::take(&mut self.log_dropped);
+        if dropped > 0 {
+            let context = self.log_context(None);
+            self.log.push(LogLine { level: LEVEL_WARN, context, text: format!("MAX_LOG_LINES: {dropped} more log lines were dropped") });
+        }
+        if !self.log.is_empty() {
+            batch.log = Some(core::mem::take(&mut self.log));
+        }
+        let states: Vec<ContextState> = [ContextId::Channel, ContextId::Page]
             .into_iter()
             .filter_map(|context| {
                 let held = self.context(context)?;
@@ -807,32 +892,29 @@ impl Host {
                 })
             })
             .collect();
-        Batch {
-            sequence,
-            verdicts,
-            sound: core::mem::take(&mut self.sound),
-            title: self.title.take(),
-            navigate: self.navigate.take(),
-            log: core::mem::take(&mut self.log),
-            log_dropped: core::mem::take(&mut self.log_dropped),
-            watch,
-            states,
+        if !states.is_empty() {
+            batch.state = Some(states);
         }
+        batch
     }
 
-    /// Every thing and kind a context listens for.
-    fn watch_list(&self) -> Vec<Watch> {
-        [ContextId::Channel, ContextId::Page]
-            .into_iter()
-            .filter_map(|context| self.context(context).map(|held| (context, held)))
-            .flat_map(|(context, held)| held.listens.iter().map(move |(handle, kind)| Watch { context, handle: *handle, kind: *kind }))
-            .collect()
+    /// The things whose painting some context listens for: what the
+    /// decoder is asked to watch. The shared core has no thing that is
+    /// painted, so this is empty until a renderer adds its handles.
+    fn watched_paintings(&self) -> Vec<i32> {
+        let mut handles: Vec<i32> = Vec::new();
+        for (handle, kind) in self.contexts.iter().flatten().flat_map(|held| &held.listens) {
+            if *kind == EventKind::PAINTED && *handle > Handle::NT.number() && !handles.contains(handle) && handles.len() < MAX_WATCHED_PAINTINGS {
+                handles.push(*handle);
+            }
+        }
+        handles
     }
 
     /// One host call of `context`: operation `op` with its whole numbers
     /// and payload.
     pub fn call(&mut self, context: i32, op: i32, ints: &[i32], payload: Payload<'_>) -> Reply {
-        let Some(context) = ContextId::from_number(context) else { return type_error("no such context") };
+        let Some(context) = context_numbered(context) else { return type_error("no such context") };
         if !self.is_open(context) {
             return type_error("the context is not open");
         }
@@ -988,7 +1070,11 @@ impl Host {
                 (false, _) => Reply::Text(format!("{:03X}", held.open.page)),
             },
             Info::PAGE_SUBPAGE => {
-                let subcode = if channel { held.shown.as_ref().and_then(|shown| shown.subcode) } else { held.open.subcode };
+                let subcode = if channel {
+                    held.shown.as_ref().and_then(|shown| shown.subcode)
+                } else {
+                    Some(held.open.subcode).filter(|subcode| *subcode != NO_SUBCODE)
+                };
                 subcode.map_or(Reply::Undefined, |subcode| Reply::Text(format!("{subcode:04X}")))
             }
             Info::PAGE_URL => match (channel, &held.shown) {
@@ -999,7 +1085,7 @@ impl Host {
             Info::PAGE_RENDERER => match (channel, &held.shown) {
                 (true, None) => Reply::Undefined,
                 (true, Some(shown)) => text(shown.renderer),
-                (false, _) => held.open.renderer.map_or(Reply::Undefined, |renderer| text(renderer.name())),
+                (false, _) => text(renderer_name(held.open.renderer)),
             },
             Info::PAGE_TITLE => {
                 // The page's title is the page context's to set; the

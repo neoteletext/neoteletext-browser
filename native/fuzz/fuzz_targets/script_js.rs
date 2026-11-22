@@ -12,9 +12,9 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use libfuzzer_sys::fuzz_target;
-use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, MAX_LOG_LINES, WASM_MEMORY_BYTES};
-use neoteletext_script::ops::EventKind;
-use neoteletext_script::{Claims, Container, ContextId, ContextOpen, Engine, EventPayload, LinkError, PointerClaim, Renderer, Settings, Step, StepEvent, TimeLimits};
+use neoteletext_script::limits::{MAX_HOST_STATE_BYTES, WASM_MEMORY_BYTES};
+use neoteletext_script::{Container, Engine, LinkError, Settings, TimeLimits};
+use protocol::script::{ContextFlags, ContextId, ContextOpen, Event, EventKind, FromScriptHost, Level, Renderer, Step, StepFlags, write_to_decoder};
 
 /// The limits the inputs run under: the browser's shapes, a tenth to a
 /// twentieth of their lengths.
@@ -37,13 +37,18 @@ fn engine() -> &'static Engine {
 
 fuzz_target!(|data: &[u8]| {
     let mut container = Container::new(engine(), &Settings { time: LIMITS, watchdog: None }, 0).unwrap_or_else(|stop| panic!("no container: {stop}"));
+    // An empty script is no script, and one past the bound is refused
+    // before it is run: neither is this target's to try.
+    let Ok(source_bytes) = u32::try_from(data.len()) else { return };
     let open = ContextOpen {
         context: ContextId::Page,
         api: 1,
-        renderer: Some(Renderer::Teletext),
+        renderer: Renderer::Teletext,
+        level: Level::TwoFive,
         page: 0x100,
-        subcode: None,
-        claims: Claims { keys: vec!["Enter".into()], text: true, pointer: PointerClaim::Move, wheel: true, tick_divisor: 1, network: false },
+        subcode: 0,
+        flags: ContextFlags { pointer_press: true, pointer_move: true, wheel: true, text: true, network: false, from_disk: false, sound_allowed: true },
+        tick_divisor: 1,
         language: "en".into(),
         channel_url: "https://example.test/chan/".into(),
         page_url: "https://example.test/chan/100.tti".into(),
@@ -52,22 +57,32 @@ fuzz_target!(|data: &[u8]| {
         seed: [3; 32],
         epoch_seconds: 1_800_000_000,
         zone_minutes: 0,
+        keys: vec!["Enter".into()],
         sounds: vec![1],
-        sound_allowed: true,
+        source_bytes,
     };
+    if open.check().is_err() {
+        return;
+    }
     let began = Instant::now();
     let opened = container.open(open, data);
     assert!(began.elapsed() <= LIMITS.start + MARGIN, "the top level took {:?}", began.elapsed());
     let mut stopped = matches!(opened, Err(LinkError::Stopped(..)));
     for at in 0..STEPS {
         let events = vec![
-            StepEvent { kind: EventKind::KEY_DOWN, ints: [0; 4], payload: EventPayload::Text("Enter".into()) },
-            StepEvent { kind: EventKind::POINTER, ints: [1, 3, 4, 0], payload: EventPayload::Ints(vec![0, 1, 0, 0]) },
-            StepEvent { kind: EventKind::TEXT, ints: [0; 4], payload: EventPayload::Text("x".into()) },
+            Event { kind: EventKind::KeyDown, numbers: [0; 4], payload: b"Enter".to_vec() },
+            Event { kind: EventKind::Pointer, numbers: [1, 3, 4, 0], payload: [0_i32, 1, 0, 0].iter().flat_map(|number| number.to_be_bytes()).collect() },
+            Event { kind: EventKind::Text, numbers: [0; 4], payload: b"x".to_vec() },
         ];
         let callbacks = container.costs().callbacks;
         let began = Instant::now();
-        let batch = container.step(&Step { sequence: at, tick: u64::from(at), is_tick: true, sound_allowed: true, events, ..Step::default() });
+        let batch = container.step(&Step {
+            sequence: at,
+            tick: u64::from(at),
+            flags: StepFlags { tick: true, sound_allowed: true, ..StepFlags::default() },
+            events,
+            ..Step::default()
+        });
         // A step starts nothing past its budget, and no callback outlives its limit.
         assert!(began.elapsed() <= LIMITS.step + LIMITS.callback + MARGIN, "a step took {:?}", began.elapsed());
         if stopped {
@@ -75,9 +90,13 @@ fuzz_target!(|data: &[u8]| {
         }
         match batch {
             Ok(batch) => {
-                assert!(batch.log.len() <= MAX_LOG_LINES && batch.verdicts.len() == 3);
-                let bytes: usize = batch.log.iter().map(|line| line.text.len()).sum();
-                assert!(bytes <= MAX_BATCH_BYTES);
+                // Whatever the script did, its step's output is a message
+                // the link takes whole, with a verdict for each event.
+                assert!(batch.verdicts.as_ref().is_some_and(|verdicts| verdicts.len() == 3));
+                let mut written = Vec::new();
+                if let Err(error) = write_to_decoder(&mut written, &FromScriptHost::Batch(batch.clone().into())) {
+                    panic!("the batch is not a message the link takes: {error:?}\n{batch:#?}");
+                }
                 stopped = container.stopped().is_some();
             }
             Err(error) => assert!(matches!(error, LinkError::Stopped(..)), "{error}"),

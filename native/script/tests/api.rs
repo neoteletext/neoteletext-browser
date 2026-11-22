@@ -3,13 +3,13 @@
 //! reads what it logged and what its batches hold.
 mod common;
 
-use common::{all_lines, assert_checks, claiming, container, lines, opening, page, run, script, tick, with_events};
-use neoteletext_script::ops::{EventKind, KeyBit, NavigateCause, PointerAction};
-use neoteletext_script::{ContextId, EventPayload, SoundOperation, Step, StepEvent, StopReason};
-
-fn key(kind: EventKind, name: &str, bits: i32) -> StepEvent {
-    StepEvent { kind, ints: [bits, 0, 0, 0], payload: EventPayload::Text(name.into()) }
-}
+use common::{
+    Opens as _, all_lines, assert_checks, claim, container, ints_event, key, lines, opening, page, plain_event, run, script, text_event, tick, view,
+    with_events,
+};
+use neoteletext_script::ops::{KeyBit, NavigateCause, PointerAction};
+use protocol::script::batch::SoundOperation;
+use protocol::script::{ContextId, EventKind, FailReason, FaultReport, SoundReport, Step, StepFlags};
 
 /// Section 10.1: the prelude takes the host's functions and leaves no
 /// name of its own in the script's realm; section 3.3: `nt` is frozen and
@@ -158,7 +158,7 @@ fn timers_and_clocks_keep_to_the_tick() {
     assert_checks(&all_lines(&batches), 13);
     // The state says when the decoder must wake: the earliest timer.
     let first = batches[0].as_ref().unwrap();
-    assert_eq!(first.states[0].next_due, Some(1));
+    assert_eq!(view(first).states[0].next_due, Some(1));
 }
 
 /// Sections 4.1 to 4.3: host events arrive as DOM events with their
@@ -201,30 +201,26 @@ fn input_events_reach_their_listeners_and_answer_with_verdicts() {
         }, 30);
         "#,
     ));
-    assert_eq!(container.step(&tick(1, 0)).unwrap().verdicts, Vec::<u8>::new());
-    let pointer = |action: PointerAction, extra: i32, x, y| StepEvent {
-        kind: EventKind::POINTER,
-        ints: [action.number() | extra, x, y, 0],
-        payload: EventPayload::Ints(vec![5, 2, 3, 4]),
-    };
+    assert_eq!(container.step(&tick(1, 0)).unwrap().verdicts, None);
+    let pointer = |action: PointerAction, extra: i32, x, y| ints_event(EventKind::Pointer, [action.number() | extra, x, y, 0], &[5, 2, 3, 4]);
     let events = vec![
-        key(EventKind::KEY_DOWN, "Enter", KeyBit::SHIFT.number()),
-        key(EventKind::KEY_DOWN, "a", KeyBit::CTRL.number() | KeyBit::REPEAT_OR_LOST.number()),
+        key(EventKind::KeyDown, "Enter", KeyBit::SHIFT.number()),
+        key(EventKind::KeyDown, "a", KeyBit::CTRL.number() | KeyBit::REPEAT_OR_LOST.number()),
         // A key the manifest did not claim is never given to the script.
-        key(EventKind::KEY_DOWN, "q", 0),
-        key(EventKind::KEY_UP, "Enter", 0),
-        StepEvent { kind: EventKind::TEXT, ints: [0; 4], payload: EventPayload::Text("héllo".into()) },
+        key(EventKind::KeyDown, "q", 0),
+        key(EventKind::KeyUp, "Enter", 0),
+        text_event(EventKind::Text, [0; 4], "héllo"),
         // Button 1, a touch (type 1 in bits 8 and 9), the primary pointer (bit 10).
         pointer(PointerAction::DOWN, (1 << 4) | (1 << 8) | (1 << 10), 12, 7),
         pointer(PointerAction::MOVE, 0, 13, 8),
-        StepEvent { kind: EventKind::WHEEL, ints: [0, -3, 0, 0], payload: EventPayload::None },
-        StepEvent { kind: EventKind::FOCUS, ints: [0; 4], payload: EventPayload::None },
-        StepEvent { kind: EventKind::BLUR, ints: [0; 4], payload: EventPayload::None },
+        plain_event(EventKind::Wheel, [0, -3, 0, 0]),
+        plain_event(EventKind::Focus, [0; 4]),
+        plain_event(EventKind::Blur, [0; 4]),
     ];
     let batch = container.step(&with_events(2, 1, events)).unwrap();
     // Bit 0: the default was cancelled; bit 1: a listener heard it. A
     // keyup's default cannot be cancelled whatever its listener calls.
-    assert_eq!(batch.verdicts, vec![3, 2, 0, 2, 2, 2, 2, 2, 2, 2]);
+    assert_eq!(view(&batch).verdicts, vec![3, 2, 0, 2, 2, 2, 2, 2, 2, 2]);
     let batches = run(&mut container, 2, 40);
     assert_checks(&all_lines(&batches), 1);
 }
@@ -237,9 +233,9 @@ fn input_events_reach_their_listeners_and_answer_with_verdicts() {
 fn two_contexts_share_only_the_store() {
     let mut container = container();
     let mut channel = opening(ContextId::Channel);
-    channel.claims = claiming(&["Enter", "a"]);
+    claim(&mut channel, &["Enter", "a"]);
     container
-        .open(
+        .open_with(
             channel,
             script(
                 r#"
@@ -260,9 +256,9 @@ fn two_contexts_share_only_the_store() {
         )
         .unwrap();
     let mut page = opening(ContextId::Page);
-    page.claims = claiming(&["Enter"]);
+    claim(&mut page, &["Enter"]);
     container
-        .open(
+        .open_with(
             page,
             script(
                 r#"
@@ -287,9 +283,9 @@ fn two_contexts_share_only_the_store() {
             .as_bytes(),
         )
         .unwrap();
-    let show = StepEvent { kind: EventKind::PAGE_SHOW, ints: [0x100, -1, 0, 0], payload: EventPayload::Text("https://example.test/chan/100.tti".into()) };
-    let hide = StepEvent { kind: EventKind::PAGE_HIDE, ints: [0x100, -1, 0, 0], payload: EventPayload::None };
-    let batch = container.step(&with_events(1, 0, vec![show, key(EventKind::KEY_DOWN, "Enter", 0), key(EventKind::KEY_DOWN, "a", 0), hide])).unwrap();
+    let show = text_event(EventKind::PageShow, [0x100, 0, 1, 0], "https://example.test/chan/100.tti");
+    let hide = plain_event(EventKind::PageHide, [0x100, 0, 0, 0]);
+    let batch = container.step(&with_events(1, 0, vec![show, key(EventKind::KeyDown, "Enter", 0), key(EventKind::KeyDown, "a", 0), hide])).unwrap();
     let log = lines(&batch);
     let order: Vec<&str> = log.iter().map(String::as_str).filter(|line| line.starts_with("page ") || line.starts_with("channel ")).collect();
     assert_eq!(
@@ -307,7 +303,7 @@ fn two_contexts_share_only_the_store() {
         ]
     );
     // Enter: heard, not cancelled. "a": cancelled by the channel context.
-    assert_eq!(batch.verdicts, vec![2, 2, 3, 2]);
+    assert_eq!(view(&batch).verdicts, vec![2, 2, 3, 2]);
     assert_checks(&log, 12);
 }
 
@@ -318,12 +314,12 @@ fn two_contexts_share_only_the_store() {
 fn a_page_context_ends_and_another_begins_with_nothing_carried() {
     let mut container = container();
     let mut channel = opening(ContextId::Channel);
-    channel.claims = claiming(&[]);
-    container.open(channel, b"let ticks = 0; nt.addEventListener('tick', () => { if (++ticks === 5) console.log('channel still ticking'); });").unwrap();
+    claim(&mut channel, &[]);
+    container.open_with(channel, b"let ticks = 0; nt.addEventListener('tick', () => { if (++ticks === 5) console.log('channel still ticking'); });").unwrap();
     let mut first = opening(ContextId::Page);
-    first.claims = claiming(&[]);
+    claim(&mut first, &[]);
     container
-        .open(
+        .open_with(
             first,
             br#"globalThis.big = new Uint8Array(8 * 1024 * 1024).fill(1);
             globalThis.carried = "from the first page";
@@ -333,7 +329,7 @@ fn a_page_context_ends_and_another_begins_with_nothing_carried() {
             nt.addEventListener("close", (e) => { console.log("closing " + (++closes) + " " + e.cancelable); nt.shared.set("left", nt.page.number); });"#,
         )
         .unwrap();
-    assert!(matches!(container.open(opening(ContextId::Page), b""), Err(neoteletext_script::LinkError::Context(_))), "a context opened twice");
+    assert!(matches!(container.open_with(opening(ContextId::Page), b";"), Err(neoteletext_script::LinkError::Context(_))), "a context opened twice");
     let (_, heap_with_page) = container.memory();
     assert!(heap_with_page > 8 * 1024 * 1024, "the page's 8 MiB are not in the heap: {heap_with_page}");
     container.close(ContextId::Page);
@@ -344,7 +340,7 @@ fn a_page_context_ends_and_another_begins_with_nothing_carried() {
     second.page = 0x200;
     second.seed = [7; 32];
     container
-        .open(
+        .open_with(
             second,
             b"console.log('second page sees ' + typeof carried + ' ' + typeof big + ' ' + nt.page.number + ' ' + nt.now() + ' ' + nt.shared.get('left'));",
         )
@@ -364,12 +360,12 @@ fn a_page_context_ends_and_another_begins_with_nothing_carried() {
 fn failures_are_logged_counted_and_stop_a_context_after_sixteen() {
     let mut container = container();
     let mut channel = opening(ContextId::Channel);
-    channel.claims = claiming(&[]);
-    container.open(channel, b"let n = 0; nt.addEventListener('tick', () => { n++; if (n === 30) console.log('channel alive'); });").unwrap();
+    claim(&mut channel, &[]);
+    container.open_with(channel, b"let n = 0; nt.addEventListener('tick', () => { n++; if (n === 30) console.log('channel alive'); });").unwrap();
     let mut page = opening(ContextId::Page);
-    page.claims = claiming(&[]);
+    claim(&mut page, &[]);
     container
-        .open(
+        .open_with(
             page,
             br#"let n = 0;
             addEventListener("error", (e) => { if (n === 2) { console.log("error event: " + e.message.split("\n")[0] + " " + (e.error instanceof RangeError)); e.preventDefault(); } });
@@ -403,8 +399,9 @@ fn failures_are_logged_counted_and_stop_a_context_after_sixteen() {
     assert!(has("uncaught: Error: again 22") && !has("again 23"), "{log:#?}");
     assert!(has("MAX_CONSECUTIVE_FAILURES"), "{log:#?}");
     let last = batches.last().unwrap().as_ref().unwrap();
-    let state = |context| last.states.iter().find(|state| state.context == context).unwrap();
-    assert_eq!((state(ContextId::Page).stopped, state(ContextId::Page).failures), (Some(StopReason::Failures), 16));
+    let states = view(last).states;
+    let state = |context| states.iter().find(|state| state.context == context).unwrap();
+    assert_eq!((state(ContextId::Page).stopped, state(ContextId::Page).failures), (Some(FailReason::Failures), 16));
     assert_eq!(state(ContextId::Channel).stopped, None);
     assert!(has("channel alive"), "{log:#?}");
     assert!(container.stopped().is_none(), "a context's failures stopped the whole container");
@@ -484,7 +481,8 @@ fn the_standard_globals_work_within_their_bounds() {
     ));
     let batch = container.step(&tick(1, 0)).unwrap();
     assert_checks(&lines(&batch), 22);
-    let logged: Vec<(u8, &str)> = batch.log.iter().map(|line| (line.level, line.text.as_str())).collect();
+    let log = view(&batch).log;
+    let logged: Vec<(u8, &str)> = log.iter().map(|line| (line.level, line.text.as_str())).collect();
     assert_eq!(&logged[..5], &[(0, "d 1"), (2, "i {\"a\":1}"), (3, "w [1,2]"), (4, "e null undefined"), (1, "l in a log")]);
     assert_eq!(logged[5].1.len(), 400, "a log line is cut to MAX_LOG_CHARS");
 }
@@ -500,7 +498,7 @@ fn math_random_follows_the_seed_and_not_the_second() {
         let mut container = container();
         let mut open = opening(ContextId::Page);
         open.seed = seed;
-        container.open(open, b"console.log([Math.random(), Math.random(), Math.random()].join()); console.log(Array.from(crypto.getRandomValues(new Uint8Array(8))).join());").unwrap();
+        container.open_with(open, b"console.log([Math.random(), Math.random(), Math.random()].join()); console.log(Array.from(crypto.getRandomValues(new Uint8Array(8))).join());").unwrap();
         lines(&container.step(&tick(1, 0)).unwrap())
     };
     let (first, same_second, same_seed) = (sequence([1; 32]), sequence([2; 32]), sequence([1; 32]));
@@ -513,10 +511,10 @@ fn math_random_follows_the_seed_and_not_the_second() {
     let mut container = container();
     let mut channel = opening(ContextId::Channel);
     channel.seed = [3; 32];
-    container.open(channel, b"console.log(Math.random())").unwrap();
+    container.open_with(channel, b"console.log(Math.random())").unwrap();
     let mut page = opening(ContextId::Page);
     page.seed = [4; 32];
-    container.open(page, b"console.log(Math.random())").unwrap();
+    container.open_with(page, b"console.log(Math.random())").unwrap();
     let both = lines(&container.step(&tick(1, 0)).unwrap());
     assert_ne!(both[0], both[1]);
 }
@@ -548,13 +546,12 @@ fn navigation_is_heard_first_and_the_browsers_own_cannot_be_cancelled() {
     // The cancelled navigation to 300 left nothing; the last allowed one is staged.
     let first = container.step(&tick(1, 0)).unwrap();
     assert_eq!(first.navigate.as_deref(), Some("1a0/00ff"));
-    let navigate =
-        |cause: NavigateCause, to: &str| StepEvent { kind: EventKind::NAVIGATE, ints: [cause.number(), 0, 0, 0], payload: EventPayload::Text(to.into()) };
+    let navigate = |cause: NavigateCause, to: &str| text_event(EventKind::Navigate, [cause.number(), 0, 0, 0], to);
     let batch = container
         .step(&with_events(2, 1, vec![navigate(NavigateCause::BROWSER, "100"), navigate(NavigateCause::LINK, "https://example.test/chan/x")]))
         .unwrap();
     // The script called preventDefault on both; only the link's counts.
-    assert_eq!(batch.verdicts, vec![2, 3]);
+    assert_eq!(view(&batch).verdicts, vec![2, 3]);
     let mut log = lines(&first);
     log.extend(all_lines(&run(&mut container, 2, 5)));
     assert_checks(&log, 4);
@@ -568,10 +565,10 @@ fn navigation_is_heard_first_and_the_browsers_own_cannot_be_cancelled() {
 fn sound_leaves_as_typed_operations_and_is_released_when_hidden() {
     let mut container = container();
     let mut open = opening(ContextId::Page);
-    open.sound_allowed = false;
-    open.claims = claiming(&[]);
+    open.flags.sound_allowed = false;
+    claim(&mut open, &[]);
     container
-        .open(
+        .open_with(
             open,
             script(
                 r#"
@@ -598,12 +595,12 @@ fn sound_leaves_as_typed_operations_and_is_released_when_hidden() {
             .as_bytes(),
         )
         .unwrap();
-    let quiet = container.step(&Step { sequence: 1, tick: 0, is_tick: true, ..Step::default() }).unwrap();
-    assert_eq!(quiet.sound, Vec::new());
-    assert_eq!(quiet.log.iter().filter(|line| line.text.contains("sound does nothing until")).count(), 1);
+    let quiet = container.step(&Step { sequence: 1, tick: 0, flags: StepFlags { tick: true, ..StepFlags::default() }, ..Step::default() }).unwrap();
+    assert_eq!(view(&quiet).sound, Vec::new());
+    assert_eq!(view(&quiet).log.iter().filter(|line| line.text.contains("sound does nothing until")).count(), 1);
     let batch = container.step(&tick(2, 1)).unwrap();
     assert_eq!(
-        batch.sound,
+        view(&batch).sound,
         vec![
             SoundOperation::Play { voice: 3, sound: 2, gain: 40 },
             SoundOperation::SynthStart { part: 1, family: 13, variant: 2, gain: 100 },
@@ -616,21 +613,21 @@ fn sound_leaves_as_typed_operations_and_is_released_when_hidden() {
         ]
     );
     // The held note is released by the host on its tick.
-    assert_eq!(batch.states[0].next_due, Some(3));
-    assert_eq!(container.step(&tick(3, 2)).unwrap().sound, Vec::new());
+    assert_eq!(view(&batch).states[0].next_due, Some(3));
+    assert_eq!(container.step(&tick(3, 2)).unwrap().sound, None);
     let reports = Step {
-        sound: vec![neoteletext_script::SoundReport::Cue { voice: 3, cue: 9 }, neoteletext_script::SoundReport::Ended { voice: 3 }],
-        faults: vec![neoteletext_script::Fault { code: 4, bound: "MAX_OBJECTS".into() }],
+        sound: vec![SoundReport::Cue { voice: 3, cue: 9 }, SoundReport::Ended { voice: 3 }],
+        faults: vec![FaultReport { code: 4, bound: "MAX_OBJECTS".into() }],
         ..tick(4, 3)
     };
     let released = container.step(&reports).unwrap();
-    assert_eq!(released.sound, vec![SoundOperation::Midi { part: 1, status: 0x80, data1: 60, data2: 0 }]);
+    assert_eq!(view(&released).sound, vec![SoundOperation::Midi { part: 1, status: 0x80, data1: 60, data2: 0 }]);
     assert_eq!(lines(&released), vec!["cue 3 9", "ended 3", "fault 4 MAX_OBJECTS"]);
     // Hidden: told first, then everything it plays is stopped.
-    let hidden = container.step(&Step { pausing: true, ..tick(5, 4) }).unwrap();
+    let hidden = container.step(&Step { flags: StepFlags { pausing: true, ..tick(5, 4).flags }, ..tick(5, 4) }).unwrap();
     assert_eq!(lines(&hidden), vec!["hidden true"]);
-    assert_eq!(hidden.sound, vec![SoundOperation::SynthStop { part: 1 }, SoundOperation::Stop { voice: 3 }]);
-    let shown = container.step(&Step { resumed: true, ..tick(6, 5) }).unwrap();
+    assert_eq!(view(&hidden).sound, vec![SoundOperation::SynthStop { part: 1 }, SoundOperation::Stop { voice: 3 }]);
+    let shown = container.step(&Step { flags: StepFlags { resumed: true, ..tick(6, 5).flags }, ..tick(6, 5) }).unwrap();
     assert_checks(&lines(&shown), 7);
     assert!(lines(&shown).contains(&"hidden false".to_owned()));
 }

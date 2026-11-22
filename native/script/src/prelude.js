@@ -518,7 +518,8 @@ function destinationOf(target) {
 }
 
 const CAUSE_NAMES = { [CAUSE.SCRIPT]: "script", [CAUSE.LINK]: "link", [CAUSE.KEY]: "key", [CAUSE.BROWSER]: "browser" };
-const RENDERER_NAMES = ["teletext", "regis", "naplps"];
+// A renderer by the code the messages give it (protocol::script::Renderer).
+const RENDERER_NAMES = { 1: "teletext", 2: "regis", 3: "naplps" };
 
 function pageNow() {
   const number = host(OP.INFO, INFO.PAGE_NUMBER);
@@ -754,12 +755,12 @@ function dispatch(kind, a, b, c, d, payload) {
       break;
     case EV.PAGE_SHOW:
       event = withFields(new Event("pageshow"), {
-        page: Object.freeze({ number: (a + 0x1000).toString(16).slice(1).toUpperCase(), subpage: b < 0 ? null : (b + 0x10000).toString(16).slice(1).toUpperCase(), url: payload || "", renderer: RENDERER_NAMES[c] || "teletext" }),
+        page: Object.freeze({ number: (a + 0x1000).toString(16).slice(1).toUpperCase(), subpage: b <= 0 ? null : (b + 0x10000).toString(16).slice(1).toUpperCase(), url: payload || "", renderer: RENDERER_NAMES[c] || "teletext" }),
       });
       break;
     case EV.PAGE_HIDE:
       event = withFields(new Event("pagehide"), {
-        page: Object.freeze({ number: (a + 0x1000).toString(16).slice(1).toUpperCase(), subpage: b < 0 ? null : (b + 0x10000).toString(16).slice(1).toUpperCase() }),
+        page: Object.freeze({ number: (a + 0x1000).toString(16).slice(1).toUpperCase(), subpage: b <= 0 ? null : (b + 0x10000).toString(16).slice(1).toUpperCase() }),
       });
       break;
     case EV.CLOSE:

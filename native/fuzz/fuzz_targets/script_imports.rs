@@ -14,7 +14,7 @@ use neoteletext_script::host::Host;
 use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, MAX_LOG_LINES};
 use neoteletext_script::machine::{IMPORTS, Probe};
 use neoteletext_script::probe::PAGE_BYTES;
-use neoteletext_script::{Claims, ContextId, ContextOpen, Renderer};
+use protocol::script::{ContextFlags, ContextId, ContextOpen, Level, Renderer};
 
 /// The most calls one input makes.
 const MAX_CALLS: usize = 64;
@@ -37,10 +37,12 @@ fuzz_target!(|data: &[u8]| {
         ContextOpen {
             context: ContextId::Page,
             api: 1,
-            renderer: Some(Renderer::Teletext),
+            renderer: Renderer::Teletext,
+            level: Level::TwoFive,
             page: 0x100,
-            subcode: None,
-            claims: Claims::default(),
+            subcode: 0,
+            flags: ContextFlags { sound_allowed: true, ..ContextFlags::default() },
+            tick_divisor: 0,
             language: String::new(),
             channel_url: "https://example.test/chan/".into(),
             page_url: String::new(),
@@ -49,8 +51,9 @@ fuzz_target!(|data: &[u8]| {
             seed: [1; 32],
             epoch_seconds: 1,
             zone_minutes: 0,
+            keys: Vec::new(),
             sounds: vec![1],
-            sound_allowed: true,
+            source_bytes: 1,
         },
         0,
     );
@@ -74,5 +77,5 @@ fuzz_target!(|data: &[u8]| {
         assert!(began.elapsed() < MAX_CALL_TIME, "{:?} took {:?}", IMPORTS[usize::from(import) % IMPORTS.len()], began.elapsed());
         assert!(probe.host().state_bytes() <= MAX_HOST_STATE_BYTES && probe.host().batch_bytes() <= MAX_BATCH_BYTES);
     }
-    assert!(probe.host().take_batch(1, Vec::new()).log.len() <= MAX_LOG_LINES);
+    assert!(probe.host().take_batch(1, &[]).log.is_none_or(|log| log.len() <= MAX_LOG_LINES));
 });

@@ -7,8 +7,14 @@
 
 use core::time::Duration;
 
+/// A byte as the whole number a host call's argument is compared with.
+const fn wide(byte: u8) -> i32 {
+    byte as i32
+}
+
 /// The largest script taken, in bytes.
-pub const MAX_SCRIPT_BYTES: usize = 1024 * 1024;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_SCRIPT_BYTES: usize = protocol::script::MAX_SCRIPT_BYTES;
 
 /// The WebAssembly linear memory one container's QuickJS may grow to: the
 /// container's memory cap, enforced by the interpreter's store limits
@@ -110,13 +116,15 @@ pub const MAX_RESULT_BYTES: usize = 1024 * 1024;
 /// The longest error text taken back from the shim: its `ERROR_CAPACITY`.
 pub const MAX_ERROR_BYTES: usize = 2048;
 /// The contexts of a container: the channel's and the page's.
-pub const CONTEXTS: usize = 2;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const CONTEXTS: usize = protocol::script::CONTEXTS;
 
 /// The presentation clock (neoteletext-common's ANIM-1): 60 ticks a
 /// second, the rule table's constant by name.
 pub const TICKS_PER_SECOND: u64 = neoteletext_rules::limits::TICKS_PER_SECOND as u64;
 /// The largest tick divisor a manifest may ask for.
-pub const MAX_TICK_DIVISOR: u8 = 60;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_TICK_DIVISOR: u8 = protocol::script::MAX_TICK_DIVISOR;
 /// The most timers a context may have.
 pub const MAX_TIMERS: usize = 32;
 /// The longest a timer may be set to: one hour of ticks.
@@ -132,17 +140,17 @@ pub const MAX_KEYS_DOWN: usize = neoteletext_rules::limits::MAX_KEYS_DOWN;
 /// The most things named under the pointer (the rule table's bound).
 pub const MAX_POINTER_OBJECTS: usize = neoteletext_rules::limits::MAX_POINTER_OBJECTS;
 /// The most keys a manifest may claim (the browser's protocol's bound).
-pub const MAX_KEY_ASKS: usize = protocol::rules::MAX_KEY_ASKS;
-/// The longest key name, in bytes: the browser's protocol's bound for a
-/// key's name (`protocol::keyboard::MAX_KEY_NAME`, which is compiled only
-/// with the phone keyboard and so is restated here; script-api.md section
-/// 10.6 gives the value).
-pub const MAX_KEY_NAME_BYTES: usize = 32;
+pub const MAX_KEY_ASKS: usize = protocol::script::MAX_KEY_ASKS;
+/// The longest key name, in bytes: the protocol crate's constant of the
+/// same name is the one definition (`protocol::script`).
+pub const MAX_KEY_NAME_BYTES: usize = protocol::script::MAX_KEY_NAME_BYTES;
 /// The most events one step may carry to the host: a step's input and the
 /// lost releases of every key that can be held.
-pub const MAX_STEP_EVENTS: usize = MAX_EVENTS_PER_TICK + MAX_KEYS_DOWN;
+pub const MAX_STEP_EVENTS: usize = protocol::script::MAX_STEP_EVENTS;
+const _: () = assert!(MAX_STEP_EVENTS == MAX_EVENTS_PER_TICK + MAX_KEYS_DOWN);
 /// The longest payload of one event of a step.
-pub const MAX_EVENT_PAYLOAD_BYTES: usize = 4096;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_EVENT_PAYLOAD_BYTES: usize = protocol::script::MAX_EVENT_PAYLOAD_BYTES;
 /// The longest committed text one `text` event carries.
 pub const MAX_TEXT_EVENT_BYTES: usize = 4096;
 const _: () = assert!(MAX_TEXT_EVENT_BYTES <= MAX_EVENT_PAYLOAD_BYTES);
@@ -163,9 +171,11 @@ pub const MAX_SHARED_BYTES: usize = 65_536;
 
 /// The most log lines kept between two steps, and the longest of each in
 /// characters; more are counted and dropped.
-pub const MAX_LOG_LINES: usize = 64;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_LOG_LINES: usize = protocol::script::MAX_LOG_LINES;
 /// See [`MAX_LOG_LINES`].
-pub const MAX_LOG_CHARS: usize = 400;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_LOG_CHARS: usize = protocol::script::MAX_LOG_CHARS;
 /// The most buffer descriptors one `fd_write` reads (the security
 /// review's finding S-09, TODO-7275): QuickJS's and the C library's own
 /// writes use one or two.
@@ -174,18 +184,22 @@ pub const MAX_WRITE_VECTORS: usize = 16;
 /// at UTF-8's four bytes a character.
 pub const MAX_WRITE_BYTES: usize = MAX_LOG_LINES * MAX_LOG_CHARS * 4;
 /// The highest log level: 0 debug, 1 log, 2 info, 3 warn, 4 error.
-pub const MAX_LOG_LEVEL: i32 = 4;
+pub const MAX_LOG_LEVEL: i32 = wide(protocol::script::batch::MAX_LOG_LEVEL);
 
 /// The longest page title, in bytes of UTF-8.
-pub const MAX_TITLE_BYTES: usize = 64;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_TITLE_BYTES: usize = protocol::script::MAX_TITLE_BYTES;
 /// The longest label of a thing, in bytes.
-pub const MAX_LABEL_BYTES: usize = 64;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_LABEL_BYTES: usize = protocol::script::MAX_LABEL_BYTES;
 /// The longest address, in bytes (the web client's bound).
-pub const MAX_URL_BYTES: usize = 8000;
+/// The web client's constant of the same name is the one definition (`protocol::web`).
+pub const MAX_URL_BYTES: usize = protocol::web::MAX_URL_BYTES;
 /// The most navigations a context may ask for in a second.
 pub const MAX_NAVIGATIONS_PER_SECOND: u32 = 2;
 /// The longest language tag of a context, in bytes.
-pub const MAX_LANGUAGE_BYTES: usize = 16;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_LANGUAGE_BYTES: usize = protocol::script::MAX_LANGUAGE_BYTES;
 
 /// The audio channels of a view (the engine's audio profile, by name).
 #[expect(clippy::cast_possible_truncation, clippy::cast_possible_wrap, reason = "the profile's four channels, far inside an i32, as the assertion below holds")]
@@ -193,8 +207,12 @@ pub const AUDIO_CHANNELS: i32 = neoteletext_rules::limits::AUDIO_CHANNELS as i32
 const _: () = assert!(neoteletext_rules::limits::AUDIO_CHANNELS <= 8);
 /// The highest handle of a channel's sound.
 pub const MAX_SOUND_NUMBER: i32 = 255;
+const _: () = assert!(MAX_SOUND_NUMBER as usize == protocol::script::MAX_SOUND_HANDLES);
+/// The largest variant of a synthesizer family: the rule table's
+/// `MAX_VARIANT`, which the batch's reader holds a start to.
+pub const MAX_SYNTH_VARIANT: i32 = wide(neoteletext_rules::limits::MAX_VARIANT);
 /// The loudest gain.
-pub const MAX_GAIN: i32 = 100;
+pub const MAX_GAIN: i32 = wide(neoteletext_rules::limits::MAX_GAIN);
 /// The most sound operations (plays, stops, notes, MIDI) one callback may ask for.
 pub const MAX_SOUND_OPERATIONS_PER_CALLBACK: u32 = 64;
 /// The most sound operations one step may ask for.
@@ -205,13 +223,14 @@ pub const MAX_SOUND_OPERATIONS_PER_SECOND: u32 = 256;
 pub const MAX_NOTE_TICKS: i32 = 600;
 /// MIDI's largest data byte (MIDI 1.0 detailed specification, section
 /// "Data bytes": seven bits).
-pub const MAX_MIDI_DATA: i32 = 127;
+pub const MAX_MIDI_DATA: i32 = wide(neoteletext_rules::limits::MAX_MIDI_DATA);
 /// The largest value of a pitch bend, 14 bits (MIDI 1.0, pitch bend change).
 pub const MAX_MIDI_BEND: i32 = 16_383;
 
 /// The most bytes one step's output may be: the engine's largest frame,
 /// by name, so that a batch is always one frame.
-pub const MAX_BATCH_BYTES: usize = neoteletext_web::consts::MAX_FRAME_BYTES;
+pub const MAX_BATCH_BYTES: usize = protocol::script::batch::MAX_BATCH_BYTES;
+const _: () = assert!(MAX_BATCH_BYTES == neoteletext_web::consts::MAX_FRAME_BYTES);
 /// The most bytes the host holds for one container outside the
 /// WebAssembly memory: tables, staged output, the log, the shared store
 /// (script-api.md section 10.1 rule 7; the security review's finding
@@ -233,13 +252,17 @@ pub const MAX_LISTEN_KINDS: i32 = 64;
 pub const MAX_NETWORK_EVENTS_PER_STEP: usize = 32;
 /// The most things a step may report as painted, as ending a cycle, as
 /// sound cues or ends, and as faults (the STEP message's bounds).
-pub const MAX_STEP_PAINTED: usize = 32;
+/// The protocol crate's `MAX_WATCHED_PAINTINGS` is the one definition.
+pub const MAX_STEP_PAINTED: usize = protocol::script::MAX_WATCHED_PAINTINGS;
 /// See [`MAX_STEP_PAINTED`].
-pub const MAX_STEP_CYCLE_ENDS: usize = 16;
+/// The protocol crate's `MAX_CYCLE_ENDS` is the one definition.
+pub const MAX_STEP_CYCLE_ENDS: usize = protocol::script::MAX_CYCLE_ENDS;
 /// See [`MAX_STEP_PAINTED`].
-pub const MAX_STEP_SOUND_REPORTS: usize = 8;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_STEP_SOUND_REPORTS: usize = protocol::script::MAX_STEP_SOUND_REPORTS;
 /// See [`MAX_STEP_PAINTED`].
-pub const MAX_STEP_FAULTS: usize = 8;
+/// The protocol crate's constant of the same name is the one definition (`protocol::script`).
+pub const MAX_STEP_FAULTS: usize = protocol::script::MAX_STEP_FAULTS;
 
 // The step and second budgets are budgets of whole callbacks, so each is
 // at least nothing and the second's holds several steps'.
@@ -251,3 +274,10 @@ const _: () = assert!(MAX_HOST_BYTES <= MAX_RESULT_BYTES && MAX_ERROR_BYTES <= M
 // QuickJS's heap fits the container's memory with room for the module's
 // own data, stack and result buffer.
 const _: () = assert!((QUICKJS_HEAP_BYTES as usize) + 8 * 1024 * 1024 <= WASM_MEMORY_BYTES);
+
+// What the two halves of the link must agree on beside the bounds taken
+// by name above: a step's sound operations fit one batch, the audio
+// channels are the batch's voices, and a seed is the message's.
+const _: () = assert!(MAX_SOUND_OPERATIONS_PER_STEP as usize == protocol::script::batch::MAX_SOUND_OPERATIONS);
+const _: () = assert!(crate::random::SEED_BYTES == protocol::script::SEED_BYTES);
+const _: () = assert!(MAX_TEXT_EVENT_BYTES <= protocol::script::MAX_EVENT_PAYLOAD_BYTES);

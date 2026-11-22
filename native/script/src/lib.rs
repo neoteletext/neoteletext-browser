@@ -49,9 +49,6 @@ pub mod watchdog;
 pub const API_VERSION: u16 = 1;
 
 pub use container::{Container, Costs, Settings, TimeLimits};
-pub use link::{
-    Batch, Claims, ContextId, ContextOpen, ContextState, EventPayload, Fault, FromFetcher, InProcess, LinkError, LogLine, PointerClaim, Renderer, ScriptLink,
-    SoundOperation, SoundReport, Step, StepEvent, StopReason, ToFetcher, Watch,
-};
+pub use link::{InProcess, LinkError, ScriptLink};
 pub use machine::{Engine, Stop};
 pub use watchdog::Watchdog;

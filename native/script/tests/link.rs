@@ -1,15 +1,21 @@
 //! The link (script-api.md section 11.1): one interface for whatever
 //! runs a tab's scripts, its in-process implementation, and the bounds a
-//! link holds its messages to.
+//! link holds its messages to, which are the protocol crate's own.
 mod common;
 
-use common::{claiming, engine, lines, opening, tick, with_events};
-use neoteletext_script::limits::{MAX_KEY_ASKS, MAX_SCRIPT_BYTES, MAX_STEP_EVENTS, MAX_URL_BYTES};
-use neoteletext_script::ops::EventKind;
-use neoteletext_script::{ContextId, EventPayload, FromFetcher, InProcess, LinkError, ScriptLink, Settings, Step, StepEvent, TimeLimits};
+use common::{claim, engine, key, lines, opening, plain_event, text_event, tick, with_events};
+use neoteletext_script::limits::{MAX_SCRIPT_BYTES, MAX_STEP_EVENTS};
+use neoteletext_script::{InProcess, LinkError, ScriptLink, Settings, TimeLimits};
+use protocol::script::{ContextId, ContextOpen, EventKind, MAX_KEY_ASKS, Step};
+use protocol::web::{FromWebClient, MAX_URL_BYTES};
 
 fn link() -> InProcess {
     InProcess::new(engine().clone(), Settings { time: TimeLimits::unhurried(), watchdog: None })
+}
+
+/// An opening whose length is its script's.
+fn opening_of(context: ContextId, source: &[u8]) -> ContextOpen {
+    ContextOpen { source_bytes: u32::try_from(source.len()).unwrap(), ..opening(context) }
 }
 
 /// TODO-7289's "done": a script runs in either context through the link,
@@ -21,18 +27,20 @@ fn a_script_runs_in_either_context_through_the_link() {
         let mut log = Vec::new();
         assert!(matches!(link.step(tick(0, 0)), Err(LinkError::Context(_))), "a step before any context");
         for context in [ContextId::Channel, ContextId::Page] {
-            let mut open = opening(context);
-            open.claims = claiming(&["Enter"]);
             let source = "const who = nt.level; nt.addEventListener('tick', (e) => { if (e.tick === 1) console.log(who + ' tick'); });
                           setTimeout(() => console.log(who + ' timer'), 0);
                           nt.addEventListener('keydown', (e) => console.log(who + ' key ' + e.key));
                           nt.addEventListener('close', () => console.log(who + ' close'));";
+            let mut open = opening_of(context, source.as_bytes());
+            claim(&mut open, &["Enter"]);
             link.open(open, source.as_bytes()).unwrap();
         }
         log.extend(lines(&link.step(tick(1, 0)).unwrap()));
-        let key = StepEvent { kind: EventKind::KEY_DOWN, ints: [0; 4], payload: EventPayload::Text("Enter".into()) };
-        log.extend(lines(&link.step(with_events(2, 1, vec![key])).unwrap()));
-        link.network(FromFetcher { context: ContextId::Page, kind: 30, ints: [0; 4], payload: EventPayload::None });
+        log.extend(lines(&link.step(with_events(2, 1, vec![key(EventKind::KeyDown, "Enter", 0)])).unwrap()));
+        // An answer from the web client has nothing to hear it until the
+        // web APIs are built: it is dropped, and the log says so once.
+        link.network(FromWebClient::End(7));
+        link.network(FromWebClient::End(8));
         assert_eq!(link.take_requests(), Vec::new());
         link.close(ContextId::Page);
         log.extend(lines(&link.step(tick(3, 2)).unwrap()));
@@ -41,47 +49,75 @@ fn a_script_runs_in_either_context_through_the_link() {
         log
     }
     let mut link = link();
-    assert_eq!(drive(&mut link), vec!["page key Enter", "channel key Enter", "page timer", "channel timer", "page tick", "channel tick", "page close"]);
+    assert_eq!(
+        drive(&mut link),
+        vec![
+            "page key Enter",
+            "channel key Enter",
+            "page timer",
+            "channel timer",
+            "page tick",
+            "channel tick",
+            "page close",
+            "an answer from the web client was dropped: this script library has no web API yet"
+        ]
+    );
     assert!(link.container().is_none(), "the container outlived its contexts");
 }
 
-/// Section 11.2: every count and length of a message is held to its
-/// bound, and a message that names what only the host makes is refused,
-/// before anything runs.
+/// Section 11.2: the link refuses what the message's own reader refuses,
+/// naming the field as that reader does, and a step that carries an event
+/// only the host makes, before anything runs.
 #[test]
-fn a_message_past_a_bound_is_refused_before_anything_runs() {
+fn a_message_out_of_its_bounds_is_refused_before_anything_runs() {
     let mut link = link();
-    let refused = |link: &mut InProcess, change: &dyn Fn(&mut neoteletext_script::ContextOpen), source: &[u8]| {
-        let mut open = opening(ContextId::Page);
+    let refused = |link: &mut InProcess, change: &dyn Fn(&mut ContextOpen), source: &[u8]| {
+        let mut open = opening_of(ContextId::Page, source);
         change(&mut open);
         link.open(open, source)
     };
-    assert_eq!(refused(&mut link, &|_| {}, &vec![b' '; MAX_SCRIPT_BYTES + 1]), Err(LinkError::Bound("MAX_SCRIPT_BYTES")));
-    assert_eq!(refused(&mut link, &|open| open.claims.keys = vec!["k".into(); MAX_KEY_ASKS + 1], b""), Err(LinkError::Bound("MAX_KEY_ASKS")));
-    assert_eq!(refused(&mut link, &|open| open.claims.keys = vec!["k".repeat(33)], b""), Err(LinkError::Bound("MAX_KEY_NAME_BYTES")));
-    assert_eq!(refused(&mut link, &|open| open.claims.tick_divisor = 61, b""), Err(LinkError::Bound("MAX_TICK_DIVISOR")));
-    assert_eq!(refused(&mut link, &|open| open.language = "x".repeat(17), b""), Err(LinkError::Bound("MAX_LANGUAGE_BYTES")));
-    assert_eq!(refused(&mut link, &|open| open.page_url = "x".repeat(MAX_URL_BYTES + 1), b""), Err(LinkError::Bound("MAX_URL_BYTES")));
-    assert_eq!(refused(&mut link, &|open| open.channel_title = "x".repeat(65), b""), Err(LinkError::Bound("MAX_TITLE_BYTES")));
+    let script = b"1";
+    assert_eq!(refused(&mut link, &|_| {}, &vec![b' '; MAX_SCRIPT_BYTES + 1]), Err(LinkError::Refused("source length")));
+    assert_eq!(refused(&mut link, &|_| {}, b""), Err(LinkError::Refused("source length")));
+    // The script given is not the length the opening says follows.
+    assert_eq!(refused(&mut link, &|open| open.source_bytes = 2, script), Err(LinkError::Refused("source length")));
+    assert_eq!(refused(&mut link, &|open| open.keys = vec!["k".into(); MAX_KEY_ASKS + 1], script), Err(LinkError::Refused("too many keys")));
+    assert_eq!(refused(&mut link, &|open| open.keys = vec!["k".repeat(33)], script), Err(LinkError::Refused("key name")));
+    assert_eq!(refused(&mut link, &|open| open.tick_divisor = 61, script), Err(LinkError::Refused("tick divisor")));
+    assert_eq!(refused(&mut link, &|open| open.language = "x".repeat(17), script), Err(LinkError::Refused("language")));
+    assert_eq!(refused(&mut link, &|open| open.page_url = "x".repeat(MAX_URL_BYTES + 1), script), Err(LinkError::Refused("page address")));
+    assert_eq!(refused(&mut link, &|open| open.channel_title = "x".repeat(65), script), Err(LinkError::Refused("channel title")));
+    assert_eq!(refused(&mut link, &|open| open.page = 0x900, script), Err(LinkError::Refused("page number")));
     assert!(link.container().is_none(), "a refused opening made a container");
-    let mut open = opening(ContextId::Page);
-    open.claims = claiming(&[]);
-    link.open(open, b"nt.addEventListener('tick', () => console.log('ran'));").unwrap();
-    let event = |kind, payload| StepEvent { kind, ints: [0; 4], payload };
-    let many = vec![event(EventKind::FOCUS, EventPayload::None); MAX_STEP_EVENTS + 1];
-    assert_eq!(link.step(with_events(1, 0, many)).err(), Some(LinkError::Bound("MAX_STEP_EVENTS")));
-    assert_eq!(
-        link.step(with_events(1, 0, vec![event(EventKind::TEXT, EventPayload::Text("x".repeat(4097)))])).err(),
-        Some(LinkError::Bound("MAX_EVENT_PAYLOAD_BYTES"))
-    );
-    assert_eq!(link.step(Step { painted: vec![0; 33], ..tick(1, 0) }).err(), Some(LinkError::Bound("MAX_STEP_PAINTED")));
-    // Events only the host makes, and events without their payload.
-    for kind in [EventKind::TICK, EventKind::TIMER, EventKind::CLOSE, EventKind::SHARED, EventKind::VISIBILITY, EventKind::SOUND_ALLOWED, EventKind::PAINTED] {
-        assert!(matches!(link.step(with_events(1, 0, vec![event(kind, EventPayload::None)])), Err(LinkError::Refused(_))), "{kind:?}");
+    let source = b"nt.addEventListener('tick', () => console.log('ran'));";
+    let mut open = opening_of(ContextId::Page, source);
+    claim(&mut open, &[]);
+    link.open(open, source).unwrap();
+    let many = vec![plain_event(EventKind::Focus, [0; 4]); MAX_STEP_EVENTS + 1];
+    assert_eq!(link.step(with_events(1, 0, many)).err(), Some(LinkError::Refused("too many events")));
+    assert_eq!(link.step(with_events(1, 0, vec![text_event(EventKind::Text, [0; 4], &"x".repeat(4097))])).err(), Some(LinkError::Refused("event payload")));
+    assert_eq!(link.step(Step { painted: vec![0; 33], ..tick(1, 0) }).err(), Some(LinkError::Refused("too many painted")));
+    // Events only the host makes.
+    for kind in [EventKind::Tick, EventKind::Timer, EventKind::Close, EventKind::Shared, EventKind::Visibility, EventKind::Painted, EventKind::SoundCue] {
+        assert_eq!(
+            link.step(with_events(1, 0, vec![plain_event(kind, [0; 4])])).err(),
+            Some(LinkError::Refused("event kind: only the host makes it")),
+            "{kind:?}"
+        );
     }
-    assert!(matches!(link.step(with_events(1, 0, vec![event(EventKind::KEY_DOWN, EventPayload::None)])), Err(LinkError::Refused(_))));
-    assert!(matches!(link.step(with_events(1, 0, vec![event(EventKind::POINTER, EventPayload::Ints(vec![0; 3]))])), Err(LinkError::Refused(_))));
-    assert!(matches!(link.step(with_events(1, 0, vec![event(EventKind::KEY_DOWN, EventPayload::Text("k".repeat(33)))])), Err(LinkError::Refused(_))));
+    // Events without the payload their kind has: a key with no name or too
+    // long a one, a pointer with too few numbers or a part of one, text
+    // that is not Unicode, a wheel with anything.
+    for event in [
+        plain_event(EventKind::KeyDown, [0; 4]),
+        text_event(EventKind::KeyDown, [0; 4], &"k".repeat(33)),
+        common::ints_event(EventKind::Pointer, [0; 4], &[0; 3]),
+        protocol::script::Event { kind: EventKind::Pointer, numbers: [0; 4], payload: vec![0; 17] },
+        protocol::script::Event { kind: EventKind::Text, numbers: [0; 4], payload: vec![0xFF] },
+        text_event(EventKind::Wheel, [0; 4], "x"),
+    ] {
+        assert_eq!(link.step(with_events(1, 0, vec![event.clone()])).err(), Some(LinkError::Refused("event payload")), "{event:?}");
+    }
     // Nothing ran for any refused step: this is the first tick heard.
     assert_eq!(lines(&link.step(tick(2, 0)).unwrap()), vec!["ran"]);
 }

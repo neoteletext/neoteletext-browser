@@ -5,8 +5,8 @@
 #![allow(clippy::arithmetic_side_effects, clippy::unwrap_used, clippy::indexing_slicing, clippy::panic, reason = "tests")]
 
 use super::*;
-use crate::link::{Claims, PointerClaim, Renderer};
 use crate::random::SEED_BYTES;
+use protocol::script::{ContextFlags, Level};
 
 const CHANNEL: &str = "https://example.test/chan/";
 const PAGE: i32 = 2;
@@ -16,10 +16,12 @@ fn opening(context: ContextId) -> ContextOpen {
     ContextOpen {
         context,
         api: 1,
-        renderer: Some(Renderer::Regis),
+        renderer: Renderer::Regis,
+        level: Level::TwoFive,
         page: 0x1A0,
-        subcode: Some(2),
-        claims: Claims { keys: vec!["Enter".into()], text: true, pointer: PointerClaim::Press, wheel: false, tick_divisor: 1, network: false },
+        subcode: 2,
+        flags: ContextFlags { pointer_press: true, text: true, sound_allowed: true, ..ContextFlags::default() },
+        tick_divisor: 1,
         language: "en".into(),
         channel_url: CHANNEL.into(),
         page_url: format!("{CHANNEL}1A0.tti"),
@@ -28,9 +30,20 @@ fn opening(context: ContextId) -> ContextOpen {
         seed: [9; SEED_BYTES],
         epoch_seconds: 1_800_000_000,
         zone_minutes: 600,
+        keys: vec!["Enter".into()],
         sounds: vec![1, 7],
-        sound_allowed: true,
+        source_bytes: 1,
     }
+}
+
+/// A batch's sound operations, none when it has no such section.
+fn sound(batch: &Batch) -> Vec<SoundOperation> {
+    batch.sound.clone().unwrap_or_default()
+}
+
+/// A batch's log lines.
+fn log(batch: &Batch) -> Vec<LogLine> {
+    batch.log.clone().unwrap_or_default()
 }
 
 /// A host with both contexts open, at tick 0 of a step, in a callback of the page context.
@@ -116,12 +129,16 @@ fn log_keeps_bounded_lines_and_counts_the_rest() {
     for _ in 0..MAX_LOG_LINES + 9 {
         assert_eq!(call_text(&mut host, Op::LOG, &[1], "more"), Reply::Undefined);
     }
-    let batch = host.take_batch(1, Vec::new());
-    assert_eq!(batch.log.len(), MAX_LOG_LINES);
-    assert_eq!(batch.log_dropped, 10);
-    assert_eq!(batch.log[0].text.chars().count(), MAX_LOG_CHARS);
-    assert_eq!((batch.log[0].level, batch.log[0].context), (3, Some(ContextId::Page)));
-    assert!(batch.log.iter().all(|line| !line.text.chars().any(char::is_control)));
+    let batch = host.take_batch(1, &[]);
+    let lines = log(&batch);
+    // One line fewer than the bound is kept, and the last says how many
+    // were dropped: 74 were written.
+    assert_eq!(lines.len(), MAX_LOG_LINES);
+    assert_eq!(lines[MAX_LOG_LINES - 1].text, "MAX_LOG_LINES: 11 more log lines were dropped");
+    assert_eq!(lines[0].text.chars().count(), MAX_LOG_CHARS);
+    assert_eq!((lines[0].level, lines[0].context), (3, ContextId::Page));
+    assert!(lines.iter().all(|line| !line.text.chars().any(char::is_control)));
+    assert_eq!(host.take_batch(2, &[]).log, None);
 }
 
 #[test]
@@ -178,7 +195,7 @@ fn key_and_pointer_state_follow_the_claimed_events_only() {
     let mut host = host();
     refuses(&mut host, "MAX_KEY_NAME_BYTES", |host| call_text(host, Op::KEY_STATE, &[0], &"k".repeat(MAX_KEY_NAME_BYTES + 1)));
     mistypes(&mut host, |host| call_text(host, Op::KEY_STATE, &[2], "Enter"));
-    let key = |kind, name: &str, bits| StepEvent { kind, ints: [bits, 0, 0, 0], payload: EventPayload::Text(name.into()) };
+    let key = |kind, name: &str, bits| Input { kind, ints: [bits, 0, 0, 0], payload: InputPayload::Text(name.into()) };
     assert!(host.take_in(ContextId::Page, &key(EventKind::KEY_DOWN, "Enter", 0)));
     // A key the manifest did not claim is never given, and is never down.
     assert!(!host.take_in(ContextId::Page, &key(EventKind::KEY_DOWN, "q", 0)));
@@ -192,17 +209,17 @@ fn key_and_pointer_state_follow_the_claimed_events_only() {
     assert!(host.take_in(ContextId::Page, &key(EventKind::KEY_UP, "Enter", 0)));
     assert_eq!(call_text(&mut host, Op::KEY_STATE, &[0], "Enter"), Reply::Int(0));
     // The pointer: a press is claimed, a move is not (the manifest says "press").
-    let pointer = |action: PointerAction, x, y, handle| StepEvent {
+    let pointer = |action: PointerAction, x, y, handle| Input {
         kind: EventKind::POINTER,
         ints: [action.number(), x, y, handle],
-        payload: EventPayload::Ints(vec![0, 1, 0, 0]),
+        payload: InputPayload::Ints(vec![0, 1, 0, 0]),
     };
     assert!(host.take_in(ContextId::Page, &pointer(PointerAction::DOWN, 30, 40, 0)));
     assert!(!host.take_in(ContextId::Page, &pointer(PointerAction::MOVE, 31, 41, 0)));
     assert_eq!(call(&mut host, Op::POINTER_STATE, &[]), Reply::Text("30,40,1,1,0".into()));
     // Text was claimed; the wheel was not.
-    assert!(host.take_in(ContextId::Page, &StepEvent { kind: EventKind::TEXT, ints: [0; 4], payload: EventPayload::Text("hi".into()) }));
-    assert!(!host.take_in(ContextId::Page, &StepEvent { kind: EventKind::WHEEL, ints: [0; 4], payload: EventPayload::None }));
+    assert!(host.take_in(ContextId::Page, &Input { kind: EventKind::TEXT, ints: [0; 4], payload: InputPayload::Text("hi".into()) }));
+    assert!(!host.take_in(ContextId::Page, &Input { kind: EventKind::WHEEL, ints: [0; 4], payload: InputPayload::None }));
 }
 
 #[test]
@@ -214,7 +231,7 @@ fn the_title_is_the_page_contexts_and_bounded() {
     assert_eq!(call_text(&mut host, Op::TITLE, &[], "First"), Reply::Undefined);
     assert_eq!(call_text(&mut host, Op::TITLE, &[], "Scores"), Reply::Undefined);
     assert_eq!(call(&mut host, Op::INFO, &[Info::PAGE_TITLE.number()]), Reply::Text("Scores".into()));
-    assert_eq!(host.take_batch(1, Vec::new()).title.as_deref(), Some("Scores"));
+    assert_eq!(host.take_batch(1, &[]).title.as_deref(), Some("Scores"));
 }
 
 /// A navigation refused for want of activation: a `TypeError` that stages nothing.
@@ -236,9 +253,9 @@ fn navigation_is_rate_limited_and_leaving_the_channel_needs_activation() {
     // A second later, inside the channel: by page and sub-page, by address.
     host.begin_step(60, true);
     assert_eq!(call_text(&mut host, Op::NAVIGATE, &[], "1A0/0002"), Reply::Undefined);
-    assert_eq!(host.take_batch(1, Vec::new()).navigate.as_deref(), Some("1A0/0002"));
+    assert_eq!(host.take_batch(1, &[]).navigate.as_deref(), Some("1A0/0002"));
     assert_eq!(call_text(&mut host, Op::NAVIGATE, &[], &format!("{CHANNEL}200.tti")), Reply::Undefined);
-    let _ = host.take_batch(2, Vec::new());
+    let _ = host.take_batch(2, &[]);
     // Another channel: only while a key press, a pointer release or a
     // component's activation is being handled.
     host.begin_step(120, true);
@@ -246,7 +263,7 @@ fn navigation_is_rate_limited_and_leaving_the_channel_needs_activation() {
     refused_without_activation(&mut host, "https://elsewhere.test/");
     host.begin_callback(ContextId::Page, Some(EventKind::KEY_DOWN), 0);
     assert_eq!(call_text(&mut host, Op::NAVIGATE, &[], "https://elsewhere.test/"), Reply::Undefined);
-    assert_eq!(host.take_batch(3, Vec::new()).navigate.as_deref(), Some("https://elsewhere.test/"));
+    assert_eq!(host.take_batch(3, &[]).navigate.as_deref(), Some("https://elsewhere.test/"));
     host.begin_step(180, true);
     host.begin_callback(ContextId::Page, Some(EventKind::POINTER), PointerAction::DOWN.number());
     refused_without_activation(&mut host, "https://elsewhere.test/");
@@ -376,7 +393,7 @@ fn info_gives_each_context_its_own_page() {
     // The channel context has no page until it is shown one.
     assert_eq!(info(&mut host, CHANNEL_CONTEXT, Info::PAGE_NUMBER), Reply::Undefined);
     assert_eq!(info(&mut host, CHANNEL_CONTEXT, Info::PAGE_URL), Reply::Undefined);
-    let shown = StepEvent { kind: EventKind::PAGE_SHOW, ints: [0x2B0, -1, 2, 0], payload: EventPayload::Text(format!("{CHANNEL}2B0.nap")) };
+    let shown = Input { kind: EventKind::PAGE_SHOW, ints: [0x2B0, 0, 3, 0], payload: InputPayload::Text(format!("{CHANNEL}2B0.nap")) };
     assert!(host.take_in(ContextId::Channel, &shown));
     assert!(!host.take_in(ContextId::Page, &shown), "a page context was told of a page shown");
     assert_eq!(info(&mut host, CHANNEL_CONTEXT, Info::PAGE_NUMBER), Reply::Text("2B0".into()));
@@ -398,13 +415,12 @@ fn listening_names_a_real_thing_and_kind() {
     assert_eq!(call(&mut host, Op::LISTEN, &[Handle::SOUND.number(), EventKind::SOUND_ENDED.number(), 1]), Reply::Undefined);
     assert!(host.listens(ContextId::Page, EventKind::TICK) && !host.listens(ContextId::Channel, EventKind::TICK));
     assert!(host.listens_to(ContextId::Page, Handle::SOUND.number(), EventKind::SOUND_ENDED));
-    let watch = host.take_batch(1, Vec::new()).watch.unwrap();
-    assert_eq!(watch.len(), 2);
+    // The decoder is asked to watch paintings alone, and the shared core
+    // has no thing that is painted: no listener here changes the list.
+    assert_eq!(host.take_batch(1, &[]).watch, None);
     assert_eq!(call(&mut host, Op::LISTEN, &[0, EventKind::TICK.number(), 0]), Reply::Undefined);
     assert!(!host.listens(ContextId::Page, EventKind::TICK));
-    // Told again only when it changed.
-    assert_eq!(host.take_batch(2, Vec::new()).watch.map(|watch| watch.len()), Some(1));
-    assert_eq!(host.take_batch(3, Vec::new()).watch, None);
+    assert_eq!(host.take_batch(2, &[]).watch, None);
 }
 
 #[test]
@@ -430,9 +446,9 @@ fn sound_operations_are_checked() {
     assert_eq!(call(&mut host, Op::SOUND_PLAY, &[7, 3, 50]), Reply::Undefined);
     assert_eq!(call(&mut host, Op::SYNTH_START, &[1, 12, 0, 80]), Reply::Undefined);
     assert_eq!(call(&mut host, Op::SYNTH_MIDI, &[1, 0xE0, 0x7F, 0x7F]), Reply::Undefined);
-    let batch = host.take_batch(1, Vec::new());
+    let batch = host.take_batch(1, &[]);
     assert_eq!(
-        batch.sound,
+        sound(&batch),
         vec![
             SoundOperation::Play { voice: 3, sound: 7, gain: 50 },
             SoundOperation::SynthStart { part: 1, family: 12, variant: 0, gain: 80 },
@@ -455,7 +471,7 @@ fn sound_stops_are_counted_for_the_callback_the_step_and_the_second() {
     // Another callback of the same step: the step's count is used up too.
     host.begin_callback(ContextId::Page, Some(EventKind::TIMER), 0);
     refuses(&mut host, "MAX_SOUND_OPERATIONS_PER_STEP", |host| call(host, Op::SOUND_STOP, &[0]));
-    assert_eq!(host.take_batch(1, Vec::new()).sound.len(), per_callback);
+    assert_eq!(sound(&host.take_batch(1, &[])).len(), per_callback);
     // Step after step, the second's count fills.
     let mut made = per_callback;
     let mut tick = 1;
@@ -467,7 +483,7 @@ fn sound_stops_are_counted_for_the_callback_the_step_and_the_second() {
             assert_eq!(call(&mut host, Op::SOUND_STOP, &[0]), Reply::Undefined);
             made += 1;
         }
-        let _ = host.take_batch(2, Vec::new());
+        let _ = host.take_batch(2, &[]);
         tick += 1;
     }
     host.begin_step(tick, true);
@@ -486,20 +502,20 @@ fn a_note_is_released_on_its_tick_and_sound_with_its_context() {
     assert_eq!(call(&mut host, Op::SYNTH_NOTE, &[2, 60, 90, 5]), Reply::Undefined);
     assert_eq!(call(&mut host, Op::SOUND_PLAY, &[1, 0, 100]), Reply::Undefined);
     assert_eq!(host.next_due(ContextId::Page), Some(5));
-    assert_eq!(host.take_batch(1, Vec::new()).sound.len(), 3);
+    assert_eq!(sound(&host.take_batch(1, &[])).len(), 3);
     host.begin_step(4, true);
-    assert_eq!(host.take_batch(2, Vec::new()).sound, Vec::new());
+    assert_eq!(sound(&host.take_batch(2, &[])), Vec::new());
     host.begin_step(5, true);
-    assert_eq!(host.take_batch(3, Vec::new()).sound, vec![SoundOperation::Midi { part: 2, status: 0x80, data1: 60, data2: 0 }]);
+    assert_eq!(sound(&host.take_batch(3, &[])), vec![SoundOperation::Midi { part: 2, status: 0x80, data1: 60, data2: 0 }]);
     // A note still held when its context ends is forgotten with the
     // instrument, and the playing sound stopped.
     host.begin_callback(ContextId::Page, Some(EventKind::TIMER), 0);
     assert_eq!(call(&mut host, Op::SYNTH_NOTE, &[2, 62, 90, 50]), Reply::Undefined);
-    let _ = host.take_batch(4, Vec::new());
+    let _ = host.take_batch(4, &[]);
     host.close(ContextId::Page);
-    assert_eq!(host.take_batch(5, Vec::new()).sound, vec![SoundOperation::Stop { voice: 0 }, SoundOperation::SynthStop { part: 2 }]);
+    assert_eq!(sound(&host.take_batch(5, &[])), vec![SoundOperation::Stop { voice: 0 }, SoundOperation::SynthStop { part: 2 }]);
     host.begin_step(100, true);
-    assert_eq!(host.take_batch(6, Vec::new()).sound, Vec::new());
+    assert_eq!(sound(&host.take_batch(6, &[])), Vec::new());
 }
 
 /// Section 3.5 (DEC-7282 item 7): until the viewer has pressed a key or
@@ -508,21 +524,21 @@ fn a_note_is_released_on_its_tick_and_sound_with_its_context() {
 fn sound_does_nothing_until_the_viewer_has_acted() {
     let mut host = Host::new();
     let mut open = opening(ContextId::Page);
-    open.sound_allowed = false;
+    open.flags.sound_allowed = false;
     host.open(open, 10);
     host.begin_step(0, false);
     host.begin_callback(ContextId::Page, Some(EventKind::TICK), 0);
     assert_eq!(call(&mut host, Op::INFO, &[Info::SOUND_ALLOWED.number()]), Reply::Int(0));
     assert_eq!(call(&mut host, Op::SOUND_PLAY, &[1, 0, 100]), Reply::Undefined);
     assert_eq!(call(&mut host, Op::SYNTH_NOTE, &[0, 60, 100, 5]), Reply::Undefined);
-    let batch = host.take_batch(1, Vec::new());
-    assert_eq!(batch.sound, Vec::new());
-    assert_eq!(batch.log.len(), 1, "the refusal is logged once");
+    let batch = host.take_batch(1, &[]);
+    assert_eq!(sound(&batch), Vec::new());
+    assert_eq!(log(&batch).len(), 1, "the refusal is logged once");
     assert_eq!(host.next_due(ContextId::Page), None);
     host.begin_step(1, true);
     assert_eq!(call(&mut host, Op::INFO, &[Info::SOUND_ALLOWED.number()]), Reply::Int(1));
     assert_eq!(call(&mut host, Op::SOUND_PLAY, &[1, 0, 100]), Reply::Undefined);
-    assert_eq!(host.take_batch(2, Vec::new()).sound.len(), 1);
+    assert_eq!(sound(&host.take_batch(2, &[])).len(), 1);
 }
 
 /// Section 10.1 rule 7 (the security review's finding S-06, TODO-7272):
@@ -558,7 +574,7 @@ fn with_every_table_full_the_host_holds_no_more_than_its_bounds() {
     call_text(&mut host, Op::TITLE, &[], &"t".repeat(MAX_TITLE_BYTES));
     host.begin_callback(ContextId::Page, Some(EventKind::KEY_DOWN), 0);
     call_text(&mut host, Op::NAVIGATE, &[], &format!("https://e.test/{}", "a".repeat(MAX_URL_BYTES - 15)));
-    assert!(host.navigate.is_some() && host.title.is_some() && host.log.len() == MAX_LOG_LINES);
+    assert!(host.navigate.is_some() && host.title.is_some() && host.log.len() == MAX_LOG_LINES - 1);
     for tick in 0..TICKS_PER_SECOND {
         host.begin_callback(ContextId::Page, Some(EventKind::TIMER), 0);
         for _ in 0..MAX_SOUND_OPERATIONS_PER_CALLBACK {
@@ -645,9 +661,9 @@ fn failures_in_a_row_stop_the_context_and_a_success_starts_the_count_again() {
     assert!(host.runs(ContextId::Page));
     assert!(host.count_failure(ContextId::Page, true));
     assert!(!host.runs(ContextId::Page) && host.runs(ContextId::Channel));
-    let states = host.take_batch(1, Vec::new()).states;
+    let states = host.take_batch(1, &[]).state.unwrap();
     assert_eq!(
         states.iter().map(|state| (state.context, state.stopped, state.failures)).collect::<Vec<_>>(),
-        vec![(ContextId::Channel, None, 0), (ContextId::Page, Some(StopReason::Failures), 16)]
+        vec![(ContextId::Channel, None, 0), (ContextId::Page, Some(FailReason::Failures), 16)]
     );
 }

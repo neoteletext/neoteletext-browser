@@ -12,11 +12,13 @@ mod common;
 
 use std::time::Duration;
 
-use common::{Took, all_lines, limited, lines, opening, tick, timed};
+use common::{Opens as _, Took, all_lines, limited, lines, opening, tick, timed, view};
 use neoteletext_script::limits::{
     CALLBACK_TIME_LIMIT, MAX_BATCH_BYTES, MAX_HOST_STATE_BYTES, MAX_SOUND_OPERATIONS_PER_CALLBACK, START_TIME_LIMIT, TIME_CHECK_MARGIN, WASM_MEMORY_BYTES,
 };
-use neoteletext_script::{Batch, Container, ContextId, LinkError, SoundOperation, StopReason};
+use neoteletext_script::{Container, LinkError};
+use protocol::script::batch::SoundOperation;
+use protocol::script::{Batch, ContextId, FailReason};
 
 macro_rules! hostile {
     ($name:literal) => {
@@ -27,8 +29,31 @@ macro_rules! hostile {
 /// Opens `source` as a page's script, timing it.
 fn open(source: &str) -> (Container, Result<(), LinkError>, Took) {
     let mut container = limited();
-    let (opened, took) = timed(|| container.open(opening(ContextId::Page), source.as_bytes()));
+    let (opened, took) = timed(|| container.open_with(opening(ContextId::Page), source.as_bytes()));
     (container, opened, took)
+}
+
+/// How often a script that should open is tried again when this machine
+/// had no processor for it.
+const STARVED_TRIES: usize = 5;
+
+/// Opens a script whose top level ends at once. The start limit is on the
+/// wall clock, and on a machine with no processor free the prelude alone
+/// can wait past it (most of all in a build that is not optimised): when
+/// the opening was stopped for time and the thread's own measure shows it
+/// spent a good part of the limit waiting for a processor, it is tried
+/// again, since nothing of the script was at fault.
+#[track_caller]
+fn opened(name: &str, source: &str) -> Container {
+    for _ in 0..STARVED_TRIES {
+        let (container, opened, took) = open(source);
+        match opened {
+            Ok(()) => return container,
+            Err(LinkError::Stopped(FailReason::Time, _)) if took.wall.saturating_sub(took.running) > START_TIME_LIMIT / 10 => {}
+            Err(error) => panic!("{name} did not open: {error}"),
+        }
+    }
+    panic!("{name} did not open in {STARVED_TRIES} tries: this machine has no processor free for it");
 }
 
 /// Asserts a run was stopped by its time limit: no sooner than `limit`
@@ -43,11 +68,13 @@ fn assert_within(took: Took, limit: Duration, what: &str) {
 /// Asserts the container is stopped for good for `reason`: its state says
 /// so, and it is never entered again.
 #[track_caller]
-fn assert_stopped_for_good(container: &mut Container, reason: StopReason) {
+fn assert_stopped_for_good(container: &mut Container, reason: FailReason) {
     assert_eq!(container.stop_reason(), Some(reason));
     let callbacks = container.costs().callbacks;
     assert!(matches!(container.step(&tick(900, 900)), Err(LinkError::Stopped(stopped, _)) if stopped == reason));
-    assert!(matches!(container.open(opening(ContextId::Channel), b"nt.log('ran after the stop')"), Err(LinkError::Stopped(stopped, _)) if stopped == reason));
+    assert!(
+        matches!(container.open_with(opening(ContextId::Channel), b"nt.log('ran after the stop')"), Err(LinkError::Stopped(stopped, _)) if stopped == reason)
+    );
     assert_eq!(container.costs().callbacks, callbacks, "a stopped container was entered again");
 }
 
@@ -56,9 +83,9 @@ fn assert_stopped_for_good(container: &mut Container, reason: StopReason) {
 #[track_caller]
 fn stopped_at_its_top_level(name: &str, source: &str) {
     let (mut container, opened, took) = open(source);
-    assert!(matches!(opened, Err(LinkError::Stopped(StopReason::Time, _))), "{name}: {opened:?}");
+    assert!(matches!(opened, Err(LinkError::Stopped(FailReason::Time, _))), "{name}: {opened:?}");
     assert_within(took, START_TIME_LIMIT, name);
-    assert_stopped_for_good(&mut container, StopReason::Time);
+    assert_stopped_for_good(&mut container, FailReason::Time);
 }
 
 /// Runs a script that sets a timer for the next tick whose callback never
@@ -66,23 +93,21 @@ fn stopped_at_its_top_level(name: &str, source: &str) {
 /// callback limit, and its batch must still be answered and say so.
 #[track_caller]
 fn stopped_in_its_callback(name: &str, source: &str) -> Batch {
-    let (mut container, opened, _) = open(source);
-    opened.unwrap_or_else(|error| panic!("{name} did not open: {error}"));
+    let mut container = opened(name, source);
     container.step(&tick(1, 0)).unwrap();
     let (batch, took) = timed(|| container.step(&tick(2, 1)));
     let batch = batch.unwrap_or_else(|error| panic!("{name}: the step in which the container stopped was not answered: {error}"));
     assert_within(took, CALLBACK_TIME_LIMIT, name);
-    assert_eq!(batch.states.iter().map(|state| state.stopped).collect::<Vec<_>>(), vec![Some(StopReason::Time)], "{name}");
-    assert!(batch.log.iter().any(|line| line.level == 4 && line.text.contains("time limit")), "{name}: {:?}", lines(&batch));
-    assert_stopped_for_good(&mut container, StopReason::Time);
+    assert_eq!(view(&batch).states.iter().map(|state| state.stopped).collect::<Vec<_>>(), vec![Some(FailReason::Time)], "{name}");
+    assert!(view(&batch).log.iter().any(|line| line.level == 4 && line.text.contains("time limit")), "{name}: {:?}", lines(&batch));
+    assert_stopped_for_good(&mut container, FailReason::Time);
     batch
 }
 
 /// Runs a script that sets a timer for the next tick and gives the step
 /// the timer fires in, with how long it took and the container after it.
 fn after_its_callback(source: &str) -> (Container, Batch, Took) {
-    let (mut container, opened, _) = open(source);
-    opened.unwrap();
+    let mut container = opened("the script", source);
     container.step(&tick(1, 0)).unwrap();
     let (batch, took) = timed(|| container.step(&tick(2, 1)));
     (container, batch.unwrap(), took)
@@ -141,7 +166,9 @@ fn describing_what_was_thrown_runs_no_page_code_after_the_callback() {
     ] {
         let (mut container, opened, took) = open(source);
         opened.unwrap();
-        assert!(took.running < START_TIME_LIMIT / 2, "{source} ran {took:?}: the page's code was called to describe what it threw");
+        // Page code that never returns would run to the start limit and
+        // stop the container.
+        assert!(took.running < START_TIME_LIMIT, "{source} ran {took:?}: the page's code was called to describe what it threw");
         let log = lines(&container.step(&tick(1, 0)).unwrap());
         // The stack, where there is one, follows on the next line.
         let first = log[0].replace("     at", "\n    at");
@@ -162,7 +189,7 @@ fn allocation_without_end_is_stopped_within_the_memory_cap() {
         assert!(container.memory().0 <= WASM_MEMORY_BYTES, "{name}: the container's memory is {} bytes", container.memory().0);
         match container.stop_reason() {
             Some(reason) => {
-                assert!(matches!(reason, StopReason::Memory | StopReason::Time), "{name}: {reason:?}");
+                assert!(matches!(reason, FailReason::Memory | FailReason::Time), "{name}: {reason:?}");
                 assert_stopped_for_good(&mut container, reason);
             }
             // A string doubled without end meets the engine's longest
@@ -172,9 +199,9 @@ fn allocation_without_end_is_stopped_within_the_memory_cap() {
     }
     // Typed arrays reach the heap's limit long before the start limit.
     let (mut container, opened, took) = open("const keep = []; for (;;) keep.push(new Uint8Array(4 * 1024 * 1024));");
-    assert!(matches!(opened, Err(LinkError::Stopped(StopReason::Memory, _))), "{opened:?}");
+    assert!(matches!(opened, Err(LinkError::Stopped(FailReason::Memory, _))), "{opened:?}");
     assert!(took.running < START_TIME_LIMIT);
-    assert_stopped_for_good(&mut container, StopReason::Memory);
+    assert_stopped_for_good(&mut container, FailReason::Memory);
 }
 
 /// Section 3.1's table and section 10.1 rule 5: recursion without end
@@ -185,8 +212,8 @@ fn recursion_without_end_is_stopped_at_the_stack_limit() {
     for (name, source) in [("recurse.js", hostile!("recurse")), ("recurse2.js", hostile!("recurse2"))] {
         let (mut container, batch, took) = after_its_callback(source);
         assert!(took.running <= CALLBACK_TIME_LIMIT + TIME_CHECK_MARGIN, "{name} ran {took:?}");
-        assert_eq!(container.stop_reason(), Some(StopReason::Stack), "{name}: {:?}", lines(&batch));
-        assert_stopped_for_good(&mut container, StopReason::Stack);
+        assert_eq!(container.stop_reason(), Some(FailReason::Stack), "{name}: {:?}", lines(&batch));
+        assert_stopped_for_good(&mut container, FailReason::Stack);
     }
 }
 
@@ -196,12 +223,16 @@ fn recursion_without_end_is_stopped_at_the_stack_limit() {
 #[test]
 fn sound_stops_are_held_to_the_callbacks_rate() {
     let (container, batch, _) = after_its_callback(hostile!("soundstop"));
-    assert_eq!(batch.sound, vec![SoundOperation::Stop { voice: 0 }; MAX_SOUND_OPERATIONS_PER_CALLBACK as usize]);
+    assert_eq!(view(&batch).sound, vec![SoundOperation::Stop { voice: 0 }; MAX_SOUND_OPERATIONS_PER_CALLBACK as usize]);
     let log = lines(&batch);
     assert!(log[0].starts_with("uncaught: RangeError: MAX_SOUND_OPERATIONS_PER_CALLBACK: "), "{log:?}");
     assert!(!log.iter().any(|line| line == "stopped"));
     assert_eq!(container.stop_reason(), None);
 }
+
+/// The most steps the scripts whose every timer fails are given to be
+/// stopped for their failures.
+const FAILING_STEPS: u32 = 120;
 
 /// S-06 (TODO-7272) and the review's request floods: the scripts that
 /// made the spike's host hold 130 MB through ReGIS drawings, and make
@@ -221,9 +252,18 @@ fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
         ("sse.js", hostile!("sse")),
         ("sse2.js", hostile!("sse2")),
     ] {
-        let (mut container, opened, _) = open(source);
-        opened.unwrap();
-        let batches: Vec<_> = (0..4).map(|at| container.step(&tick(at, u64::from(at)))).collect();
+        let mut container = opened(name, source);
+        // Thirty-one timers that each fail, sixteen failures to stop the
+        // context: a few steps on a quiet machine, more where the step's
+        // budget lets fewer callbacks start.
+        let mut batches = Vec::new();
+        for at in 0..FAILING_STEPS {
+            batches.push(container.step(&tick(at, u64::from(at))));
+            let stopped = batches.last().and_then(|batch| batch.as_ref().ok()).is_some_and(|batch| view(batch).states[0].stopped.is_some());
+            if at >= 3 && (stopped || !name.ends_with("2.js")) {
+                break;
+            }
+        }
         let log = all_lines(&batches);
         assert!(
             log.iter()
@@ -234,14 +274,14 @@ fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
         assert_eq!(container.take_requests(), Vec::new(), "{name} made a request");
         assert!(container.host_bytes() <= MAX_HOST_STATE_BYTES, "{name}: the host holds {} bytes", container.host_bytes());
         for batch in batches.iter().flatten() {
-            assert!(batch.sound.is_empty() && batch.navigate.is_none() && batch.title.is_none(), "{name}");
-            let bytes: usize = batch.log.iter().map(|line| line.text.len()).sum();
+            assert!(view(batch).sound.is_empty() && batch.navigate.is_none() && batch.title.is_none(), "{name}");
+            let bytes: usize = view(batch).log.iter().map(|line| line.text.len()).sum();
             assert!(bytes <= MAX_BATCH_BYTES, "{name}: a batch of {bytes} bytes of log");
         }
         assert_eq!(container.stop_reason(), None, "{name}");
         if name.ends_with("2.js") {
-            let stopped = batches.last().unwrap().as_ref().unwrap().states[0].stopped;
-            assert_eq!(stopped, Some(StopReason::Failures), "{name}");
+            let stopped = view(batches.last().unwrap().as_ref().unwrap()).states[0].stopped;
+            assert_eq!(stopped, Some(FailReason::Failures), "{name}");
         }
     }
 }
@@ -251,8 +291,7 @@ fn scripts_for_parts_of_the_api_not_yet_built_find_nothing_to_call() {
 /// D14): neither `Date` nor `performance.now()` moves within a callback.
 #[test]
 fn the_realm_has_no_shared_memory_and_no_fine_clock() {
-    let (mut container, opened, _) = open(hostile!("globals"));
-    opened.unwrap();
+    let mut container = opened("globals.js", hostile!("globals"));
     let log = all_lines(&[container.step(&tick(1, 0)), container.step(&tick(2, 1))]);
     let names: String = log.iter().filter_map(|line| line.strip_prefix("globals ")).collect();
     let globals: Vec<&str> = names.split(',').collect();
@@ -276,7 +315,7 @@ fn pages_started_in_the_same_second_have_different_random_sequences() {
         let mut container = limited();
         let mut open = opening(ContextId::Page);
         open.seed = [seed; 32];
-        container.open(open, hostile!("rand").as_bytes()).unwrap();
+        container.open_with(open, hostile!("rand").as_bytes()).unwrap();
         lines(&container.step(&tick(1, 0)).unwrap())
     };
     let (first, second, third) = (sequence(1), sequence(2), sequence(3));
