@@ -407,7 +407,7 @@ impl Client {
             jar: [Vec::new(), Vec::new()],
             writing: [Vec::new(), Vec::new()],
         };
-        if Url::parse(channel).is_ok_and(|url| url.path().ends_with('/')) {
+        if channel == protocol::web::FILE_PAGE_IDENTITY || Url::parse(channel).is_ok_and(|url| url.path().ends_with('/')) {
             assert_eq!(client.next_event(), FromWebClient::Confined);
             assert_eq!(client.tab, PROCESS_TAB);
         }

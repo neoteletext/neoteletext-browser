@@ -6,11 +6,11 @@
 //! Built here: a script's claim of the network reaches the relay, which
 //! passes a script host's requests only then; a decoder that stopped its
 //! scripts has their script host ended; a script's log lines are the
-//! channel's. The key claims, the verdicts, navigation, titles and labels
-//! are kept or passed over for the trusted strip and the key routing,
-//! which are work package F5's (TODO-7294), and a script's bytes are
-//! given by [`Core::give_script`], which script loading calls (work
-//! package C2, TODO-7304).
+//! channel's. The key claims are kept, and the verdicts, navigation and
+//! titles given to the trusted core's gate (`script_gate.rs`, TODO-7294),
+//! which decides what the viewer's input, the tab and the page list do
+//! with them; a script's bytes are given by [`Core::give_script`], which
+//! script loading calls (work package C2, TODO-7304).
 
 use neoteletext_core::consts::MAX_SCRIPT_NAME;
 use protocol::clean;
@@ -25,6 +25,19 @@ use protocol::script::{ContextId, MAX_SCRIPT_BYTES, MAX_SOURCE_PIECE_BYTES};
 const SECONDS_PER_MINUTE: i32 = 60;
 
 use super::super::Core;
+
+/// The most page scripts kept for each channel in case its decoder is
+/// replaced: the pages a viewer has most lately opened. With the
+/// channel's own script, at a megabyte each at most, a channel's kept
+/// scripts are bounded.
+const MAX_PAGE_SCRIPTS_KEPT: usize = 8;
+
+/// A script kept as its decoder was given it.
+pub(super) struct Kept {
+    level: ContextId,
+    page: PageSub,
+    pieces: Vec<SourcePiece>,
+}
 
 /// The level of the developer log a script's line is shown at: the
 /// script library's 0 is an error and 1 a warning; everything quieter is
@@ -41,15 +54,22 @@ impl Core {
     /// What `channel`'s scripts last claimed, as its decoder read their
     /// manifests; none when no script of it runs.
     #[cfg_attr(
-        not(all(test, unix, feature = "interaction")),
-        expect(dead_code, reason = "read by the key routing and the trusted strip, which work package F5 builds (TODO-7294)")
+        not(feature = "interaction"),
+        expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
     )]
     pub(in super::super) fn script_claims(&self, channel: u32) -> Option<&ScriptClaims> {
         self.scripts.claims.get(&channel)
     }
 
     /// A decoder's report of its channel's scripts.
-    pub(in super::super) fn script_reported(&mut self, channel: u32, report: ScriptReport) {
+    ///
+    /// # Errors
+    /// When the interface cannot be written to.
+    #[cfg_attr(
+        not(feature = "interaction"),
+        expect(clippy::unnecessary_wraps, reason = "only the gate of a script's page writes to the interface, and a build without typing has none")
+    )]
+    pub(in super::super) fn script_reported(&mut self, channel: u32, report: ScriptReport) -> Result<(), String> {
         match report {
             ScriptReport::Claims(claims) => {
                 // Section 11.1: the network kinds are relayed only for a
@@ -72,14 +92,29 @@ impl Core {
                 let who = if context == ContextId::Channel { "channel script" } else { "page script" };
                 self.channel_log(channel, console_level(level), None, &format!("{who}: {text}"));
             }
-            // Each event's verdict, a script's navigation, a page's title
-            // and a thing's label: taken by the key routing, the
-            // navigation gate and the screen reader's tree, which work
-            // package F5 builds (TODO-7294). Until then every default
-            // stands, as with no script.
-            ScriptReport::Verdict { .. } | ScriptReport::Navigate { .. } | ScriptReport::Title { .. } | ScriptReport::Label { .. } => {}
+            // What became of an event the gate gave: its default is
+            // taken unless a script cancelled it (section 4.1).
+            #[cfg(feature = "interaction")]
+            ScriptReport::Verdict { sequence, cancelled, handled } => self.script_verdict(channel, sequence, cancelled, handled)?,
+            // A script's navigation, through the checks a link's goes
+            // through (section 3.3).
+            #[cfg(all(feature = "interaction", feature = "links"))]
+            ScriptReport::Navigate { page, target } => self.script_navigate(channel, page, &target)?,
+            // The page's title, where every page's title shows.
+            #[cfg(feature = "interaction")]
+            ScriptReport::Title { page, title } => self.script_titled(channel, page, &title)?,
+            // A thing's label is the screen reader's, and nothing reads
+            // one yet (section 18): it is bounded by its reader and kept
+            // nowhere. In a build without typing no script is given the
+            // viewer's input, and none of these has anything to act on.
+            ScriptReport::Label { .. } => {}
+            #[cfg(not(feature = "interaction"))]
+            ScriptReport::Verdict { .. } | ScriptReport::Title { .. } => {}
+            #[cfg(not(all(feature = "interaction", feature = "links")))]
+            ScriptReport::Navigate { .. } => {}
             ScriptReport::Wanted { page, name } => self.script_wanted(channel, page, &name),
         }
+        Ok(())
     }
 
     /// A page file of `channel` names a script its decoder does not hold
@@ -94,14 +129,23 @@ impl Core {
         };
         let Some(tab) = self.session.all_tabs().find(|tab| tab.channel.id == channel) else { return };
         let Some(web) = tab.channel.web.clone() else {
-            // A file opened from disk: its script is read from the file's
-            // own folder by the broker (section 12.7, DEC-7315), which is
-            // not built yet (TODO-7304 step 6).
-            return self.log(
-                Level::Warning,
-                Some(channel),
-                "a file opened from disk names a script; reading it from the file's folder is not built yet, so the page runs without it",
-            );
+            // A file opened from disk (section 12.7; DEC-7315 version 2):
+            // its script is read by the broker from the file's own folder
+            // and nowhere else, and runs at once. The script itself has no
+            // access to files.
+            let Some(file) = tab.address().and_then(|address| address.file.clone()) else { return };
+            return match self.broker().and_then(|broker| broker.read_script(&file, name)) {
+                Ok(bytes) => self.give_script(channel, ContextId::Page, page, name, &bytes),
+                Err(reason) => {
+                    let name = clean(name, MAX_SCRIPT_NAME);
+                    self.log(
+                        Level::Warning,
+                        Some(channel),
+                        &format!("the script {name} a file names could not be read from its folder ({reason}); the page runs without it"),
+                    );
+                    self.tell(channel, ToDecoder::Script(ScriptOrder::NoScript(page)));
+                }
+            };
         };
         let allowed = neoteletext_web::url::Url::parse(&web).is_ok_and(|folder| {
             neoteletext_web::scripts::script_url(&folder, script).is_ok_and(|address| neoteletext_web::scripts::may_load(&folder, script, &address))
@@ -121,9 +165,16 @@ impl Core {
         if self.scripts.told.get(&channel) == Some(&decoder) {
             return;
         }
-        let Some(tab) = self.session.all_tabs().find(|tab| tab.channel.id == channel) else { return };
+        let Some(facts) = self.script_facts(channel) else { return };
+        self.scripts.told.insert(channel, decoder);
+        self.give_script_facts(channel, facts);
+    }
+
+    /// What `channel`'s scripts' contexts are told.
+    fn script_facts(&self, channel: u32) -> Option<ChannelFacts> {
+        let tab = self.session.all_tabs().find(|tab| tab.channel.id == channel)?;
         let time = self.local_time();
-        let facts = ChannelFacts {
+        Some(ChannelFacts {
             // A file's own address is no folder a script's address is made
             // from: a file page's origin is `null` (DEC-7315 item 3).
             channel_url: tab.channel.web.clone().unwrap_or_default(),
@@ -131,9 +182,7 @@ impl Core {
             from_disk: tab.channel.web.is_none(),
             epoch_seconds: u64::try_from(time.utc).unwrap_or(0),
             zone_minutes: i16::try_from(time.offset.checked_div(SECONDS_PER_MINUTE).unwrap_or(0)).unwrap_or(0),
-        };
-        self.scripts.told.insert(channel, decoder);
-        self.give_script_facts(channel, facts);
+        })
     }
 
     /// What `channel`'s fetcher said of a script: a piece of one it
@@ -151,7 +200,44 @@ impl Core {
     /// contexts are told.
     fn script_fetched(&mut self, channel: u32, piece: SourcePiece) {
         self.script_facts_once(channel);
+        self.keep_script(channel, &piece);
         self.tell(channel, ToDecoder::Script(ScriptOrder::Source(piece)));
+    }
+
+    /// Keeps a piece of a script given to `channel`'s decoder, for a
+    /// decoder that replaces it: a first piece replaces the script kept
+    /// for the same level and page, and the page scripts kept are the
+    /// newest [`MAX_PAGE_SCRIPTS_KEPT`].
+    fn keep_script(&mut self, channel: u32, piece: &SourcePiece) {
+        let kept = self.scripts.kept.entry(channel).or_default();
+        if piece.offset == 0 {
+            // The channel's script is one, whatever page it came with.
+            kept.retain(|held| held.level != piece.level || (piece.level == ContextId::Page && held.page != piece.page));
+            while kept.iter().filter(|held| held.level == ContextId::Page).count() >= MAX_PAGE_SCRIPTS_KEPT {
+                let Some(oldest) = kept.iter().position(|held| held.level == ContextId::Page) else { break };
+                kept.remove(oldest);
+            }
+            kept.push(Kept { level: piece.level, page: piece.page, pieces: Vec::new() });
+        }
+        if let Some(held) = kept.iter_mut().rev().find(|held| held.level == piece.level && held.page == piece.page) {
+            held.pieces.push(piece.clone());
+        }
+    }
+
+    /// A decoder of generation `decoder` is being started for `channel`:
+    /// what it is told first when it replaces another (its store grew, or
+    /// the channel woke): what its scripts' contexts are told, and every
+    /// script kept for the channel, so that a page whose decoder was
+    /// restarted does not lose its script. A channel no tab holds is
+    /// forgotten.
+    pub(in super::super) fn scripts_for_new_decoder(&mut self, channel: u32, decoder: u64) -> Vec<ToDecoder> {
+        let open: Vec<u32> = self.session.all_tabs().map(|tab| tab.channel.id).collect();
+        self.scripts.kept.retain(|kept, _| open.contains(kept));
+        self.scripts.told.retain(|told, _| open.contains(told));
+        let pieces: Vec<SourcePiece> = self.scripts.kept.get(&channel).into_iter().flatten().flat_map(|held| held.pieces.iter().cloned()).collect();
+        let Some(facts) = self.script_facts(channel).filter(|_| !pieces.is_empty()) else { return Vec::new() };
+        self.scripts.told.insert(channel, decoder);
+        core::iter::once(ScriptOrder::Channel(facts)).chain(pieces.into_iter().map(ScriptOrder::Source)).map(ToDecoder::Script).collect()
     }
 
     /// A script of `channel` could not be fetched: its page runs without
@@ -163,6 +249,9 @@ impl Core {
             &format!("the script {} of page {:03X} could not be loaded; the page runs without it", clean(name, MAX_SCRIPT_NAME), page.page),
         );
         if level == ContextId::Page {
+            if let Some(kept) = self.scripts.kept.get_mut(&channel) {
+                kept.retain(|held| held.level != ContextId::Page || held.page != page);
+            }
             self.tell(channel, ToDecoder::Script(ScriptOrder::NoScript(page)));
         }
     }
@@ -176,7 +265,6 @@ impl Core {
     /// Gives `channel`'s decoder a script as it was fetched or read,
     /// unread, in pieces: the channel's, or the one of `page`. One longer
     /// than a script may be is not given.
-    #[expect(dead_code, reason = "called by script loading, which work package C2 builds (TODO-7304)")]
     pub(in super::super) fn give_script(&mut self, channel: u32, level: ContextId, page: PageSub, name: &str, bytes: &[u8]) {
         let Ok(total) = u32::try_from(bytes.len()) else { return };
         if bytes.is_empty() || bytes.len() > MAX_SCRIPT_BYTES {
@@ -184,8 +272,7 @@ impl Core {
         }
         let mut offset = 0_u32;
         for piece in bytes.chunks(MAX_SOURCE_PIECE_BYTES) {
-            let source = SourcePiece { level, page, name: name.to_owned(), total, offset, bytes: piece.to_vec() };
-            self.tell(channel, ToDecoder::Script(ScriptOrder::Source(source)));
+            self.script_fetched(channel, SourcePiece { level, page, name: name.to_owned(), total, offset, bytes: piece.to_vec() });
             offset = offset.saturating_add(u32::try_from(piece.len()).unwrap_or(u32::MAX));
         }
     }

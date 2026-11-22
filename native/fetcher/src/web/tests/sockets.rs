@@ -274,6 +274,24 @@ fn a_socket_opens_and_carries_messages_each_way() {
     client.finish().unwrap();
 }
 
+/// DEC-7315 version 2 (TODO-7395 step 1): a page opened from disk opens
+/// a socket as the origin `null`, plain or not, with no cookie.
+#[test]
+fn a_file_pages_socket_says_the_origin_null() {
+    let (port, seen) = socket_server(Answering::Accepts, false);
+    let mut page = Client::with(protocol::web::FILE_PAGE_IDENTITY, |setup| setup.space = protocol::web::FILE_PAGE_SPACE);
+    let id = page.start(&format!("ws://localhost:{port}/live"), as_socket(&[]));
+    assert_eq!(page.next_event(), FromWebClient::Opened { id, protocol: String::new(), url: String::new() });
+    let head = seen.lock().unwrap()[0].clone();
+    assert!(head.contains("\r\nOrigin: null\r\n") && !head.contains("Cookie:"), "{head}");
+    assert!(page.jar.iter().all(Vec::is_empty), "the handshake's Set-Cookie is not kept");
+    text(&mut page, id, "hello");
+    assert_eq!(next(&mut page), message(id, false, b"hello"));
+    page.send(&ToWebClient::SocketClose { id, code: 1000, reason: String::new() });
+    assert_eq!(next(&mut page), closed(id, 1000, "", true));
+    page.finish().unwrap();
+}
+
 /// RFC 6455 sections 5.5.1 and 7, with TODO-7371 step 3: a script's close
 /// with no code is a close frame with no body; the script host's 1009 is
 /// sent as it is; a code that is no script's goes as none; the server's

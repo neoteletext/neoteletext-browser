@@ -42,7 +42,7 @@ const LIMIT: Duration = Duration::from_secs(60);
 /// media type each is served with. The channel file names a script for
 /// the channel, one for page 100 and one for page 101; page 101's own
 /// file names another, which wins (section 12.6).
-const FILES: [(&str, &str, &str); 7] = [
+const FILES: [(&str, &str, &str); 8] = [
     (
         "channel.ttx",
         "application/vnd.neoteletext+json",
@@ -54,7 +54,27 @@ const FILES: [(&str, &str, &str); 7] = [
     ("p100.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"1\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY P100');"),
     ("other.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"x\"]} */ nt.teletext.page.put(5, 0, 'OTHER');"),
     ("own.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"o\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY OWN');"),
+    ("record.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"t\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY RECORD');"),
 ];
+
+/// Page 102 as a file of packets, `102.t42`: its header, a row, and a
+/// `SCRIPT_REF` record that names its script (section 12.4).
+fn packet_page() -> Vec<u8> {
+    use neoteletext_core::ecc::with_odd_parity;
+    use neoteletext_core::packet::encode;
+    use neoteletext_core::types::{ControlBits, PageAddress, ScriptName, SubCode};
+    let address = PageAddress::from_mpp(0x102).unwrap();
+    let mut row = [with_odd_parity(b' '); neoteletext_core::consts::DATA_BYTES];
+    for (slot, code) in row.iter_mut().zip(b"PAGE ONE OH TWO") {
+        *slot = with_odd_parity(*code);
+    }
+    let header = encode::header(address.magazine, address.page, SubCode::new(0), ControlBits(0), &[with_odd_parity(b' '); 32]).unwrap();
+    let mut bytes: Vec<u8> = [header, encode::row(address.magazine, 1, &row)].iter().flat_map(|packet| packet.bytes).collect();
+    let record =
+        neoteletext_web::records::script_ref::ScriptRefRecord { page: address, subcode: SubCode::new(0), name: ScriptName::parse(b"record.js").unwrap() };
+    neoteletext_web::records::script_ref::encode(record, 0, 0, &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
+    bytes
+}
 
 /// Answers one connection's requests for the channel's files until it
 /// closes, noting each path asked for.
@@ -73,12 +93,17 @@ fn serve(stream: TcpStream, asked: &Mutex<Vec<String>>) {
         }
         let path = request.split(' ').nth(1).unwrap_or_default().to_owned();
         asked.lock().unwrap().push(path.clone());
-        let file = FILES.iter().find(|(name, _, _)| path == format!("/chan/{name}"));
+        let file = FILES.iter().find(|(name, _, _)| path == format!("/chan/{name}")).map(|(_, media, body)| (*media, body.as_bytes().to_vec()));
+        let file = file.or_else(|| (path == "/chan/102.t42").then(|| ("application/x-teletext-t42", packet_page())));
         let answer = match file {
-            Some((_, media, body)) => format!("HTTP/1.1 200 OK\r\nContent-Type: {media}\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
-            None => String::from("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n"),
+            Some((media, body)) => {
+                let mut answer = format!("HTTP/1.1 200 OK\r\nContent-Type: {media}\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+                answer.extend(body);
+                answer
+            }
+            None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_vec(),
         };
-        if stream.write_all(answer.as_bytes()).is_err() {
+        if stream.write_all(&answer).is_err() {
             return;
         }
     }
@@ -111,7 +136,7 @@ fn programs() -> std::path::PathBuf {
 struct Browser {
     core: Core,
     incoming: mpsc::Receiver<Event>,
-    _stand_in: StandIn,
+    stand_in: StandIn,
     channel: u32,
     asked: Arc<Mutex<Vec<String>>>,
 }
@@ -149,7 +174,7 @@ impl Browser {
         core.send_window_whole().unwrap();
         core.flush().unwrap();
         let channel = core.session.tabs[0].channel.id;
-        Self { core, incoming, _stand_in: stand_in, channel, asked }
+        Self { core, incoming, stand_in, channel, asked }
     }
 
     /// The interface says the viewer opened `page` and that it is on
@@ -221,5 +246,77 @@ fn a_static_channels_scripts_run_by_the_channel_file_and_by_a_page_files_own_lin
     for (channel, decoder) in &browser.core.decoders {
         assert!(decoder.heard(), "the decoder of channel {channel} never said it was confined");
     }
+
+    // A decoder that replaces another is given the scripts its predecessor
+    // held (TODO-7391 step 4): the decoder is ended, the core starts
+    // another for the channel, and the page's own script runs again,
+    // with nothing fetched for it.
+    let before = browser.asked().len();
+    let old = browser.core.decoders.remove(&browser.channel).unwrap();
+    let old_generation = old.generation();
+    super::super::processes::stop_decoder(old);
+    browser.core.scripts.claims.clear();
+    let ran = browser.until_claimed(&["c", "o"]);
+    assert!(
+        ran,
+        "the new decoder's scripts never ran: claims {:?}, state {:?}",
+        browser.core.script_claims(browser.channel),
+        browser.core.script_state(browser.channel)
+    );
+    assert_ne!(browser.core.decoders.get(&browser.channel).map(Decoder::generation), Some(old_generation), "another decoder");
+    assert!(
+        !browser.asked().iter().skip(before).any(|path| std::path::Path::new(path).extension().is_some_and(|extension| extension == "js")),
+        "no script was fetched again: {:?}",
+        browser.asked()
+    );
+
+    // The T42 route (section 12.4): a file of packets names its script by
+    // a SCRIPT_REF record, which is asked for by name and runs.
+    browser.open(0x102);
+    let ran = browser.until_claimed(&["c", "t"]);
+    assert!(ran, "page 102's script, named by its record, never ran: claims {:?}, asked {:?}", browser.core.script_claims(browser.channel), browser.asked());
+    assert_eq!(browser.asked().iter().filter(|path| *path == "/chan/record.js").count(), 1);
     shut_down(browser.core);
+}
+
+/// Section 12.7 and DEC-7315 version 2 (TODO-7304 step 6): a page file
+/// opened from disk that names a script by a `JS` line has that script
+/// read by the broker, by its name, from the file's folder, and it runs
+/// at once, with no prompt, in the confined script host; the core asks
+/// the broker for nothing else of the folder.
+#[test]
+fn a_file_opened_from_disk_runs_the_script_its_page_names() {
+    confine::raise_descriptor_limit().unwrap();
+    let folder = std::env::temp_dir().join(format!("neoteletext-file-script-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    std::fs::create_dir_all(&folder).unwrap();
+    let page = folder.join("101.tti");
+    std::fs::write(&page, "PN,10100\nSC,0000\nPS,8000\nJS,own.js\nOL,1,A PAGE FROM DISK\n").unwrap();
+    std::fs::write(folder.join("own.js"), "/*! nt {\"api\":1,\"keys\":[\"o\"]} */ nt.teletext.page.put(5, 0, 'DRAWN FROM DISK');").unwrap();
+    let (events, incoming) = mpsc::channel();
+    let (broker, stand_in) =
+        StandIn::start_real(Box::new(|path| std::fs::read(path).map_err(|error| error.to_string())), Box::new(|_: &Started| Some(Vec::new())), programs())
+            .unwrap();
+    let reader = Arc::clone(&broker);
+    let session =
+        Session::with_reader(Bookmarks::default(), Box::new(move |path: &std::path::Path| reader.read_source(path).map(crate::source::Source::from_bytes)));
+    let settings = Settings { tab_pictures: false, ..Settings::default() };
+    let mut core = Core::new(session, Vec::new(), (settings, None), events, Outbox::new(Sink(mpsc::channel().0)), Some(broker));
+    core.session.open(page.to_str().unwrap()).unwrap();
+    core.session.active = 0;
+    core.send_window_whole().unwrap();
+    core.flush().unwrap();
+    let channel = core.session.tabs[0].channel.id;
+    let mut browser = Browser { core, incoming, stand_in, channel, asked: Arc::new(Mutex::new(Vec::new())) };
+    browser.open(0x101);
+    let ran = browser.until_claimed(&["o"]);
+    assert!(ran, "the file's script never ran: claims {:?}, state {:?}", browser.core.script_claims(channel), browser.core.script_state(channel));
+    let requests = browser.stand_in.take_requests();
+    let scripts: Vec<&confine::broker::Request> = requests.iter().filter(|request| matches!(request, confine::broker::Request::ReadScript { .. })).collect();
+    assert!(
+        matches!(scripts.as_slice(), [confine::broker::Request::ReadScript { file, name }] if *file == page.to_string_lossy() && name == "own.js"),
+        "the script was asked of the broker once, by its name: {scripts:?}"
+    );
+    shut_down(browser.core);
+    let _ = std::fs::remove_dir_all(&folder);
 }

@@ -44,6 +44,7 @@ pub mod probe;
 pub mod process;
 pub mod random;
 pub mod teletext;
+pub mod ui;
 pub mod watchdog;
 pub mod web;
 

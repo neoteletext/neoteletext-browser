@@ -118,6 +118,22 @@ numbered! {
     URL_SET = 48,
     /// Decodes bytes in an encoding of the Encoding standard, names a label's encoding, or encodes a string as UTF-8.
     DECODE = 49,
+    /// Components: makes one of a kind at an area, with its options as JSON; gives its handle.
+    UI_CREATE = 60,
+    /// Components: changes a component's options.
+    UI_SET = 61,
+    /// Components: removes a component.
+    UI_REMOVE = 62,
+    /// Components: gives a component the focus.
+    UI_FOCUS = 63,
+    /// Components: the names of the keys a kind uses, as JSON text.
+    UI_KEYS = 64,
+    /// Components: a component's value, as JSON text.
+    UI_VALUE = 65,
+    /// Components: offers a key, typed text or the pointer to a component; gives what it would do, as JSON text.
+    UI_OFFER = 66,
+    /// Components: carries out, or drops, what a component would do.
+    UI_SETTLE = 67,
     /// Teletext: text on the page plane, its style's spacing attributes before it.
     TT_PUT = 100,
     /// Teletext: raw seven-bit codes on a row.
@@ -654,6 +670,7 @@ pub fn prelude() -> String {
     table("NP", &mut crate::host::naplps::program::table());
     table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
     table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
+    table("UI", &mut crate::host::ui_prelude_numbers().into_iter());
     table("TTB", &mut crate::teletext::bitmap::prelude_numbers().iter().copied());
     table("RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
     table("RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
@@ -663,6 +680,7 @@ pub fn prelude() -> String {
     out.push_str(crate::teletext::bitmap::PRELUDE);
     out.push_str(crate::teletext::PRELUDE);
     out.push_str(include_str!("regis.js"));
+    out.push_str(include_str!("ui.js"));
     // The web APIs (work package W2), inside the same function.
     crate::web::write_prelude(&mut out);
     out.push_str("\n})();\n");

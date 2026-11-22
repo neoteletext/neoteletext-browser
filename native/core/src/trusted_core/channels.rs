@@ -98,6 +98,13 @@ impl Core {
                 if !self.sound_heard(*id) {
                     let _ = decoder.tell(&ToDecoder::SoundHeard(false));
                 }
+                // The scripts its predecessor was given (script-api.md
+                // section 12.5), before the pages that name them: a
+                // restarted decoder keeps its pages' scripts, and asks for
+                // none it was given.
+                for message in self.scripts_for_new_decoder(*id, self.generation) {
+                    let _ = decoder.tell(&message);
+                }
                 for message in self.sleep.kept(*id) {
                     let _ = decoder.tell(message);
                 }
@@ -206,6 +213,11 @@ impl Core {
         }
         self.generation = self.generation.wrapping_add(1);
         let mut decoder = start_decoder(self.broker()?, id, self.generation, pages, self.events.clone())?;
+        // The larger decoder is given the scripts the smaller one held,
+        // before the pages that name them.
+        for message in self.scripts_for_new_decoder(id, self.generation) {
+            let _ = decoder.tell(&message);
+        }
         for message in self.sleep.kept(id) {
             let _ = decoder.tell(message);
         }

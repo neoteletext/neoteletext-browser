@@ -109,7 +109,10 @@ impl ScriptHost {
 /// What the trusted strip may say of a channel's scripts (section 3.1;
 /// the indication itself is work package F5's).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "read by the trusted strip's indication, which work package F5 builds (TODO-7294)"))]
+#[cfg_attr(
+    not(any(all(test, unix), feature = "interaction")),
+    expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
+)]
 pub(super) enum ScriptState {
     /// The channel has no script host.
     None,
@@ -132,6 +135,9 @@ pub(super) struct Scripts {
     /// contexts are told, by its generation: a decoder that replaces it
     /// is told again before its first script.
     told: BTreeMap<u32, u64>,
+    /// The scripts each channel's decoder was given, whole, for a decoder
+    /// that replaces it: the channel's own and its newest pages'.
+    kept: BTreeMap<u32, Vec<reports::Kept>>,
     web: web::WebClients,
 }
 
@@ -175,7 +181,10 @@ fn start_host(broker: &Arc<Broker>, channel: u32, generation: u64, decoder: u64,
 
 impl Core {
     /// What the strip may say of `channel`'s scripts.
-    #[cfg_attr(not(test), expect(dead_code, reason = "read by the trusted strip's indication, which work package F5 builds (TODO-7294)"))]
+    #[cfg_attr(
+        not(any(all(test, unix), feature = "interaction")),
+        expect(dead_code, reason = "read by the gate of a script's page (`script_gate.rs`), which a build without typing has none of")
+    )]
     pub(super) fn script_state(&self, channel: u32) -> ScriptState {
         match (self.scripts.stopped.get(&channel), self.scripts.hosts.contains_key(&channel)) {
             (Some(reason), _) => ScriptState::Stopped(*reason),
@@ -187,13 +196,14 @@ impl Core {
     /// The decoder of `channel` reported whether a context of its scripts
     /// has the network (section 11.1: "it relays the network kinds only
     /// for a context the decoder reported with `network: true` and only
-    /// while `ChannelPolicy::network_allowed()` holds"). A channel that is
-    /// not a web channel, a file opened from disk, has none whatever its
-    /// decoder says (section 2, rule P6).
+    /// while `ChannelPolicy::network_allowed()` holds"). A web channel
+    /// and a page opened from disk each have a partition to ask through
+    /// (DEC-7315 version 2); a channel with none has no network whatever
+    /// its decoder says.
     pub(super) fn script_network(&mut self, channel: u32, reported: bool) {
-        let web = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.web.is_some());
+        let served = self.partition_of(channel).is_some();
         if let Some(host) = self.scripts.hosts.get_mut(&channel) {
-            host.network = reported && web;
+            host.network = reported && served;
         }
     }
 
@@ -323,7 +333,7 @@ impl Core {
 
     /// Kills `channel`'s script host and stops its scripts until the
     /// channel is reloaded.
-    fn stop_scripts(&mut self, channel: u32, reason: FailReason, text: &str) {
+    pub(super) fn stop_scripts(&mut self, channel: u32, reason: FailReason, text: &str) {
         self.scripts_stopped(channel, reason, text, true);
     }
 

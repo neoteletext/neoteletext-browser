@@ -66,6 +66,8 @@ mod regions;
 mod regis_pointer;
 mod regis_status;
 mod remote;
+#[cfg(feature = "interaction")]
+pub mod scripts;
 mod settings_panel;
 mod shown;
 mod star;
@@ -256,6 +258,9 @@ pub struct Browser {
     /// Typing into a page (`interaction.md`).
     #[cfg(feature = "interaction")]
     typing: typing::TerminalUi,
+    /// The open page's program (`scripts.rs`).
+    #[cfg(feature = "interaction")]
+    scripts: scripts::ScriptUi,
     /// The last input event sent, with `--input-trace` (`input_trace.rs`).
     #[cfg(feature = "interaction")]
     input_trace: Option<crate::trace::TraceLine>,
@@ -347,6 +352,8 @@ impl Browser {
             links: hyperlinks::LinkUi::default(),
             #[cfg(feature = "interaction")]
             typing: typing::TerminalUi::default(),
+            #[cfg(feature = "interaction")]
+            scripts: scripts::ScriptUi::default(),
             #[cfg(feature = "interaction")]
             input_trace: None,
             regis: BTreeMap::new(),

@@ -435,6 +435,112 @@ fn leaving_the_channel_closes_each_context_and_ends_the_script_host() {
     );
 }
 
+/// Sections 4.2 and 4.4 (TODO-7294): a pointer the trusted core tells
+/// with its number and kind reaches the script as that pointer, a
+/// contact of a touch screen beside the mouse; its press is answered
+/// with the batch's verdict; and one no manifest claims is answered at
+/// once and never reaches the script host.
+#[test]
+fn a_pointer_is_told_with_its_number_and_kind() {
+    use protocol::decoder::script::{PointerKind, ScriptPointer};
+    let pointer = |sequence: u32, action: PointerAction, number: u8, kind: PointerKind, primary: bool| {
+        ScriptOrder::Pointer(ScriptPointer { sequence, action, button: 0, x: 24, y: 40, pointer: number, kind, primary })
+    };
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    fixture.order(pointer(21, PointerAction::Press, 3, PointerKind::Touch, false));
+    let (reports, link) = written(&mut fixture.out);
+    assert!(reports.is_empty(), "the verdict waits for the script");
+    let [ToScriptHost::Step(step)] = link.as_slice() else { panic!("one step: {link:?}") };
+    let event = &step.events[0];
+    let touch = i32::from(PointerKind::Touch.code()) << events::POINTER_KIND_SHIFT;
+    assert_eq!((event.kind, event.numbers[0]), (EventKind::Pointer, events::POINTER_DOWN | touch), "a touch, not the primary one");
+    // The cell of the dot, on a teletext page: column 2, row 2.
+    assert_eq!((event.numbers[1], event.numbers[2]), (2, 2));
+    assert_eq!(event.payload[..4], 3_i32.to_be_bytes(), "its own number");
+    fixture.answer(Batch { verdicts: Some(vec![Verdict { cancelled: false, handled: true }]), ..Batch::new(1) });
+    assert_eq!(written(&mut fixture.out).0, vec![ScriptReport::Verdict { sequence: 21, cancelled: false, handled: true }]);
+    // The mouse is pointer 1 and primary; a pen is told as a pen.
+    fixture.order(pointer(22, PointerAction::Release, 1, PointerKind::Mouse, true));
+    fixture.order(pointer(23, PointerAction::Press, 2, PointerKind::Pen, true));
+    let steps = fixture.steps();
+    let packed: Vec<i32> = steps.iter().flat_map(|step| step.events.iter().map(|event| event.numbers[0])).collect();
+    let pen = i32::from(PointerKind::Pen.code()) << events::POINTER_KIND_SHIFT;
+    assert_eq!(packed, [events::POINTER_UP | events::POINTER_PRIMARY, events::POINTER_DOWN | pen | events::POINTER_PRIMARY]);
+    // The page's manifest claims presses and not moves: a move is not
+    // sent, and has no verdict to wait for.
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    fixture.order(pointer(24, PointerAction::Move, 1, PointerKind::Mouse, true));
+    let (reports, link) = written(&mut fixture.out);
+    assert!(reports.is_empty() && link.is_empty(), "{reports:?} {link:?}");
+    // With only the channel's script, which claims no pointer, a press is
+    // answered at once as not cancelled.
+    let mut fixture = Fixture::new();
+    fixture.order(source(ContextId::Channel, 0x100, "channel.js", CHANNEL));
+    fixture.show(Some(0x100));
+    fixture.host(FromScriptHost::Ready { link_version: LINK_VERSION, api_max: 1 });
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    fixture.order(pointer(25, PointerAction::Press, 1, PointerKind::Mouse, true));
+    let (reports, link) = written(&mut fixture.out);
+    assert_eq!((reports, link.len()), (vec![ScriptReport::Verdict { sequence: 25, cancelled: false, handled: false }], 0));
+}
+
+/// Section 4.2 (TODO-7294; TODO-7338 item 9): when the trusted core says
+/// the tab is about to go somewhere, the contexts are given `navigate`
+/// with its cause and where, at once and not at a tick; nothing is
+/// reported for it, since a navigation of the browser's own cannot be
+/// cancelled.
+#[test]
+fn the_scripts_hear_navigate_before_the_tab_goes() {
+    use protocol::decoder::script::NavigationCause;
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    fixture.order(ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "101/0002".into() });
+    let (reports, link) = written(&mut fixture.out);
+    assert_eq!(reports, vec![], "nothing is reported for it");
+    let [ToScriptHost::Step(step)] = link.as_slice() else { panic!("one step: {link:?}") };
+    let event = &step.events[0];
+    assert_eq!((event.kind, event.numbers[0], event.payload.as_slice()), (EventKind::Navigate, i32::from(NavigationCause::Browser.code()), &b"101/0002"[..]));
+    assert!(!step.flags.tick);
+    // Whatever the script host answers, no verdict is told for it.
+    fixture.answer(Batch { verdicts: Some(vec![Verdict { cancelled: true, handled: true }]), ..Batch::new(1) });
+    assert_eq!(written(&mut fixture.out).0, vec![]);
+    // With no script running there is nobody to tell.
+    let mut fixture = Fixture::new();
+    fixture.show(Some(0x100));
+    fixture.order(ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "101".into() });
+    let (reports, link) = written(&mut fixture.out);
+    assert!(reports.is_empty() && link.is_empty());
+}
+
+/// Section 4.1 and principle 5 (TODO-7294), the decoder's half of "a
+/// script that does not answer never holds a key": a claimed key whose
+/// step is never answered is reported as not cancelled when the script
+/// host passes its deadline, [`STEP_DEADLINE`] after the step was asked.
+#[test]
+fn a_key_whose_step_is_never_answered_is_reported_as_not_cancelled_at_the_deadline() {
+    let (mut fixture, _, _) = Fixture::started();
+    fixture.answer(Batch::new(0));
+    written(&mut fixture.out);
+    let pressed = Instant::now();
+    fixture.scripts.input(at(0x100), 31, &key('1', KeyAction::Press), &mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(written(&mut fixture.out).0.is_empty(), "the verdict waits");
+    // The loop wakes by itself at the deadline, on the engine's clock.
+    assert!(fixture.scripts.due_us(&fixture.engine).is_some());
+    fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
+    assert!(written(&mut fixture.out).0.is_empty(), "the script host still has time");
+    std::thread::sleep((pressed + STEP_DEADLINE).saturating_duration_since(Instant::now()));
+    fixture.scripts.wake(&mut fixture.engine, &mut fixture.out).unwrap();
+    let reports = written(&mut fixture.out).0;
+    assert_eq!(reports.first(), Some(&ScriptReport::Verdict { sequence: 31, cancelled: false, handled: false }), "{reports:?}");
+    assert!(reports.iter().any(|report| matches!(report, ScriptReport::Stopped { reason: FailReason::Time, .. })), "{reports:?}");
+}
+
 /// DEC-7315 version 2, the owner's ruling on local files and the network: a
 /// page file opened from disk runs its script at once, and its script has
 /// the network when its manifest asks for it; the context is told the
