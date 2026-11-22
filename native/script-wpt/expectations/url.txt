@@ -1,6 +1,6 @@
 # The web-platform-tests' url suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
 # Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
-# 29 files run, 12 not run here; cases: 2090 pass, 0 fail as a listed departure, 92 fail as a fault with its to-do (0 of them unlisted)
+# 29 files run, 12 not run here; cases: 2093 pass, 0 fail as a listed departure, 89 fail as a fault with its to-do (0 of them unlisted)
 # FILE <file> <harness status> <cases passed> <cases not passed>
 # <status> <reason> <file> <case>     for each case that does not pass
 # HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
@@ -18,7 +18,7 @@ FILE	url/url-setters-stripping.any.js	OK	320	0
 FILE	url/url-setters.any.js?include=file	OK	21	3
 FILE	url/url-setters.any.js?include=javascript	OK	7	0
 FILE	url/url-setters.any.js?include=mailto	OK	7	0
-FILE	url/url-setters.any.js?exclude=(file|javascript|mailto)	OK	232	18
+FILE	url/url-setters.any.js?exclude=(file|javascript|mailto)	OK	235	15
 FILE	url/url-statics-canparse.any.js	OK	8	0
 FILE	url/url-statics-parse.any.js	OK	8	0
 FILE	url/url-tojson.any.js	OK	1	0
@@ -107,15 +107,12 @@ FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file://monkey
 FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file:///unicorn>.pathname = '//\u{5c}/' File URLs and (back)slashes
 FAIL	TODO-7388/1	url/url-setters.any.js?include=file	URL: Setting <file:///unicorn>.pathname = '//monkey/..//' File URLs and (back)slashes
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://example.com/>.host = 'xn--'
-FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//p>.hostname = 'h' Drop /. from path
-FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//p>.hostname = ''
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://example.com/>.hostname = 'xn--'
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <https://domain.com:3000>.port = '\u{a}\u{a}\u{9}\u{9}'
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <foo:///some/path>.pathname = '' Non-special URLs with an empty host can have their paths erased
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '/.//p' Serialize /. in path
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '/..//p'
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/>.pathname = '//p'
-FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <non-spec:/.//>.pathname = 'p' Drop /. from path
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space ?query>.search = '' Trailing spaces and opaque paths
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <sc:space ?query>.search = ''
 FAIL	TODO-7388/1	url/url-setters.any.js?exclude=(file|javascript|mailto)	URL: Setting <data:space  ?query#fragment>.search = '' Trailing spaces and opaque paths
