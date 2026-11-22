@@ -1,0 +1,21 @@
+What ponyfill.js is, and under what licence
+
+ponyfill.js is the file dist/ponyfill.js of the npm package
+web-streams-polyfill, version 4.5.1, unchanged: the WHATWG Streams
+standard's ReadableStream, WritableStream, TransformStream and their
+queuing strategies, in JavaScript. The script library writes it into the
+prelude each context runs first (../../web.rs), so that a script has the
+standard's streams (script-api.md section 9.1).
+
+https://github.com/MattiasBuelens/web-streams-polyfill
+https://registry.npmjs.org/web-streams-polyfill/-/web-streams-polyfill-4.5.1.tgz
+MIT licence: LICENSE, beside this file, as the package carries it.
+
+The owner approved the library by name (neoteletext-common's DEC-7261).
+No other JavaScript library is bundled.
+
+fetch.py downloads the package at the address above with Python's
+standard library, refuses a package whose SHA-256 is not the one it
+records, and writes or checks (--check) the two files against
+SHA256SUMS. The crate's own test holds the bytes compiled in to the same
+SHA256SUMS, so a changed file fails `cargo test` as well.

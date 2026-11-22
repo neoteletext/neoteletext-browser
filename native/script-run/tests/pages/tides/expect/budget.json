@@ -1,0 +1,15 @@
+{
+  "page": {
+    "scriptBytes": {"used": 1173, "limit": 1048576, "most": 1173},
+    "timers": {"used": 0, "limit": 32, "most": 0},
+    "listeners": {"used": 1, "limit": 256, "most": 1},
+    "requests": {"used": 0, "limit": 40, "most": 2},
+    "sockets": {"used": 0, "limit": 8, "most": 1},
+    "soundOperations": {"used": 0, "limit": 256, "most": 0},
+    "batchBytes": {"used": 0, "limit": 262144, "most": 0},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "triplets": {"used": 0, "limit": 208, "most": 0},
+    "colours": {"used": 0, "limit": 16, "most": 0},
+    "controls": {"used": 0, "limit": 32, "most": 0}
+  }
+}

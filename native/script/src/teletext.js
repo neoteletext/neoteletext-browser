@@ -224,6 +224,7 @@ let teletextSprites;
     page, overlay, colours, control,
     block(columns, rows) { return teletextSprites.block(columns, rows); },
     sprite(options) { return teletextSprites.sprite(options); },
+    bitmap: teletextBitmap,
     get level() { return host(OP.TT_LEVEL); },
     measure(text, options) { return host(OP.TT_MEASURE, languageOf(optionsOf(options).language), textOf(text)); },
     languages() { return languageTags().map((language) => ({ tag: language.tag, name: language.name, direction: language.direction })); },

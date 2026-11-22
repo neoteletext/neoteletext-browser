@@ -103,7 +103,12 @@ impl Receiver {
 
     /// The page as a Level 2.5 receiver resolves it.
     pub fn grid(&self) -> Box<Grid> {
-        let config = Config { level: PresentationLevel::Level25, ..Config::default() };
+        self.grid_at(PresentationLevel::Level25)
+    }
+
+    /// The page as a receiver of `level` resolves it.
+    pub fn grid_at(&self, level: PresentationLevel) -> Box<Grid> {
+        let config = Config { level, ..Config::default() };
         let mut pages = vec![StoredPage::EMPTY; 16];
         let mut sub_pages = vec![EnhancementSubPage::EMPTY; 16];
         let mut held = vec![EnhancementPacket::EMPTY; 64];
