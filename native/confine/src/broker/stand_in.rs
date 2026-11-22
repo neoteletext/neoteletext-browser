@@ -155,7 +155,9 @@ impl StandIn {
         std::mem::take(&mut self.lock().requests)
     }
 
-    /// Every helper started so far.
+    /// Every helper started so far. A helper the core asked for on its own
+    /// thread is here once that call has returned, since the stand-in
+    /// records it before it answers (TODO-7437).
     #[must_use]
     pub fn started(&self) -> Vec<Started> {
         self.lock().started.clone()
@@ -316,15 +318,24 @@ impl Server {
         let (mut from_core, core_writes) = io::pipe()?;
         let (core_reads, mut to_core) = io::pipe()?;
         let reply = encode_reply(&Reply::Spawned { id: helper.id, report: String::from(REPORT) })?;
-        send(&self.stream, &reply, &[core_writes.as_raw_fd(), core_reads.as_raw_fd()])?;
-        // The core holds its own ends now.
-        drop((core_writes, core_reads));
-        self.next = self.next.wrapping_add(1).max(1);
+        // Recorded before it is answered: the core's call returns as soon
+        // as it reads the answer, and a test may read `started` at once
+        // (TODO-7437).
         {
             let mut record = self.lock();
             record.started.push(helper.clone());
             record.piped = record.piped.saturating_add(1);
         }
+        if let Err(error) = send(&self.stream, &reply, &[core_writes.as_raw_fd(), core_reads.as_raw_fd()]) {
+            // Never answered, so never started.
+            let mut record = self.lock();
+            record.started.pop();
+            record.piped = record.piped.saturating_sub(1);
+            return Err(error);
+        }
+        // The core holds its own ends now.
+        drop((core_writes, core_reads));
+        self.next = self.next.wrapping_add(1).max(1);
         if let Some(words) = (self.first_words)(&helper) {
             // A helper's first words fit in its pipe; a test's helper that
             // says more holds its output open, unread, as a slow one would.
@@ -366,16 +377,57 @@ impl Server {
         };
         helper.report = process.report.to_string();
         let reply = encode_reply(&Reply::Spawned { id: helper.id, report: helper.report.clone() })?;
-        send(&self.stream, &reply, &[stdin.as_raw_fd(), stdout.as_raw_fd()])?;
+        // Kept and recorded before it is answered, as in `start`
+        // (TODO-7437): the core may ask about it, or a test read
+        // `started`, as soon as the answer is read.
+        let id = helper.id;
+        self.alive.insert(id, process);
+        self.lock().started.push(helper);
+        if let Err(error) = send(&self.stream, &reply, &[stdin.as_raw_fd(), stdout.as_raw_fd()]) {
+            // Never answered, so never started: it is ended.
+            self.lock().started.pop();
+            if let Some(mut process) = self.alive.remove(&id) {
+                let _ = process.kill();
+                let _ = process.wait();
+            }
+            return Err(error);
+        }
         // Our copies close here; the core holds its own.
         drop((stdin, stdout));
-        self.alive.insert(helper.id, process);
         self.next = self.next.wrapping_add(1).max(1);
-        self.lock().started.push(helper);
         Ok(())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Record> {
         self.record.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing, reason = "a test")]
+    use super::*;
+
+    /// The spawns the test makes: on the code that answered before it
+    /// recorded, a count this size lost the race at least once in every
+    /// run made of it (TODO-7437).
+    const SPAWNS: usize = 2_000;
+
+    /// TODO-7437: a helper is in `started()` as soon as the core's call
+    /// that asked for it has returned, as a request is in
+    /// `take_requests()`. Before, the stand-in sent its answer and only
+    /// then recorded the helper, so a test that read `started()` straight
+    /// after a spawn raced the serving thread and at times found the
+    /// helper missing.
+    #[test]
+    fn a_helper_is_recorded_as_started_before_its_spawn_is_answered() {
+        let (broker, stand_in) = StandIn::start(Box::new(|_| Err(String::from("no file"))), Box::new(|_| None)).unwrap();
+        for spawned in 1..=SPAWNS {
+            let helper = broker.spawn(Program::Decoder, &[], false).unwrap();
+            let started = stand_in.started().len();
+            assert_eq!(started, spawned, "the spawn was answered before its helper was recorded");
+            assert_eq!(stand_in.take_requests().len(), 1);
+            drop(helper);
+        }
     }
 }
