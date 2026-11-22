@@ -984,6 +984,20 @@ impl Ui {
         }
     }
 
+    /// Draws every component again as it now is, and gives the handles
+    /// of the components there are: for a renderer that lost what it had
+    /// drawn of them (ReGIS, whose refused commit takes a step's changes
+    /// with it). A component the renderer has no room for stays as it
+    /// was drawn.
+    pub fn redraw(&self, painter: &mut dyn Painter) -> Vec<i32> {
+        for place in 0..self.list.len() {
+            if let Some(shown) = self.shown(place) {
+                let _ = painter.paint(Some(shown.component), Some(&shown));
+            }
+        }
+        self.list.iter().map(|held| held.handle).collect()
+    }
+
     /// Whether `context` has any component.
     #[must_use]
     pub fn has_any(&self, context: ContextId) -> bool {

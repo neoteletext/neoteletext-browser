@@ -224,7 +224,14 @@ impl Core {
     /// What the trusted indications say of the program of the active
     /// tab's open page (sections 3.1 and 4.6).
     fn script_view(&self) -> Option<ScriptView> {
-        let key = self.typing.opened_page().filter(|key| self.active_channel() == Some(key.channel))?;
+        // The page open in the active tab; and while the trusted core is
+        // told of none (between a tab chosen and its page reported open
+        // again), the page the interface was last told of, so that a
+        // program that stops then is not left shown as running
+        // (TODO-7407).
+        let active = self.active_channel()?;
+        let told = self.script_gate.told.map(|view| PageKey { channel: view.channel, page: view.page });
+        let key = self.typing.opened_page().or(told).filter(|key| key.channel == active)?;
         let run = match self.script_state(key.channel) {
             ScriptState::None => ScriptRun::None,
             ScriptState::Running => ScriptRun::Running,

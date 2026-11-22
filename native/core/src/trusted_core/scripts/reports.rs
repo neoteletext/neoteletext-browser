@@ -86,6 +86,7 @@ impl Core {
             // none is started until the channel is reloaded.
             ScriptReport::Stopped { reason, text } => {
                 self.scripts.claims.remove(&channel);
+                self.script_stop_explained(channel, reason, &text);
                 self.stop_scripts(channel, reason, &text);
             }
             ScriptReport::Log { level, context, text } => {
@@ -199,6 +200,24 @@ impl Core {
     /// 1): passed to the channel's decoder unread, after what its
     /// contexts are told.
     fn script_fetched(&mut self, channel: u32, piece: SourcePiece) {
+        // Section 12.3: a page with a script and no page file is a
+        // JavaScript page, not a page that does not exist. Its page
+        // file's 404 was said just before its script came, since the
+        // fetcher asks for the page first: that refusal is withdrawn.
+        if piece.level == ContextId::Page && piece.offset == 0 {
+            let refused = self
+                .session
+                .all_tabs_mut()
+                .find(|tab| tab.channel.id == channel)
+                .filter(|tab| tab.channel.failed.is_some_and(|(_, page)| page == Some(piece.page.page)));
+            if let Some(tab) = refused {
+                tab.channel.failed = None;
+                if self.active_channel() == Some(channel) {
+                    let strip = self.strip();
+                    let _ = self.send(&protocol::ToInterface::Strip(strip));
+                }
+            }
+        }
         self.script_facts_once(channel);
         self.keep_script(channel, &piece);
         self.tell(channel, ToDecoder::Script(ScriptOrder::Source(piece)));
