@@ -1277,6 +1277,7 @@ dependencies = [
  "neoteletext-input",
  "neoteletext-qrkeyboard",
  "neoteletext-script",
+ "neoteletext-script-host",
  "protocol",
  "update",
  "web-opener",
@@ -1363,6 +1364,16 @@ dependencies = [
  "protocol",
  "ring",
  "wasmi",
+]
+
+[[package]]
+name = "neoteletext-script-host"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-script",
+ "protocol",
+ "ring",
 ]
 
 [[package]]

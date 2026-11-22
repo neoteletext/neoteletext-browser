@@ -28,6 +28,8 @@ icon = { path = "../icon", package = "neoteletext-icon" }
 # built with debug assertions by compiler flags, which the interpreter's
 # build script cannot see (native/script/Cargo.toml).
 neoteletext-script = { path = "../script", features = ["portable-dispatch"] }
+# The script-host program's serving, on the same build of the library.
+script-host = { path = "../script-host", package = "neoteletext-script-host" }
 neoteletext-qrkeyboard = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
 neoteletext-input = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-teletext", rev = "54d796b96668458fc2aeffaf4d5cb651b293ecd5" }
 
@@ -417,6 +419,20 @@ bench = false
 [[bin]]
 name = "script_js"
 path = "fuzz_targets/script_js.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_relay_pipes"
+path = "fuzz_targets/script_relay_pipes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_host_serve"
+path = "fuzz_targets/script_host_serve.rs"
 test = false
 doc = false
 bench = false
