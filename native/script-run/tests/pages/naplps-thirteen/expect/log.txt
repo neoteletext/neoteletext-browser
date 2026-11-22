@@ -1,0 +1,25 @@
+000000 page log made 13 components, 16 objects, 5 symbols; focus on story
+000005 runner note verdicts C-
+000008 runner note verdicts C-
+000008 page log move menu 1
+000010 runner note verdicts C-
+000010 page log move menu 3
+000012 runner note verdicts C-
+000014 runner note verdicts C-
+000014 page log move tides 1
+000016 runner note verdicts C-
+000017 runner note verdicts C-
+000018 runner note verdicts C-
+000020 runner note verdicts C-
+000020 page log change sound true
+000022 runner note verdicts C-
+000024 runner note verdicts C-
+000024 page log change volume 5
+000026 runner note verdicts C-
+000028 runner note verdicts h
+000028 page log change name "Mary Rose"
+000030 runner note verdicts C-
+000030 page log change name "Mary Ros"
+000040 runner note verdicts -
+000041 runner note verdicts C
+000041 page log activate menu "ship"

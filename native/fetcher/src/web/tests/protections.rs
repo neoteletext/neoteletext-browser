@@ -446,3 +446,53 @@ fn a_tabs_requests_are_counted_and_its_starts_held_to_a_rate() {
     assert_eq!(hasty.get(&server.url("/a/fast")).text(), "fast", "starts come back with time");
     hasty.finish().unwrap();
 }
+
+/// TODO-7316 item 10 (`targetAddressSpace`): an address the script
+/// declared the space of must answer from that space, for a fetch and
+/// for a socket's connection; and an address known to be of the local
+/// network before its name is resolved, declared so or named under
+/// `.local`, is not mixed content from a channel loaded securely, where
+/// any other plain address still is.
+#[test]
+fn a_declared_address_space_is_held_to_and_a_known_local_address_is_not_mixed_content() {
+    use protocol::web::RequestKind;
+    let declare = |space: AddressSpace| move |start: &mut protocol::web::Start| start.target_space = Some(space);
+    let server = serve(|_| Reply::ok("here").header("access-control-allow-origin", "*"));
+    let before = || server.asked().len();
+    let mut client = Client::new(&server.url("/a/"));
+    assert_eq!(client.fetch(&server.url("/a/x"), declare(AddressSpace::Loopback)).text(), "here");
+    for wrong in [AddressSpace::Local, AddressSpace::Public] {
+        assert_eq!(client.fetch(&server.url("/a/x"), declare(wrong)).reason(), Reason::LocalRefused, "{wrong:?}");
+    }
+    // A socket's connection is judged before anything is written to it.
+    let asked = before();
+    let socket = |space: AddressSpace| move |start: &mut protocol::web::Start| (start.kind, start.target_space) = (RequestKind::WebSocket, Some(space));
+    let address = server.url("/a/live").replacen("http", "ws", 1);
+    assert_eq!(client.fetch(&address, socket(AddressSpace::Local)).reason(), Reason::LocalRefused);
+    assert_eq!(client.fetch(&address, socket(AddressSpace::Public)).reason(), Reason::LocalRefused);
+    assert_eq!(before(), asked, "no handshake was written");
+    assert_eq!(
+        client.fetch(&address, socket(AddressSpace::Loopback)).reason(),
+        Reason::Protocol,
+        "the right space: the handshake is made, and this server is no socket's"
+    );
+    client.finish().unwrap();
+    // A channel loaded securely, asking plain addresses.
+    let mut secure = Client::new("https://site.test/a/");
+    let plain = |host: &str| server.at("http", host, "/x");
+    assert_eq!(secure.get(&plain("other.test")).reason(), Reason::MixedContent);
+    assert_eq!(secure.fetch(&plain("other.test"), declare(AddressSpace::Public)).reason(), Reason::MixedContent);
+    assert_eq!(
+        secure.fetch(&plain("other.test"), declare(AddressSpace::Loopback)).reason(),
+        Reason::MixedContent,
+        "this computer by another name is not exempt"
+    );
+    // Declared local: not mixed content; the name resolves here, which is
+    // not the local network, so the declaration is then found wrong.
+    assert_eq!(secure.fetch(&plain("other.test"), declare(AddressSpace::Local)).reason(), Reason::LocalRefused);
+    // A name under `.local` is known to be local and is asked.
+    assert_eq!(secure.get(&plain("printer.local")).text(), "here");
+    assert_eq!(secure.fetch(&plain("printer.local").replacen("http", "ws", 1), |start| start.kind = RequestKind::WebSocket).reason(), Reason::Protocol);
+    assert_eq!(secure.fetch(&plain("other.test").replacen("http", "ws", 1), |start| start.kind = RequestKind::WebSocket).reason(), Reason::MixedContent);
+    secure.finish().unwrap();
+}

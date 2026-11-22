@@ -365,6 +365,7 @@ fn start() -> Start {
         body: BodySource::None,
         protocols: Vec::new(),
         last_event_id: String::new(),
+        target_space: None,
     }
 }
 
