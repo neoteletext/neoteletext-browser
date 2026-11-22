@@ -227,12 +227,23 @@ fn a_hidden_tab_pauses_the_contexts_and_the_tick_does_not_jump() {
     assert_eq!(ticked.iter().map(|step| (step.tick, step.flags.tick)).collect::<Vec<_>>(), vec![(2, true)], "the page's manifest asked every second tick");
     fixture.answer(Batch::new(2));
 
+    // No page open between two pages pauses nothing and asks no step
+    // (TODO-7405): only a hidden tab does.
     fixture.show(None);
+    assert!(fixture.steps().is_empty() && fixture.scripts.running() && fixture.scripts.stopped().is_none());
+    fixture.show(Some(0x100));
+    assert!(fixture.steps().is_empty(), "the same page named again changes nothing");
+
+    fixture.order(ScriptOrder::TabShown(false));
     let pausing = fixture.steps();
     assert_eq!(pausing.len(), 1);
     assert!(pausing[0].flags.pausing);
+    // The script host makes `visibilitychange` itself from the step's
+    // flag, and refuses the event from the decoder: none is sent.
     let events: Vec<(EventKind, i32)> = pausing[0].events.iter().map(|event| (event.kind, event.numbers[0])).collect();
-    assert_eq!(events, vec![(EventKind::KeyUp, events::KEY_REPEAT_OR_LOST), (EventKind::Visibility, 1)]);
+    assert_eq!(events, vec![(EventKind::KeyUp, events::KEY_REPEAT_OR_LOST)]);
+    fixture.order(ScriptOrder::TabShown(false));
+    assert!(fixture.steps().is_empty(), "hidden twice is hidden once");
     assert_eq!(pausing[0].events[0].payload, b"1");
     fixture.answer(Batch::new(3));
     fixture.at_tick(40);
@@ -240,7 +251,7 @@ fn a_hidden_tab_pauses_the_contexts_and_the_tick_does_not_jump() {
     assert!(fixture.scripts.due_us(&fixture.engine).is_none(), "and nothing to wake for");
 
     fixture.engine.set_now_us(due_after(99));
-    fixture.show(Some(0x100));
+    fixture.order(ScriptOrder::TabShown(true));
     let resumed = fixture.steps();
     assert_eq!(resumed.len(), 1);
     assert!(resumed[0].flags.resumed && !resumed[0].flags.pausing);
