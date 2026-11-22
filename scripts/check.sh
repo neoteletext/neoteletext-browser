@@ -296,7 +296,7 @@ $found"
 # same SHA-256 of the build and of the committed file; the build script
 # itself refuses a module that holds a bulk-memory instruction, and fails,
 # never skips, when a tool it needs is missing.
-readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js)
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js script_url_resolve script_web_host script_web_answers)
 check_script_engine_committed() {
     step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
     native/script/qjs/build.sh --committed
@@ -476,6 +476,8 @@ fuzz_options() {
         dbus_message) echo "-max_len=131072" ;;
         # A whole script, and a memory image of a page.
         script_js | script_imports) echo "-max_len=65536" ;;
+        # A web client's answers, the longest of which is a piece of a body.
+        script_web_host | script_web_answers) echo "-max_len=65536" ;;
         script_link_to_host | script_link_to_decoder | web_to_client | web_from_client) echo "-max_len=262149" ;;
     esac
 }

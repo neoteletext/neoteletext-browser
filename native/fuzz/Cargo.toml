@@ -408,6 +408,27 @@ doc = false
 bench = false
 
 [[bin]]
+name = "script_url_resolve"
+path = "fuzz_targets/script_url_resolve.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_web_host"
+path = "fuzz_targets/script_web_host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_web_answers"
+path = "fuzz_targets/script_web_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "script_imports"
 path = "fuzz_targets/script_imports.rs"
 test = false
