@@ -251,8 +251,8 @@ pub struct Engine {
     /// The presentation clock locked to the interface's frames, and the
     /// paint points (page-rules.md RULE-98, RULE-65).
     lock: crate::frame_lock::FrameLock,
-    /// The time a test holds the clock at.
-    #[cfg(test)]
+    /// The time a test, or the standalone runner, holds the clock at.
+    #[cfg(any(test, feature = "stepped-clock"))]
     fixed_now_us: Option<u64>,
     /// What plays on each audio channel, as the page's rules read it
     /// (RULE-27, RULE-30).
@@ -334,7 +334,7 @@ impl Engine {
             rules: crate::rules::host::Rules::default(),
             rule_out: Vec::new(),
             lock: crate::frame_lock::FrameLock::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "stepped-clock"))]
             fixed_now_us: None,
             heard: crate::voice_sink::Heard::default(),
             animation: animation::Animated::default(),
@@ -442,7 +442,7 @@ impl Engine {
     /// Microseconds since the engine started, unmoved.
     #[must_use]
     pub fn real_us(&self) -> u64 {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "stepped-clock"))]
         if let Some(now) = self.fixed_now_us {
             return now;
         }
@@ -498,8 +498,10 @@ impl Engine {
         self.lock.painted(began_real_us, finished);
     }
 
-    /// Holds the engine's clock at `now_us`, for a test that scripts time.
-    #[cfg(test)]
+    /// Holds the engine's clock at `now_us`, for a test that scripts time
+    /// and for the standalone runner, whose clock is stepped and never
+    /// read (script-api.md section 16).
+    #[cfg(any(test, feature = "stepped-clock"))]
     pub fn set_now_us(&mut self, now_us: u64) {
         self.fixed_now_us = Some(now_us);
     }

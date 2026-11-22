@@ -1,0 +1,40 @@
+[package]
+name = "neoteletext-script-run"
+description = "The standalone runner (script-api.md section 16, DEC-7262): runs a channel folder, a page or a script with no browser, on a stepped clock, through the script library the browser's script host links, the decoder's own engine and the sound helper's own mixer, and compares what it drew, played and logged with kept results"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "script_run"
+path = "src/lib.rs"
+
+[[bin]]
+name = "neoteletext-script-run"
+path = "src/main.rs"
+
+[dependencies]
+# The script library: the same one the browser's script host links, behind
+# the same `ScriptLink` (script-api.md section 1 principle 6).
+neoteletext-script = { path = "../script" }
+# The messages a link carries, and the web client's.
+protocol.workspace = true
+# The decoder's own engine: pages are read, drawn and snapshotted by it.
+decoder = { workspace = true, features = ["stepped-clock"] }
+# The sound helper's own mixer, which the WAV file is rendered by.
+sound = { path = "../sound", package = "neoteletext-sound" }
+# The worker process is started confined, as the script host is.
+confine.workspace = true
+# The engine's packet and record writers, and its channel file reader and
+# bounded JSON reader.
+neoteletext-core.workspace = true
+neoteletext-web.workspace = true
+# The engine's PNG writer.
+neoteletext-image = { workspace = true, features = ["alloc"] }
+# SHA-256, for the seed and for each kept file's digest.
+ring.workspace = true
+
+[lints]
+workspace = true

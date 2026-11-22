@@ -1,0 +1,13 @@
+# What the mock web client answers the page's requests with.
+request fetch GET https://channel.test/tides.json
++1 head 200 type=basic text=OK
+header content-type: application/json
++2 body {"height":
++3 body 3}\n
++4 end
+
+request events GET https://channel.test/feed
++2 opened
++5 event message - first
++12 event message 7 second
++20 event message 8 never heard: the page closed the stream

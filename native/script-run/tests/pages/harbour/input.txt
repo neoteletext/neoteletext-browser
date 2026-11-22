@@ -1,0 +1,5 @@
+# the worked example of section 5.8: a key the page claims, and a press on its control
+10 key 2
+20 pointer down 3 4
+21 pointer up 3 4
+30 key 1

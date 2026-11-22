@@ -322,6 +322,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9eb1aa714776b75c7e67e1da744b81a129b3ff919c8712b5e1b32252c1f07cc7"
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1053,6 +1062,11 @@ version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=02a5343081547509509e84e70b9d7d36b73e5fdf#02a5343081547509509e84e70b9d7d36b73e5fdf"
 
 [[package]]
+name = "neoteletext-audio-mix"
+version = "0.1.0"
+source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=02a5343081547509509e84e70b9d7d36b73e5fdf#02a5343081547509509e84e70b9d7d36b73e5fdf"
+
+[[package]]
 name = "neoteletext-core"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=02a5343081547509509e84e70b9d7d36b73e5fdf#02a5343081547509509e84e70b9d7d36b73e5fdf"
@@ -1117,7 +1131,9 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=02a5343081547509509e84e70b9d7d36b73e5fdf#02a5343081547509509e84e70b9d7d36b73e5fdf"
 dependencies = [
+ "naplps",
  "neoteletext-core",
+ "regis",
  "unicode-bidi",
 ]
 
@@ -1129,6 +1145,7 @@ dependencies = [
  "draw-raster",
  "interface-core",
  "libfuzzer-sys",
+ "naplps",
  "neoteletext",
  "neoteletext-dbus",
  "neoteletext-decoder",
@@ -1138,6 +1155,7 @@ dependencies = [
  "neoteletext-qrkeyboard",
  "neoteletext-script",
  "neoteletext-script-host",
+ "neoteletext-script-run",
  "protocol",
  "update",
  "web-opener",
@@ -1214,13 +1232,17 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev
 name = "neoteletext-script"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
+ "naplps",
  "neoteletext-audio",
  "neoteletext-core",
  "neoteletext-formats",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
+ "regis",
  "ring",
+ "url",
  "wasmi",
 ]
 
@@ -1235,11 +1257,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "neoteletext-script-run"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-core",
+ "neoteletext-decoder",
+ "neoteletext-image",
+ "neoteletext-script",
+ "neoteletext-sound",
+ "neoteletext-web",
+ "protocol",
+ "ring",
+]
+
+[[package]]
 name = "neoteletext-secret-store"
 version = "0.1.0"
 dependencies = [
  "neoteletext-dbus",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "neoteletext-sound"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-audio",
+ "neoteletext-audio-instruments",
+ "neoteletext-audio-mix",
+ "neoteletext-rules",
+ "protocol",
+ "sound-output",
 ]
 
 [[package]]
@@ -1806,6 +1856,13 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sound-output"
+version = "0.1.0"
+dependencies = [
+ "windows",
 ]
 
 [[package]]

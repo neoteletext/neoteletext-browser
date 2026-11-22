@@ -35,7 +35,12 @@ fuzz_target!(|data: &[u8]| {
             assert_eq!(single("access-control-allow-credentials"), Some(&b"true"[..]));
         }
         if allows == Some(true) {
-            let named = |list: &str, wanted: &str| headers.iter().filter(|(header, _)| header == list).any(|(_, value)| value.split(|&byte| byte == b',').any(|part| part.trim_ascii().eq_ignore_ascii_case(wanted.as_bytes())));
+            let named = |list: &str, wanted: &str| {
+                headers
+                    .iter()
+                    .filter(|(header, _)| header == list)
+                    .any(|(_, value)| value.split(|&byte| byte == b',').any(|part| part.trim_ascii().eq_ignore_ascii_case(wanted.as_bytes())))
+            };
             assert!(named("access-control-allow-headers", "x-token"), "with credentials a header is allowed only by name");
         }
     }
