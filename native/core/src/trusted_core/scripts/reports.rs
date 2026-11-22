@@ -86,6 +86,7 @@ impl Core {
             // none is started until the channel is reloaded.
             ScriptReport::Stopped { reason, text } => {
                 self.scripts.claims.remove(&channel);
+                self.script_stop_explained(channel, reason, &text);
                 self.stop_scripts(channel, reason, &text);
             }
             ScriptReport::Log { level, context, text } => {

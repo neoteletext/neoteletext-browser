@@ -174,6 +174,13 @@ impl Core {
                     if let Some(next) = page {
                         self.script_page_leaving(channel, next);
                     }
+                    // Whether the tab is shown is told apart from which
+                    // page is open: no page is open between two pages of
+                    // a tab in front, which hides nothing, and only a
+                    // hidden tab pauses a channel's scripts (script-api.md
+                    // section 3.1; TODO-7405).
+                    let shown = page.is_some() || self.active_channel() == Some(channel);
+                    self.tell(channel, protocol::decoder::ToDecoder::Script(protocol::decoder::script::ScriptOrder::TabShown(shown)));
                     self.tell(channel, protocol::decoder::ToDecoder::RulesPage(page));
                     // A page opening is told the interface's frames again,
                     // for its tick 0 (RULE-98 item 2).

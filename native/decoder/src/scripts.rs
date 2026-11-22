@@ -347,6 +347,7 @@ impl Scripts {
             // channel's, before the tab goes. Only a cause the browser's
             // own controls made is told today, which no script can cancel,
             // so no verdict is waited for.
+            ScriptOrder::TabShown(shown) => self.tab_shown(shown, engine, out)?,
             ScriptOrder::Navigating { cause, target } => {
                 let event = Event { kind: EventKind::Navigate, numbers: [i32::from(cause.code()), 0, 0, 0], payload: target.into_bytes() };
                 self.enqueue(true, event, None, false, out)?;
@@ -454,43 +455,51 @@ impl Scripts {
     }
 
     /// The page and sub-code of the active tab that is open, or none
-    /// while the tab is not the active one (the rule table's `RulesPage`,
-    /// which the trusted core already sends): a page's context starts and
-    /// ends with it, and with none the contexts are paused.
+    /// while none is (the rule table's `RulesPage`, which the trusted
+    /// core already sends): a page's context starts and ends with the
+    /// page. None pauses nothing: the trusted core says it between two
+    /// pages of one tab, while the next is fetched and drawn, and the
+    /// contexts of the page left live until the next one is named
+    /// (section 3.1; TODO-7405). Whether the tab is shown is told apart
+    /// ([`ScriptOrder::TabShown`]).
     ///
     /// # Errors
     /// When the decoder's output cannot be written.
     pub fn page_opened(&mut self, page: Option<PageSub>, engine: &mut Engine, out: &mut dyn Write) -> Result<Outcome, ProtocolError> {
-        match page {
-            Some(page) => {
-                if self.open != Some(page) {
-                    self.open = Some(page);
-                    self.epoch = self.epoch.wrapping_add(1);
-                }
-                if self.paused {
-                    self.paused = false;
-                    self.resumed = self.running();
-                    // The ticks of the pause never happened (section 3.2).
-                    let now = tick_at(engine.now_us());
-                    if let (Some(base), Some(since)) = (self.base.as_mut(), self.paused_at.take()) {
-                        *base = base.saturating_add(now.saturating_sub(since));
-                    }
-                }
-            }
-            None if !self.paused => {
-                self.paused = true;
-                self.paused_at = Some(tick_at(engine.now_us()));
-                if self.running() && self.link.stopped().is_none() {
-                    // `visibilitychange` before the pause, and the release
-                    // of every key held (sections 3.1 and 4.7).
-                    self.lose_keys();
-                    self.push(Event { kind: EventKind::Visibility, numbers: [1, 0, 0, 0], payload: Vec::new() }, None, false);
-                    self.step(engine, false, StepFlags { pausing: true, ..StepFlags::default() }, out)?;
-                }
-            }
-            None => {}
+        if let Some(page) = page.filter(|page| self.open != Some(*page)) {
+            self.open = Some(page);
+            self.epoch = self.epoch.wrapping_add(1);
         }
         self.settle(engine, out)
+    }
+
+    /// The channel's tab is hidden, or shown again (section 3.1's table):
+    /// hidden, the contexts are paused after one last step, in which the
+    /// script host itself tells them `visibilitychange` and releases what
+    /// sounds; shown, the next step says so and the tick goes on from
+    /// where it stopped (section 13 item 6). The decoder makes no
+    /// visibility event: a step's flags say it, and the script host
+    /// refuses the event from anyone else.
+    fn tab_shown(&mut self, shown: bool, engine: &Engine, out: &mut dyn Write) -> Result<(), ProtocolError> {
+        if shown && self.paused {
+            self.paused = false;
+            self.resumed = self.running();
+            // The ticks of the pause never happened (section 3.2).
+            let now = tick_at(engine.now_us());
+            if let (Some(base), Some(since)) = (self.base.as_mut(), self.paused_at.take()) {
+                *base = base.saturating_add(now.saturating_sub(since));
+            }
+        } else if !shown && !self.paused {
+            self.paused = true;
+            self.paused_at = Some(tick_at(engine.now_us()));
+            if self.running() && self.link.stopped().is_none() {
+                // The release of every key held rides in the last step
+                // (section 4.7).
+                self.lose_keys();
+                self.step(engine, false, StepFlags { pausing: true, ..StepFlags::default() }, out)?;
+            }
+        }
+        Ok(())
     }
 
     /// Brings the script host's contexts to what the scripts held and the

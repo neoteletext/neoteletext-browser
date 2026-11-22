@@ -38,6 +38,7 @@ const ORDER_TEXT: u8 = 5;
 const ORDER_WHEEL: u8 = 6;
 const ORDER_POINTER: u8 = 7;
 const ORDER_NAVIGATING: u8 = 8;
+const ORDER_TAB_SHOWN: u8 = 9;
 
 // The forms of [`ScriptReport`].
 const REPORT_CLAIMS: u8 = 1;
@@ -161,6 +162,13 @@ pub enum ScriptOrder {
     /// 4.2): the mouse, or a contact of a touch screen or a pen, each with
     /// its number and kind.
     Pointer(ScriptPointer),
+    /// The channel's tab is shown, or hidden (section 3.1's table: "The
+    /// tab is hidden: both paused"). Hidden, the contexts hear
+    /// `visibilitychange` and are paused: no step is asked and their tick
+    /// does not advance. This and nothing else pauses them: the page that
+    /// is open, or that none is while another is fetched
+    /// (`ToDecoder::RulesPage`), starts and ends a page's context only.
+    TabShown(bool),
     /// The tab is about to go somewhere by something other than a script
     /// of the page: the contexts hear `navigate` first (section 4.2).
     Navigating {
@@ -528,6 +536,7 @@ pub(super) fn push_order(payload: &mut Vec<u8>, order: &ScriptOrder) -> Result<(
             payload.extend_from_slice(&pointer.y.to_be_bytes());
             payload.extend_from_slice(&[pointer.pointer, pointer.kind.code(), u8::from(pointer.primary)]);
         }
+        ScriptOrder::TabShown(shown) => payload.extend_from_slice(&[ORDER_TAB_SHOWN, u8::from(*shown)]),
         ScriptOrder::Navigating { cause, target } => {
             check_plain(target, MAX_URL_BYTES, "navigation target")?;
             payload.extend_from_slice(&[ORDER_NAVIGATING, cause.code()]);
@@ -569,6 +578,7 @@ pub(super) fn read_order(fields: &mut Fields<'_>) -> Result<ScriptOrder, Protoco
             pointer.check()?;
             ScriptOrder::Pointer(pointer)
         }
+        ORDER_TAB_SHOWN => ScriptOrder::TabShown(fields.flag("tab shown")?),
         ORDER_NAVIGATING => {
             let (cause, target) = (NavigationCause::of(fields.u8()?)?, fields.string(MAX_URL_BYTES, "navigation target")?);
             check_plain(&target, MAX_URL_BYTES, "navigation target")?;
@@ -724,6 +734,8 @@ mod tests {
             ScriptOrder::Text { sequence: 9, text: "été".into() },
             ScriptOrder::Wheel { sequence: 10, x: 479, y: 12, delta_x: -3, delta_y: 2 },
             ScriptOrder::Pointer(pointer(MAX_POINTERS)),
+            ScriptOrder::TabShown(false),
+            ScriptOrder::TabShown(true),
             ScriptOrder::Navigating { cause: NavigationCause::Browser, target: "100/0002".into() },
             ScriptOrder::Navigating { cause: NavigationCause::Link, target: "https://example.test/harbour/200.tti".into() },
         ]

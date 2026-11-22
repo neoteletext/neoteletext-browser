@@ -207,13 +207,23 @@ fn the_badge_says_what_a_pages_program_does() {
     let said = badge(&browser);
     let identity = browser.strip.identity.clone();
     assert!(said.starts_with(&alloc::format!("{} {identity}", words::KEYS_GO_TO)) && said.ends_with(words::RUNNING_CONTROL), "{said}");
-    assert!(!said.contains(words::TYPING) && !said.contains("Not secure"), "{said}");
+    // The fixture's channel is on a plain connection: said for as long
+    // as the badge says keys go to it, whoever has the keys just then
+    // (TODO-7407).
+    assert!(!said.contains(words::TYPING) && said.contains(words::NOT_SECURE), "{said}");
+    browser.start_editing();
+    assert_eq!(badge(&browser), said, "the address field having the keys changes nothing of it");
+    browser.stop_editing();
+    browser.set_typing(TypingView { on: false, keys: false, ..typing() }, NOW);
+    assert_eq!(badge(&browser), said, "nor does the typing state");
+    browser.set_typing(typing(), NOW);
     // It is given typed text.
     browser.set_script_view(view(ScriptRun::Running, true, true), NOW);
     assert!(badge(&browser).contains(words::TYPING), "{}", badge(&browser));
-    // Over a plain connection.
-    browser.set_typing(TypingView { secure: false, ..typing() }, NOW);
-    assert!(badge(&browser).contains("Not secure"), "{}", badge(&browser));
+    // Over an encrypted connection.
+    browser.strip.encrypted = true;
+    assert!(!badge(&browser).contains(words::NOT_SECURE), "{}", badge(&browser));
+    browser.strip.encrypted = false;
     // It stopped: nothing is the page's any more.
     browser.set_script_view(view(ScriptRun::Stopped, false, false), NOW);
     browser.set_typing(TypingView { on: false, keys: false, ..typing() }, NOW);

@@ -128,7 +128,10 @@ impl Viewer {
     /// What of the decoder's input is input for the page's scripts: the
     /// keys, and the orders that carry text, the pointer and the wheel.
     fn given(&mut self) -> Vec<ToDecoder> {
-        self.decoder().into_iter().filter(|message| matches!(message, ToDecoder::RuleInput { .. } | ToDecoder::Script(_))).collect()
+        let input = |message: &ToDecoder| {
+            matches!(message, ToDecoder::RuleInput { .. } | ToDecoder::Script(_)) && !matches!(message, ToDecoder::Script(ScriptOrder::TabShown(_)))
+        };
+        self.decoder().into_iter().filter(input).collect()
     }
 
     fn input(&mut self, intent: Intent) {
@@ -535,6 +538,114 @@ fn a_scripts_title_names_its_page_in_the_page_list_and_nowhere_else() {
     // character, never reaches the trusted core.
     let long = ScriptReport::Title { page: open_page(), title: "t".repeat(protocol::script::MAX_TITLE_BYTES + 1) };
     assert!(protocol::decoder::write_to_core(&mut Vec::new(), &protocol::decoder::FromDecoder::Script(long)).is_err());
+}
+
+/// Sections 3.1 and 4.6 (TODO-7407): the interface is told what a page's
+/// program does in every change of it, also one that comes while the
+/// trusted core has been told of no open page, as between a tab chosen
+/// and its page reported open again: a program that stops then is told
+/// as stopped, for the page the interface was last told of.
+#[test]
+fn a_program_that_stops_while_no_page_is_reported_open_is_told_as_stopped() {
+    let views = |sent: &[ToInterface]| -> Vec<(ScriptRun, bool)> {
+        sent.iter().filter_map(|message| if let ToInterface::Script(view) = message { Some((view.run, view.holds)) } else { None }).collect()
+    };
+    let mut viewer = Viewer::new();
+    viewer.claims(&["a"], false, PointerClaim::None, false);
+    assert_eq!(views(&viewer.interface()), [(ScriptRun::Running, true)]);
+    viewer.core.intent(ToCore::Opened(None)).unwrap();
+    viewer.tick();
+    // Still the page's program, running; it holds nothing off the page.
+    assert_eq!(views(&viewer.interface()), [(ScriptRun::Running, false)]);
+    viewer.report(ScriptReport::Stopped { reason: FailReason::Link, text: "refused".into() });
+    assert_eq!(views(&viewer.interface()), [(ScriptRun::Stopped, false)]);
+    // The page reported open again changes nothing of it.
+    let key = viewer.key;
+    viewer.core.intent(ToCore::Opened(Some(key))).unwrap();
+    viewer.tick();
+    assert_eq!(views(&viewer.interface()), []);
+    assert_eq!(viewer.core.script_gate.told.map(|view| view.run), Some(ScriptRun::Stopped));
+}
+
+/// TODO-7410: the Log tab says why a channel's scripts stopped, in the
+/// browser's own words for the reason, with the script host's text
+/// beside it cleaned and bounded; also when the trusted core's relay,
+/// which reads no payload, noted the stop first and knew no reason.
+#[test]
+fn the_log_says_why_a_channels_scripts_stopped() {
+    let logged = |viewer: &mut Viewer| {
+        let channel = viewer.channel();
+        viewer.core.console.set_open(true);
+        format!("{:?}", viewer.core.console.updates(Some(channel)))
+    };
+    // The decoder's word alone: a time limit.
+    let mut viewer = Viewer::new();
+    viewer.report(ScriptReport::Stopped { reason: FailReason::Time, text: "CALLBACK_TIME_LIMIT".into() });
+    let said = logged(&mut viewer);
+    assert!(said.contains("a time limit was passed") && said.contains("CALLBACK_TIME_LIMIT"), "{said}");
+    // The relay saw the script host say it stopped, and then the decoder
+    // says why: the reason kept is the decoder's, and the log has it.
+    let mut viewer = Viewer::new();
+    let channel = viewer.channel();
+    let mut failed = Vec::new();
+    let said_failed = FromScriptHost::Failed { context: protocol::script::ContextId::Channel, reason: FailReason::Memory, text: "heap".into() };
+    protocol::script::write_to_decoder(&mut failed, &said_failed).unwrap();
+    let Some(protocol::script::relay::HostOutput::ToDecoder(relayed)) = protocol::script::relay::read_host_output(&mut failed.as_slice()).unwrap() else {
+        panic!("not for the decoder")
+    };
+    let generation = viewer.core.generation;
+    viewer.core.script_said(channel, generation, protocol::script::relay::HostOutput::ToDecoder(relayed));
+    assert!(matches!(viewer.core.script_state(channel), ScriptState::Stopped(_)));
+    viewer.report(ScriptReport::Stopped { reason: FailReason::Memory, text: "QUICKJS_HEAP_BYTES\u{7} passed".into() });
+    assert_eq!(viewer.core.script_state(channel), ScriptState::Stopped(FailReason::Memory));
+    let said = logged(&mut viewer);
+    assert!(said.contains("a memory limit was passed") && said.contains("QUICKJS_HEAP_BYTES passed"), "{said}");
+    // The viewer's stop says so.
+    let mut viewer = Viewer::new();
+    viewer.core.intent(ToCore::StopScripts).unwrap();
+    assert!(logged(&mut viewer).contains("the viewer stopped the page's program"));
+}
+
+/// Section 3.1's table and TODO-7405: only a hidden tab pauses a
+/// channel's scripts. A change of the open page, the page chosen again,
+/// and the tab's own key pressed for the tab already in front tell the
+/// decoder that the tab is shown, whatever they say of the open page;
+/// another tab in front tells it the tab is hidden, and coming back that
+/// it is shown, before the page is named.
+#[test]
+fn only_a_hidden_tab_is_told_as_hidden() {
+    let shown = |told: &[ToDecoder]| -> Vec<bool> {
+        told.iter().filter_map(|message| if let ToDecoder::Script(ScriptOrder::TabShown(shown)) = message { Some(*shown) } else { None }).collect()
+    };
+    let mut viewer = Viewer::new();
+    viewer.claims(&["a"], false, PointerClaim::None, false);
+    viewer.decoder();
+    // Another page of the channel is chosen and drawn.
+    let next = PageKey { channel: viewer.channel(), page: 0x101 };
+    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
+    let sends = viewer.core.typing.drawn(next, 0);
+    viewer.core.deliver_typing(sends).unwrap();
+    let told = viewer.decoder();
+    assert!(told.iter().any(|message| matches!(message, ToDecoder::RulesPage(Some(_)))), "{told:?}");
+    assert!(!shown(&told).contains(&false), "a change of page hides nothing: {told:?}");
+    // The tab's own key, for the tab already in front.
+    viewer.core.intent(ToCore::SelectTab(0)).unwrap();
+    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
+    assert!(!shown(&viewer.decoder()).contains(&false), "the tab in front chosen again is not hidden");
+    // Another tab comes in front, and this one comes back.
+    viewer.core.intent(ToCore::NewTab).unwrap();
+    viewer.core.intent(ToCore::Opened(None)).unwrap();
+    let told = viewer.decoder();
+    assert_eq!(shown(&told).last(), Some(&false), "{told:?}");
+    assert!(told.iter().any(|message| matches!(message, ToDecoder::RulesPage(None))), "{told:?}");
+    viewer.core.intent(ToCore::SelectTab(0)).unwrap();
+    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
+    let told = viewer.decoder();
+    let place = |wanted: fn(&ToDecoder) -> bool| told.iter().position(wanted);
+    let (said_shown, named) =
+        (place(|message| matches!(message, ToDecoder::Script(ScriptOrder::TabShown(true)))), place(|message| matches!(message, ToDecoder::RulesPage(Some(_)))));
+    assert!(said_shown.is_some() && said_shown < named, "shown again, then its page: {told:?}");
+    assert_eq!(viewer.core.script_state(viewer.channel()), ScriptState::Running);
 }
 
 /// Section 4.2 (`navigate`, cause `"browser"`): before the decoder of a
