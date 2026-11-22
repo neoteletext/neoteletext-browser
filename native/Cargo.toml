@@ -177,8 +177,10 @@ cookie = { version = "=0.18.2", default-features = false }
 cookie_store = { version = "=0.22.1", default-features = false }
 # MIT or Apache-2.0: the public suffix list's reader, for the jars' rule
 # that no cookie is set for a public suffix and for what a site is. The
-# list itself is data given to it, not part of the crate.
-publicsuffix = { version = "=2.3.0", default-features = false, features = ["idna"] }
+# list itself is data given to it, not part of the crate. `punycode` has
+# it keep each rule of other than ASCII letters in its ASCII form as
+# well, which is the form an address's host has; `idna` is what does it.
+publicsuffix = { version = "=2.3.0", default-features = false, features = ["punycode"] }
 # MIT or Apache-2.0: gzip and deflate response bodies, inflated by
 # miniz_oxide in Rust, never a C zlib.
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }

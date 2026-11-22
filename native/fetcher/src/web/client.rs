@@ -26,7 +26,7 @@ use tokio::sync::{Notify, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 
 use super::connect::Settings;
-use super::cookies::{Jar, Suffixes};
+use super::cookies::{Jar, Suffixes, bundled_suffixes};
 use super::cors::PreflightCache;
 use super::fetch::{Engine, Fetched, fetch};
 use super::limits::{
@@ -598,7 +598,7 @@ pub struct Partition<'a> {
 /// runtime cannot start.
 pub fn run(allowed: &[IpAddr], proxy: Option<Proxy>, partition: &Partition<'_>) -> Result<(), String> {
     let settings = Settings::new(allowed, proxy, neoteletext_transport::mozilla_roots());
-    run_with(settings, partition, None, Box::new(std::io::stdin()), Box::new(std::io::stdout()))
+    run_with(settings, partition, bundled_suffixes()?, Box::new(std::io::stdin()), Box::new(std::io::stdout()))
 }
 
 /// [`run`] with the connection settings, the public suffix list and the

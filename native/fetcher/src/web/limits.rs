@@ -85,6 +85,12 @@ pub(crate) const MAX_COOKIES_PER_JAR: usize = 300;
 // A whole jar, written for the trusted core to keep, fits the pipe's bound
 // on one: each cookie's text, the address that set it and its numbers.
 const _: () = assert!(MAX_COOKIES_PER_JAR * (MAX_COOKIE_BYTES + 3 * MAX_COOKIE_ATTRIBUTE + 512) <= protocol::web::MAX_JAR_BYTES);
+/// The bytes of the public suffix list built in: three times the 342,871
+/// of the list of 21 November 2026. The build fails on a longer one.
+pub(crate) const MAX_SUFFIX_LIST_BYTES: usize = 1 << 20;
+/// The rules of the public suffix list built in: three times the 10,469
+/// of the list of 21 November 2026. The process does not start on more.
+pub(crate) const MAX_SUFFIX_RULES: usize = 1 << 15;
 /// The requests a tab may start at once after a pause: a second's worth
 /// saved up.
 pub(crate) const START_BURST: u32 = protocol::web::MAX_REQUESTS_PER_SECOND;
