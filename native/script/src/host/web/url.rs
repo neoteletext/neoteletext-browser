@@ -81,6 +81,16 @@ fn written(url: &Url) -> Reply {
     }
     let mut out = String::with_capacity(text.len().saturating_add(128));
     for place in PLACES {
+        // The library's own cut of an address at its password is wrong
+        // when it has a user name and no password, as
+        // `https://user@example.test/` has: it gives the password as the
+        // "@" after the name, and where its debug assertions are compiled
+        // in (url 2.5.9, `slicing.rs` line 148) it panics, on an address
+        // any script may write (rdm TODO-7386). Without a password both
+        // its places are the end of the user name, which is asked for
+        // instead and is right in every case.
+        let place =
+            if matches!(place, Position::BeforePassword | Position::AfterPassword) && url.password().is_none() { Position::AfterUsername } else { place };
         let _ = write!(out, "{},", url[..place].len());
     }
     // The fragment runs from its place to the end.
@@ -183,6 +193,22 @@ mod tests {
         assert_eq!(&href[..places[0]], "https");
         assert_eq!((cut(1, 2), cut(3, 4), cut(5, 6), cut(7, 8), cut(9, 10), cut(11, 12)), ("user", "pw", "example.test", "8443", "/a/b", "q=1"));
         assert_eq!(&href[places[13]..], "f");
+    }
+
+    /// URL standard section 4.1: an address with a user name and no
+    /// password has an empty password. The library's own cut gave "@" for
+    /// it and panicked where its debug assertions are compiled in (rdm
+    /// TODO-7386), so this test fails in such a build without the guard
+    /// in `written`, and in every build by the password it finds.
+    #[test]
+    fn a_user_name_without_a_password_is_cut_with_an_empty_password() {
+        let reply = text(parse(-1, "https://user@example.test/a"));
+        let mut lines = reply.splitn(3, '\n');
+        let places: Vec<usize> = lines.next().unwrap().split(',').map(|place| place.parse().unwrap()).collect();
+        let href = lines.nth(1).unwrap();
+        assert_eq!(href, "https://user@example.test/a");
+        let cut = |from: usize, to: usize| &href[places[from]..places[to]];
+        assert_eq!((cut(1, 2), cut(3, 4), cut(5, 6)), ("user", "", "example.test"));
     }
 
     /// URL standard section 4.4: what the parser fails on is undefined to
