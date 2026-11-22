@@ -125,8 +125,8 @@ impl ChannelPolicy {
     }
 
     /// Whether the partition is a page opened from disk (DEC-7315 version
-    /// 2): its origin is written `null`, no address is its own, and it
-    /// has no cookies.
+    /// 2): its origin is written `null`, no address is its own, and its
+    /// jar is never kept.
     pub(crate) const fn is_file_page(&self) -> bool {
         self.channel.folder().is_none()
     }

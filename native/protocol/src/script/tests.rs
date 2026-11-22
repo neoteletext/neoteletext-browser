@@ -599,7 +599,14 @@ fn a_message_cut_short_or_running_on_is_refused() {
     let failed = |reason: u8, text: &[u8]| read_to_decoder(&mut frame(KIND_FAILED, &[vec![2, reason], field(text)].concat()).as_slice());
     assert!(failed(6, b"link").is_ok());
     assert!(refused(&failed(0, b""), "failure reason"));
-    assert!(refused(&failed(7, b""), "failure reason"));
+    // Every code that names no reason is refused: 0, and each past the
+    // last one assigned.
+    let last = FailReason::ALL.iter().map(|reason| reason.code()).max().unwrap();
+    assert_eq!(last, FailReason::Viewer.code());
+    for unassigned in [0, last + 1, last + 2, u8::MAX] {
+        assert!(refused(&failed(unassigned, b""), "failure reason"), "{unassigned}");
+    }
+    assert!(FailReason::ALL.iter().all(|reason| !refused(&failed(reason.code(), b""), "failure reason")));
     assert!(refused(&failed(1, "x".repeat(MAX_LOG_CHARS + 1).as_bytes()), "log line"));
     assert!(refused(&failed(1, &vec![b'x'; MAX_LOG_BYTES + 1]), "log line"));
     assert!(refused(&failed(1, b"a\nb"), "log line"));
@@ -996,7 +1003,9 @@ fn a_section_of_a_shape_no_writer_makes_is_not_read() {
     assert!(refused(&patched(log(), 8, 0x0A), "log line"));
     let state = || Batch { state: Some(vec![ContextState { context: ContextId::Page, stopped: None, failures: 0, next_due: None }]), ..Batch::new(1) };
     assert!(refused(&patched(state(), 2, 3), "context"));
-    assert!(refused(&patched(state(), 3, 7), "failure reason"));
+    let past_the_last = FailReason::ALL.iter().map(|reason| reason.code()).max().unwrap() + 1;
+    assert!(refused(&patched(state(), 3, past_the_last), "failure reason"));
+    assert!(refused(&patched(state(), 3, u8::MAX), "failure reason"));
     assert!(refused(&patched(state(), 6, 2), "next due"));
     assert!(refused(&patched(state(), 14, 1), "next due"), "a tick with no timer");
     assert!(refused(&read_batch(&raw_batch(&[(VERDICTS, vec![0b100])])), "verdict"));

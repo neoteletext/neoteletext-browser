@@ -1,6 +1,6 @@
 //! A page opened from disk as a partition (DEC-7315 version 2, the
-//! owner's ruling on local files; TODO-7395 step 1; TODO-7316 item 2): its origin is written `null`, every address is cross-origin
-//! to it, it sends and keeps no cookie, nothing is mixed content to it,
+//! owner's ruling on local files; TODO-7395 step 1; TODO-7316 item 2):
+//! its origin is written `null`, every address is cross-origin to it, its jar is its own and unkept, nothing is mixed content to it,
 //! it fetches no file, and it asks this computer and the local network
 //! unasked.
 
@@ -58,27 +58,44 @@ fn a_file_pages_request_is_a_cross_origin_request_of_the_origin_null() {
     page.finish().unwrap();
 }
 
-/// The page has no cookies: a `Set-Cookie` is not kept, none is sent
-/// with credentials asked for, nothing is written out for the trusted
-/// core to keep.
+/// The page's requests carry the target server's cookies as any
+/// cross-site request's do (DEC-7401): none sent and none kept without
+/// credentials; with them, a `SameSite=None; Secure` cookie is kept and
+/// sent back, and a `Lax` or `Strict` one is neither. The jar is the
+/// page's alone, another page from disk seeing nothing of it, and is
+/// never written out for the trusted core to keep.
 #[test]
-fn a_file_page_sends_and_keeps_no_cookie() {
-    let server = serve(|_| {
-        Reply::ok("x").header("access-control-allow-origin", "null").header("access-control-allow-credentials", "true").header("set-cookie", "sid=1; Path=/")
+fn a_file_pages_requests_carry_cookies_as_a_cross_site_requests_do() {
+    let server = serve_tls(&["http/1.1"], |asked| {
+        let reply = Reply::ok("x").header("access-control-allow-origin", "null").header("access-control-allow-credentials", "true");
+        if asked.target == "/set" {
+            reply
+                .header("set-cookie", "open=1; Path=/; SameSite=None; Secure")
+                .header("set-cookie", "lax=1; Path=/; Secure")
+                .header("set-cookie", "strict=1; Path=/; SameSite=Strict; Secure")
+        } else {
+            reply
+        }
     });
+    let at = |path: &str| server.at("https", "localhost", path);
     let mut page = file_page();
-    assert_eq!(page.fetch(&server.url("/login"), include).text(), "x");
-    assert_eq!(page.fetch(&server.url("/again"), include).text(), "x");
-    assert_eq!(server.the("/again").header("cookie"), None);
-    assert!(page.jar.iter().all(Vec::is_empty), "no jar was written out");
+    // Without credentials: the answer's cookies are not kept.
+    assert_eq!(page.get(&at("/set")).text(), "x");
+    assert_eq!(page.fetch(&at("/after-none"), include).text(), "x");
+    assert_eq!(server.the("/after-none").header("cookie"), None);
+    // With them: only the cookie a cross-site request may carry.
+    assert_eq!(page.fetch(&at("/set"), include).text(), "x");
+    assert_eq!(page.fetch(&at("/with"), include).text(), "x");
+    assert_eq!(server.the("/with").header("cookie").as_deref(), Some("open=1"));
+    assert_eq!(page.get(&at("/without")).text(), "x");
+    assert_eq!(server.the("/without").header("cookie"), None, "kept, and still not sent without credentials");
+    assert!(page.jar.iter().all(Vec::is_empty), "the jar is not written out");
+    // Another page from disk has a jar of its own.
+    let mut other = file_page();
+    assert_eq!(other.fetch(&at("/other"), include).text(), "x");
+    assert_eq!(server.the("/other").header("cookie"), None);
+    other.finish().unwrap();
     page.finish().unwrap();
-    // The same answers to a channel of this computer are kept and sent
-    // back, so it is the page's rule and not the server's cookie.
-    let mut channel = Client::new(&server.at("http", "site.test", "/"));
-    assert_eq!(channel.get(&server.at("http", "site.test", "/login")).text(), "x");
-    assert_eq!(channel.get(&server.at("http", "site.test", "/back")).text(), "x");
-    assert_eq!(server.the("/back").header("cookie").as_deref(), Some("sid=1"));
-    channel.finish().unwrap();
 }
 
 /// The page fetches no file, its own or another, asked for or redirected

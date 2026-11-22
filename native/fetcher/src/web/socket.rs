@@ -34,6 +34,7 @@ use super::connect::Stream;
 use super::cookies;
 use super::fetch::{Engine, is_loopback, user_agent};
 use super::limits::MAX_RESPONSE_HEAD;
+use super::local::{is_as_declared, known_local};
 use super::rules::is_bad_port;
 use crate::agent::Random;
 
@@ -221,7 +222,9 @@ fn target(engine: &Engine, start: &Start) -> Result<Target, Reason> {
     }
     // A page opened from disk has no channel, and opens a plain socket
     // as it asks a plain address (DEC-7315 version 2).
-    if engine.policy.folder().is_some_and(|folder| folder.scheme() == "https") && !secure && !is_loopback(&url) {
+    // Nor is an address known to be of the local network held to it
+    // (TODO-7316 item 10).
+    if engine.policy.folder().is_some_and(|folder| folder.scheme() == "https") && !secure && !is_loopback(&url) && !known_local(&url, start.target_space) {
         return Err(Reason::MixedContent);
     }
     if start.protocols.len() > MAX_WS_PROTOCOLS || start.protocols.iter().any(|protocol| protocol.is_empty() || !protocol.bytes().all(is_token_byte)) {
@@ -257,6 +260,11 @@ async fn open(engine: &Engine, start: &Start) -> Result<Open, Reason> {
     let key = new_key(&mut Random::new());
     let head = request(&url, &engine.policy.origin(), &key, &start.protocols, cookie.as_deref()).ok_or(Reason::Address)?;
     let opened = engine.pool.open_alone(secure, &host, port, engine.asker()).await?;
+    // The address the script declared the space of is in that space, or
+    // nothing is written to it (TODO-7316 item 10).
+    if !is_as_declared(opened.peer, start.target_space) {
+        return Err(Reason::LocalRefused);
+    }
     let (mut input, mut out) = tokio::io::split(opened.stream);
     let handshake = async {
         out.write_all(&head).await.map_err(|_| Reason::Connection)?;

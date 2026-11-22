@@ -586,6 +586,11 @@ const MODES = ["same-origin", "cors"];
 const CREDENTIALS = ["omit", "same-origin", "include"];
 const CACHE_MODES = ["default", "no-store", "reload", "no-cache", "force-cache", "only-if-cached"];
 const REDIRECT_MODES = ["follow", "error", "manual"];
+// The Local Network Access draft's `targetAddressSpace` (section 3.3, the
+// enumeration IPAddressSpace without the legacy alias "private"), in
+// the order of `protocol::web::AddressSpace`'s numbers from 1; the
+// operation's field is 0 when the script names none.
+const TARGET_ADDRESS_SPACES = ["public", "local", "loopback"];
 const NORMALIZED_METHODS = new Set(["DELETE", "GET", "HEAD", "OPTIONS", "POST", "PUT"]);
 // The referrer that names the client (section 2.2.1): the script itself (departure D25).
 const CLIENT = "about:client";
@@ -632,7 +637,7 @@ class Request {
         // The address without its fragment, as a response's `url` gives it.
         bare: record.bare,
         mode: "cors", credentials: "same-origin", cache: "default", redirect: "follow", referrer: CLIENT, referrerPolicy: "",
-        integrity: "", keepalive: false, headers: null, body: null, signal: null,
+        integrity: "", keepalive: false, headers: null, body: null, signal: null, targetAddressSpace: "",
       };
     }
     // Step 12: there is no window here.
@@ -662,6 +667,7 @@ class Request {
     if (init.redirect !== undefined) state.redirect = oneOf(init.redirect, REDIRECT_MODES, "redirect mode");
     if (init.integrity !== undefined) state.integrity = String(init.integrity);
     if (init.keepalive !== undefined) state.keepalive = !!init.keepalive;
+    if (init.targetAddressSpace !== undefined) state.targetAddressSpace = oneOf(init.targetAddressSpace, TARGET_ADDRESS_SPACES, "target address space");
     if (init.priority !== undefined) oneOf(init.priority, ["high", "low", "auto"], "priority");
     if (init.duplex !== undefined) oneOf(init.duplex, ["half"], "duplex");
     if (init.method !== undefined) {
@@ -710,6 +716,7 @@ class Request {
   get cache() { return this.#state.cache; }
   get redirect() { return this.#state.redirect; }
   get integrity() { return this.#state.integrity; }
+  get targetAddressSpace() { return this.#state.targetAddressSpace || "unknown"; }
   get keepalive() { return this.#state.keepalive; }
   get isReloadNavigation() { return false; }
   get isHistoryNavigation() { return false; }
@@ -874,6 +881,7 @@ function fetchFlags(state, kind, hasBody) {
     | (REDIRECT_MODES.indexOf(state.redirect) << FETCH_FLAG.REDIRECT)
     | (REFERRER_POLICIES.indexOf(state.referrerPolicy) << FETCH_FLAG.POLICY)
     | ((state.keepalive ? 1 : 0) << FETCH_FLAG.KEEPALIVE)
+    | ((TARGET_ADDRESS_SPACES.indexOf(state.targetAddressSpace) + 1) << FETCH_FLAG.TARGET)
     | ((hasBody ? 1 : 0) << FETCH_FLAG.BODY);
 }
 

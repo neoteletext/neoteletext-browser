@@ -208,7 +208,7 @@ fn parts(handle: i32) -> (i32, i32) {
 }
 
 /// A definition: ESC, `definition`, `code`, the contents, ESC, END.
-fn definition(definition: u8, code: u8, body: &[u8], out: &mut Vec<u8>) {
+pub(super) fn definition(definition: u8, code: u8, body: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(&[ESC, definition, code]);
     out.extend_from_slice(body);
     out.extend_from_slice(&[ESC, END]);
@@ -426,6 +426,142 @@ impl Cast {
         for (name, used, limit) in entries {
             let _ = write!(out, ",\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
+    }
+}
+
+/// An object a component owns (script-api.md section 8; work package
+/// U3): what the components' painter asks of the cast, in canvas dots.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(super) struct UiObject {
+    /// A region, which takes the pointer; else an actor.
+    pub region: bool,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub layer: u8,
+    /// An actor's frames, by their symbols' slots.
+    pub frames: Vec<usize>,
+    pub detectable: bool,
+    /// What a screen reader says for it.
+    pub label: String,
+    /// The period, in ticks, at which an actor cycles its frames.
+    pub cycle: Option<u16>,
+}
+
+impl Cast {
+    /// A symbol of the components' own, in the page context's share:
+    /// its slot. The caller appends its definition to the stream.
+    pub(super) fn ui_symbol(&mut self, width: i32, height: i32, body: Vec<u8>) -> Result<usize, Reply> {
+        let slot = pool(ContextId::Page)
+            .find(|slot| self.symbols.get(*slot).is_some_and(Option::is_none))
+            .ok_or_else(|| range("DEFINABLE_CODES", "the page has as many symbols as it may, and a component needs one for its highlight, caret or thumb"))?;
+        if body.len() > MAX_MACRO_BYTES || self.symbol_bytes().saturating_add(body.len()) > MAX_ALL_MACRO_BYTES {
+            return Err(range("MAX_ALL_MACRO_BYTES", "the symbols together are too long"));
+        }
+        if let Some(held) = self.symbols.get_mut(slot) {
+            *held = Some(Symbol { width, height, body, scope: 0 });
+        }
+        Ok(slot)
+    }
+
+    /// Frees a symbol of the components' own.
+    pub(super) fn ui_free_symbol(&mut self, slot: usize) {
+        self.free_symbol(slot);
+    }
+
+    /// The definition of the symbol in `slot`, as the stream carries it.
+    pub(super) fn symbol_definition(&self, slot: usize, out: &mut Vec<u8>) {
+        if let Some(symbol) = self.symbols.get(slot).and_then(Option::as_ref) {
+            definition(DEF_MACRO, code_of(slot), &symbol.body, out);
+        }
+    }
+
+    /// Makes an object of a component, or redefines the one numbered
+    /// `existing`; its number. It counts against the page's share of the
+    /// cast as a script's own actor does.
+    pub(super) fn ui_object(&mut self, existing: Option<u16>, object: UiObject) -> Result<u16, Reply> {
+        let place = existing.and_then(|number| self.actors.iter().position(|actor| actor.number == number));
+        if place.is_none() && self.actors.iter().filter(|actor| actor.context == ContextId::Page).count() >= PAGE_ACTORS {
+            return Err(range(
+                "MAX_OBJECTS",
+                "the page has as many actors and regions as it may, and a component needs one for each part the pointer takes, its highlight, caret or thumb",
+            ));
+        }
+        if object.cycle.is_some()
+            && place.and_then(|place| self.actors.get(place)).is_none_or(|actor| actor.cycle.is_none())
+            && self.actors.iter().filter(|actor| actor.cycle.is_some()).count() >= MAX_CYCLING_OBJECTS
+        {
+            return Err(range("MAX_CYCLING_OBJECTS", "as many objects cycle as may"));
+        }
+        let narrow = |value: i32| i16::try_from(value).unwrap_or(0);
+        let side = |value: i32| u16::try_from(value.max(1)).unwrap_or(1);
+        let number = if let Some(actor) = place.and_then(|place| self.actors.get(place)) {
+            actor.number
+        } else {
+            let mut number = self.next_number.max(1);
+            while self.actors.iter().any(|actor| actor.number == number) {
+                number = number.checked_add(1).unwrap_or(1);
+            }
+            self.next_number = number.checked_add(1).unwrap_or(1);
+            number
+        };
+        let actor = Actor {
+            number,
+            context: ContextId::Page,
+            scope: 0,
+            region: object.region,
+            x: narrow(object.x),
+            y: narrow(object.y),
+            width: side(object.width),
+            height: side(object.height),
+            origin: (0, 0),
+            layer: object.layer,
+            order: 0,
+            shown: true,
+            detectable: object.detectable,
+            wheel: false,
+            cover: 0,
+            looks: [None; LOOKS],
+            frames: object.frames,
+            label: object.label,
+            frame: 0,
+            cycle: object.cycle.map(|period| Cycle { first: 0, last: 1, period, once: false }),
+            look: 0,
+        };
+        match place.and_then(|place| self.actors.get_mut(place)) {
+            Some(held) => *held = actor,
+            None => self.actors.push(actor),
+        }
+        self.changed.push(number);
+        Ok(number)
+    }
+
+    /// Removes an object of a component.
+    pub(super) fn ui_remove_object(&mut self, number: u16) {
+        let before = self.actors.len();
+        self.actors.retain(|actor| actor.number != number);
+        self.whole |= self.actors.len() != before;
+    }
+
+    /// Moves an object of a component to a place, by an `ANIMATE`
+    /// operation: nothing is painted again.
+    pub(super) fn ui_move(&mut self, number: u16, x: i32, y: i32) -> Result<(), Reply> {
+        if self.operations.len() >= MAX_ANIMATE_OPERATIONS {
+            return Err(range("MAX_ANIMATE_OPERATIONS", "the step has as many animation operations as it may"));
+        }
+        let narrow = |value: i32| i16::try_from(value).unwrap_or(0);
+        let Some(actor) = self.actors.iter_mut().find(|actor| actor.number == number) else { return Ok(()) };
+        (actor.x, actor.y) = (narrow(x), narrow(y));
+        let kind = OperationKind::Move { relative: false, x: actor.x, y: narrow(y.saturating_add(CANVAS_TOP_LINE)) };
+        self.operations.push(Operation { target: AnimateTarget::object(number), kind });
+        Ok(())
+    }
+
+    /// The number of the object `handle` names, when it names one.
+    pub(super) fn object_number(handle: i32) -> Option<u16> {
+        let (kind, number) = parts(handle);
+        (kind == KIND_ACTOR).then(|| u16::try_from(number).ok()).flatten()
     }
 }
 

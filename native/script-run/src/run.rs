@@ -296,10 +296,8 @@ fn step_of(sequence: u32, page_tick: u64, items: &[&Item], first: Option<Event>,
         // step carries is dropped and counted, as a full queue's are.
         let fits = match item {
             Item::Event(event) => (step.events.len() < MAX_STEP_EVENTS).then(|| step.events.push(event.clone())),
-            Item::Hide => {
-                step.flags.pausing = true;
-                Some(())
-            }
+            // The pause is a step of its own, after this one.
+            Item::Hide => Some(()),
             Item::Show => {
                 step.flags.resumed = true;
                 Some(())
@@ -531,6 +529,8 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
     let mut files: Vec<Blob> = Vec::new();
     let (mut times, mut events, mut dropped) = (Vec::new(), 0_u64, 0_u64);
     let (mut sound_allowed, mut hidden, mut page_tick, mut sequence, mut ticks_run) = (options.sound_allowed, false, 0_u64, 0_u32, 0_u64);
+    // The keys the scripts were given as down and not yet as up.
+    let mut held_keys: Vec<String> = Vec::new();
     let paced = Instant::now();
     for tick in 0..options.ticks {
         if (options.pace || network.real_time())
@@ -563,7 +563,15 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
             closing = closes;
             dropped = dropped.saturating_add(lost);
             events = events.saturating_add(u64::try_from(step.events.len()).unwrap_or(u64::MAX));
-            hidden = step.flags.pausing;
+            let hides = items.iter().any(|item| matches!(item, Item::Hide));
+            for event in &step.events {
+                let name = String::from_utf8_lossy(&event.payload).into_owned();
+                match event.kind {
+                    EventKind::KeyDown if !held_keys.contains(&name) => held_keys.push(name),
+                    EventKind::KeyUp => held_keys.retain(|held| *held != name),
+                    _ => {}
+                }
+            }
             let stepped = Instant::now();
             let answered = running.link.step(step);
             times.push(stepped.elapsed());
@@ -575,6 +583,31 @@ pub fn run(options: &Options, blobs: &[Blob], mut network: Box<dyn Network>) -> 
                     running.stopped.get_or_insert_with(|| error.to_string());
                     running.log.runner(tick, &format!("stopped: {error}"));
                 }
+            }
+            // The tab is hidden: as the decoder does it, one more step
+            // that is no tick, the last before the pause, carrying the
+            // release of every key held, marked as not seen (section 4.7).
+            if hides && running.stopped.is_none() {
+                let releases: Vec<Event> = held_keys.drain(..).take(MAX_STEP_EVENTS).map(|name| decoder::scripts::events::lost_release(&name)).collect();
+                events = events.saturating_add(u64::try_from(releases.len()).unwrap_or(u64::MAX));
+                let pause = Step {
+                    sequence,
+                    tick: page_tick.saturating_sub(1),
+                    flags: StepFlags { pausing: true, sound_allowed, ..StepFlags::default() },
+                    events: releases,
+                    ..Step::default()
+                };
+                sequence = sequence.wrapping_add(1);
+                match running.link.step(pause) {
+                    Ok(batch) => running.take(tick, &batch, true),
+                    Err(error) => {
+                        running.stopped.get_or_insert_with(|| error.to_string());
+                        running.log.runner(tick, &format!("stopped: {error}"));
+                    }
+                }
+                hidden = true;
+            } else if shown_again {
+                hidden = false;
             }
             for message in running.link.take_requests() {
                 network.request(tick, message);

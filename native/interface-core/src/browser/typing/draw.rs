@@ -59,10 +59,7 @@ impl Browser {
     pub(in crate::browser) fn typing_badge(&self) -> Option<TypingBadge> {
         // A page's program has the badge to itself: that it holds the
         // keys, runs or has stopped (script-api.md sections 3.1 and 4.6).
-        if let Some((stopped, mut parts)) = self.script_indication() {
-            if self.typing_target().is_some() && self.typing.typing.is_some_and(|typing| !typing.secure) {
-                parts.push((String::from("Not secure"), INSECURE));
-            }
+        if let Some((stopped, parts)) = self.script_indication() {
             return Some(TypingBadge { refused: stopped, parts });
         }
         let typing = self.typing.typing?;

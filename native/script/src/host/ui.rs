@@ -4,13 +4,13 @@
 //!
 //! **Where a renderer plugs in.** [`painter`] chooses the
 //! [`Painter`](crate::ui::Painter) of the renderer of the page shown.
-//! Teletext's is here; work packages U2 and U3 add ReGIS's and NAPLPS's
-//! to that one function, each an implementation of the trait on its own
-//! state. Nothing else of this file, of `ui.rs` or of the prelude's part
+//! Teletext's and NAPLPS's are here; work package U2 adds ReGIS's to
+//! that one function, an implementation of the trait on its own state. Nothing else of this file, of `ui.rs` or of the prelude's part
 //! knows which renderer draws.
 
 use protocol::script::ContextId;
 
+use super::naplps::Naplps;
 use super::{Host, Ints, Payload, Reply, no_payload, text_of, type_error};
 use crate::limits::{MAX_KEY_NAME_BYTES, MAX_LABEL_BYTES, MAX_TEXT_EVENT_BYTES, TICKS_PER_SECOND};
 use crate::ops::{EventKind, KeyBit, Op, PointerAction};
@@ -22,11 +22,22 @@ use crate::ui::{Kind, Painter, Time, What, keys_json};
 /// Milliseconds in a second.
 const SECOND_MS: u64 = 1000;
 
-/// The drawing of components for `context` on the page shown: its
-/// renderer's own. A renderer with no page state for the context has
-/// none, and the call is refused.
-fn painter(teletext: &mut Slot, context: ContextId) -> Result<&mut dyn Painter, Reply> {
-    teletext.painter(context).ok_or_else(|| type_error("components are drawn on the page shown, by the page context of a page whose renderer draws them"))
+/// The drawing of components for `context` on the page shown, when its
+/// renderer has one: the one place that knows which renderer draws. Each
+/// renderer adds its arm here: teletext's page plane (work package U1),
+/// and NAPLPS's backdrop and cast (work package U3).
+fn painter_of<'a>(teletext: &'a mut Slot, naplps: &'a mut Naplps, context: ContextId) -> Option<&'a mut dyn Painter> {
+    if naplps.draws_components() {
+        return naplps.ui_painter(context);
+    }
+    teletext.painter(context)
+}
+
+/// The drawing of components for `context` on the page shown. A renderer
+/// with no page state for the context has none, and the call is refused.
+fn painter<'a>(teletext: &'a mut Slot, naplps: &'a mut Naplps, context: ContextId) -> Result<&'a mut dyn Painter, Reply> {
+    painter_of(teletext, naplps, context)
+        .ok_or_else(|| type_error("components are drawn on the page shown, by the page context of a page whose renderer draws them"))
 }
 
 /// The numbers the prelude's component part shares with the host, written
@@ -71,7 +82,7 @@ impl Host {
             return;
         }
         let time = self.ui_time();
-        self.ui.set_time(self.teletext.painter(ContextId::Page), time);
+        self.ui.set_time(painter_of(&mut self.teletext, &mut self.naplps, ContextId::Page), time);
     }
 
     /// The tick at which a clock of `context` next changes: the first of
@@ -87,7 +98,7 @@ impl Host {
 
     /// The scope `scope` of `context` ends: its components are removed.
     pub(super) fn ui_scope_end(&mut self, context: ContextId, scope: i32) -> Vec<i32> {
-        self.ui.remove_scope(self.teletext.painter(context), context, scope)
+        self.ui.remove_scope(painter_of(&mut self.teletext, &mut self.naplps, context), context, scope)
     }
 
     /// One of the component vocabulary's operations.
@@ -109,18 +120,18 @@ impl Host {
                 let scope = self.context(context).and_then(|held| held.scope_stack.last().copied()).unwrap_or(0);
                 let time = self.ui_time();
                 self.ui.set_time(None, time);
-                self.ui.create(painter(&mut self.teletext, context)?, context, scope, kind, at, options).map(Reply::Int)
+                self.ui.create(painter(&mut self.teletext, &mut self.naplps, context)?, context, scope, kind, at, options).map(Reply::Int)
             }
             Op::UI_SET => {
                 let [handle] = ints.exactly()?;
                 let options = options(payload)?;
                 self.room(MAX_UI_OPTION_BYTES.saturating_mul(2), MAX_LABEL_BYTES)?;
-                self.ui.set(painter(&mut self.teletext, context)?, context, handle, options).map(|()| Reply::Undefined)
+                self.ui.set(painter(&mut self.teletext, &mut self.naplps, context)?, context, handle, options).map(|()| Reply::Undefined)
             }
             Op::UI_REMOVE => {
                 let [handle] = ints.exactly()?;
                 no_payload(op, payload)?;
-                self.ui.remove(painter(&mut self.teletext, context)?, context, handle)?;
+                self.ui.remove(painter(&mut self.teletext, &mut self.naplps, context)?, context, handle)?;
                 if let Some(held) = self.context_mut(context) {
                     held.listens.retain(|(listened, _)| *listened != handle);
                 }
@@ -129,7 +140,7 @@ impl Host {
             Op::UI_FOCUS => {
                 let [handle] = ints.exactly()?;
                 no_payload(op, payload)?;
-                self.ui.focus(painter(&mut self.teletext, context)?, context, handle).map(|()| Reply::Undefined)
+                self.ui.focus(painter(&mut self.teletext, &mut self.naplps, context)?, context, handle).map(|()| Reply::Undefined)
             }
             Op::UI_VALUE => {
                 let [handle] = ints.exactly()?;
@@ -139,7 +150,7 @@ impl Host {
             Op::UI_OFFER => {
                 let [kind, first, second] = ints.exactly()?;
                 // No component: nothing is offered, and nothing refused.
-                let Ok(painter) = painter(&mut self.teletext, context) else { return Ok(Reply::Undefined) };
+                let Ok(painter) = painter(&mut self.teletext, &mut self.naplps, context) else { return Ok(Reply::Undefined) };
                 let offered = match EventKind::from_number(kind) {
                     Some(EventKind::KEY_DOWN) => {
                         let name = text_of(op, payload)?;
@@ -169,7 +180,7 @@ impl Host {
                 if !(0..=1).contains(&go) {
                     return Err(type_error("a verdict is to go on (1) or not (0)"));
                 }
-                let done = self.ui.settle(painter(&mut self.teletext, context)?, context, handle, go == 1)?;
+                let done = self.ui.settle(painter(&mut self.teletext, &mut self.naplps, context)?, context, handle, go == 1)?;
                 Ok(Reply::Int(i32::from(done)))
             }
         }
