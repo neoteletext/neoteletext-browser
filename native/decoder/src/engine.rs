@@ -39,6 +39,9 @@ mod font_tests;
 mod painting_tests;
 mod render;
 mod rules;
+pub mod script;
+#[cfg(test)]
+mod script_tests;
 mod snapshot;
 #[cfg(test)]
 mod snapshot_tests;

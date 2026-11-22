@@ -800,6 +800,15 @@ impl RegisPages {
         core::mem::take(&mut self.links)
     }
 
+    /// The generation of the ReGIS stream the sub-page `sub` of `page`
+    /// holds and the offset its next byte has, or none when it holds no
+    /// stream: where a page's script appends (the script API's
+    /// specification section 13 item 3; TODO-7293).
+    #[must_use]
+    pub fn stream_end(&self, page: u16, sub: u16) -> Option<(u16, u32)> {
+        self.pages.get(&(page, sub)).filter(|held| !held.lost).map(|held| (held.generation, held.next))
+    }
+
     /// Whether the sub-page of `page` on screen (see [`Self::shown`]) is
     /// drawn in ReGIS.
     #[must_use]
