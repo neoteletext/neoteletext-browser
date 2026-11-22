@@ -180,7 +180,7 @@ class WebSocket extends EventTarget {
     if (typeof protocols === "string") protocols = [protocols];
     protocols = Array.from(protocols, String);
     // Steps 8 and 9: no protocol twice, each a token.
-    if (new Set(protocols).size !== protocols.length) throw domException("a subprotocol is named twice", "SyntaxError");
+    if (new Set(protocols.map((protocol) => protocol.toLowerCase())).size !== protocols.length) throw domException("a subprotocol is named twice", "SyntaxError");
     for (const protocol of protocols) if (!TOKEN.test(protocol)) throw domException("'" + protocol + "' is not a subprotocol", "SyntaxError");
     if (protocols.length > WEB_BOUND.MAX_WS_PROTOCOLS) throw domException("MAX_WS_PROTOCOLS: too many subprotocols", "SyntaxError");
     state.url = record.href;
@@ -212,7 +212,8 @@ class WebSocket extends EventTarget {
   close(code = undefined, reason = undefined) {
     const state = this.#state;
     if (code !== undefined) {
-      code = Number(code) & 0xffff;
+      // Web IDL's [Clamp] unsigned short.
+      code = Math.min(Math.max(Math.round(Number(code)) || 0, 0), 0xffff);
       if (code !== 1000 && (code < 3000 || code > 4999)) throw domException("a close code is 1000 or 3000 to 4999", "InvalidAccessError");
     }
     let text = "";

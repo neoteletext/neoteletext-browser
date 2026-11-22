@@ -44,6 +44,8 @@ class Blob {
   #bytes;
   #type;
   constructor(parts = undefined, options = undefined) {
+    // Web IDL: a dictionary is an object, null or undefined.
+    if (options !== undefined && options !== null && typeof options !== "object" && typeof options !== "function") throw new TypeError("a blob's options are an object");
     const endings = options && options.endings !== undefined ? String(options.endings) : "transparent";
     if (endings !== "transparent" && endings !== "native") throw new TypeError("endings is 'transparent' or 'native'");
     this.#bytes = blobParts(parts, endings);
@@ -54,9 +56,14 @@ class Blob {
   // File API section 3.3.1, slice.
   slice(start = 0, end = undefined, contentType = "") {
     const size = this.#bytes.byteLength;
+    // Web IDL's [Clamp] long long: to the nearest whole number, a half
+    // to the even one; then the File API's own clamping to the blob.
     const clamp = (value) => {
-      value = Math.trunc(Number(value)) || 0;
-      return value < 0 ? Math.max(size + value, 0) : Math.min(value, size);
+      value = Number(value);
+      if (Number.isNaN(value)) value = 0;
+      let whole = Math.floor(value + 0.5);
+      if (whole - value === 0.5 && whole % 2 !== 0) whole -= 1;
+      return whole < 0 ? Math.max(size + whole, 0) : Math.min(whole, size);
     };
     const from = clamp(start);
     const to = end === undefined ? size : clamp(end);
@@ -64,14 +71,15 @@ class Blob {
   }
   stream() {
     const bytes = this.#bytes;
-    return new ReadableStream({
+    return new ReadableStream(bare({
       type: "bytes",
       pull(controller) {
         if (bytes.byteLength > 0) controller.enqueue(bytes.slice());
         controller.close();
       },
-    });
+    }));
   }
+  textStream() { return this.stream().pipeThrough(new TextDecoderStream()); }
   text() { return Promise.resolve().then(() => utf8Decode(this.#bytes)); }
   arrayBuffer() { return Promise.resolve().then(() => this.#bytes.slice().buffer); }
   bytes() { return Promise.resolve().then(() => this.#bytes.slice()); }
@@ -93,6 +101,7 @@ class File extends Blob {
   #lastModified;
   constructor(parts, name, options = undefined) {
     if (arguments.length < 2) throw new TypeError("a File takes its parts and its name");
+    if (options !== undefined && options !== null && typeof options !== "object" && typeof options !== "function") throw new TypeError("a file's options are an object");
     super(parts, options);
     this.#name = usv(name);
     const modified = options && options.lastModified !== undefined ? Number(options.lastModified) : Date.now();
@@ -160,19 +169,16 @@ class FormData {
       this.#list = this.#list.filter((one, index) => index <= first || one[0] !== entry[0]);
     }
   }
-  forEach(callback, thisArg = undefined) {
-    if (typeof callback !== "function") throw new TypeError("forEach takes a function");
-    for (let index = 0; index < this.#list.length; index++) callback.call(thisArg, this.#list[index][1], this.#list[index][0], this);
-  }
-  *entries() { for (let index = 0; index < this.#list.length; index++) yield [this.#list[index][0], this.#list[index][1]]; }
-  *keys() { for (let index = 0; index < this.#list.length; index++) yield this.#list[index][0]; }
-  *values() { for (let index = 0; index < this.#list.length; index++) yield this.#list[index][1]; }
-  [Symbol.iterator]() { return this.entries(); }
   get [Symbol.toStringTag]() { return "FormData"; }
   static {
     formInternals.list = (form) => form.#list;
   }
 }
+
+pairIterable(FormData, "FormData", (form) => {
+  if (!(form instanceof FormData)) throw new TypeError("not a FormData");
+  return formInternals.list(form);
+});
 
 // HTML section 4.10.21.8, the multipart/form-data encoding algorithm.
 function multipartEncode(form) {
@@ -303,7 +309,7 @@ function isForbiddenResponseHeader(name) {
   return name === "set-cookie" || name === "set-cookie2";
 }
 
-const headersInternals = { list: null, guard: null, fill: null };
+const headersInternals = { list: null, guard: null, fill: null, copy: null, sorted: null, is: null };
 
 class Headers {
   // Each entry: the name as given, its lower case, and the value.
@@ -315,10 +321,6 @@ class Headers {
   // Section 5.1, "fill".
   static #fill(headers, init) {
     if (init === null || (typeof init !== "object" && typeof init !== "function")) throw new TypeError("headers are a sequence of pairs or a record");
-    if (init instanceof Headers) {
-      for (const [name, , value] of init.#list.slice()) headers.#append(name, value);
-      return;
-    }
     const iterate = init[Symbol.iterator];
     if (iterate !== undefined && iterate !== null) {
       if (typeof iterate !== "function") throw new TypeError("the headers' iterator is not a function");
@@ -404,26 +406,37 @@ class Headers {
     }
     return out;
   }
-  forEach(callback, thisArg = undefined) {
-    if (typeof callback !== "function") throw new TypeError("forEach takes a function");
-    for (const [name, value] of this.#sorted()) callback.call(thisArg, value, name, this);
-  }
-  *entries() { for (const pair of this.#sorted()) yield pair; }
-  *keys() { for (const pair of this.#sorted()) yield pair[0]; }
-  *values() { for (const pair of this.#sorted()) yield pair[1]; }
-  [Symbol.iterator]() { return this.entries(); }
   get [Symbol.toStringTag]() { return "Headers"; }
   static {
     headersInternals.list = (headers) => headers.#list;
     headersInternals.guard = (headers, guard) => { headers.#guard = guard; };
     headersInternals.fill = (headers, init) => Headers.#fill(headers, init);
+    // A header list copied as it is (Fetch standard section 5.4 step 32,
+    // section 5.5 clone): names as given, each Set-Cookie its own.
+    headersInternals.copy = (headers, from) => { for (const [name, , value] of from.#list.slice()) headers.#append(name, value); };
+    headersInternals.sorted = (headers) => headers.#sorted();
+    headersInternals.is = (value) => #list in value;
   }
 }
+
+pairIterable(Headers, "Headers", (headers) => {
+  if (headers === null || typeof headers !== "object" || !headersInternals.is(headers)) throw new TypeError("not a Headers");
+  return headersInternals.sorted(headers);
+});
 
 function headersWith(guard, init) {
   const headers = new Headers();
   headersInternals.guard(headers, guard);
   if (init !== undefined) headersInternals.fill(headers, init);
+  return headers;
+}
+
+// Headers under `guard` holding a copy of another's header list.
+function headersCopy(guard, from) {
+  const headers = new Headers();
+  headersInternals.guard(headers, "none");
+  headersInternals.copy(headers, from);
+  headersInternals.guard(headers, guard);
   return headers;
 }
 
@@ -437,14 +450,17 @@ function makeBody(source, stream) {
 
 function bodyStream(body) {
   if (!body.stream) {
-    const bytes = body.source;
-    body.stream = new ReadableStream({
+    const bytes = body.used ? new Uint8Array(0) : body.source;
+    body.stream = new ReadableStream(bare({
       type: "bytes",
       pull(controller) {
         if (bytes.byteLength > 0) controller.enqueue(bytes.slice());
         controller.close();
       },
-    });
+    }));
+    // A body read whole before its stream was asked for: the stream is
+    // then locked and disturbed, as the read left it (section 5.3).
+    if (body.used) body.stream.getReader().read().catch(() => {});
   }
   return body.stream;
 }
@@ -525,6 +541,12 @@ function bodyMixin(Class, state) {
     },
     text() { return all(this).then(utf8Decode); },
     json() { return all(this).then((bytes) => JSON.parse(utf8Decode(bytes))); },
+    textStream() {
+      const body = state(this).body;
+      if (bodyUnusable(body)) throw new TypeError("the body has already been read");
+      const stream = body === null ? new ReadableStream(bare({ type: "bytes", pull(controller) { controller.close(); } })) : bodyStream(body);
+      return stream.pipeThrough(new TextDecoderStream());
+    },
     formData() {
       const type = state(this).headers.get("content-type");
       return all(this).then((bytes) => {
@@ -654,7 +676,7 @@ class Request {
       signal = init.signal;
     }
     state.signal = followSignal(signal);
-    state.headers = headersWith("request", init.headers !== undefined ? init.headers : input instanceof Request ? input.#state.headers : undefined);
+    state.headers = init.headers === undefined && input instanceof Request ? headersCopy("request", input.#state.headers) : headersWith("request", init.headers);
     const initBody = init.body !== undefined && init.body !== null ? init.body : null;
     if ((initBody !== null || inputBody !== null) && (state.method === "GET" || state.method === "HEAD")) throw new TypeError("a GET or HEAD request has no body");
     if (initBody !== null) {
@@ -669,7 +691,7 @@ class Request {
       state.body = makeBody(inputBody.source, inputBody.stream);
       inputBody.used = true;
       if (inputBody.stream !== null) {
-        const through = new TransformStream();
+        const through = new TransformStream(bare({}));
         inputBody.stream.pipeTo(through.writable).catch(() => {});
         state.body = makeBody(null, through.readable);
       }
@@ -696,7 +718,7 @@ class Request {
   clone() {
     if (bodyUnusable(this.#state.body)) throw new TypeError("the request's body has already been read");
     const copy = new Request(this.#state.url);
-    copy.#state = { ...this.#state, headers: headersWith("request", this.#state.headers), body: cloneBody(this.#state.body), signal: followSignal(this.#state.signal) };
+    copy.#state = { ...this.#state, headers: headersCopy("request", this.#state.headers), body: cloneBody(this.#state.body), signal: followSignal(this.#state.signal) };
     return copy;
   }
   get [Symbol.toStringTag]() { return "Request"; }
@@ -770,8 +792,7 @@ class Response {
   get headers() { return this.#state.headers; }
   clone() {
     if (bodyUnusable(this.#state.body)) throw new TypeError("the response's body has already been read");
-    const headers = headersWith("none", this.#state.headers);
-    headersInternals.guard(headers, this.#state.type === "default" ? "response" : "immutable");
+    const headers = headersCopy(this.#state.type === "default" ? "response" : "immutable", this.#state.headers);
     return responseInternals.make({ ...this.#state, headers, body: cloneBody(this.#state.body) });
   }
   get [Symbol.toStringTag]() { return "Response"; }
@@ -802,7 +823,7 @@ function networkError(kind) {
 
 // Section 4.2.1 of the Fetch standard's "data: URL processor": the
 // response for a `data:` address (departure D10: fetched here), or null.
-function dataResponse(url) {
+function dataResponse(url, headOnly) {
   const comma = url.indexOf(",");
   if (comma < 0) return null;
   let type = url.slice(5, comma).replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, "");
@@ -841,7 +862,8 @@ function dataResponse(url) {
   if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+\/[!#$%&'*+\-.^_`|~0-9A-Za-z]+[\t\n\r ]*(;.*)?$/.test(type)) type = "text/plain;charset=US-ASCII";
   const headers = headersWith("none", [["Content-Type", type]]);
   headersInternals.guard(headers, "immutable");
-  return responseInternals.make({ type: "basic", url, redirected: false, status: 200, statusText: "OK", headers, body: makeBody(bytes, null) });
+  // Section 4.1 "main fetch" step 21: a HEAD has no body.
+  return responseInternals.make({ type: "basic", url, redirected: false, status: 200, statusText: "OK", headers, body: headOnly ? null : makeBody(bytes, null) });
 }
 
 function fetchFlags(state, kind, hasBody) {
@@ -885,12 +907,12 @@ function responseOf(pending, status, flags, payload) {
   // Section 4.1 "main fetch" step 21 and section 2.2.3: no body for HEAD
   // or for a null body status; none can be read of a redirect not followed.
   if (type !== "opaqueredirect" && pending.method !== "HEAD" && !NULL_BODY_STATUSES.has(status)) {
-    const stream = new ReadableStream({
+    const stream = new ReadableStream(bare({
       type: "bytes",
       start(controller) { pending.controller = controller; },
       pull() { giveCredit(pending); },
       cancel() { finishFetch(pending, true); },
-    }, { highWaterMark: WEB_BOUND.FETCH_WINDOW_BYTES });
+    }), bare({ highWaterMark: WEB_BOUND.FETCH_WINDOW_BYTES }));
     body = makeBody(null, stream);
   }
   // A redirect not followed is answered at the address that was asked.
@@ -965,7 +987,7 @@ function fetch(input, init = undefined) {
     if (state.signal.aborted) { reject(state.signal.reason); return; }
     const scheme = state.scheme;
     if (scheme === "data") {
-      const response = dataResponse(state.bare);
+      const response = dataResponse(state.bare, state.method === "HEAD");
       if (response) resolve(response); else reject(new TypeError("Failed to fetch"));
       return;
     }
