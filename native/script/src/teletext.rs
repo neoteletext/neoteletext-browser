@@ -41,6 +41,7 @@ pub mod limits;
 pub mod model;
 pub mod sprites;
 pub mod text;
+pub mod ui;
 
 use std::fmt::Write as _;
 
@@ -332,6 +333,11 @@ pub struct Teletext {
     channel_shown: bool,
     /// The presentation tick of the step.
     tick: u64,
+    /// The controls that are parts of components (work package U1).
+    ui_parts: Vec<ui::Part>,
+    /// The cells each component wrote and the overlay it set, by its
+    /// handle: what erasing it clears.
+    ui_drawn: Vec<(i32, Rect)>,
     /// The sixel bitmap's two buffers (section 5.7).
     bitmap: Box<bitmap::Bitmap>,
 }
@@ -365,6 +371,8 @@ impl Teletext {
             page_open: false,
             channel_shown: false,
             tick: 0,
+            ui_parts: Vec::new(),
+            ui_drawn: Vec::new(),
             bitmap: bitmap::Bitmap::new(),
         })
     }
@@ -960,6 +968,14 @@ impl Slot {
             self.0 = None;
         }
         handles
+    }
+
+    /// The page's drawing of components, for the page context: on
+    /// teletext a component is cells of the page plane, which is the page
+    /// context's alone (section 3.1).
+    pub fn painter(&mut self, context: ContextId) -> Option<&mut dyn crate::ui::Painter> {
+        let held = self.0.as_deref_mut().filter(|held| context == ContextId::Page && held.page_open)?;
+        Some(held)
     }
 
     /// The state `context` may draw on, when it has one.
