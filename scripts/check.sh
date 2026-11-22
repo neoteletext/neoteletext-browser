@@ -293,6 +293,24 @@ check_page_range_literals() {
 $found"
 }
 
+# rdm TODO-7390: the url crate's slicing of an address by position
+# (`&url[..Position::X]`) is used nowhere. At the pinned version 2.5.9 its
+# `BeforePassword` and `AfterPassword` index past the end of an address
+# that ends at an empty authority (`foo://`), which a script or a server
+# can give, and fail an assertion in a debug build for a user name with
+# no password. An address is read by the crate's accessors or its
+# `quirks` getters, which do not go through that code. Comment lines may
+# name the positions, to say why.
+readonly URL_POSITION='url::Position|Position::(Before|After)(Scheme|Username|Password|Host|Port|Path|Query|Fragment)\b'
+check_url_position_slicing() {
+    step "no address is sliced by the url crate's Position (TODO-7390)"
+    local found status=0
+    found="$(git grep --cached -n -IE "$URL_POSITION" -- 'native/*.rs' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//')" || status=$?
+    [[ "$status" -le 1 ]] || fail "git grep failed looking for slicing by Position"
+    [[ -z "$found" ]] || fail "these lines slice an address by the url crate's Position, which panics on addresses from outside (rdm TODO-7390); read the address by the crate's accessors or its quirks getters:
+$found"
+}
+
 # The security review's finding S-11 (TODO-7277): the script engine's
 # module, native/script/qjs/nt-quickjs.wasm, is a committed binary that
 # every script runs in, built by native/script/qjs/build.sh from pinned
@@ -338,6 +356,7 @@ check_script_engine_rebuilds() {
 check_compiles() {
     check_browser_names
     check_page_range_literals
+    check_url_position_slicing
     check_engine_pin
     check_desktop_codecs
     check_release_versions
