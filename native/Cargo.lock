@@ -1761,6 +1761,8 @@ name = "neoteletext-script-host"
 version = "0.1.0"
 dependencies = [
  "confine",
+ "neoteletext-decoder",
+ "neoteletext-rules",
  "neoteletext-script",
  "protocol",
  "ring",

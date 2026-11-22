@@ -26,5 +26,13 @@ confine.workspace = true
 # library already links for the same sources.
 ring.workspace = true
 
+[dev-dependencies]
+# The decoder's side of scripts, driven against this program as the
+# trusted core relays them (work package F4, TODO-7293): the decoder
+# itself never links the script library (requirement 1.3), so the test of
+# the two together lives here.
+decoder.workspace = true
+neoteletext-rules.workspace = true
+
 [lints]
 workspace = true
