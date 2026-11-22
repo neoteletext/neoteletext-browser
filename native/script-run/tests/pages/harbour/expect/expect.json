@@ -1,8 +1,8 @@
 {
   "form": 1,
-  "version": 1,
+  "version": 2,
   "files": {
-    "budget.json": "4567b25ecd9c6e9bb3c3805a83eae8618272e8ad52a543636fc98f88055f29aa",
+    "budget.json": "f851472527aece711c649be6841d598ab1b93625402de8d34b48630c2a4bc4a9",
     "log.txt": "cc9c2760838efca301316df5e01afaf48f0f82d338a348561b5ba7e3fb485752",
     "sound.wav": "6ed1f40667b397731df04c3b1809dfe6658efac1a72d76465bf0133f14cee895",
     "tick-000000.png": "4ae4a1142aa224b8b96dbe078221a2025cf2304307d58e9292c26e13839660a8",

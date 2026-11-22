@@ -7,7 +7,8 @@
 //! they are in the report and never in what is kept and compared. The
 //! budget is in both: the report has all of it, and the kept
 //! `budget.json` leaves out the entries that are shares of a time limit
-//! ([`TIMED_ENTRIES`]).
+//! ([`TIMED_ENTRIES`]) and those that measure the library's own footprint
+//! ([`FOOTPRINT_ENTRIES`]).
 
 use core::fmt::Write as _;
 use core::time::Duration;
@@ -19,6 +20,12 @@ use crate::network::Counts;
 /// The budget's entries that are shares of a time limit (section 3.7):
 /// they follow the wall clock, so they are reported and not kept.
 pub const TIMED_ENTRIES: [&str; 4] = ["callbackPercent", "callbackPercentMax", "stepPercentMax", "secondPercent"];
+/// The budget's entries that measure the script library's own footprint
+/// with the page's: the engine's heap and the host's bytes hold the
+/// prelude, which grows with every API added to it. They are reported
+/// and not kept, so that a kept run changes when its page's behaviour
+/// does and not whenever the library gains an operation.
+pub const FOOTPRINT_ENTRIES: [&str; 2] = ["heapBytes", "hostBytes"];
 /// The most values a budget report holds: its entries, each an object of
 /// two numbers, for the shared core, a renderer and the components.
 const MAX_BUDGET_VALUES: usize = 512;
@@ -68,7 +75,9 @@ impl Budget {
     fn json(&self, timed: bool) -> String {
         let mut out = String::from("{");
         let mut first = true;
-        for entry in self.entries.iter().filter(|entry| timed || !TIMED_ENTRIES.contains(&entry.name.as_str())) {
+        for entry in
+            self.entries.iter().filter(|entry| timed || !(TIMED_ENTRIES.contains(&entry.name.as_str()) || FOOTPRINT_ENTRIES.contains(&entry.name.as_str())))
+        {
             if !first {
                 out.push(',');
             }

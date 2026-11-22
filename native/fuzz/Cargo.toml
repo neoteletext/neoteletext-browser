@@ -28,6 +28,9 @@ icon = { path = "../icon", package = "neoteletext-icon" }
 # built with debug assertions by compiler flags, which the interpreter's
 # build script cannot see (native/script/Cargo.toml).
 neoteletext-script = { path = "../script", features = ["portable-dispatch"] }
+# The NAPLPS renderer the browser pins, which reads what the script
+# library's NAPLPS painter writes (painter_programs).
+naplps = { git = "file:///Users/andrewstuart/devel/neoteletext-renderer-naplps", rev = "60e8816088bb9e1eec21caab7dff23bb6945bbf9" }
 # The script-host program's serving, on the same build of the library.
 script-host = { path = "../script-host", package = "neoteletext-script-host" }
 # The standalone runner's readers: its input script, its network file,
@@ -408,6 +411,13 @@ bench = false
 [[bin]]
 name = "script_host_ops"
 path = "fuzz_targets/script_host_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "painter_programs"
+path = "fuzz_targets/painter_programs.rs"
 test = false
 doc = false
 bench = false

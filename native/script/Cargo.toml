@@ -38,22 +38,41 @@ neoteletext-rules.workspace = true
 neoteletext-web.workspace = true
 # The synthesizer families' codec numbers, by name (script-api.md section 3.5).
 neoteletext-audio.workspace = true
+# MIT, the project's own, no dependencies: the ReGIS renderer, for its
+# `Validator`, which checks each step's commit before it is sent, and its
+# limits by name (script-api.md sections 6.2 and 11.1).
+regis.workspace = true
 # The bound on the keys a page may claim, by name.
 protocol.workspace = true
-# The teletext API (script-api.md section 5, work package T1): the engine
-# core's constants, character set designations and control limits, by name.
-neoteletext-core.workspace = true
-# The engine's own text encoder, `write_text::write_runs` (section 5.6,
-# DEC-2199). Its feature `write-text` brings unicode-bidi (MIT or
-# Apache-2.0, pure Rust; the engine's decision E.82, rdm DEC-606), for
+# The NAPLPS renderer (MIT, the project's own, pinned by revision): the
+# dot mapping every writer of NAPLPS calls (naplps-raster.md RAS-2) and
+# the renderer's limits by name (script-api.md section 7; work package N1).
+naplps.workspace = true
+# The engine's own text encoders: `write_text::write_runs` for teletext
+# (section 5.6, DEC-2199) and the picture text encoder for NAPLPS
+# (renderer parity PAR-3 to PAR-5), text in the 55 provided sets. The
+# feature `picture-text` holds `write-text`, which brings unicode-bidi
+# 0.3.18 (MIT or Apache-2.0, pure Rust; the engine's decision E.82, rdm
+# DEC-606; under the owner's standing approval DEC-6579), for
 # right-to-left runs.
-neoteletext-formats = { workspace = true, features = ["write-text"] }
+neoteletext-formats = { workspace = true, features = ["write-text", "picture-text"] }
+# The teletext API (script-api.md section 5, work package T1): the engine
+# core's constants, character set designations and control limits, by
+# name. And the engine's character sets, which the picture text encoder
+# names: its feature `picture-text` uses the core's `glyphs` module
+# without turning on the core's `render` feature that holds it (the
+# engine's TODO-7363, after which the feature goes from this line).
+neoteletext-core = { workspace = true, features = ["render"] }
 
 [dev-dependencies]
 # The teletext tests' receiver (tests/teletext/receiver.rs): the engine as
 # the browser's decoder builds it, so that a kept picture is what the
 # browser would show.
 neoteletext-core = { workspace = true, features = ["modern-classic", "level35-32colors", "extended-sets"] }
+# The receiver's stroke font for the primary set, as the browser's decoder
+# gives it to the NAPLPS renderer (MIT, the project's own, pinned by
+# revision): the tests draw what the painter writes.
+naplps-fonts.workspace = true
 
 [lints]
 workspace = true

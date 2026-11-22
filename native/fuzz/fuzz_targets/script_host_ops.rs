@@ -11,7 +11,7 @@ use libfuzzer_sys::fuzz_target;
 use neoteletext_script::host::{Host, Input as HostInput, InputPayload, Payload};
 use neoteletext_script::limits::{MAX_BATCH_BYTES, MAX_HOST_INTS, MAX_HOST_STATE_BYTES};
 use neoteletext_script::ops::{EventKind, Op};
-use protocol::script::{ContextFlags, ContextId, ContextOpen, FromScriptHost, Level, Renderer, write_to_decoder};
+use protocol::script::{Bounds, ContextFlags, ContextId, ContextOpen, Event, EventKind as Carried, FromScriptHost, Level, Renderer, Step, write_to_decoder};
 
 /// The most commands one input gives.
 const MAX_COMMANDS: usize = 512;
@@ -58,7 +58,15 @@ fn opening(context: ContextId, input: &mut Bytes<'_>) -> ContextOpen {
     ContextOpen {
         context,
         api: 1,
-        renderer: Renderer::Teletext,
+        // Bits 6 and 7 choose the page's renderer, so that each renderer's
+        // operations are reached: a ReGIS page as often as not (operations
+        // 200 to 214, work package R1), a NAPLPS page (300 to 312, work
+        // packages N1 and N2) or a teletext page a quarter of the time each.
+        renderer: match flags >> 6 {
+            3 => Renderer::Naplps,
+            1 => Renderer::Teletext,
+            _ => Renderer::Regis,
+        },
         level: Level::TwoFive,
         page: 0x100,
         subcode: u16::from(flags & 1),
@@ -148,6 +156,24 @@ fuzz_target!(|data: &[u8]| {
                 }
                 let _ = host.take_shared_notice();
                 let _ = host.count_failure(context, input.byte() & 1 != 0);
+            }
+            7 => {
+                // What a step reports of the page's drawings: painted,
+                // cycles ended, bounds, and the page left.
+                let left = input.byte() % 8 == 0;
+                let step = Step {
+                    events: if left { vec![Event { kind: Carried::PageHide, numbers: [0x100, 0, 0, 0], payload: Vec::new() }] } else { Vec::new() },
+                    painted: vec![input.int()],
+                    cycle_ended: vec![input.int(), input.int()],
+                    bounds: (0..input.byte() % 4)
+                        .map(|_| Bounds { handle: input.int(), x: input.int(), y: input.int(), width: input.int(), height: input.int() })
+                        .collect(),
+                    ..Step::default()
+                };
+                host.regis_reports(&step);
+                for context in [ContextId::Channel, ContextId::Page] {
+                    let _ = host.regis_take_failure(context);
+                }
             }
             _ => {
                 // A host call: a context, an operation, whole numbers, a payload.

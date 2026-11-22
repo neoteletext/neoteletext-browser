@@ -47,10 +47,9 @@ pub const FIRST_DEFINABLE: i32 = FIRST_DEFINABLE_ENTRY as i32;
 pub const TELETEXT_DEFINABLE_COLOURS: usize = MAX_DEFINABLE_COLOURS;
 /// The greatest colour: four bits each of red, green and blue.
 pub const LAST_RGB12: i32 = MAX_RGB12 as i32;
-/// The most redefinitions of one colour entry in a second: three flashes
-/// (section 10.5; the security review's finding S-10, TODO-7276: more
-/// than three flashes a second is unsafe for viewers).
-pub const MAX_COLOUR_SETS_PER_SECOND: usize = 6;
+/// The colour rule of section 10.5, which every renderer holds: the script
+/// library's one definition.
+pub use crate::limits::MAX_COLOUR_SETS_PER_SECOND;
 /// The most characters of a text a script gives (section 10.6).
 pub const MAX_TEXT_CHARS: usize = 1024;
 /// The forced looks of a control: none, hover and pressed (section 5.4;

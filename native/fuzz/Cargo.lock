@@ -1263,7 +1263,9 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
 dependencies = [
+ "naplps",
  "neoteletext-core",
+ "regis",
  "unicode-bidi",
 ]
 
@@ -1275,6 +1277,7 @@ dependencies = [
  "draw-raster",
  "interface-core",
  "libfuzzer-sys",
+ "naplps",
  "neoteletext",
  "neoteletext-dbus",
  "neoteletext-decoder",
@@ -1365,12 +1368,14 @@ source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev
 name = "neoteletext-script"
 version = "0.1.0"
 dependencies = [
+ "naplps",
  "neoteletext-audio",
  "neoteletext-core",
  "neoteletext-formats",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
+ "regis",
  "ring",
  "wasmi",
 ]
