@@ -1181,7 +1181,8 @@ impl Host {
             | Op::RG_MACROGRAPH
             | Op::RG_MEASURE
             | Op::RG_BOUNDS
-            | Op::RG_GET => self.regis_operate(context, op, ints, payload),
+            | Op::RG_GET
+            | Op::RG_SET_MANY => self.regis_operate(context, op, ints, payload),
         }
     }
 

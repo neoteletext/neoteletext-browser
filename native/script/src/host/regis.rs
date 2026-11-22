@@ -60,6 +60,12 @@ const HANDLE_NUMBERS: i32 = 65_536;
 const GENERATIONS: u16 = 0x8000;
 /// The text that commits a step's operations (`regis-v2.md`, "D operations").
 const COMMIT: &[u8] = b"D(C)";
+/// The whole numbers of one change given to operation `RG_SET_MANY` with
+/// no property: a handle, a property and a value.
+const SET_MANY_ENTRY: usize = 3;
+/// The most bytes one such change stages: its wrapper and the longest
+/// attribute, `X-32768`.
+const SET_MANY_CHANGE_BYTES: usize = SET_WRAPPER_BYTES + 7;
 /// ReGIS's resynchronisation character (the manual's chapter 1), and a
 /// commit.
 const RESYNCHRONISE_AND_COMMIT: &[u8] = b";D(C)";
@@ -120,6 +126,8 @@ pub(crate) fn prelude_bounds() -> Vec<(&'static str, i64)> {
         ("ANIMATE_CYCLE", i64::from(code::CYCLE)),
         ("ANIMATE_STOP_CYCLE", i64::from(code::STOP_CYCLE)),
         ("OPTION_NOT_GIVEN", i64::from(OPTION_NOT_GIVEN)),
+        ("MIN_COORDINATE", i64::from(MIN_COORDINATE)),
+        ("MAX_COORDINATE", i64::from(MAX_COORDINATE)),
     ]
 }
 
@@ -1033,6 +1041,12 @@ impl Host {
                 let bounds = self.regis.bounds.iter().find(|bounds| bounds.handle == i32::from(number));
                 Ok(bounds.map_or(Reply::Undefined, |bounds| Reply::Text(format!("{},{},{},{}", bounds.x, bounds.y, bounds.width, bounds.height))))
             }
+            Op::RG_SET_MANY => {
+                let [property] = ints.exactly()?;
+                let numbers = ints_of(op, payload)?;
+                self.regis_set_many(context, property, &numbers)?;
+                Ok(Reply::Undefined)
+            }
             Op::RG_GET => {
                 let [handle, field] = ints.exactly()?;
                 no_payload(op, payload)?;
@@ -1371,6 +1385,94 @@ impl Host {
             change(drawing);
         }
         self.regis.stage_set(number, &text);
+        Ok(())
+    }
+
+    /// Sets properties of many drawings in one call (operation
+    /// `RG_SET_MANY`; TODO-7373). With a property, `numbers` holds the
+    /// drawings' handles and then as many values of it: a `DrawingList`'s
+    /// `set`. With no property (0), `numbers` holds a handle, a property
+    /// and a value for each change: what the prelude gives a callback's
+    /// assignments to `x`, `y`, `depth`, `visible` and `detectable` as.
+    /// Each entry is held to exactly what operation `RG_SET` holds it to,
+    /// every entry is checked before any is taken, and a refusal names
+    /// the entry.
+    fn regis_set_many(&mut self, context: ContextId, property: i32, numbers: &[i32]) -> Result<(), Reply> {
+        let one_of_the_five = |number: i32| match Property::from_number(number) {
+            Some(property @ (Property::X | Property::Y | Property::DEPTH | Property::VISIBLE | Property::DETECTABLE)) => Ok(property),
+            _ => Err(type_error("many drawings at once take x, y, depth, visible or detectable")),
+        };
+        // The entries: a handle, a property and a value each.
+        let entries: Vec<(i32, i32, i32)> = if property == 0 {
+            if numbers.len().checked_rem(SET_MANY_ENTRY) != Some(0) {
+                return Err(type_error("a handle, a property and a value for each change"));
+            }
+            numbers.as_chunks::<SET_MANY_ENTRY>().0.iter().map(|[handle, property, value]| (*handle, *property, *value)).collect()
+        } else {
+            one_of_the_five(property)?;
+            if numbers.len().checked_rem(2) != Some(0) {
+                return Err(type_error("as many values as drawings"));
+            }
+            let (handles, values) = numbers.split_at(numbers.len().checked_div(2).unwrap_or(0));
+            handles.iter().zip(values).map(|(handle, value)| (*handle, property, *value)).collect()
+        };
+        let count = entries.len();
+        let named = |entry: usize, reply: Reply| match reply {
+            Reply::Range(text) => Reply::Range(format!("{text} (entry {entry} of {count} changes)")),
+            Reply::Type(text) => Reply::Type(format!("{text} (entry {entry} of {count} changes)")),
+            other => other,
+        };
+        // Checked, each as its own assignment would be. A value the
+        // drawing already has, by the entries before it too, changes
+        // nothing.
+        let regis = &self.regis;
+        let mut changes: Vec<(u16, Property, i16)> = Vec::with_capacity(count);
+        for (entry, (handle, property, value)) in entries.into_iter().enumerate() {
+            let property = one_of_the_five(property).map_err(|reply| named(entry, reply))?;
+            let number = regis.resolve(context, handle).map_err(|reply| named(entry, reply))?;
+            let value = match property {
+                Property::VISIBLE | Property::DETECTABLE => i16::from(flag(value, "a flag").map_err(|reply| named(entry, reply))?),
+                _ => attribute(value, "a drawing's x, y or depth").map_err(|reply| named(entry, reply))?,
+            };
+            let held = regis.get(number).map_or(0, |drawing| match property {
+                Property::X => drawing.x,
+                Property::Y => drawing.y,
+                Property::DEPTH => drawing.depth,
+                Property::VISIBLE => i16::from(drawing.visible),
+                _ => i16::from(drawing.detectable),
+            });
+            if value != held || changes.iter().rev().any(|(earlier, of, _)| *earlier == number && *of == property) {
+                changes.push((number, property, value));
+            }
+        }
+        if changes.is_empty() {
+            return Ok(());
+        }
+        // Room for every change at its longest, before any is taken.
+        self.regis_room(changes.len().saturating_mul(SET_MANY_CHANGE_BYTES), 0)?;
+        let regis = &mut self.regis;
+        let mut text = Vec::new();
+        for (number, property, value) in changes {
+            let letter = match property {
+                Property::X => 'X',
+                Property::Y => 'Y',
+                Property::DEPTH => 'L',
+                Property::VISIBLE => 'V',
+                _ => 'I',
+            };
+            if let Some(drawing) = regis.get_mut(number) {
+                match property {
+                    Property::X => drawing.x = value,
+                    Property::Y => drawing.y = value,
+                    Property::DEPTH => drawing.depth = value,
+                    Property::VISIBLE => drawing.visible = value != 0,
+                    _ => drawing.detectable = value != 0,
+                }
+            }
+            text.clear();
+            put(&mut text, format_args!("{letter}{value}"));
+            regis.stage_set(number, &text);
+        }
         Ok(())
     }
 

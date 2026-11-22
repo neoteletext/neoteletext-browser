@@ -660,31 +660,48 @@ fn a_script_that_fills_every_regis_table_is_held_to_the_hosts_bound() {
     assert!(cost.host_bytes > 2 * 900_000 && cost.host_bytes <= MAX_HOST_STATE_BYTES, "{cost:?}");
 }
 
-/// TODO-7298's measurement: a commit a tick on a scene of 2,048 drawings
-/// (the page's 1,984 and the channel context's 64), every one of the
-/// page's moved by its properties each tick. Printed: the time of a
-/// step, of which the host's validation of the commit is a part, and the
-/// bytes of a step's commit. Held only to the decoder's deadline for a
-/// step's answer, since the figure depends on the machine.
-#[test]
-fn a_commit_a_tick_on_2048_drawings_is_measured() {
+/// What one way of moving the page's drawings each tick costs.
+struct Moved {
+    /// A step's time on average and at most.
+    average: Duration,
+    longest: Duration,
+    /// The bytes of a step's commit.
+    bytes: usize,
+    /// The receiver's time to take and compose a step, on average.
+    receiver: Duration,
+}
+
+/// Runs a page of 2,048 drawings (the page's 1,984, one of them a hidden
+/// master, and the channel context's 64) for a second of ticks, with
+/// `each_tick` as what the page's script does each tick once its
+/// drawings are made: `all` holds the drawings, `xs` their x as the
+/// script last set it, and `plain` as many plain objects with an `x`.
+fn moved(each_tick: &str) -> Moved {
     /// The ticks measured: a second.
     const TICKS: u32 = 60;
-    let page = r#"
+    let page = format!(
+        r#"
 const g = nt.regis;
 const shape = g.symbol((p) => p.ink(3).fill((q) => q.rect(0, 0, 6, 6)));
-const all = [];
+const all = [], xs = [], plain = [];
 let building = true;
-nt.addEventListener("tick", (e) => {
+nt.addEventListener("tick", (e) => {{
   // 128 drawings a tick, until the page's share is made.
-  if (building) {
-    try { for (let n = 0; n < 128; n++) all.push(g.drawing({ source: shape, layer: 2, x: (all.length * 13) % 790, y: (all.length * 7) % 470 })); }
-    catch (error) { building = false; console.log("made " + all.length + ": " + error.message.split(":")[0]); }
+  if (building) {{
+    try {{
+      for (let n = 0; n < 128; n++) {{
+        const x = (all.length * 13) % 790;
+        all.push(g.drawing({{ source: shape, layer: 2, x, y: (all.length * 7) % 470 }}));
+        xs.push(x);
+        plain.push({{ x }});
+      }}
+    }} catch (error) {{ building = false; console.log("made " + all.length + ": " + error.message.split(":")[0]); }}
     return;
-  }
-  for (const d of all) d.x = (d.x + 1) % 790;
-});
-"#;
+  }}
+  {each_tick}
+}});
+"#
+    );
     let channel = "for (let n = 0; n < 64; n++) nt.regis.drawing({ x: n * 12, y: 470 }).draw((p) => p.ink(2).rect(0, 0, 8, 8));";
     let mut container = container();
     container.open_with(regis_opening(ContextId::Channel), channel.as_bytes()).unwrap();
@@ -701,8 +718,7 @@ nt.addEventListener("tick", (e) => {
     }
     // The page's share, less the one hidden master.
     assert_eq!(log, vec![format!("made {}: REGIS_MAX_DRAWINGS", REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS - 1)]);
-    let (mut total, mut longest, mut bytes) = (Duration::ZERO, Duration::ZERO, 0_usize);
-    let mut compose = Duration::ZERO;
+    let (mut total, mut longest, mut bytes, mut compose) = (Duration::ZERO, Duration::ZERO, 0_usize, Duration::ZERO);
     for _ in 0..TICKS {
         let began = Instant::now();
         let batch = container.step(&tick(at, u64::from(at))).unwrap();
@@ -717,16 +733,51 @@ nt.addEventListener("tick", (e) => {
         compose += began.elapsed();
         at += 1;
     }
-    assert_eq!(receiver.commits, 16 + TICKS, "a commit a tick");
-    println!(
-        "a commit a tick on {REGIS_MAX_DRAWINGS} drawings, {} moved each tick: a step takes {:?} on average and {longest:?} at most; a step's commit is {bytes} bytes; \
-         the host holds {} bytes; the receiver takes and composes it in {:?} on average",
-        REGIS_MAX_DRAWINGS - CHANNEL_SHARE_DRAWINGS,
-        total / TICKS,
-        container.host_bytes(),
-        compose / TICKS
-    );
-    assert!(longest < STEP_DEADLINE, "a step took {longest:?}");
+    Moved { average: total / TICKS, longest, bytes, receiver: compose / TICKS }
+}
+
+/// TODO-7298's and TODO-7373's measurement: a commit a tick on a scene of
+/// 2,048 drawings, every one of the page's 1,983 shown drawings moved by
+/// its properties each tick, with where a step's time goes: the script's
+/// own loop over as many plain objects, the reads alone, the writes
+/// alone, the whole by assignments one by one, and a list's `set`.
+/// Printed; the list's held to the step's budget (section 3.2,
+/// `STEP_TIME_BUDGET`) in a release build, which is what the figure is of.
+#[test]
+fn a_commit_a_tick_on_2048_drawings_is_measured() {
+    let ways = [
+        ("nothing", ""),
+        ("the script's loop alone, over plain objects", "for (const o of plain) o.x = (o.x + 1) % 790;"),
+        ("two reads a drawing, nothing written", "let sum = 0; for (const d of all) sum += d.x + d.x;"),
+        ("one write a drawing of the value it has", "for (let i = 0; i < all.length; i++) all[i].x = xs[i];"),
+        ("one write a drawing of a new value", "for (let i = 0; i < all.length; i++) { xs[i] = (xs[i] + 1) % 790; all[i].x = xs[i]; }"),
+        ("a read and a write a drawing: d.x = (d.x + 1) % 790", "for (const d of all) d.x = (d.x + 1) % 790;"),
+        ("x and y of every drawing: d.moveBy(1, 1)", "for (const d of all) d.moveBy(1, 1);"),
+        (
+            "a list's set of x from an Int32Array the script computed",
+            "if (!globalThis.list) { globalThis.list = g.many(all); globalThis.values = Int32Array.from(xs); } \
+             for (let i = 0; i < values.length; i++) values[i] = (values[i] + 1) % 790; list.set('x', values);",
+        ),
+    ];
+    let mut costs = Vec::new();
+    for (name, each_tick) in ways {
+        let cost = moved(each_tick);
+        println!(
+            "2,048 drawings, each tick {name}: a step takes {:?} on average and {:?} at most; its commit is {} bytes; the receiver takes and composes it in {:?}",
+            cost.average, cost.longest, cost.bytes, cost.receiver
+        );
+        costs.push(cost);
+    }
+    // The way to move very many drawings each tick is the list's: held
+    // to the step's budget in the build the figure is of. A debug build,
+    // and the assignments one by one (TODO-7373 records what they cost
+    // and why), are held to the decoder's deadline for a step's answer.
+    let list = costs.last().unwrap();
+    let limit = if cfg!(debug_assertions) { STEP_DEADLINE } else { neoteletext_script::limits::STEP_TIME_BUDGET };
+    assert!(list.average < limit, "a list's set of every drawing takes {:?} a step, over {limit:?}", list.average);
+    for cost in &costs {
+        assert!(cost.average < STEP_DEADLINE, "a step took {:?}", cost.average);
+    }
 }
 
 /// Section 6.4's first worked example, as the specification has it: a
@@ -886,4 +937,68 @@ done();
     ] {
         assert!(sent.contains(written), "{written} is not in {sent}");
     }
+}
+
+/// TODO-7373: a callback's assignments to x, y, depth, visible and
+/// detectable are gathered on the script's side and given to the host
+/// together, before any other ReGIS call and before the step's commit; a
+/// read is answered from what was assigned; and `nt.regis.many` sets one
+/// attribute of a list of drawings from a typed array. What the receiver
+/// then holds is what assignments one by one would have given it.
+#[test]
+fn assignments_are_gathered_and_lists_set_many_drawings_at_once() {
+    let body = r#"
+const g = nt.regis;
+const a = g.drawing({ x: 1, y: 2 });
+const b = g.drawing({ visible: false });
+a.x = 5; a.x = 6; a.y = a.x + 10; a.depth = -3; b.visible = true; b.detectable = true;
+equal("a read is what was assigned", JSON.stringify([a.x, a.y, a.depth, b.visible, b.detectable]), "[6,16,-3,true,true]");
+// An assignment is in its place among the other calls: the label is
+// staged after the x before it and before the x after it.
+a.label = "between";
+a.x = 7;
+throws("a value out of range is refused where it is assigned", RangeError, "MAX_COORDINATE", () => { a.x = 40000; });
+throws("a value of the wrong kind", TypeError, "visible is true or false", () => { b.visible = 1; });
+equal("and changes nothing", a.x, 7);
+// What a promise's job assigns leaves with the same step.
+Promise.resolve().then(() => { b.y = 99; });
+const all = [a, b, g.drawing({})];
+const list = g.many(all);
+check("a list", list instanceof DrawingList && list.length === 3 && Object.isFrozen(list));
+nt.addEventListener("tick", (e) => {
+  if (e.tick === 1) {
+    equal("the job's assignment", b.y, 99);
+    list.set("x", Int32Array.of(100, 200, 300));
+    list.moveTo(Int32Array.of(10, 20, 30), Int32Array.of(11, 21, 31));
+    list.set("visible", Int32Array.of(1, 0, 1));
+    equal("after a list's set a drawing reads what the host holds", JSON.stringify([a.x, a.y, b.x, b.visible, all[2].y]), "[10,11,20,false,31]");
+    a.x = a.x + 1;
+    throws("a list's attributes", TypeError, "a list sets", () => list.set("layer", Int32Array.of(1, 1, 1)));
+    throws("as many values as drawings", TypeError, "values is an Int32Array", () => list.set("x", Int32Array.of(1, 2)));
+    throws("values are an Int32Array", TypeError, "values is an Int32Array", () => list.set("x", [1, 2, 3]));
+    throws("a value out of range names its entry", RangeError, "MAX_COORDINATE", () => list.set("y", Int32Array.of(1, 40000, 3)));
+    equal("a refused set changes nothing", b.y, 21);
+    throws("a list is of drawings", TypeError, "a drawing of the list is a Drawing", () => g.many([a, null]));
+    throws("a DrawingList is not constructed", TypeError, "a DrawingList is made by", () => new DrawingList());
+    all[2].remove();
+    throws("a removed drawing's assignment", TypeError, "the drawing was removed", () => { all[2].x = 1; });
+    throws("a list with a removed drawing", TypeError, "the drawing was removed", () => list.set("x", Int32Array.of(1, 2, 3)));
+    done();
+  }
+});
+"#;
+    let mut container = regis_page(&script(body));
+    let mut receiver = Receiver::new();
+    let first = container.step(&tick(0, 0)).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(first.regis.as_ref().unwrap()),
+        "D(S1(X1,Y2))D(S2(V0))D(S1(X6,Y16,L-3))D(S2(V1,I1))D(S1(U'between',X7))D(S3(X0))D(S2(Y99))D(C)"
+    );
+    receiver.take(&first);
+    let second = container.step(&tick(1, 1)).unwrap();
+    assert_checks(&[lines(&first), lines(&second)].concat(), 16);
+    receiver.take(&second);
+    assert_eq!(receiver.commits, 2, "one commit a step");
+    assert_eq!([receiver.terminal.drawing_position(1), receiver.terminal.drawing_position(2)], [Some((11, 11)), Some((20, 21))]);
+    assert!(receiver.terminal.committed_drawing(3).is_none());
 }

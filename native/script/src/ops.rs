@@ -208,6 +208,8 @@ numbered! {
     RG_BOUNDS = 213,
     /// ReGIS: a property or other field of a drawing as the host holds it.
     RG_GET = 214,
+    /// ReGIS: sets one property of many drawings: the drawings' handles, then as many values.
+    RG_SET_MANY = 215,
     /// NAPLPS: defines a colour; its 24 bits and its name; gives its entry.
     NP_COLOUR_DEFINE = 300,
     /// NAPLPS: redefines a colour entry.
