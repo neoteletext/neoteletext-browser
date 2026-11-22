@@ -28,6 +28,36 @@ fn a_decoder_can_do_nothing_but_compute() {
     }
 }
 
+/// `script-api.md` section 11.1 (DEC-7266, TODO-7292): a script host has
+/// exactly a decoder's confinement, so it can open no file, start no
+/// program, make no connection and reach no local socket, and beside it
+/// the kernel's limit on its memory; it can still start a thread, which
+/// its watchdog is. A decoder has no such limit.
+#[test]
+fn a_script_host_can_do_nothing_but_compute_within_its_memory() {
+    let line = probe("script", &[]);
+    assert!(line.starts_with("PROBE report=memory limit, network namespace, Landlock, seccomp;"), "{line}");
+    for expected in [
+        "memory=refused",
+        "thread=ran",
+        "file=refused",
+        "program=refused",
+        "tcp=refused",
+        "write=refused",
+        "bus=refused",
+        "user-bus=refused",
+        "system-bus=refused",
+        "netlink-route=refused",
+        "steal=refused",
+        "terminal=refused",
+        "signal-parent=refused",
+    ] {
+        assert!(line.contains(expected), "{expected}: {line}");
+    }
+    let decoder = probe("decoder", &[]);
+    assert!(decoder.contains("memory=reserved") && decoder.contains("thread=ran"), "{decoder}");
+}
+
 /// Requirement 3.3: a fetcher may connect but not write or start programs.
 #[test]
 fn a_fetcher_has_the_network_and_nothing_else() {

@@ -33,6 +33,7 @@ mod redirects;
 mod regis_pointer;
 mod rules;
 mod run;
+mod scripts;
 mod selection;
 mod settings;
 mod sound;
@@ -157,6 +158,23 @@ enum Event {
     Updater(update::wire::FromUpdater),
     /// The updater ended.
     UpdaterEnded(Option<String>),
+    /// A decoder wrote a message of the script link for its script host,
+    /// its payload unread (`script-api.md` section 11.1): the channel,
+    /// the decoder's generation, the message.
+    ScriptAsked(u32, u64, protocol::script::relay::Relayed),
+    /// A script host wrote a message for its decoder or its web client,
+    /// its payload unread: the channel, the script host's generation.
+    ScriptSaid(u32, u64, protocol::script::relay::HostOutput),
+    /// A script host's output ended or broke the protocol.
+    ScriptHostEnded(u32, u64, Option<String>),
+    /// A script host that ended untold was waited for: the channel, its
+    /// decoder's generation, and how it ended.
+    ScriptHostExited(u32, u64, confine::broker::Exit),
+    /// A web client wrote a message, of the web client of that
+    /// generation: an answer for a script host, unread, or its own word.
+    WebClientSaid(u64, protocol::web::FromClientFrame),
+    /// The web client of that generation ended or broke the protocol.
+    WebClientEnded(u64, Option<String>),
 }
 
 /// The frame a decoder last sent of a page (animation.md ANIM-5).
@@ -324,6 +342,8 @@ struct Core {
     /// The filmstrip's thumbnails: the store, the misses and what is
     /// fetched and drawn for them (REQ-6883, REQ-6886).
     thumbnails: thumbnails::Thumbnails,
+    /// The channels' script hosts and their web clients (`scripts.rs`).
+    scripts: scripts::Scripts,
 }
 
 impl Core {
@@ -462,6 +482,7 @@ impl Core {
             picture: picture::PictureState::default(),
             fonts: fonts::PictureFonts::default(),
             thumbnails,
+            scripts: scripts::Scripts::default(),
         }
     }
 }

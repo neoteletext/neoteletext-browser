@@ -32,6 +32,8 @@ use crate::web::MAX_URL_BYTES;
 use crate::{Fields, MAX_PAYLOAD, ProtocolError, push_bytes, push_count, read_frame, write_frame};
 
 pub mod batch;
+pub mod link;
+pub mod relay;
 
 pub use batch::Batch;
 

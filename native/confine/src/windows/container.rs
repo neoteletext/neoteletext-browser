@@ -18,6 +18,9 @@ pub(super) const INTERNET_CLIENT_SID: &str = "S-1-15-3-1";
 pub(super) const PRIVATE_NETWORK_SID: &str = "S-1-15-3-3";
 /// The `AppContainer` profiles, one a role, registered once for the user.
 const CONTAINER_DECODER: &str = "NeoTeletext.Decoder";
+/// The script host's (DEC-7266): its own, so that nothing a decoder's
+/// container is ever granted reaches a script.
+const CONTAINER_SCRIPT: &str = "NeoTeletext.Script";
 const CONTAINER_NETWORK: &str = "NeoTeletext.Fetcher";
 const CONTAINER_CORE: &str = "NeoTeletext.Core";
 const CONTAINER_SOUND: &str = "NeoTeletext.Sound";
@@ -25,7 +28,7 @@ const CONTAINER_UPDATER: &str = "NeoTeletext.Updater";
 /// The interface's, with no capabilities (decision 90).
 const CONTAINER_INTERFACE: &str = "NeoTeletext.Interface";
 /// Every container's name, for the uninstaller to remove them.
-const CONTAINERS: [&str; 6] = [CONTAINER_DECODER, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER, CONTAINER_INTERFACE];
+const CONTAINERS: [&str; 7] = [CONTAINER_DECODER, CONTAINER_SCRIPT, CONTAINER_NETWORK, CONTAINER_CORE, CONTAINER_SOUND, CONTAINER_UPDATER, CONTAINER_INTERFACE];
 
 /// Removes the browser's `AppContainer` profiles, which the first start of
 /// each helper made for the user (requirement 13.20). A profile that is
@@ -59,6 +62,7 @@ static MAKING: Mutex<()> = Mutex::new(());
 pub(super) fn container(role: Role) -> io::Result<ContainerSid> {
     profile(match role {
         Role::Decoder => CONTAINER_DECODER,
+        Role::Script => CONTAINER_SCRIPT,
         Role::Core => CONTAINER_CORE,
         Role::Sound => CONTAINER_SOUND,
         Role::Updater { .. } => CONTAINER_UPDATER,
