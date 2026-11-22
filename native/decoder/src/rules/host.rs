@@ -134,6 +134,11 @@ pub(crate) struct Rules {
     held: Option<Held>,
     /// The fragments of a RULES record being assembled (RULE-41).
     assembler: Option<Box<Assembler>>,
+    /// The page whose image the assembler holds incomplete, or none. While
+    /// no page is open (the pause) the first fragments of the table of the
+    /// page being gone to are assembled, and they must outlast that page's
+    /// opening, which closes the page left (TODO-7233).
+    assembling: Option<PageSub>,
     /// What was produced outside a tick, for the trusted core.
     out: Vec<FromDecoder>,
     /// The picture commands of the last evaluation, for the engine.
@@ -620,8 +625,10 @@ impl Rules {
             return;
         }
         let assembler = self.assembler.get_or_insert_with(|| Box::new(Assembler::new()));
+        // Every answer but an incomplete image leaves the assembler empty.
+        self.assembling = None;
         match assembler.push(record) {
-            Assembled::Incomplete => {}
+            Assembled::Incomplete => self.assembling = Some(page),
             Assembled::Removed { .. } => {
                 // RULE-111: the table and its rule state go; the page's
                 // sounds and picture stay, for it is still the page shown.
@@ -784,8 +791,13 @@ impl Rules {
                 } else if let Some(before) = before.filter(|before| held != Some(*before)) {
                     self.drop_page(before, parts);
                 }
-                if let Some(assembler) = self.assembler.as_mut() {
-                    assembler.clear();
+                // The fragments of another page's table go with it. Those
+                // of the page now open stay: they came while no page was
+                // open, between the selection and the interface's report
+                // that the page opened, and the rest of the image follows
+                // (TODO-7233).
+                if self.assembling != Some(open) {
+                    self.forget_fragments();
                 }
             }
             // The same page is the open page again: it goes on from the
@@ -812,13 +824,19 @@ impl Rules {
         produced
     }
 
+    /// Forgets the image the assembler holds incomplete (RULE-111).
+    fn forget_fragments(&mut self) {
+        if let Some(assembler) = self.assembler.as_mut() {
+            assembler.clear();
+        }
+        self.assembling = None;
+    }
+
     /// RULE-111 case 2: the view's connection ended. Everything local of
     /// the page is dropped at once, with every local sound stopped, and no
     /// `close` tick is run.
     pub(crate) fn connection_ended<const OBJECTS: usize, const RECORDS: usize>(&mut self, parts: &mut Parts<'_, OBJECTS, RECORDS>) {
-        if let Some(assembler) = self.assembler.as_mut() {
-            assembler.clear();
-        }
+        self.forget_fragments();
         let page = self.held.take().map(|held| held.page).or(self.open);
         if let Some(page) = page {
             self.drop_page(page, parts);

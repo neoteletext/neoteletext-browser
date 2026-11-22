@@ -472,6 +472,72 @@ fn the_table_of_the_page_gone_to_is_taken_once_the_page_left_is_not_open() {
     assert!(matches!(reports(&said).as_slice(), [Report { page: OTHER, rule: 0, tick: 0, .. }]), "its open rule fires: {said:?}");
 }
 
+/// The pushed packets of the two RULES records that carry `table`'s image
+/// for `page`, cut in the middle: the first fragment's, then the second's.
+/// The engine's own writer cuts only an image longer than
+/// `MAX_TABLE_FRAGMENT`; a channel may cut one anywhere (RULE-41).
+fn two_fragments(page: PageSub, generation: u16, table: &Table) -> [Vec<u8>; 2] {
+    use neoteletext_web::records::rules::{Fragment, RulesRecord, encode};
+    let mut image = vec![0_u8; neoteletext_rules::limits::MAX_TABLE_BYTES];
+    let length = neoteletext_rules::encode(table, neoteletext_web::records::body_check, &mut image).unwrap();
+    let (address, subcode) = address(page);
+    let total = u16::try_from(length).unwrap();
+    let cut = length / 2;
+    let fragment = |offset: usize, data: &[u8], id: u8| {
+        let mut bytes = Vec::new();
+        let fragment = Fragment { total, offset: u16::try_from(offset).unwrap(), data };
+        let record = RulesRecord { page: address, subcode, generation, fragment: Some(fragment) };
+        encode(&record, 0, id, &mut |packet| bytes.extend_from_slice(&packet.bytes)).unwrap();
+        bytes
+    };
+    [fragment(0, &image[..cut], 1), fragment(cut, &image[cut..length], 2)]
+}
+
+/// RULE-41, RULE-58, RULE-111 (REQ-6534), TODO-7233: a table that comes in
+/// more than one RULES record is taken though its page is opened between
+/// its fragments. From a selection until the interface reports the page
+/// opened no page is the open page (TODO-7214), and the first fragment of
+/// the table of the page gone to arrives then, while the table of the page
+/// left is still held. Opening the page closes the page left; before, that
+/// also threw the fragment away, so the second was out of place, fault 1
+/// was reported and the page had no table. The fragments of another page
+/// than the one opened still go.
+#[test]
+fn a_table_in_fragments_is_taken_though_its_page_opens_between_them() {
+    let next = Builder::new(OTHER);
+    let opening = next.report(None);
+    let next = next.rule(Trigger::Open, &[], &[opening]);
+    let [first, second] = two_fragments(OTHER, 1, &next.table);
+
+    let (mut engine, _) = opened(&send_all(OPEN, false));
+    run(&mut engine, after(1));
+    set_open(&mut engine, None, after(2));
+    engine.feed_whole(true, true, &first);
+    let mut said = set_open(&mut engine, Some(OTHER), after(3));
+    engine.feed_whole(true, true, &second);
+    said.extend(run(&mut engine, after(5)));
+    let faults: Vec<&FromDecoder> = said.iter().filter(|message| matches!(message, FromDecoder::RulesFault { .. })).collect();
+    assert!(faults.is_empty(), "{faults:?}");
+    let asked: Vec<RulesOpen> = told(&said).into_iter().filter(|open| open.page == OTHER).collect();
+    assert!(matches!(asked.as_slice(), [RulesOpen { generation: 1, .. }]), "the table is taken and said once: {said:?}");
+    assert!(matches!(reports(&said).as_slice(), [Report { page: OTHER, rule: 0, tick: 0, .. }]), "its open rule fires: {said:?}");
+
+    // The first fragment of a table for another page than the one opened
+    // is forgotten with the page left: its second fragment is out of
+    // place, were it to come, and the page opened has no table.
+    let third = PageSub::new(PAGE, 3);
+    let (mut engine, _) = opened(&send_all(OPEN, false));
+    run(&mut engine, after(1));
+    set_open(&mut engine, None, after(2));
+    engine.feed_whole(true, true, &first);
+    let mut said = set_open(&mut engine, Some(third), after(3));
+    set_open(&mut engine, None, after(4));
+    engine.feed_whole(true, true, &second);
+    said.extend(run(&mut engine, after(5)));
+    assert!(said.contains(&FromDecoder::RulesFault { page: OTHER, generation: 1, fault: 1, count: 1 }), "{said:?}");
+    assert!(told(&said).iter().all(|open| open.generation == 0), "{said:?}");
+}
+
 /// RULE-111 case 2 (REQ-6615): when the view's connection ends everything
 /// of the page is dropped at once: no `close` tick runs and nothing is
 /// reported, its local sound stops, and nothing more is evaluated until a
