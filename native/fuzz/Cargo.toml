@@ -17,6 +17,7 @@ protocol = { path = "../protocol" }
 interface-core = { path = "../interface-core" }
 draw-raster = { path = "../draw-raster" }
 decoder = { path = "../decoder", package = "neoteletext-decoder" }
+fetcher = { path = "../fetcher", package = "neoteletext-fetcher" }
 neoteletext = { path = "../core" }
 web-opener = { path = "../web-opener" }
 dbus = { path = "../dbus", package = "neoteletext-dbus" }
@@ -335,6 +336,41 @@ bench = false
 [[bin]]
 name = "dbus_message"
 path = "fuzz_targets/dbus_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_messages"
+path = "fuzz_targets/web_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_same_channel"
+path = "fuzz_targets/web_same_channel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_content_coding"
+path = "fuzz_targets/web_content_coding.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_event_stream"
+path = "fuzz_targets/web_event_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_cookie_jar"
+path = "fuzz_targets/web_cookie_jar.rs"
 test = false
 doc = false
 bench = false
