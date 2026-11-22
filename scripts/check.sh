@@ -43,7 +43,7 @@ $out_of_date"
 readonly NO_PANIC_ROOTS=(native/protocol/src/lib.rs native/decoder/src/lib.rs native/decoder/src/main.rs native/fetcher/src/main.rs native/fetcher/src/lib.rs
     native/core/src/lib.rs native/core/src/main.rs native/interface/src/lib.rs native/interface/src/main.rs native/interface-core/src/lib.rs native/draw-raster/src/lib.rs native/draw-embedded/src/lib.rs
     native/web-opener/src/lib.rs native/dock-menu/src/lib.rs native/dbus/src/lib.rs native/secret-store/src/lib.rs native/dialog/src/lib.rs
-    native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs
+    native/keyboard/src/main.rs native/sound/src/lib.rs native/sound/src/main.rs native/confine/src/lib.rs native/script/src/lib.rs
     native/update/src/lib.rs native/icon/src/lib.rs native/launcher/src/lib.rs native/launcher/src/main.rs native/os-install/src/lib.rs native/installer/src/main.rs
     native/tuf/updater/src/lib.rs native/tuf/updater/src/main.rs native/tuf/release/src/main.rs native/tuf/release/src/bin/test_host.rs)
 
@@ -129,9 +129,17 @@ $outside"
 readonly CORE_ENGINE_CRATES="neoteletext-audio neoteletext-core neoteletext-formats neoteletext-input neoteletext-opus neoteletext-rules neoteletext-web"
 # Requirement 1.3 (REQ-661): no crate in any program's tree executes or
 # interprets code from outside. Each is a crate a program could run a
-# script, a WebAssembly module or a web page with; wasmi waits on
-# decision 41's iOS decoder and is listed until that work starts.
+# script, a WebAssembly module or a web page with. One is allowed in one
+# place (the owner's DEC-7246 and DEC-7256; the security review's finding
+# S-11, TODO-7277 item 3): wasmi, in the tree of the script library and
+# the programs built on it alone, named in SCRIPT_PACKAGES. Every other
+# package of the workspace, the trusted core, the fetcher, the decoder,
+# the interface and the broker among them, is held to having none.
 readonly INTERPRETER_CRATES='boa_engine|deno_core|dyon|gluon|hlua|js-sandbox|ketos|koto|mlua|mun_runtime|pyo3|quickjs|quickjs-rs|rhai|rlua|rquickjs|rune|rustpython-vm|servo|starlark|steel-core|tauri|v8|wasm3|wasmer|wasmi|wasmtime|webkit2gtk|webview2-com|wry'
+# The packages that may hold the script engine's interpreter, and the one
+# interpreter they may hold.
+readonly SCRIPT_PACKAGES=(neoteletext-script)
+readonly SCRIPT_INTERPRETER='wasmi'
 # Requirement 2.2 (REQ-663): no engine crate the browser uses brings a
 # user interface or graphics toolkit; those are the interface's alone.
 readonly TOOLKIT_CRATES='cairo-rs|cocoa|druid|eframe|egui|embedded-graphics|femtovg|fltk|fontique|gdk|gdk4|glib|glow|glutin|gtk|gtk4|iced|minifb|objc2-app-kit|pango|parley|sdl2|slint|smithay-client-toolkit|softbuffer|tao|tiny-skia|vello|vello_cpu|vello_hybrid|wayland-client|wgpu|winit|x11rb|xilem'
@@ -153,8 +161,18 @@ check_dependency_trees() {
     local found crate
     found="$(engine_names -p neoteletext | tr '\n' ' ' | sed 's/ $//')"
     [[ "$found" == "$CORE_ENGINE_CRATES" ]] || fail "the trusted core links the engine crates \"$found\", not the \"$CORE_ENGINE_CRATES\" DEC-2355 permits"
-    found="$( (tree_names --workspace; cd native/tuf && cargo tree --quiet --locked --workspace -e normal,build --target all --prefix none -f '{p}' | sed 's/ .*//') | sort -u | grep -xE "$INTERPRETER_CRATES" || true)"
+    local -a outside=(--workspace)
+    for crate in "${SCRIPT_PACKAGES[@]}"; do outside+=(--exclude "$crate"); done
+    found="$( (tree_names "${outside[@]}"; cd native/tuf && cargo tree --quiet --locked --workspace -e normal,build --target all --prefix none -f '{p}' | sed 's/ .*//') | sort -u | grep -xE "$INTERPRETER_CRATES" || true)"
     [[ -z "$found" ]] || fail "a program's tree holds a script engine, a web engine or an interpreter: $found"
+    # The trusted core by name as well, so that it is held even if it were
+    # ever listed among the script packages by mistake.
+    found="$(tree_names -p neoteletext | grep -xE "$INTERPRETER_CRATES" || true)"
+    [[ -z "$found" ]] || fail "the trusted core's tree holds a script engine, a web engine or an interpreter: $found"
+    for crate in "${SCRIPT_PACKAGES[@]}"; do
+        found="$(tree_names -p "$crate" | grep -xE "$INTERPRETER_CRATES" | tr '\n' ' ' | sed 's/ $//' || true)"
+        [[ "$found" == "$SCRIPT_INTERPRETER" ]] || fail "the script package $crate holds the interpreters \"$found\", not exactly \"$SCRIPT_INTERPRETER\""
+    done
     for crate in $(engine_names --workspace); do
         found="$(tree_names -p "$crate" | grep -xE "$TOOLKIT_CRATES" || true)"
         [[ -z "$found" ]] || fail "the engine crate $crate brings a user interface or graphics toolkit: $found"
@@ -268,6 +286,37 @@ check_page_range_literals() {
 $found"
 }
 
+# The security review's finding S-11 (TODO-7277): the script engine's
+# module, native/script/qjs/nt-quickjs.wasm, is a committed binary that
+# every script runs in, built by native/script/qjs/build.sh from pinned
+# sources with a pinned compiler. The commit gate holds the committed file
+# to the SHA-256 recorded beside it, and the fuzz crate's list of targets
+# to the three the script library owes (script-api.md section 11.4). The
+# full gate builds the module again from its sources and requires the
+# same SHA-256 of the build and of the committed file; the build script
+# itself refuses a module that holds a bulk-memory instruction, and fails,
+# never skips, when a tool it needs is missing.
+readonly SCRIPT_FUZZ_TARGETS=(script_host_ops script_imports script_js)
+check_script_engine_committed() {
+    step "the script engine's committed module has its recorded SHA-256, and its fuzz targets exist (TODO-7277)"
+    native/script/qjs/build.sh --committed
+    local target
+    for target in "${SCRIPT_FUZZ_TARGETS[@]}"; do
+        [[ -f "native/fuzz/fuzz_targets/$target.rs" ]] && grep -q "^name = \"$target\"$" native/fuzz/Cargo.toml ||
+            fail "the fuzz target $target, which script-api.md section 11.4 gives the script library, is missing from native/fuzz"
+    done
+}
+# The compiler the module is built with is wasi-sdk's for x86_64 Linux, so
+# the rebuild runs on Linux: here when this machine is Linux, and always
+# on the Linux host with its other steps (linux_steps).
+check_script_engine_rebuilds() {
+    [[ "$(uname -s)" == Linux ]] || return 0
+    step "the script engine's module rebuilds from its pinned sources to the committed bytes (TODO-7277)"
+    need_tool cmake "the wasi-libc build's generator; the system's package cmake"
+    need_tool ninja "the wasi-libc build; the system's package ninja-build"
+    native/script/qjs/build.sh --check
+}
+
 # What the commit gate checks: the code compiles clean.
 check_compiles() {
     check_browser_names
@@ -283,6 +332,7 @@ check_compiles() {
     step "native: formatting"
     (cd native && cargo fmt --check)
     check_no_panic_lists
+    check_script_engine_committed
     step "native: Clippy, warnings as errors"
     (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings)
     # The updater's workspace (native/tuf: the updater and the release
@@ -391,8 +441,10 @@ feature_list() {
 }
 
 linux_steps() {
-    step "Linux on $linux_host: native, Clippy and tests"
+    step "Linux on $linux_host: native, Clippy and tests, and the script engine's module rebuilt"
     need_host
+    need_host_tool cmake "the script engine's wasi-libc build needs it; the system's package cmake"
+    need_host_tool ninja "the script engine's wasi-libc build needs it; the system's package ninja-build"
     # Files are compared by content and written with the host's own time:
     # with this machine's times kept, a file edited here before the host's
     # last build looks older than that build, and Cargo reuses it.
@@ -403,6 +455,7 @@ linux_steps() {
     # does here. rustup installs the toolchain rust-toolchain.toml pins if
     # the host does not have it yet.
     ssh "$linux_host" "set -e; . ~/.cargo/env; cd neoteletext-browser-check; rustup toolchain install
+        native/script/qjs/build.sh --check
         (cd native && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace \\
             && cargo clippy --quiet --workspace --all-targets --no-default-features -- -D warnings)
         (cd native/tuf && cargo clippy --quiet --workspace --all-targets -- -D warnings && cargo test --quiet --workspace)"
@@ -415,6 +468,8 @@ linux_steps() {
 fuzz_options() {
     case "$1" in
         dbus_message) echo "-max_len=131072" ;;
+        # A whole script, and a memory image of a page.
+        script_js | script_imports) echo "-max_len=65536" ;;
     esac
 }
 
@@ -427,12 +482,16 @@ check_fuzz() {
         (
             cd "$folder"
             cargo "+$FUZZ_NIGHTLY" clippy --quiet --all-targets -- -D warnings
-            local target log
+            local target log seeds
             for target in $(cargo "+$FUZZ_NIGHTLY" fuzz list); do
                 mkdir -p "corpus/$target" "regressions/$target"
                 log="target/fuzz-$target.log"
                 mkdir -p target
-                cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" -- \
+                # A target's committed seeds, where it has any (script_js
+                # starts from the security review's hostile scripts).
+                seeds=""
+                [[ ! -d "seeds/$target" ]] || seeds="seeds/$target"
+                cargo "+$FUZZ_NIGHTLY" fuzz run "$target" "corpus/$target" "regressions/$target" $seeds -- \
                     -max_total_time="$fuzz_seconds" -timeout=10 -rss_limit_mb=2048 $(fuzz_options "$target") >"$log" 2>&1 ||
                     { tail -40 "$log"; fail "fuzz target $target found a fault; its input is in $folder/artifacts/$target/"; }
                 printf '%s: %s\n' "$target" "$(grep '^Done' "$log")"
@@ -546,6 +605,7 @@ full_steps() {
     (cd native && cargo machete)
     (cd native/tuf && cargo machete)
     check_release_identity
+    check_script_engine_rebuilds
     step "native/tuf: release tests"
     (cd native/tuf && cargo nextest run --workspace --release --hide-progress-bar --status-level fail --final-status-level fail)
     check_fuzz
