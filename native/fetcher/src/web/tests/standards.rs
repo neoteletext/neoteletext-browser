@@ -188,10 +188,17 @@ fn the_cors_safelisted_request_headers_are_the_standards() {
 /// greater than rangeEndValue, then return failure": such a `Range` is not
 /// safelisted, so a request across origins with it asks leave first.
 #[test]
-#[ignore = "fault TODO-7345 item 2: a Range whose start is past its end (bytes=5-1) is taken as safelisted"]
 fn a_range_that_ends_before_it_starts_needs_a_preflight() {
     assert!(!is_safelisted_request_header("range", b"bytes=5-1"));
     assert!(is_safelisted_request_header("range", b"bytes=5-5"));
+    assert!(!is_safelisted_request_header("range", b"bytes=10-9") && is_safelisted_request_header("range", b"bytes=9-10"), "as numbers, not as text");
+    assert!(
+        is_safelisted_request_header("range", b"bytes=007-7") && !is_safelisted_request_header("range", b"bytes=8-007"),
+        "leading zeros are no part of the number"
+    );
+    // Numbers past any machine's are still compared as numbers.
+    assert!(is_safelisted_request_header("range", b"bytes=99999999999999999999999998-99999999999999999999999999"));
+    assert!(!is_safelisted_request_header("range", b"bytes=99999999999999999999999999-99999999999999999999999998"));
 }
 
 /// The Fetch standard section 2.2.2, "CORS-safelisted response-header
