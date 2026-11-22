@@ -26,7 +26,7 @@ use neoteletext_web::consts::{CLOSE_TOO_BIG, OPCODE_BINARY, OPCODE_CLOSE, OPCODE
 use neoteletext_web::http::{HeadCollector, each_field, is_interim, parse_head};
 use neoteletext_web::ws::{FrameReader, WsError, WsMessage, accept_for, new_key, write_frame};
 use protocol::web::{FromWebClient, MAX_CHUNK_BYTES, MAX_CLOSE_REASON_BYTES, MAX_WS_MESSAGE_BYTES, MAX_WS_PROTOCOLS, Reason, Start, is_token_byte};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -142,7 +142,7 @@ fn request(url: &Url, origin: &str, key: &[u8], protocols: &[String], cookie: Op
 /// section 4.1, the client's checks 1 to 6): not a 101, no `Upgrade:
 /// websocket` or `Connection: Upgrade`, another accept value, any
 /// extension, or a subprotocol that was not offered or is named twice.
-fn accepted(head: &[u8], key: &[u8], protocols: &[String]) -> Result<String, Reason> {
+pub(crate) fn accepted(head: &[u8], key: &[u8], protocols: &[String]) -> Result<String, Reason> {
     let parsed = parse_head(head).map_err(|_| Reason::Protocol)?;
     if (300..400).contains(&parsed.status) {
         // The standard asks for the redirect mode `error`.
@@ -163,7 +163,7 @@ fn accepted(head: &[u8], key: &[u8], protocols: &[String]) -> Result<String, Rea
 }
 
 /// One frame, masked, written whole.
-async fn send_frame(out: &mut WriteHalf<Stream>, opcode: u8, payload: &[u8]) -> Result<(), ()> {
+async fn send_frame(out: &mut (impl AsyncWrite + Unpin), opcode: u8, payload: &[u8]) -> Result<(), ()> {
     let mut buffer = vec![0_u8; payload.len().saturating_add(MAX_FRAME_HEADER)];
     let mut writer = Writer::new(&mut buffer);
     write_frame(&mut writer, opcode, payload, &mut Random::new()).map_err(|_| ())?;
@@ -173,7 +173,7 @@ async fn send_frame(out: &mut WriteHalf<Stream>, opcode: u8, payload: &[u8]) -> 
 
 /// A close frame with `code` and `reason`, or with no body when `code`
 /// is none.
-async fn send_close(out: &mut WriteHalf<Stream>, code: Option<u16>, reason: &str) {
+async fn send_close(out: &mut (impl AsyncWrite + Unpin), code: Option<u16>, reason: &str) {
     let mut payload = Vec::with_capacity(CLOSE_CODE_BYTES.saturating_add(reason.len()));
     if let Some(code) = code {
         payload.extend_from_slice(&code.to_be_bytes());
@@ -238,6 +238,42 @@ fn target(engine: &Engine, start: &Start) -> Result<Target, Reason> {
     Ok(Target { url, secure, host, port })
 }
 
+/// What a socket's opening says first: where it goes, the context its
+/// cookies are judged in, and the handshake's request with `key`.
+fn first_words(engine: &Engine, start: &Start, key: &[u8]) -> Result<(Target, cookies::Context, Vec<u8>), Reason> {
+    let target = target(engine, start)?;
+    // A socket carries the channel's cookies as a request with
+    // credentials does (the standard's credentials mode `include`), by
+    // the same SameSite rule. A page opened from disk is of no site.
+    let same_site = engine.policy.folder().is_some_and(|folder| cookies::same_site(engine.jar.borrow().suffixes(), folder, &target.url));
+    let context = cookies::Context { same_site, navigation: false, safe_method: true };
+    let cookie = engine.jar.borrow().header(&target.url, context);
+    let head = request(&target.url, &engine.policy.origin(), key, &start.protocols, cookie.as_deref()).ok_or(Reason::Address)?;
+    Ok((target, context, head))
+}
+
+/// For the fuzz targets (`fuzzing::socket_address`): the handshake's
+/// request for `start` with `key`, and the address it is sent to, with
+/// no connection made.
+pub(crate) fn handshake_request(engine: &Engine, start: &Start, key: &[u8]) -> Result<(Url, Vec<u8>), Reason> {
+    first_words(engine, start, key).map(|(target, _, head)| (target.url, head))
+}
+
+/// For the fuzz targets (`fuzzing::frames`): reads `bytes` as a server's
+/// frames, `at_a_time` bytes a call, telling `told` what a script would
+/// be told and discarding what would be written back; the event that
+/// ended the socket, if one did.
+pub(crate) async fn read_frames(bytes: &[u8], at_a_time: usize, told: &impl Told) -> Option<FromWebClient> {
+    let mut reading = Reading { id: 1, reader: FrameReader::new(), message: vec![0_u8; MAX_WS_MESSAGE_BYTES], closing: None };
+    let mut out = tokio::io::sink();
+    for piece in bytes.chunks(at_a_time.max(1)) {
+        if let Some(ended) = reading.take(piece, told, &mut out).await {
+            return Some(ended);
+        }
+    }
+    None
+}
+
 /// An open socket: the subprotocol the server chose, the bytes that came
 /// with its answer, and the connection's two halves.
 struct Open {
@@ -250,15 +286,8 @@ struct Open {
 /// Connects and makes the opening handshake, within the limit on any
 /// answer's head once the connection is open.
 async fn open(engine: &Engine, start: &Start) -> Result<Open, Reason> {
-    let Target { url, secure, host, port } = target(engine, start)?;
-    // A socket carries the channel's cookies as a request with
-    // credentials does (the standard's credentials mode `include`), by
-    // the same SameSite rule. A page opened from disk is of no site.
-    let same_site = engine.policy.folder().is_some_and(|folder| cookies::same_site(engine.jar.borrow().suffixes(), folder, &url));
-    let context = cookies::Context { same_site, navigation: false, safe_method: true };
-    let cookie = engine.jar.borrow().header(&url, context);
     let key = new_key(&mut Random::new());
-    let head = request(&url, &engine.policy.origin(), &key, &start.protocols, cookie.as_deref()).ok_or(Reason::Address)?;
+    let (Target { url, secure, host, port }, context, head) = first_words(engine, start, &key)?;
     let opened = engine.pool.open_alone(secure, &host, port, engine.asker()).await?;
     // The address the script declared the space of is in that space, or
     // nothing is written to it (TODO-7316 item 10).
@@ -320,7 +349,7 @@ impl Reading {
     /// Takes what has arrived, frame by frame: each whole message told in
     /// the pipe's pieces, a ping answered, and the server's close
     /// answered. The event that ends the socket is returned, if it ended.
-    async fn take(&mut self, arrived: &[u8], told: &impl Told, out: &mut WriteHalf<Stream>) -> Option<FromWebClient> {
+    async fn take(&mut self, arrived: &[u8], told: &impl Told, out: &mut (impl AsyncWrite + Unpin)) -> Option<FromWebClient> {
         let id = self.id;
         let mut rest = arrived;
         loop {
