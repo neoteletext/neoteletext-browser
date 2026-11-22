@@ -6,6 +6,9 @@
 //! (TODO-7272).
 #![allow(clippy::arithmetic_side_effects, clippy::unwrap_used, clippy::indexing_slicing, clippy::panic, clippy::naive_bytecount, reason = "tests")]
 
+use neoteletext_rules::animate::{Operation, OperationKind};
+use neoteletext_rules::table::Target as AnimateTarget;
+use protocol::script::batch::NaplpsObjectKind;
 use protocol::script::{ContextFlags, Level};
 
 use super::program::Paint;
@@ -478,4 +481,383 @@ fn the_backdrop_is_a_thing_whose_painting_is_watched() {
     assert_eq!(batch.watch.and_then(|watch| watch.painted), Some(vec![BACKDROP_HANDLE]));
     assert_type(&host.call(CHANNEL, Op::LISTEN.number(), &[BACKDROP_HANDLE, EventKind::PAINTED.number(), 1], Payload::None));
     assert_type(&call(&mut host, Op::LISTEN, &[BACKDROP_HANDLE + 1, EventKind::PAINTED.number(), 1]));
+}
+
+// Definitions and the cast (work package N2) ------------------------------------
+
+const END_DEFINITION: [u8; 2] = [0x1B, 0x45];
+
+/// A definition's program whose contents are `22 + 6 x steps` bytes: SO,
+/// DOMAIN (8), SELECT COLOR (2), TEXTURE (2), POINT SET to the pen's
+/// place (7), LINE relative and an operand a step, and the PDI's end.
+fn stepped(steps: i32) -> Vec<i32> {
+    let mut program = vec![Paint::POLYLINE_BY as i32, steps];
+    program.extend((0..steps).flat_map(|index| [if index % 2 == 0 { 1 } else { -1 }, 0]));
+    program
+}
+
+fn symbol_in(host: &mut Host, context: i32, existing: i32, size: (i32, i32), program: &[i32]) -> Reply {
+    host.call(context, Op::NP_SYMBOL.number(), &[existing, size.0, size.1], Payload::Ints(&words(program)))
+}
+
+fn symbol(host: &mut Host, program: &[i32]) -> i32 {
+    match symbol_in(host, PAGE, 0, (8, 8), program) {
+        Reply::Int(handle) => handle,
+        other => panic!("no symbol: {other:?}"),
+    }
+}
+
+/// `NP_ACTOR`'s whole numbers for an actor at (`x`, `y`) in `layer`.
+fn actor_ints(existing: i32, x: i32, y: i32, layer: i32, flags: i32) -> [i32; 15] {
+    [existing, 1, x, y, 0, 0, 0, 0, layer, 0, flags, 0, 0, 0, 0]
+}
+
+fn actor_in(host: &mut Host, context: i32, ints: [i32; 15], frames: &[i32]) -> Reply {
+    host.call(context, Op::NP_ACTOR.number(), &ints, Payload::Ints(&words(frames)))
+}
+
+fn actor(host: &mut Host, x: i32, y: i32, frames: &[i32]) -> i32 {
+    match actor_in(host, PAGE, actor_ints(0, x, y, 2, 1), frames) {
+        Reply::Int(handle) => handle,
+        other => panic!("no actor: {other:?}"),
+    }
+}
+
+/// Section 7.4 and 10.6, `DEFINABLE_CODES`, `MAX_MACRO_BYTES`,
+/// `MAX_ALL_MACRO_BYTES` and `CHANNEL_SHARE_SYMBOLS`: each at its bound
+/// and one past. A symbol is DEF MACRO with its contents and END.
+#[test]
+fn symbols_are_held_to_their_codes_and_their_bytes() {
+    let mut host = host();
+    // The longest contents: 22 + 6 x 679 = 4,096 bytes, and six more are too many.
+    let first = symbol(&mut host, &stepped(679));
+    let (_, bytes) = staged(&mut host).unwrap();
+    let at_definition = bytes.windows(3).position(|window| window == [0x1B, 0x40, 0x20]).expect("DEF MACRO of code 2/0");
+    assert_eq!(bytes[at_definition + 3..].len(), 4_096 + 2);
+    assert_eq!(bytes[bytes.len() - 2..], END_DEFINITION);
+    assert_range(&symbol_in(&mut host, PAGE, 0, (8, 8), &stepped(680)), "MAX_MACRO_BYTES");
+    assert_eq!(staged(&mut host), None, "a symbol refused appends nothing");
+    // Sixteen of the longest are exactly the 65,536 bytes; a seventeenth is past it.
+    for _ in 1..16 {
+        symbol(&mut host, &stepped(679));
+    }
+    assert_range(&symbol_in(&mut host, PAGE, 0, (8, 8), &stepped(679)), "MAX_ALL_MACRO_BYTES");
+    // Redefined shorter, the first leaves room for one that fits what it gave up.
+    assert_eq!(symbol_in(&mut host, PAGE, first, (8, 8), &stepped(1)), Reply::Int(first));
+    symbol(&mut host, &stepped(600));
+    // Eighty symbols are the page's, and no eighty-first.
+    let mut host = self::host();
+    let handles: Vec<i32> = (0..80).map(|_| symbol(&mut host, &RECT)).collect();
+    assert_range(&symbol_in(&mut host, PAGE, 0, (8, 8), &RECT), "DEFINABLE_CODES");
+    // The channel context has sixteen of its own, whatever the page has.
+    for _ in 0..16 {
+        assert!(matches!(symbol_in(&mut host, CHANNEL, 0, (8, 8), &RECT), Reply::Int(_)));
+    }
+    assert_range(&symbol_in(&mut host, CHANNEL, 0, (8, 8), &RECT), "CHANNEL_SHARE_SYMBOLS");
+    // A symbol removed gives its code back, and its handle names nothing after.
+    assert_eq!(call(&mut host, Op::NP_REMOVE, &[handles[3]]), Reply::Undefined);
+    let again = symbol(&mut host, &RECT);
+    assert_ne!(again, handles[3]);
+    assert_type(&symbol_in(&mut host, PAGE, handles[3], (8, 8), &RECT));
+    assert_type(&call(&mut host, Op::NP_REMOVE, &[handles[3]]));
+    // One context's symbol is not the other's.
+    assert_type(&symbol_in(&mut host, CHANNEL, handles[0], (8, 8), &RECT));
+    // Refusals: a size past the canvas, a WAIT, a program with a fault.
+    assert_range(&symbol_in(&mut host, PAGE, handles[0], (481, 8), &RECT), "CANVAS_WIDTH");
+    assert_range(&symbol_in(&mut host, PAGE, handles[0], (8, 0), &RECT), "CANVAS_HEIGHT");
+    assert_type(&symbol_in(&mut host, PAGE, handles[0], (8, 8), &[Paint::WAIT as i32, 1]));
+    assert_type(&symbol_in(&mut host, PAGE, handles[0], (8, 8), &[Paint::STROKE as i32, 9]));
+}
+
+/// Section 7.4, `drcs` and `texture`: DEF DRCS and DEF TEXTURE, 96
+/// characters and four patterns (`DEFINABLE_CODES`, `TEXTURE_MASKS`),
+/// their contents bounded each and together.
+#[test]
+fn drcs_characters_and_textures_are_held_to_their_tables() {
+    let mut host = host();
+    let drcs = |host: &mut Host, program: &[i32]| host.call(PAGE, Op::NP_DRCS.number(), &[], Payload::Ints(&words(program)));
+    let texture =
+        |host: &mut Host, size: (i32, i32), program: &[i32]| host.call(PAGE, Op::NP_TEXTURE.number(), &[size.0, size.1], Payload::Ints(&words(program)));
+    assert_eq!(drcs(&mut host, &RECT), Reply::Int(KIND_DRCS << HANDLE_KIND_SHIFT));
+    let (_, bytes) = staged(&mut host).unwrap();
+    // TEXT with the cell's field goes before DEF DRCS (ESC 4/3) of code 2/0.
+    let define = bytes.windows(3).position(|window| window == [0x1B, 0x43, 0x20]).expect("DEF DRCS");
+    assert!(bytes[..define].contains(&0x22));
+    assert_eq!(bytes[bytes.len() - 2..], END_DEFINITION);
+    for _ in 1..96 {
+        assert!(matches!(drcs(&mut host, &RECT), Reply::Int(_)));
+    }
+    assert_range(&drcs(&mut host, &RECT), "DEFINABLE_CODES");
+    for pattern in 0..4 {
+        assert_eq!(texture(&mut host, (12, 6), &RECT), Reply::Int((KIND_TEXTURE << HANDLE_KIND_SHIFT) | pattern));
+    }
+    assert_range(&texture(&mut host, (12, 6), &RECT), "TEXTURE_MASKS");
+    assert_type(&host.call(CHANNEL, Op::NP_DRCS.number(), &[], Payload::Ints(&words(&RECT))));
+    // The mask's side at its bound and one past.
+    let mut host = self::host();
+    assert!(matches!(texture(&mut host, (128, 128), &RECT), Reply::Int(_)));
+    assert_range(&texture(&mut host, (129, 1), &RECT), "MASK_SIDE");
+    assert_range(&texture(&mut host, (1, 0), &RECT), "MASK_SIDE");
+    // DEF TEXTURE (ESC 4/4) of pattern A (4/1), after TEXTURE with the mask's size.
+    let (_, bytes) = staged(&mut host).unwrap();
+    let define = bytes.windows(3).position(|window| window == [0x1B, 0x44, 0x41]).expect("DEF TEXTURE");
+    assert!(bytes[..define].contains(&0x23));
+    // Each definition's contents and all of them together: eight of the longest, and no more.
+    assert_range(&drcs(&mut host, &stepped(681)), "MAX_MACRO_BYTES");
+    for _ in 0..7 {
+        assert!(matches!(drcs(&mut host, &stepped(679)), Reply::Int(_)));
+    }
+    assert_range(&drcs(&mut host, &stepped(679)), "NAPLPS_MAX_PATTERN_BYTES");
+}
+
+/// Section 7.5 and 10.6, `MAX_OBJECTS`, `CHANNEL_SHARE_ACTORS` and
+/// `MAX_OBJECT_FRAMES`, each at its bound and one past; the objects leave
+/// as the engine's record: one alone by its `ONE` flag, or all of them.
+#[test]
+fn the_cast_is_held_to_sixty_four_objects() {
+    let mut host = host();
+    let box_symbol = symbol(&mut host, &RECT);
+    let tall = match symbol_in(&mut host, PAGE, 0, (8, 30), &RECT) {
+        Reply::Int(handle) => handle,
+        other => panic!("{other:?}"),
+    };
+    staged(&mut host);
+    // One actor made in a step is sent alone.
+    let first = actor(&mut host, 100, 50, &[box_symbol]);
+    assert_eq!(first, (KIND_ACTOR << HANDLE_KIND_SHIFT) | 1);
+    let record = host.take_batch(0, &[]).naplps_objects.expect("the object");
+    assert!(record.one && record.title.is_empty());
+    let object = &record.objects[0];
+    // Canvas line 50 is raster line 70; a symbol 8 lines tall, run from
+    // the unit screen's origin, has its top left on raster line 472.
+    assert_eq!(
+        (object.number, object.x, object.y, object.width, object.height, object.origin, object.layer, object.shown),
+        (1, 100, 70, 8, 8, (0, 472), 2, true)
+    );
+    assert_eq!((object.frames.clone(), object.looks, object.kind), (vec![0x20], [0; 3], NaplpsObjectKind::Macro));
+    // Sixteen frames, and no seventeenth; frames of one height.
+    assert!(matches!(actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[box_symbol; 16]), Reply::Int(_)));
+    assert_range(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[box_symbol; 17]), "MAX_OBJECT_FRAMES");
+    assert_type(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[box_symbol, tall]));
+    assert_type(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[]));
+    assert_type(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[box_symbol + 256]));
+    // Fifty-six objects are the page's, and no fifty-seventh.
+    for index in 2..56 {
+        actor(&mut host, index, index, &[box_symbol]);
+    }
+    assert_range(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 1), &[box_symbol]), "MAX_OBJECTS");
+    // The channel context has eight of its own, in the overlay only, drawn with its own symbols.
+    let Reply::Int(channel_symbol) = symbol_in(&mut host, CHANNEL, 0, (8, 8), &RECT) else { panic!("the channel context's symbol") };
+    assert_type(&actor_in(&mut host, CHANNEL, actor_ints(0, 0, 0, 2, 1), &[channel_symbol]));
+    assert_type(&actor_in(&mut host, CHANNEL, actor_ints(0, 0, 0, 3, 1), &[box_symbol]));
+    let mut channel_actor = 0;
+    for _ in 0..8 {
+        let Reply::Int(handle) = actor_in(&mut host, CHANNEL, actor_ints(0, 0, 0, 3, 1), &[channel_symbol]) else { panic!("the channel context's actor") };
+        channel_actor = handle;
+    }
+    assert_range(&actor_in(&mut host, CHANNEL, actor_ints(0, 0, 0, 3, 1), &[channel_symbol]), "CHANNEL_SHARE_ACTORS");
+    assert_type(&host.call(CHANNEL, Op::NP_ANIMATE.number(), &[channel_actor, 16, 2, 0, 0, 0], Payload::None));
+    assert_type(&host.call(CHANNEL, Op::NP_ANIMATE.number(), &[first, 5, 0, 0, 0, 0], Payload::None));
+    // Many made in one step: every object is sent, sixty-four of them, with the page's title.
+    host.call(PAGE, Op::TITLE.number(), &[], Payload::Text(b"Cast"));
+    let record = host.take_batch(0, &[]).naplps_objects.expect("the objects");
+    assert!(!record.one);
+    assert_eq!((record.objects.len(), record.title.as_str()), (64, "Cast"));
+    // The channel context's go with it; the page's stay.
+    host.close(ContextId::Channel);
+    assert_eq!(host.take_batch(0, &[]).naplps_objects.map(|record| record.objects.len()), Some(56));
+    // A region: a rectangle and a cover, no frames.
+    let mut host = self::host();
+    let region = |ints: [i32; 15]| ints;
+    let made = host.call(PAGE, Op::NP_ACTOR.number(), &region([0, 2, 10, 10, 20, 20, 0, 0, 1, -3, 3, 3, 0, 0, 0]), Payload::None);
+    assert_eq!(made, Reply::Int((KIND_ACTOR << HANDLE_KIND_SHIFT) | 1));
+    let record = host.take_batch(0, &[]).naplps_objects.unwrap();
+    let object = &record.objects[0];
+    assert_eq!(
+        (object.kind, object.cover, object.order, object.origin, object.detectable, object.frames.len()),
+        (NaplpsObjectKind::Region, 3, -3, (0, 0), true, 0)
+    );
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 0, 20, 0, 0, 1, 0, 3, 3, 0, 0, 0], Payload::None), "CANVAS_WIDTH");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 461, 0, 0, 1, 0, 3, 3, 0, 0, 0], Payload::None), "CANVAS_HEIGHT");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20, 0, 0, 0, 0, 3, 3, 0, 0, 0], Payload::None), "LAYERS");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20, 0, 0, 4, 0, 3, 3, 0, 0, 0], Payload::None), "LAYERS");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20, 0, 0, 1, 128, 3, 3, 0, 0, 0], Payload::None), "MAX_ORDER");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20, 0, 0, 1, 0, 3, 16, 0, 0, 0], Payload::None), "NAPLPS_COLOURS");
+    assert_range(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 40_000, 10, 20, 20, 0, 0, 1, 0, 3, 3, 0, 0, 0], Payload::None), "MAX_X");
+    assert_type(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 3, 10, 10, 20, 20, 0, 0, 1, 0, 3, 3, 0, 0, 0], Payload::None));
+    assert_type(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20, 0, 0, 1, 0, 8, 3, 0, 0, 0], Payload::None));
+    assert_type(&host.call(PAGE, Op::NP_ACTOR.number(), &[0, 2, 10, 10, 20, 20], Payload::None));
+}
+
+/// Section 7.5: an actor's moves, shows, order, frames, cycles and looks
+/// are `ANIMATE` operations (animation.md ANIM-6), bounded a step
+/// (`MAX_ANIMATE_OPERATIONS`) and in how many objects cycle
+/// (`MAX_CYCLING_OBJECTS`); a redefinition sends the one object again
+/// with its state, and a removal every object.
+#[test]
+#[expect(clippy::too_many_lines, reason = "every animation operation, each bound at its edge, and what the batches carry")]
+fn actors_are_animated_by_operations_and_redefined_alone() {
+    let mut host = host();
+    let box_symbol = symbol(&mut host, &RECT);
+    let handles: Vec<i32> = (0..17).map(|index| actor(&mut host, 10 * index, 100, &[box_symbol, box_symbol])).collect();
+    host.take_batch(0, &[]);
+    let animate = |host: &mut Host, handle: i32, ints: [i32; 5]| {
+        host.call(PAGE, Op::NP_ANIMATE.number(), &[handle, ints[0], ints[1], ints[2], ints[3], ints[4]], Payload::None)
+    };
+    let first = handles[0];
+    for ints in [
+        [15, 0, 30, 40, 0],
+        [15, 1, 5, -5, 0],
+        [6, 0, 0, 0, 0],
+        [5, 0, 0, 0, 0],
+        [16, 3, 7, 0, 0],
+        [16, 255, -7, 0, 0],
+        [17, 1, 0, 0, 0],
+        [7, 2, 0, 0, 0],
+        [18, 0, 1, 15, 1],
+        [19, 0, 0, 0, 0],
+    ] {
+        assert_eq!(animate(&mut host, first, ints), Reply::Undefined, "{ints:?}");
+    }
+    let target = AnimateTarget::object(1);
+    let batch = host.take_batch(0, &[]);
+    assert_eq!(batch.naplps_objects, None, "animation sends no record");
+    assert_eq!(
+        batch.animate,
+        Some(
+            [
+                // A place is written in the record's lines: canvas line 40 is raster line 60.
+                OperationKind::Move { relative: false, x: 30, y: 60 },
+                OperationKind::Move { relative: true, x: 5, y: -5 },
+                OperationKind::Hide,
+                OperationKind::Show,
+                OperationKind::Order { layer: 3, order: 7 },
+                OperationKind::Order { layer: 255, order: -7 },
+                OperationKind::Frame(1),
+                OperationKind::Look(2),
+                OperationKind::Cycle { first: 0, last: 1, period: 15, once: true },
+                OperationKind::StopCycle,
+            ]
+            .into_iter()
+            .map(|kind| Operation { target, kind })
+            .collect()
+        )
+    );
+    // Refusals: each bound by its name, and nothing staged for them.
+    assert_range(&animate(&mut host, first, [17, 16, 0, 0, 0]), "MAX_FRAME");
+    assert_range(&animate(&mut host, first, [18, 0, 1, 3_601, 0]), "MAX_CYCLE_PERIOD");
+    assert_range(&animate(&mut host, first, [18, 0, 1, 0, 0]), "MAX_CYCLE_PERIOD");
+    assert_range(&animate(&mut host, first, [16, 0, 0, 0, 0]), "LAYERS");
+    assert_range(&animate(&mut host, first, [7, 4, 0, 0, 0]), "LOOKS");
+    assert_range(&animate(&mut host, first, [15, 0, 40_000, 0, 0]), "MAX_X");
+    assert_type(&animate(&mut host, first, [18, 1, 0, 15, 0]));
+    assert_type(&animate(&mut host, first, [20, 0, 0, 0, 0]));
+    assert_type(&animate(&mut host, first + 100, [5, 0, 0, 0, 0]));
+    assert_eq!(host.take_batch(0, &[]).animate, None);
+    // Sixteen objects cycle, and no seventeenth; one of them may start again.
+    for handle in &handles[..16] {
+        assert_eq!(animate(&mut host, *handle, [18, 0, 1, 30, 0]), Reply::Undefined);
+    }
+    assert_range(&animate(&mut host, handles[16], [18, 0, 1, 30, 0]), "MAX_CYCLING_OBJECTS");
+    assert_eq!(animate(&mut host, handles[3], [18, 1, 1, 9, 0]), Reply::Undefined);
+    // Sixty-four operations a step, and no sixty-fifth.
+    for _ in 17..64 {
+        assert_eq!(animate(&mut host, first, [15, 1, 1, 0, 0]), Reply::Undefined);
+    }
+    assert_range(&animate(&mut host, first, [15, 1, 1, 0, 0]), "MAX_ANIMATE_OPERATIONS");
+    assert_eq!(host.take_batch(0, &[]).animate.map(|operations| operations.len()), Some(64));
+    // Redefined, an actor is sent alone where it stands, its frame, cycle and look forgotten.
+    assert_eq!(actor_in(&mut host, PAGE, actor_ints(first, 300, 200, 1, 0), &[box_symbol]), Reply::Int(first));
+    let batch = host.take_batch(0, &[]);
+    let record = batch.naplps_objects.expect("the one object");
+    assert!(record.one);
+    assert_eq!(
+        (record.objects[0].number, record.objects[0].x, record.objects[0].y, record.objects[0].shown, record.objects[0].frames.len()),
+        (1, 300, 220, false, 1)
+    );
+    assert_eq!(batch.animate, None);
+    // A label is carried by the record.
+    assert_eq!(host.call(PAGE, Op::NP_LABEL.number(), &[handles[1]], Payload::Text("Kite".as_bytes())), Reply::Undefined);
+    assert_range(&host.call(PAGE, Op::NP_LABEL.number(), &[handles[1]], Payload::Text(&[b'x'; 65])), "MAX_LABEL_BYTES");
+    assert_type(&host.call(PAGE, Op::NP_LABEL.number(), &[handles[1]], Payload::Text(b"a\x07")));
+    let record = host.take_batch(0, &[]).naplps_objects.unwrap();
+    assert_eq!((record.one, record.objects[0].label.as_str()), (true, "Kite"));
+    // Removed, every object is sent, and those that cycle are told to again.
+    assert_eq!(call(&mut host, Op::NP_REMOVE, &[handles[16]]), Reply::Undefined);
+    assert_type(&call(&mut host, Op::NP_REMOVE, &[handles[16]]));
+    let batch = host.take_batch(0, &[]);
+    assert_eq!(batch.naplps_objects.map(|record| (record.one, record.objects.len())), Some((false, 16)));
+    let cycles = batch.animate.unwrap();
+    assert_eq!(cycles.len(), 15, "the fifteen that still cycle: the one redefined does not");
+    assert!(cycles.contains(&Operation { target: AnimateTarget::object(4), kind: OperationKind::Cycle { first: 1, last: 1, period: 9, once: false } }));
+    // A symbol an actor draws with is not removed, and keeps its height.
+    assert_type(&call(&mut host, Op::NP_REMOVE, &[box_symbol]));
+    assert_type(&symbol_in(&mut host, PAGE, box_symbol, (8, 9), &RECT));
+    // The wheel: the things that take it are told to the decoder, sixteen at most.
+    let mut host = self::host();
+    let box_symbol = symbol(&mut host, &RECT);
+    let wheels: Vec<i32> = (0..16)
+        .map(|_| match actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 5), &[box_symbol]) {
+            Reply::Int(handle) => handle,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_range(&actor_in(&mut host, PAGE, actor_ints(0, 0, 0, 2, 5), &[box_symbol]), "MAX_WHEEL_THINGS");
+    assert_eq!(host.take_batch(0, &[]).watch.and_then(|watch| watch.wheel), Some(wheels.clone()));
+    // An actor is a thing to listen to; removed, it is not, and its listeners are forgotten.
+    assert_eq!(call(&mut host, Op::LISTEN, &[wheels[0], EventKind::POINTER.number(), 1]), Reply::Undefined);
+    assert_eq!(call(&mut host, Op::NP_REMOVE, &[wheels[0]]), Reply::Undefined);
+    assert!(!host.listens_to(ContextId::Page, wheels[0], EventKind::POINTER));
+    assert_type(&call(&mut host, Op::LISTEN, &[wheels[0], EventKind::POINTER.number(), 1]));
+}
+
+/// Section 7.2: a new generation deletes the receiver's definitions, so
+/// the host sends every symbol, DRCS character and texture again, then
+/// the cast, each object where it stands with its cycle; the opening is
+/// the host's own and is not charged to the callback's allowance. And
+/// section 10.1 rule 7: what is kept for all this is counted.
+#[test]
+fn a_repaint_sends_the_definitions_and_the_cast_again() {
+    let mut host = host();
+    let box_symbol = symbol(&mut host, &stepped(679));
+    host.call(PAGE, Op::NP_DRCS.number(), &[], Payload::Ints(&words(&RECT)));
+    host.call(PAGE, Op::NP_TEXTURE.number(), &[12, 6], Payload::Ints(&words(&RECT)));
+    let handle = actor(&mut host, 100, 50, &[box_symbol]);
+    host.call(PAGE, Op::NP_ANIMATE.number(), &[handle, 15, 1, 7, 7, 0], Payload::None);
+    host.call(PAGE, Op::NP_ANIMATE.number(), &[handle, 18, 0, 0, 20, 0], Payload::None);
+    host.take_batch(0, &[]);
+    let held = host.state_bytes();
+    assert!(held > 4_093 && host.naplps.cast.state_bytes() > 4_093, "the symbol's contents are counted");
+    at(&mut host, 30);
+    // A painting that takes the whole of a callback's allowance still fits beside the opening.
+    assert_eq!(paint(&mut host, Op::NP_REPAINT, &long(10)), Reply::Undefined);
+    let batch = host.take_batch(0, &[]);
+    let append = batch.naplps.expect("the new generation");
+    assert!(append.new_generation && append.bytes.len() > 61_000 + 4_093);
+    for definition in [[0x1B, 0x40, 0x20], [0x1B, 0x43, 0x20], [0x1B, 0x44, 0x41]] {
+        assert_eq!(append.bytes.windows(3).filter(|window| *window == definition).count(), 1, "{definition:02X?}");
+    }
+    let record = batch.naplps_objects.expect("the cast again");
+    assert!(!record.one);
+    assert_eq!((record.objects[0].x, record.objects[0].y), (107, 77));
+    assert_eq!(
+        batch.animate,
+        Some(vec![Operation { target: AnimateTarget::object(1), kind: OperationKind::Cycle { first: 0, last: 0, period: 20, once: false } }])
+    );
+    // The host's bound on what it holds is met by a definition too.
+    host.set_limits_for_test(host.state_bytes() + 1_000, usize::MAX);
+    assert_range(&symbol_in(&mut host, PAGE, 0, (8, 8), &stepped(679)), "MAX_HOST_STATE_BYTES");
+    // A scope's actors and symbols go with it.
+    let mut host = self::host();
+    assert!(matches!(call(&mut host, Op::SCOPE_BEGIN, &[]), Reply::Int(1)));
+    let scoped = symbol(&mut host, &RECT);
+    let in_scope = actor(&mut host, 1, 1, &[scoped]);
+    call(&mut host, Op::SCOPE_LEAVE, &[1]);
+    let kept = symbol(&mut host, &RECT);
+    host.take_batch(0, &[]);
+    assert_eq!(call(&mut host, Op::SCOPE_END, &[1]), Reply::Undefined);
+    assert_eq!(host.take_batch(0, &[]).naplps_objects.map(|record| record.objects.len()), Some(0));
+    assert_type(&host.call(PAGE, Op::NP_ANIMATE.number(), &[in_scope, 5, 0, 0, 0, 0], Payload::None));
+    assert_type(&symbol_in(&mut host, PAGE, scoped, (8, 8), &RECT));
+    assert_eq!(symbol_in(&mut host, PAGE, kept, (8, 8), &RECT), Reply::Int(kept));
 }

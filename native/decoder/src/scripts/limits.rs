@@ -48,3 +48,6 @@ pub const MAX_QUEUED_EVENTS: usize = neoteletext_rules::limits::MAX_QUEUED_EVENT
 pub const MAX_SCRIPTS_HELD: usize = 1 + protocol::MAX_TABS;
 /// The API version a script is written for is at least this (section 3.1).
 pub const FIRST_API: u16 = 1;
+/// The most pages whose own file's script name is remembered: every page
+/// a channel may name a script for (the engine's `MAX_SCRIPT_PAGES`).
+pub const MAX_NAMED_PAGES: usize = neoteletext_web::scripts::MAX_SCRIPT_PAGES;

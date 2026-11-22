@@ -271,6 +271,21 @@ impl Broker {
         }
     }
 
+    /// The script a page file opened from disk names, read by the broker
+    /// from that file's own folder (the script API's specification
+    /// section 12.7).
+    ///
+    /// # Errors
+    /// Why it could not be read, in words for the log.
+    pub fn read_script(&self, file: &Path, name: &str) -> Result<Vec<u8>, String> {
+        let text = file.to_str().ok_or("the path is not text")?;
+        match self.ask(&Request::ReadScript { file: text.to_owned(), name: name.to_owned() }).map_err(|error| error.to_string())? {
+            (Reply::Source(bytes), _) => Ok(bytes),
+            (Reply::Failed(reason), _) => Err(reason),
+            _ => Err(String::from("an unexpected reply")),
+        }
+    }
+
     /// A font for pictures the user chose in the font dialog, read by the
     /// broker within its language's bound (renderer parity PAR-35).
     ///

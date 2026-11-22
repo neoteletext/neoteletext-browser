@@ -1,0 +1,121 @@
+# The web-platform-tests' streams suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 70 files run, 19 not run here; cases: 1159 pass, 16 fail as a listed departure, 9 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	streams/idlharness.any.js	NO-FILE	0	0
+FILE	streams/piping/abort.any.js	OK	33	0
+FILE	streams/piping/close-propagation-backward.any.js	OK	16	0
+FILE	streams/piping/close-propagation-forward.any.js	OK	30	0
+FILE	streams/piping/error-propagation-backward.any.js	OK	36	0
+FILE	streams/piping/error-propagation-forward.any.js	OK	32	0
+FILE	streams/piping/flow-control.any.js	OK	5	0
+FILE	streams/piping/general-addition.any.js	OK	0	1
+FILE	streams/piping/general.any.js	OK	14	0
+FILE	streams/piping/multiple-propagation.any.js	OK	9	0
+FILE	streams/piping/pipe-through.any.js	OK	43	0
+FILE	streams/piping/then-interception.any.js	OK	2	0
+FILE	streams/piping/throwing-options.any.js	OK	8	0
+FILE	streams/piping/transform-streams.any.js	OK	1	0
+FILE	streams/queuing-strategies.any.js	OK	20	0
+FILE	streams/readable-byte-streams/bad-buffers-and-views.any.js	OK	24	0
+FILE	streams/readable-byte-streams/construct-byob-request.any.js	OK	16	0
+FILE	streams/readable-byte-streams/enqueue-with-detached-buffer.any.js	OK	0	1
+FILE	streams/readable-byte-streams/general.any.js	OK	98	3
+FILE	streams/readable-byte-streams/non-transferable-buffers.any.js	OK	0	4
+FILE	streams/readable-byte-streams/patched-global.any.js	OK	1	0
+FILE	streams/readable-byte-streams/read-min.any.js	OK	23	1
+FILE	streams/readable-byte-streams/respond-after-enqueue.any.js	OK	3	0
+FILE	streams/readable-byte-streams/tee.any.js	OK	40	0
+FILE	streams/readable-byte-streams/templated.any.js	OK	34	0
+FILE	streams/readable-streams/async-iterator.any.js	OK	40	1
+FILE	streams/readable-streams/bad-strategies.any.js	OK	8	0
+FILE	streams/readable-streams/bad-underlying-sources.any.js	OK	22	0
+FILE	streams/readable-streams/cancel.any.js	OK	11	0
+FILE	streams/readable-streams/constructor.any.js	OK	1	0
+FILE	streams/readable-streams/count-queuing-strategy-integration.any.js	OK	4	0
+FILE	streams/readable-streams/default-reader.any.js	OK	29	0
+FILE	streams/readable-streams/floating-point-total-queue-size.any.js	OK	4	0
+FILE	streams/readable-streams/from.any.js	OK	50	0
+FILE	streams/readable-streams/garbage-collection.any.js	OK	5	0
+FILE	streams/readable-streams/general.any.js	OK	38	0
+FILE	streams/readable-streams/owning-type-message-port.tentative.any.js	OK	0	2
+FILE	streams/readable-streams/owning-type-video-frame.tentative.any.js	OK	0	5
+FILE	streams/readable-streams/owning-type.tentative.any.js	OK	0	5
+FILE	streams/readable-streams/patched-global.any.js	OK	5	0
+FILE	streams/readable-streams/reentrant-strategies.any.js	OK	10	0
+FILE	streams/readable-streams/tee.any.js	OK	26	0
+FILE	streams/readable-streams/templated.any.js	OK	91	0
+FILE	streams/transferable/transform-stream-members.any.js	OK	4	0
+FILE	streams/transform-streams/backpressure.any.js	OK	14	0
+FILE	streams/transform-streams/cancel.any.js	OK	11	0
+FILE	streams/transform-streams/errors.any.js	OK	21	0
+FILE	streams/transform-streams/flush.any.js	OK	6	0
+FILE	streams/transform-streams/general.any.js	OK	26	0
+FILE	streams/transform-streams/lipfuzz.any.js	OK	20	0
+FILE	streams/transform-streams/patched-global.any.js	OK	2	0
+FILE	streams/transform-streams/properties.any.js	OK	6	0
+FILE	streams/transform-streams/reentrant-strategies.any.js	OK	11	0
+FILE	streams/transform-streams/strategies.any.js	OK	10	0
+FILE	streams/transform-streams/terminate.any.js	OK	6	0
+FILE	streams/writable-streams/aborting.any.js	OK	65	0
+FILE	streams/writable-streams/bad-strategies.any.js	OK	7	0
+FILE	streams/writable-streams/bad-underlying-sinks.any.js	OK	14	0
+FILE	streams/writable-streams/byte-length-queuing-strategy.any.js	OK	1	0
+FILE	streams/writable-streams/close.any.js	OK	26	0
+FILE	streams/writable-streams/constructor.any.js	OK	13	0
+FILE	streams/writable-streams/count-queuing-strategy.any.js	OK	3	0
+FILE	streams/writable-streams/error.any.js	OK	5	0
+FILE	streams/writable-streams/floating-point-total-queue-size.any.js	OK	4	0
+FILE	streams/writable-streams/garbage-collection.any.js	OK	1	0
+FILE	streams/writable-streams/general.any.js	OK	15	1
+FILE	streams/writable-streams/properties.any.js	OK	8	0
+FILE	streams/writable-streams/reentrant-strategy.any.js	OK	7	0
+FILE	streams/writable-streams/start.any.js	OK	8	0
+FILE	streams/writable-streams/write.any.js	OK	13	0
+HARNESS	TODO-7372/14b	streams/idlharness.any.js	NO-FILE	no file resources/WebIDLParser.js
+FAIL	TODO-7388/2	streams/piping/general-addition.any.js	enqueue() must not synchronously call write algorithm
+FAIL	D17	streams/readable-byte-streams/enqueue-with-detached-buffer.any.js	enqueue after detaching byobRequest.view.buffer should throw
+FAIL	D17	streams/readable-byte-streams/general.any.js	ReadableStream with byte source: read(view), then respondWithNewView() with a transferred ArrayBuffer
+FAIL	D17	streams/readable-byte-streams/general.any.js	ReadableStream with byte source: respondWithNewView() with a transferred non-zero-length view (in the readable state)
+FAIL	D17	streams/readable-byte-streams/general.any.js	ReadableStream with byte source: respondWithNewView() with a transferred zero-length view (in the closed state)
+FAIL	D-9.1	streams/readable-byte-streams/non-transferable-buffers.any.js	ReadableStream with byte source: read() with a non-transferable buffer
+FAIL	D-9.1	streams/readable-byte-streams/non-transferable-buffers.any.js	ReadableStream with byte source: fill() with a non-transferable buffer
+FAIL	D-9.1	streams/readable-byte-streams/non-transferable-buffers.any.js	ReadableStream with byte source: enqueue() with a non-transferable buffer
+FAIL	D-9.1	streams/readable-byte-streams/non-transferable-buffers.any.js	ReadableStream with byte source: respondWithNewView() with a non-transferable buffer
+FAIL	D17	streams/readable-byte-streams/read-min.any.js	ReadableStream with byte source: read({ min }), then respondWithNewView() with a transferred ArrayBuffer
+FAIL	TODO-7388/2	streams/readable-streams/async-iterator.any.js	Async iterator instances should have the correct list of properties
+FAIL	D-9.1	streams/readable-streams/owning-type-message-port.tentative.any.js	Transferred MessageChannel works as expected
+FAIL	D-9.1	streams/readable-streams/owning-type-message-port.tentative.any.js	Second branch of owning ReadableStream tee should end up into errors with transfer only values
+FAIL	D-9.1	streams/readable-streams/owning-type-video-frame.tentative.any.js	ReadableStream of type owning should close serialized chunks
+FAIL	D-9.1	streams/readable-streams/owning-type-video-frame.tentative.any.js	ReadableStream of type owning should transfer JS chunks with transferred values
+FAIL	D-9.1	streams/readable-streams/owning-type-video-frame.tentative.any.js	ReadableStream of type owning should error when trying to enqueue not serializable values
+FAIL	D-9.1	streams/readable-streams/owning-type-video-frame.tentative.any.js	ReadableStream of type owning should clone serializable objects when teeing
+FAIL	D-9.1	streams/readable-streams/owning-type-video-frame.tentative.any.js	ReadableStream of type owning should clone JS Objects with serializables when teeing
+FAIL	TODO-7388/2	streams/readable-streams/owning-type.tentative.any.js	ReadableStream can be constructed with owning type
+FAIL	TODO-7388/2	streams/readable-streams/owning-type.tentative.any.js	ReadableStream of type owning should call start with a ReadableStreamDefaultController
+FAIL	TODO-7388/2	streams/readable-streams/owning-type.tentative.any.js	ReadableStream should be able to call enqueue with an empty transfer list
+FAIL	TODO-7388/2	streams/readable-streams/owning-type.tentative.any.js	ReadableStream should check transfer parameter
+FAIL	TODO-7388/2	streams/readable-streams/owning-type.tentative.any.js	ReadableStream of type owning should transfer enqueued chunks
+FAIL	TODO-7388/2	streams/writable-streams/general.any.js	WritableStream's strategy.size should not be called as a method
+SKIP	PAGE	D-9.1	streams/queuing-strategies-size-function-navigation.window.js
+SKIP	PAGE	D-9.1	streams/queuing-strategies-size-function-per-global.window.js
+SKIP	PAGE	D-9.1	streams/readable-streams/cross-realm-crash.window.js
+SKIP	PAGE	D-9.1	streams/readable-streams/global.html
+SKIP	PAGE	D-9.1	streams/readable-streams/read-task-handling.window.js
+SKIP	PAGE	D-9.1	streams/readable-streams/tee-detached-context-crash.html
+SKIP	PAGE	D-9.1	streams/transferable/audioworklet.https.html
+SKIP	PAGE	D-9.1	streams/transferable/deserialize-error.window.js
+SKIP	PAGE	D-9.1	streams/transferable/gc-crash.html
+SKIP	PAGE	D-9.1	streams/transferable/readable-stream.html
+SKIP	PAGE	D-9.1	streams/transferable/reason.html
+SKIP	PAGE	D-9.1	streams/transferable/service-worker.https.html
+SKIP	PAGE	D-9.1	streams/transferable/shared-worker.html
+SKIP	PAGE	D-9.1	streams/transferable/transfer-with-messageport.window.js
+SKIP	PAGE	D-9.1	streams/transferable/transform-stream.html
+SKIP	PAGE	D-9.1	streams/transferable/window.html
+SKIP	PAGE	D-9.1	streams/transferable/worker.html
+SKIP	PAGE	D-9.1	streams/transferable/writable-stream.html
+SKIP	PAGE	D-9.1	streams/transform-streams/invalid-realm.tentative.window.js

@@ -30,7 +30,7 @@ workspace_version="$(sed -n '/^\[workspace.package\]$/,/^\[/s/^version = "\(.*\)
 # would read as an unchanged tree.
 changes=$(git status --porcelain --untracked-files=no) || { echo "build-macos: the tree is not a git checkout; a release is built from a commit" >&2; exit 1; }
 [[ -z "$changes" ]] || { echo "build-macos: the tree has changes; a release is built from a commit" >&2; exit 1; }
-programs=(neoteletext neoteletext-chooser neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-launcher)
+programs=(neoteletext neoteletext-chooser neoteletext-decoder neoteletext-fetcher neoteletext-interface neoteletext-keyboard neoteletext-sound neoteletext-script-host neoteletext-launcher)
 mkdir -p "$out"
 cargo build --quiet --manifest-path native/tuf/Cargo.toml --release -p neoteletext-release
 release_tool="native/tuf/target/release/neoteletext-release"

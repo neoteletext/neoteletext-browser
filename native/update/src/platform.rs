@@ -8,7 +8,7 @@ use std::fmt;
 /// The browser's programs, as each version has them: the broker and
 /// trusted core, its helpers, the updater, and the launcher of this
 /// release (installed only by a launcher release, section 7).
-pub const PROGRAMS: [&str; 9] = [
+pub const PROGRAMS: [&str; 10] = [
     "neoteletext",
     "neoteletext-chooser",
     "neoteletext-decoder",
@@ -16,6 +16,8 @@ pub const PROGRAMS: [&str; 9] = [
     "neoteletext-interface",
     "neoteletext-keyboard",
     "neoteletext-sound",
+    // The script host, which runs a channel's scripts confined (DEC-7266).
+    "neoteletext-script-host",
     "neoteletext-updater",
     "neoteletext-launcher",
 ];
@@ -41,10 +43,10 @@ pub const SIGNATURE_SUFFIX: &str = ".sig";
 pub const APPARMOR_PROFILE: &str = "neoteletext.apparmor";
 /// The programs whose sandbox makes a user namespace on Linux (`confine`'s
 /// roles that make a namespace: the broker and trusted core, the decoder,
-/// the interface and the sound helper), the only ones the `AppArmor`
+/// the interface, the sound helper and the script host), the only ones the `AppArmor`
 /// profile names (decision 95). The fetcher, the keyboard and the updater
 /// keep the network and make none.
-pub const NAMESPACE_PROGRAMS: [&str; 4] = ["neoteletext", "neoteletext-decoder", "neoteletext-interface", "neoteletext-sound"];
+pub const NAMESPACE_PROGRAMS: [&str; 5] = ["neoteletext", "neoteletext-decoder", "neoteletext-interface", "neoteletext-sound", "neoteletext-script-host"];
 /// The bundle's icon file, in `Contents/Resources`, which its `Info.plist`
 /// names (`CFBundleIconFile`, decision 124).
 pub const MACOS_ICON: &str = "NeoTeletext.icns";
@@ -275,14 +277,14 @@ impl fmt::Display for Platform {
 mod tests {
     use super::*;
 
-    /// Decision 95: the profile names the four programs that make
+    /// Decision 95: the profile names the five programs that make
     /// namespaces under the root given, and a root that would be a
     /// pattern is refused.
     #[test]
-    fn the_apparmor_profile_names_four_programs_under_the_real_root() {
+    fn the_apparmor_profile_names_the_namespace_programs_under_the_real_root() {
         let profile = apparmor_profile("/home/a b/.local/share/neoteletext");
         assert!(
-            profile.contains("\nprofile neoteletext \"/home/a b/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}\" flags=(unconfined) {\n  userns,\n"),
+            profile.contains("\nprofile neoteletext \"/home/a b/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound,neoteletext-script-host}\" flags=(unconfined) {\n  userns,\n"),
             "{profile}"
         );
         for program in NAMESPACE_PROGRAMS {

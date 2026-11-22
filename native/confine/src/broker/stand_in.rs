@@ -292,6 +292,14 @@ impl Server {
             Request::Openings => Reply::Failed(String::from("a test opens nothing from outside")),
             Request::ReadPicture(_) | Request::Save { .. } => Reply::Failed(String::from("a test has no pictures")),
             Request::ReadFont(_) => Reply::Failed(String::from("a test has no fonts")),
+            // A test's reader is asked for the script as the file of its
+            // name beside the page file: the real broker's rules for it
+            // are the browser's own (`core/src/source.rs`).
+            Request::ReadScript { file, name } => match (self.read_source)(&Path::new(file).with_file_name(name)) {
+                Ok(bytes) if bytes.len() <= MAX_REPLY => Reply::Source(bytes),
+                Ok(_) => Reply::Failed(String::from("the script is too large")),
+                Err(reason) => Reply::Failed(reason),
+            },
         };
         self.keep(request);
         self.stream.write_all(&encode_reply(&reply)?)

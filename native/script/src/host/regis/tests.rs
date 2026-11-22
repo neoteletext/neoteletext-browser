@@ -83,6 +83,12 @@ fn get(host: &mut Host, handle: i32, field: i32) -> Reply {
     call(host, Op::RG_GET, &[handle, field])
 }
 
+/// What a painter program writes as a drawing's contents, in English,
+/// with no macrograph to call.
+fn encode_plain(program: &[i32]) -> Result<Vec<u8>, Reply> {
+    painter::encode(program, &Setting { language: "en", letter: &|_| Err(type_error("not a macrograph")), macrograph: false })
+}
+
 /// A filled rectangle as a painter program.
 fn filled(x: i32, y: i32, width: i32, height: i32, ink: i32) -> Vec<i32> {
     vec![RegisPaint::INK.number(), ink, RegisPaint::FILL.number(), 5, RegisPaint::RECT.number(), x, y, width, height]
@@ -611,7 +617,7 @@ fn a_colour_entry_changes_at_most_six_times_a_second() {
 #[test]
 fn a_painter_program_becomes_one_well_formed_definition() {
     use RegisPaint as P;
-    let encode = |program: &[i32]| String::from_utf8(painter::encode(program).unwrap()).unwrap();
+    let encode = |program: &[i32]| String::from_utf8(encode_plain(program).unwrap()).unwrap();
     assert_eq!(
         encode(&[P::MOVE_TO.number(), 10, 20, P::LINE_TO.number(), 30, 40, P::LINE_BY.number(), -5, 6, P::MOVE_BY.number(), 1, -2, P::DOT.number()]),
         "P[10,20]V[30,40]V[-5,+6]P[+1,-2]V[]"
@@ -622,7 +628,7 @@ fn a_painter_program_becomes_one_well_formed_definition() {
     assert_eq!(encode(&[P::POLYGON.number(), 3, 0, 0, 10, 0, 10, 10, P::LINE_BY.number(), 1, 1]), "P[0,0]V(B)[10,0][10,10](E)V[+1,+1]");
     assert_eq!(encode(&[P::RECT.number(), 2, 3, 10, 5]), "P[2,3]V[+9][,+4][-9][,-4]");
     assert_eq!(encode(&[P::INK.number(), 15, P::FILL.number(), 5, P::RECT.number(), 0, 0, 800, 480]), "W(I15)F(P[0,0]V[+799][,+479][-799][,-479])");
-    let refused = |program: &[i32]| painter::encode(program).unwrap_err();
+    let refused = |program: &[i32]| encode_plain(program).unwrap_err();
     assert!(matches!(refused(&[99]), Reply::Type(_)));
     assert!(matches!(refused(&[P::MOVE_TO.number(), 1]), Reply::Type(_)), "a program that ends inside a call");
     assert!(matches!(refused(&[P::FILL.number(), 9, P::DOT.number()]), Reply::Type(_)), "a fill longer than the program");
@@ -630,7 +636,7 @@ fn a_painter_program_becomes_one_well_formed_definition() {
     assert!(matches!(refused(&[P::FILL.number(), 2, P::INK.number(), 1]), Reply::Type(_)));
     assert!(matches!(refused(&[P::RECT.number(), 0, 0, 0, 5]), Reply::Type(_)));
     assert!(matches!(refused(&[P::POLYLINE.number(), 0]), Reply::Type(_)));
-    assert!(matches!(refused(&[P::TEXT.number(), 0]), Reply::Type(_)), "text is work package R2's");
+    assert!(matches!(refused(&[P::TEXT.number(), 0]), Reply::Type(_)), "a text call that ends before its options");
     assert_range(&refused(&[P::MOVE_TO.number(), 32_768, 0]), "MAX_COORDINATE");
     assert_range(&refused(&[P::MOVE_TO.number(), 32_767, 0, P::LINE_BY.number(), 1, 0]), "MAX_COORDINATE");
     assert_range(&refused(&[P::RECT.number(), 32_000, 0, 1000, 5]), "MAX_COORDINATE");
@@ -678,7 +684,7 @@ fn contents_are_held_to_a_drawing_a_page_and_a_step() {
     for at in 0..1000 {
         big.extend_from_slice(&[RegisPaint::RECT.number(), at % 700, at % 400, 30_000, 30_000]);
     }
-    let size = painter::encode(&big).unwrap().len();
+    let size = encode_plain(&big).unwrap().len();
     assert!(size > 20_000 && size <= REGIS_MAX_CONTENTS_BYTES, "{size}");
     let page_share = REGIS_MAX_TOTAL_CONTENTS_BYTES - CHANNEL_SHARE_CONTENTS_BYTES;
     let mut defined = 0;
@@ -886,7 +892,7 @@ fn what_is_counted_as_held_covers_what_is_held() {
     for at in 0..1400 {
         big.extend_from_slice(&[RegisPaint::RECT.number(), at % 700, at % 400, 30_000, 30_000]);
     }
-    assert!(painter::encode(&big).unwrap().len() > 60_000);
+    assert!(encode_plain(&big).unwrap().len() > 60_000);
     let mut handles: Vec<i32> = Vec::new();
     let step = |host: &mut Host, tick: &mut u64| {
         let batch = host.take_batch(1, &[]);
@@ -931,7 +937,7 @@ fn what_is_counted_as_held_covers_what_is_held() {
     }
     assert_eq!(
         defined,
-        (REGIS_MAX_TOTAL_CONTENTS_BYTES - CHANNEL_SHARE_CONTENTS_BYTES) / painter::encode(&big).unwrap().len(),
+        (REGIS_MAX_TOTAL_CONTENTS_BYTES - CHANNEL_SHARE_CONTENTS_BYTES) / encode_plain(&big).unwrap().len(),
         "the page's share of contents in drawings of over 60,000 bytes"
     );
     step(&mut host, &mut tick);

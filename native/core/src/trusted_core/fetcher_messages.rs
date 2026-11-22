@@ -70,6 +70,8 @@ impl Core {
                 }
             }
             FromFetcher::Notice(text) => self.log(Level::Warning, Some(channel), &format!("channel {channel}: {}", clean(&text, MAX_NOTICE))),
+            // A channel's scripts (script-api.md section 12.5), unread.
+            message @ (FromFetcher::Script(_) | FromFetcher::ScriptFailed { .. }) => self.script_message(channel, message),
             FromFetcher::Denied { status, place } => self.denied(channel, status, &place)?,
             FromFetcher::Refused { file, status } => {
                 if let protocol::fetcher::RefusedFile::Page(page) = file {
