@@ -16,7 +16,7 @@ use crate::framing::HEADER_BYTES;
 /// A change to a message.
 type Change<T> = Box<dyn Fn(&mut T)>;
 
-fn open() -> ContextOpen {
+pub(super) fn open() -> ContextOpen {
     ContextOpen {
         context: ContextId::Page,
         api: 1,
