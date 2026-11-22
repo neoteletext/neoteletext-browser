@@ -26,7 +26,7 @@ use protocol::web::{
 
 use super::support::{Client, HERE, Outcome, Reply, certificate, header, serve};
 use crate::web::coding::tests::gzip;
-use crate::web::limits::{BODY_IDLE_TIMEOUT, MAX_COOKIES_PER_DOMAIN, MAX_DECODED_BODY, MAX_REDIRECTS};
+use crate::web::limits::{BODY_IDLE_TIMEOUT, DECODED_RATIO_FLOOR, MAX_COOKIES_PER_DOMAIN, MAX_DECODED_BODY, MAX_DECOMPRESSED_RATIO, MAX_REDIRECTS, PIECE};
 
 /// The time limits a hostile test's client is given in place of the
 /// engine's 10 and 30 seconds, so that each test ends soon.
@@ -387,6 +387,46 @@ fn zlib(body: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
     encoder.write_all(body).unwrap();
     encoder.finish().unwrap()
+}
+
+/// TODO-7321 item 7, `MAX_DECOMPRESSED_RATIO` of `docs/script-api.md`
+/// section 10.6: a coded body that decodes to more than a hundred times
+/// its coded length fails as too large once it is past the floor, having
+/// given little more than the floor; a short one of the same ratio, and
+/// a long one of an ordinary ratio, are read whole.
+#[test]
+fn a_body_that_decodes_past_the_ratio_fails_past_the_floor() {
+    let floor = usize::try_from(DECODED_RATIO_FLOOR).unwrap();
+    let dense = gzip(&vec![0_u8; 4 * floor]);
+    assert!(u64::try_from(dense.len()).unwrap() * MAX_DECOMPRESSED_RATIO < DECODED_RATIO_FLOOR, "{} bytes coded: past the ratio at the floor", dense.len());
+    let short = gzip(&vec![0_u8; floor / 2]);
+    // Bytes that code to about a third: no two runs alike for long.
+    let ordinary: Vec<u8> = (0..4 * floor).map(|index| b"0123456789abcdef"[((index * 2_654_435_761) >> 13) % 16]).collect();
+    let coded = gzip(&ordinary);
+    assert!(
+        u64::try_from(coded.len()).unwrap() * MAX_DECOMPRESSED_RATIO > u64::try_from(ordinary.len()).unwrap(),
+        "{} bytes coded: within the ratio",
+        coded.len()
+    );
+    let server = serve(move |request| {
+        let body = match request.target.as_str() {
+            "/a/dense" => &dense,
+            "/a/short" => &short,
+            _ => &coded,
+        };
+        Reply::new(200).header("content-encoding", "gzip").body(body)
+    });
+    let mut client = Client::new(&server.url("/a/"));
+    let outcome = client.get(&server.url("/a/dense"));
+    assert_eq!(outcome.failed, Some((ErrorKind::Network, Reason::TooLarge)));
+    assert!(outcome.body.len() <= floor + PIECE, "{} bytes given", outcome.body.len());
+    let outcome = client.get(&server.url("/a/short"));
+    assert_eq!((outcome.failed, outcome.body.len()), (None, floor / 2));
+    let outcome = client.get(&server.url("/a/ordinary"));
+    assert_eq!(outcome.failed, None);
+    assert_eq!(outcome.body.len(), ordinary.len());
+    assert!(outcome.body.iter().eq(ordinary.iter()), "the bytes as they were coded");
+    client.finish().unwrap();
 }
 
 /// A small body that decodes past [`MAX_DECODED_BODY`] fails as too

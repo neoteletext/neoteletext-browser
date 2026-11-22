@@ -52,6 +52,17 @@ pub(crate) const MAX_RESPONSE_HEAD: usize = protocol::web::MAX_HEADER_BYTES;
 /// largest request body, past which the answer fails rather than a small
 /// coded body fill the script's memory.
 pub(crate) const MAX_DECODED_BODY: u64 = 64 * 1024 * 1024;
+/// How many times its coded length a coded body may decode to
+/// (`MAX_DECOMPRESSED_RATIO` of neoteletext-common's `docs/script-api.md`
+/// section 10.6): past it the answer fails long before
+/// [`MAX_DECODED_BODY`], since what decodes so is made to fill memory, not
+/// to be read.
+pub(crate) const MAX_DECOMPRESSED_RATIO: u64 = 100;
+/// The decoded bytes below which the ratio is not asked: a short body of
+/// one repeated byte passes the ratio and harms nothing. It is the
+/// longest WebSocket message, the size the script side already holds
+/// whole.
+pub(crate) const DECODED_RATIO_FLOOR: u64 = protocol::web::MAX_WS_MESSAGE_BYTES as u64;
 /// The largest body held whole to check its integrity metadata before any
 /// of it is given to the script: the largest request body's size.
 pub(crate) const MAX_INTEGRITY_BODY: usize = protocol::web::MAX_REQUEST_BODY_BYTES;

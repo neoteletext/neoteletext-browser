@@ -22,7 +22,7 @@ use super::coding::{ACCEPT_ENCODING, Decoder};
 use super::cookies::{self, Jar};
 use super::cors::{self, Allowed, PreflightCache};
 use super::integrity;
-use super::limits::{MAX_DECODED_BODY, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
+use super::limits::{DECODED_RATIO_FLOOR, MAX_DECODED_BODY, MAX_DECOMPRESSED_RATIO, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
 use super::local::Asker;
 use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
@@ -107,6 +107,8 @@ pub(crate) struct Reader {
     decoder: Option<Decoder>,
     /// How many bytes the decoder has written.
     decoded: u64,
+    /// How many coded bytes the decoder has taken.
+    coded: u64,
 }
 
 impl Reader {
@@ -117,9 +119,11 @@ impl Reader {
                 let mut room = vec![0_u8; PIECE];
                 let step = decoder.step(&self.pending, &mut room).map_err(|_| Reason::Coding)?;
                 let _ = self.pending.split_to(step.taken.min(self.pending.len()));
+                self.coded = self.coded.saturating_add(u64::try_from(step.taken).unwrap_or(u64::MAX));
                 if step.written > 0 {
                     self.decoded = self.decoded.saturating_add(u64::try_from(step.written).unwrap_or(u64::MAX));
-                    if self.decoded > MAX_DECODED_BODY {
+                    let past_ratio = self.decoded > DECODED_RATIO_FLOOR && self.decoded > self.coded.saturating_mul(MAX_DECOMPRESSED_RATIO);
+                    if self.decoded > MAX_DECODED_BODY || past_ratio {
                         return Err(Reason::TooLarge);
                     }
                     room.truncate(step.written);
@@ -542,13 +546,13 @@ impl<'a> Request<'a> {
                 // One coding is decoded; a body coded twice is refused.
                 (Some(_), Some(_)) => return Err(Reason::Coding),
             };
-            let mut reader = Reader { source: Some(body), pending: Bytes::new(), decoder, decoded: 0 };
+            let mut reader = Reader { source: Some(body), pending: Bytes::new(), decoder, decoded: 0, coded: 0 };
             if integrity::asks(&self.start.integrity) {
                 let whole = reader.whole(MAX_INTEGRITY_BODY).await?;
                 if !integrity::matches(&self.start.integrity, &whole) {
                     return Err(Reason::Integrity);
                 }
-                reader = Reader { source: None, pending: Bytes::from(whole), decoder: None, decoded: 0 };
+                reader = Reader { source: None, pending: Bytes::from(whole), decoder: None, decoded: 0, coded: 0 };
             }
             Some(reader)
         };
