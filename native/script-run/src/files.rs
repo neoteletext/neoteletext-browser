@@ -9,30 +9,31 @@
 //! find the channel's first page and title; a page file by the decoder's
 //! engine, in [`crate::screen`].
 //!
-//! # The scripts a channel names: the seam for work package C2
+//! # The scripts a channel names
 //!
 //! Which script a page has is said by the channel file's `scripts`
 //! member and by a page file's `JS` line or `SCRIPT_REF` record (section
-//! 12), and the engine reads all three from its branch `reqresp` on
-//! (work package C1). The browser's workspace is pinned to an engine
-//! commit before that, and moving the pin is work package C2's; a second
-//! commit of the engine in one workspace is refused by the commit gate
-//! (requirement 2.5). So until the pin moves, this build's engine cannot
-//! say which script a page has, and the runner is told on its command
-//! line: `--script FILE.js` and `--channel-script FILE.js`. [`scripts`]
-//! is the one function that changes when the pin moves.
+//! 12), and only the engine's readers say it: [`channel`] reads the
+//! member with `neoteletext_web::descriptor::page_scripts`, and the
+//! decoder's engine reads a page file's own reference as it reads the
+//! page ([`crate::screen::Screen::script_names`]). A script is a file of
+//! its channel's folder and of no other place (section 12.2), so this
+//! process passes the worker every file of the folder whose name is a
+//! script name (`ScriptName::parse`), unread, and the worker takes the
+//! ones the readers name.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use neoteletext_web::descriptor::Descriptor;
+use neoteletext_core::types::ScriptName;
+use neoteletext_web::descriptor::{Descriptor, page_scripts};
 use neoteletext_web::url::Url;
 use protocol::script::MAX_SCRIPT_BYTES;
 
 use crate::Failure;
 use crate::args::{NetworkMode, Options};
 use crate::blobs::Blob;
-use crate::limits::{DEFAULT_PAGE, MAX_CHANNEL_FILE_BYTES, MAX_INPUT_BYTES, MAX_NETWORK_FILE_BYTES, MAX_PAGE_FILE_BYTES};
+use crate::limits::{DEFAULT_PAGE, MAX_CHANNEL_FILE_BYTES, MAX_FOLDER_SCRIPTS, MAX_INPUT_BYTES, MAX_NETWORK_FILE_BYTES, MAX_PAGE_FILE_BYTES};
 
 /// The name the command line is passed under, its arguments with a NUL
 /// between.
@@ -43,10 +44,14 @@ pub const CHANNEL_FILE: &str = "channel.ttx";
 pub const PAGE_TTI: &str = "page.tti";
 /// See [`PAGE_TTI`].
 pub const PAGE_T42: &str = "page.t42";
-/// The page-level script.
+/// The page-level script, when the run's target is one script; and the
+/// channel-level script beside it, which only a test gives so.
 pub const PAGE_SCRIPT: &str = "script.page";
-/// The channel-level script.
+/// See [`PAGE_SCRIPT`].
 pub const CHANNEL_SCRIPT: &str = "script.channel";
+/// What a script file of the channel's folder is passed under, before
+/// its file name.
+pub const FOLDER_SCRIPT: &str = "js.";
 /// The file name of the page-level script, for its address.
 pub const PAGE_SCRIPT_NAME: &str = "script.page.name";
 /// The file name of the channel-level script, for its address.
@@ -55,43 +60,63 @@ pub const CHANNEL_SCRIPT_NAME: &str = "script.channel.name";
 pub const INPUT: &str = "input";
 /// The network file.
 pub const NETWORK: &str = "network";
+/// The name, before its extension, of a page file opened from disk: a
+/// channel's page file is named by its page number (the engine's
+/// REQ-508), which is then the page the run opens.
+pub const PAGE_FILE_STEM: &str = "page.stem";
 /// Whether the target is a page file opened from disk (section 12.7).
 pub const FROM_DISK: &str = "from-disk";
 
-/// What the engine's reader says of a channel file.
+/// What the engine's readers say of a channel file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Channel {
     /// The channel's title.
     pub title: String,
     /// Its first page.
     pub initial_page: u16,
+    /// The channel-level script's name.
+    pub channel_script: Option<String>,
+    /// Each entry of `scripts.pages`: the page, its sub-code when the key
+    /// names a sub-page, and the script's name.
+    pub page_scripts: Vec<(u16, Option<u16>, String)>,
+    /// The channel is live (its file has the member `push`), so it runs
+    /// no script and its `scripts` member is ignored (section 12.1).
+    pub scripts_ignored: bool,
 }
 
-/// Reads a channel's `channel.ttx` with the engine's reader.
+impl Channel {
+    /// The script the channel file names for exactly this page and
+    /// sub-code (section 12.1: keys are exact, nothing is inherited). A
+    /// page with no sub-pages, sub-code 0, is the page written with none.
+    #[must_use]
+    pub fn page_script(&self, page: u16, subcode: u16) -> Option<&str> {
+        let key = (subcode != 0).then_some(subcode);
+        self.page_scripts.iter().find(|(held, sub, _)| *held == page && *sub == key).map(|(_, _, name)| name.as_str())
+    }
+}
+
+/// Reads a channel's `channel.ttx` with the engine's readers.
 ///
 /// # Errors
 /// Status 4: the address is no channel's, or the engine refuses the file.
 pub fn channel(bytes: &[u8], channel_url: &str) -> Result<Channel, Failure> {
     let base = Url::parse(&format!("{channel_url}{CHANNEL_FILE}"))
         .map_err(|error| Failure::usage(format!("{channel_url}: not an address the engine takes: {error:?}")))?;
-    let descriptor = Descriptor::parse_channel(bytes, &base).map_err(|error| {
-        let scripts = core::str::from_utf8(bytes).is_ok_and(|text| text.contains("\"scripts\""));
-        let hint = if scripts {
-            " (this build's engine is pinned before the commit that reads the member `scripts`: name the scripts with --script and --channel-script, and run a copy of the channel file without the member, until the pin moves)"
-        } else {
-            ""
-        };
-        Failure::usage(format!("channel.ttx: the engine's reader refused it: {error:?}{hint}"))
-    })?;
-    Ok(Channel { title: descriptor.name.as_str().to_owned(), initial_page: descriptor.initial_page.mpp() })
-}
-
-/// The scripts a page has, as the paths to read: the page-level one and
-/// the channel-level one. Today they are the command line's; when the
-/// engine pin holds work package C1 they come from the channel file and
-/// the page file by the engine's `neoteletext_web::scripts`.
-fn scripts(options: &Options, target_script: Option<&Path>) -> (Option<PathBuf>, Option<PathBuf>) {
-    (options.script.clone().or_else(|| target_script.map(Path::to_path_buf)), options.channel_script.clone())
+    let refused = |error| Failure::usage(format!("channel.ttx: the engine's reader refused it: {error:?}"));
+    let descriptor = Descriptor::parse_channel(bytes, &base).map_err(refused)?;
+    let mut entries = Vec::new();
+    let scripts = page_scripts(bytes, &mut |page, subcode, name| {
+        entries.push((page.mpp(), subcode.map(neoteletext_core::types::SubCode::value), name.as_str().to_owned()));
+    })
+    .map_err(refused)?;
+    let ignored = descriptor.scripts_ignored();
+    Ok(Channel {
+        title: descriptor.name.as_str().to_owned(),
+        initial_page: descriptor.initial_page.mpp(),
+        channel_script: scripts.channel.filter(|_| !ignored).map(|name| name.as_str().to_owned()),
+        page_scripts: if ignored { Vec::new() } else { entries },
+        scripts_ignored: ignored,
+    })
 }
 
 /// Reads `path`, at most `most` bytes of it.
@@ -110,14 +135,23 @@ fn has_extension(path: &Path, extension: &str) -> bool {
     path.extension().is_some_and(|found| found.eq_ignore_ascii_case(extension))
 }
 
-/// A script's file name, for its address: the file's own when it is one
-/// an address can hold, else a plain one.
-fn script_name(path: &Path, fallback: &str) -> Vec<u8> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')));
-    name.unwrap_or(fallback).as_bytes().to_vec()
+/// The script files of `folder`: every file whose name is a script name
+/// (section 12.2), by name, at most [`MAX_FOLDER_SCRIPTS`].
+fn folder_scripts(folder: &Path) -> Result<Vec<(String, PathBuf)>, Failure> {
+    let fail = |error: std::io::Error| Failure::usage(format!("{}: {error}", folder.display()));
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(folder).map_err(fail)? {
+        let path = entry.map_err(fail)?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()).filter(|name| ScriptName::parse(name.as_bytes()).is_some()) else { continue };
+        if path.is_file() {
+            found.push((name.to_owned(), path.clone()));
+        }
+    }
+    found.sort();
+    if found.len() > MAX_FOLDER_SCRIPTS {
+        return Err(Failure::usage(format!("MAX_FOLDER_SCRIPTS: {} holds more than {MAX_FOLDER_SCRIPTS} script files", folder.display())));
+    }
+    Ok(found)
 }
 
 /// A file read for a run, and when it was last changed as its reading
@@ -149,7 +183,7 @@ pub fn gather(options: &Options, arguments: &[String]) -> Result<(Vec<Blob>, Vec
         Ok(())
     };
     let target = options.target.as_path();
-    let (mut target_script, mut from_disk) = (None, false);
+    let (mut from_disk, mut folder) = (false, None);
     if target.is_dir() {
         let channel_file = target.join(CHANNEL_FILE);
         let mut first = DEFAULT_PAGE;
@@ -169,23 +203,22 @@ pub fn gather(options: &Options, arguments: &[String]) -> Result<(Vec<Blob>, Vec
                 break;
             }
         }
+        folder = Some(target.to_path_buf());
     } else if has_extension(target, "js") {
-        target_script = Some(target);
-    } else if has_extension(target, "tti") {
-        take(PAGE_TTI, target, MAX_PAGE_FILE_BYTES)?;
+        take(PAGE_SCRIPT, target, MAX_SCRIPT_BYTES)?;
+    } else if has_extension(target, "tti") || has_extension(target, "t42") {
+        take(if has_extension(target, "tti") { PAGE_TTI } else { PAGE_T42 }, target, MAX_PAGE_FILE_BYTES)?;
+        // The script a file opened from disk names is read only from the
+        // file's own folder (section 12.7 rule 1).
         from_disk = true;
-    } else if has_extension(target, "t42") {
-        take(PAGE_T42, target, MAX_PAGE_FILE_BYTES)?;
-        from_disk = true;
+        folder = Some(target.parent().filter(|parent| !parent.as_os_str().is_empty()).map_or_else(|| PathBuf::from("."), Path::to_path_buf));
     } else {
         return Err(Failure::usage(format!("{}: not a channel's folder, a page file (.tti, .t42) or a script (.js)", target.display())));
     }
-    let (page_script, channel_script) = scripts(options, target_script);
-    if let Some(path) = &page_script {
-        take(PAGE_SCRIPT, path, MAX_SCRIPT_BYTES)?;
-    }
-    if let Some(path) = &channel_script {
-        take(CHANNEL_SCRIPT, path, MAX_SCRIPT_BYTES)?;
+    if let Some(folder) = &folder {
+        for (name, path) in folder_scripts(folder)? {
+            take(&format!("{FOLDER_SCRIPT}{name}"), &path, MAX_SCRIPT_BYTES)?;
+        }
     }
     if let Some(path) = &options.input {
         take(INPUT, path, MAX_INPUT_BYTES)?;
@@ -193,17 +226,17 @@ pub fn gather(options: &Options, arguments: &[String]) -> Result<(Vec<Blob>, Vec
     if let NetworkMode::Mock(path) | NetworkMode::Replay(path) = &options.network {
         take(NETWORK, path, MAX_NETWORK_FILE_BYTES)?;
     }
-    if let Some(path) = &page_script {
-        blobs.push((PAGE_SCRIPT_NAME.to_owned(), script_name(path, "page.js")));
-    }
-    if let Some(path) = &channel_script {
-        blobs.push((CHANNEL_SCRIPT_NAME.to_owned(), script_name(path, "channel.js")));
+    if has_extension(target, "js")
+        && let Some(name) = target.file_name().and_then(|name| name.to_str()).filter(|name| ScriptName::parse(name.as_bytes()).is_some())
+    {
+        blobs.push((PAGE_SCRIPT_NAME.to_owned(), name.as_bytes().to_vec()));
     }
     if from_disk {
         blobs.push((FROM_DISK.to_owned(), Vec::new()));
-    }
-    if page_script.is_none() && channel_script.is_none() {
-        return Err(Failure::usage("nothing to run: no script. Give a script (.js), or name the page's with --script and the channel's with --channel-script"));
+        let stem = target.file_stem().and_then(|stem| stem.to_str()).filter(|stem| stem.len() == 3 && stem.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        if let Some(stem) = stem {
+            blobs.push((PAGE_FILE_STEM.to_owned(), stem.as_bytes().to_vec()));
+        }
     }
     Ok((blobs, paths))
 }

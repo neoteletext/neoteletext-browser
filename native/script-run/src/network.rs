@@ -91,6 +91,11 @@ pub trait Network {
     fn deterministic(&self) -> bool {
         true
     }
+    /// Whether its answers come in real time, so that a run's ticks must
+    /// be paced on the wall clock for an answer to arrive within them.
+    fn real_time(&self) -> bool {
+        !self.deterministic()
+    }
     /// The file a recording mode has made.
     fn recording(&self) -> Option<Vec<u8>> {
         None

@@ -19,7 +19,7 @@ fn a_page_that_fetches_matches_its_kept_run_with_the_mock_network() {
     let path = |name: &str| folder.join(name).to_str().unwrap().to_owned();
     let output = Command::new(PROGRAM)
         .arg("run")
-        .args([&path(""), "--script", &path("tides.js"), "--ticks", "30", "--network", "mock", &path("network.txt"), "--png-at", "0,29"])
+        .args([&path(""), "--ticks", "30", "--network", "mock", &path("network.txt"), "--png-at", "0,29"])
         .args(["--expect", &path("expect"), "--unconfined"])
         .output()
         .unwrap();

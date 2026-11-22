@@ -1,0 +1,23 @@
+{
+  "page": {
+    "scriptBytes": {"used": 1299, "limit": 1048576, "most": 1299},
+    "timers": {"used": 0, "limit": 32, "most": 0},
+    "listeners": {"used": 1, "limit": 256, "most": 1},
+    "requests": {"used": 0, "limit": 40, "most": 0},
+    "sockets": {"used": 0, "limit": 8, "most": 0},
+    "soundOperations": {"used": 0, "limit": 256, "most": 1},
+    "batchBytes": {"used": 0, "limit": 262144, "most": 0},
+    "failures": {"used": 0, "limit": 16, "most": 0},
+    "symbols": {"used": 3, "limit": 80, "most": 3},
+    "symbolBytes": {"used": 132, "limit": 65536, "most": 132},
+    "drcs": {"used": 0, "limit": 96, "most": 0},
+    "textures": {"used": 0, "limit": 4, "most": 0},
+    "actors": {"used": 4, "limit": 56, "most": 5},
+    "blinks": {"used": 0, "limit": 32, "most": 0},
+    "appendedBytesThisSecond": {"used": 0, "limit": 262144, "most": 255},
+    "waitTicks": {"used": 0, "limit": 3600, "most": 0},
+    "colours": {"used": 1, "limit": 8, "most": 1},
+    "components": {"used": 0, "limit": 64, "most": 0},
+    "uiNodes": {"used": 0, "limit": 16384, "most": 0}
+  }
+}
