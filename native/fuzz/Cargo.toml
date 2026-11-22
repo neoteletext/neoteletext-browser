@@ -599,3 +599,66 @@ path = "fuzz_targets/script_url_sequences.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "web_location"
+path = "fuzz_targets/web_location.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_handshake"
+path = "fuzz_targets/web_socket_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_frames"
+path = "fuzz_targets/web_socket_frames.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_socket_address"
+path = "fuzz_targets/web_socket_address.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_body_ratio"
+path = "fuzz_targets/web_body_ratio.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_cookie_suffixes"
+path = "fuzz_targets/web_cookie_suffixes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_channel_relation"
+path = "fuzz_targets/web_channel_relation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_referrer"
+path = "fuzz_targets/web_referrer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_address_space"
+path = "fuzz_targets/web_address_space.rs"
+test = false
+doc = false
+bench = false

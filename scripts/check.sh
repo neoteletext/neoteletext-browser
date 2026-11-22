@@ -521,6 +521,8 @@ fuzz_options() {
         script_js | script_imports) echo "-max_len=65536" ;;
         # A web client's answers, the longest of which is a piece of a body.
         script_web_host | script_web_answers) echo "-max_len=65536" ;;
+        # A decompression bomb, and a Public Suffix List with cookies.
+        web_body_ratio | web_cookie_suffixes) echo "-max_len=65536" ;;
         script_link_to_host | script_link_to_decoder | web_to_client | web_from_client) echo "-max_len=262149" ;;
         # The same messages on the pipes they share, and a script host's
         # whole input (TODO-7292).
