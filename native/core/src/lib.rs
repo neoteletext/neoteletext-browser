@@ -55,7 +55,10 @@ pub mod recording;
 pub mod regis;
 pub mod regis_pointer;
 #[cfg(feature = "interaction")]
+pub mod script_gate;
+#[cfg(feature = "interaction")]
 pub mod script_keys;
+pub mod script_network;
 pub mod sealed_file;
 pub use private_file::make_folder;
 pub mod session_file;
