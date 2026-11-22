@@ -207,9 +207,13 @@ fn a_teletext_script_page_draws_in_the_decoder_through_a_confined_script_host() 
         let ticks = 0;
         nt.addEventListener("tick", () => { ticks += 1; if (ticks === 3) nt.teletext.page.put(7, 0, "THREE TICKS"); });
         nt.addEventListener("keydown", (e) => { e.preventDefault(); nt.teletext.page.put(6, 0, "KEY " + e.key); });"#;
-    let mut browser = Browser::new(file);
-    browser.open(page, "100.js", script);
-    assert!(browser.run_until(|browser| browser.row(0x100, 7) == "THREE TICKS"), "reports: {:?}", browser.reports);
+    let mut browser = drawn(|| {
+        let mut browser = Browser::new(file);
+        browser.open(page, "100.js", script);
+        browser.run_until(|browser| browser.row(0x100, 7) == "THREE TICKS" || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert_eq!(browser.row(0x100, 7), "THREE TICKS", "reports: {:?}", browser.reports);
     assert_eq!((browser.row(0x100, 1), browser.row(0x100, 5), browser.row(0x100, 24)), ("FILE ROW ONE".into(), "HELLO FROM JS".into(), "FILE KEYS".into()));
     assert!(matches!(&browser.reports[0], ScriptReport::Claims(claims) if claims.running && claims.keys == ["1"] && !claims.network), "{:?}", browser.reports);
 
