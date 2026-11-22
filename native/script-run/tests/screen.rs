@@ -20,9 +20,9 @@ fn blank(renderer: Renderer) -> Screen {
 }
 
 /// A JavaScript page opens blank (section 12.3): a teletext one is a
-/// page of no rows, 480 by 500; of a ReGIS or NAPLPS one the decoder
-/// holds nothing until its script draws, and then paints it in its
-/// renderer's size.
+/// page of no rows, 480 by 500, whatever it is to be drawn in: the
+/// decoder carries a ReGIS or NAPLPS page by a teletext page of its
+/// number, and paints it in its renderer's size once its script draws.
 #[test]
 fn a_javascript_page_is_drawn_in_its_renderer() {
     let mut teletext = blank(Renderer::Teletext);
@@ -33,8 +33,9 @@ fn a_javascript_page_is_drawn_in_its_renderer() {
         (Renderer::Naplps, Batch { naplps: Some(NaplpsAppend { new_generation: true, bytes: b"\x1b\x22\x40".to_vec() }), ..Batch::default() }, (480, 500)),
     ] {
         let mut screen = blank(renderer);
-        assert_eq!(screen.held_renderer(), None);
-        assert!(screen.snapshot().is_err(), "{renderer:?}: nothing to draw yet");
+        // Carried by a blank teletext page until its script draws.
+        assert_eq!(screen.held_renderer(), Some(Renderer::Teletext));
+        assert_eq!(png_size(&screen.snapshot().unwrap()), (480, 500));
         screen.set_tick(1);
         screen.apply(1, &batch, true).unwrap();
         screen.paint();
