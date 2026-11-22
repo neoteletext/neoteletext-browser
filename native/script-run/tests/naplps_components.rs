@@ -21,11 +21,10 @@ fn said(output: &Output) -> String {
 /// kept results, with scripted keys, typed text and a press of the
 /// pointer on a region of the menu: each component's event is in the
 /// kept log, line by line, and the pictures are what the runner's
-/// receiver presents. The runner's stand-in for the decoder's side of a
-/// step does not apply the cast's objects, so the highlights, the thumb,
-/// the caret and the focus ring are not in the pictures, and the report
-/// must say so, never pass silently. With `NT_BLESS` set the kept
-/// results are written.
+/// receiver presents: the components' painting on the backdrop and, over
+/// it, the cast's objects (the highlights, the slider's thumb, the
+/// field's caret and the focus ring), so the report has nothing it did
+/// not draw. With `NT_BLESS` set the kept results are written.
 #[test]
 fn the_naplps_page_of_all_thirteen_kinds_matches_its_kept_run() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -50,7 +49,7 @@ fn the_naplps_page_of_all_thirteen_kinds_matches_its_kept_run() {
     let output = runner(&arguments);
     let all = said(&output);
     assert_eq!(output.status.code(), Some(0), "{all}");
-    assert!(all.contains("NOT DRAWN") && all.contains("NAPLPS objects"), "{all}");
+    assert!(!all.contains("NOT DRAWN"), "{all}");
     let log = std::fs::read_to_string(kept.join("expect/log.txt")).unwrap();
     let events: Vec<&str> = log.lines().filter_map(|line| line.split_once("] ").map_or(Some(line), |(_, rest)| Some(rest))).collect();
     for line in [
