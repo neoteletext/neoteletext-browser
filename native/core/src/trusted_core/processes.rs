@@ -16,6 +16,9 @@ use neoteletext::outbox::Outbox;
 use neoteletext::settings::{self as stored, Settings};
 use protocol::decoder::{BookmarkEntry, FromDecoder, MAX_BOOKMARK_ENTRIES, MAX_CHUNK, ToDecoder, read_from_decoder, write_to_decoder};
 use protocol::fetcher::{FETCHER_END_WAIT, FromFetcher, MAX_FETCHER_TABS, ToFetcher, read_from_fetcher_for, write_to_fetcher};
+use protocol::script::relay::DecoderOutput;
+#[cfg(not(feature = "timed-test"))]
+use protocol::script::relay::read_decoder_output;
 use protocol::{ProtocolError, read_from_interface};
 
 use super::Event;
@@ -179,6 +182,12 @@ impl Decoder {
     /// Writes `message` to its input, to be sent at the next flush.
     pub(super) fn tell(&mut self, message: &ToDecoder) -> Result<(), ProtocolError> {
         write_to_decoder(&mut self.input, message)
+    }
+
+    /// Writes a message of the script link to its input as it stands,
+    /// its payload unread, to be sent at the next flush (`scripts.rs`).
+    pub(super) fn pass(&mut self, frame: &[u8]) -> std::io::Result<()> {
+        self.input.write_all(frame)
     }
 
     /// Sends what it was told; an error once it has stopped reading.
@@ -356,6 +365,22 @@ impl Reach {
         Self { allow_local, proxy: settings.proxy.as_ref().map(stored::Proxy::url), share_connections: settings.share_connections }
     }
 
+    /// What a partition's web client is started with after its channel
+    /// and its token (DEC-7333 item 1): each local address allowed, and
+    /// the proxy.
+    pub(super) fn web_client_arguments(&self) -> Vec<String> {
+        let mut arguments = Vec::new();
+        for ip in &self.allow_local {
+            arguments.push(String::from("--allow-local"));
+            arguments.push(ip.clone());
+        }
+        if let Some(proxy) = &self.proxy {
+            arguments.push(String::from("--proxy"));
+            arguments.push(proxy.clone());
+        }
+        arguments
+    }
+
     /// Whether a fetcher started with this reach may share one HTTP/3
     /// connection among its tabs: the setting is on (REQ-6982) and no proxy
     /// is set, since QUIC would go direct (requirement 19.10).
@@ -414,13 +439,17 @@ pub(super) fn start_decoder(broker: &Arc<Broker>, channel: u32, generation: u64,
     let mut child = spawn(broker, Program::Decoder, &[String::from("--store-pages"), store_pages.to_string()], false)?;
     let output = child.stdout.take().ok_or("the decoder has no output")?;
     let input = Outbox::new(child.stdin.take().ok_or("the decoder has no input")?);
-    #[cfg(feature = "timed-test")]
-    let read_from_decoder = timed_read_from_decoder;
+    // A channel's decoder writes its own messages and, among them, the
+    // script link's for its script host, which are passed on unread
+    // (`script-api.md` section 11.1).
     relay(
         output,
-        read_from_decoder,
+        read_decoder_output,
         events,
-        move |message| Event::Decoded(channel, generation, message),
+        move |output| match output {
+            DecoderOutput::Core(message) => Event::Decoded(channel, generation, message),
+            DecoderOutput::ToHost(asked) => Event::ScriptAsked(channel, generation, asked),
+        },
         move |end| Event::DecoderEnded(channel, generation, end),
     );
     Ok(Decoder::new(child, input, generation))
@@ -805,11 +834,13 @@ fn interface_said(message: protocol::ToCore) -> Event {
 /// decoder's pipe read a repaint or a `LocalMidi`, before the core's
 /// thread takes it.
 #[cfg(feature = "timed-test")]
-fn timed_read_from_decoder(input: &mut dyn Read) -> Result<Option<FromDecoder>, ProtocolError> {
-    let message = read_from_decoder(input);
+fn read_decoder_output(input: &mut dyn Read) -> Result<Option<DecoderOutput>, ProtocolError> {
+    let message = protocol::script::relay::read_decoder_output(input);
     match &message {
-        Ok(Some(FromDecoder::Regis { .. })) => protocol::timed_test::mark("core", "regis-arrived", std::time::Instant::now(), format_args!("")),
-        Ok(Some(FromDecoder::Audio(protocol::audio::Audio::LocalMidi { .. }))) => {
+        Ok(Some(DecoderOutput::Core(FromDecoder::Regis { .. }))) => {
+            protocol::timed_test::mark("core", "regis-arrived", std::time::Instant::now(), format_args!(""))
+        }
+        Ok(Some(DecoderOutput::Core(FromDecoder::Audio(protocol::audio::Audio::LocalMidi { .. })))) => {
             protocol::timed_test::mark("core", "local-midi-arrived", std::time::Instant::now(), format_args!(""));
         }
         _ => {}

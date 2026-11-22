@@ -1267,7 +1267,10 @@ name = "neoteletext-formats"
 version = "0.1.0"
 source = "git+file:///Users/andrewstuart/devel/neoteletext-renderer-teletext?rev=54d796b96668458fc2aeffaf4d5cb651b293ecd5#54d796b96668458fc2aeffaf4d5cb651b293ecd5"
 dependencies = [
+ "naplps",
  "neoteletext-core",
+ "regis",
+ "unicode-bidi",
 ]
 
 [[package]]
@@ -1278,6 +1281,7 @@ dependencies = [
  "draw-raster",
  "interface-core",
  "libfuzzer-sys",
+ "naplps",
  "neoteletext",
  "neoteletext-dbus",
  "neoteletext-decoder",
@@ -1286,6 +1290,7 @@ dependencies = [
  "neoteletext-input",
  "neoteletext-qrkeyboard",
  "neoteletext-script",
+ "neoteletext-script-host",
  "protocol",
  "update",
  "web-opener",
@@ -1367,13 +1372,27 @@ name = "neoteletext-script"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "naplps",
  "neoteletext-audio",
+ "neoteletext-core",
+ "neoteletext-formats",
  "neoteletext-rules",
  "neoteletext-web",
  "protocol",
+ "regis",
  "ring",
  "url",
  "wasmi",
+]
+
+[[package]]
+name = "neoteletext-script-host"
+version = "0.1.0"
+dependencies = [
+ "confine",
+ "neoteletext-script",
+ "protocol",
+ "ring",
 ]
 
 [[package]]
@@ -2196,6 +2215,12 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "unicode-bidi"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
 
 [[package]]
 name = "unicode-ident"

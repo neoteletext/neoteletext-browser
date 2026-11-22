@@ -311,6 +311,7 @@ function socketEvent(state, kind, a, b, c, payload) {
 // The network's events (30 to 41 of section 10.3): each names its
 // request by the host's number, and goes to the object that made it.
 function webDispatch(kind, id, b, c, d, payload) {
+  if (kind < EV.FETCH_HEAD || kind > EV.SSE_RETRYING) return 0;
   const object = network.get(id);
   if (!object) return 0;
   // The objects are the prelude's own, so the event is always heard.

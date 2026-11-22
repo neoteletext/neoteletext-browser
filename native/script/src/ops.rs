@@ -118,6 +118,86 @@ numbered! {
     URL_SET = 48,
     /// Decodes bytes in an encoding of the Encoding standard, names a label's encoding, or encodes a string as UTF-8.
     DECODE = 49,
+    /// Teletext: text on the page plane, its style's spacing attributes before it.
+    TT_PUT = 100,
+    /// Teletext: raw seven-bit codes on a row.
+    TT_CODES = 101,
+    /// Teletext: the whole plane, rows 1 to 23.
+    TT_BLIT = 102,
+    /// Teletext: the code of a cell of the host's plane.
+    TT_AT = 103,
+    /// Teletext: fills rows with spaces.
+    TT_CLEAR = 104,
+    /// Teletext: moves the rows of a band up or down.
+    TT_SCROLL = 105,
+    /// Teletext: the default screen and row colours and black background substitution.
+    TT_SETTINGS = 106,
+    /// Teletext: characters with non-spacing attributes on the overlay.
+    TT_OVERLAY_PUT = 107,
+    /// Teletext: colours a rectangle of the overlay.
+    TT_OVERLAY_FILL = 108,
+    /// Teletext: removes the overlay, wholly or in a rectangle.
+    TT_OVERLAY_CLEAR = 109,
+    /// Teletext: defines the next free Colour Map entry of 16 to 31.
+    TT_COLOUR_DEFINE = 110,
+    /// Teletext: redefines a Colour Map entry.
+    TT_COLOUR_SET = 111,
+    /// Teletext: labels a sprite or a control.
+    TT_LABEL = 113,
+    /// Teletext: an animation operation on a sprite or a control.
+    TT_ANIMATE = 114,
+    /// Teletext: removes a sprite or a control.
+    TT_REMOVE = 115,
+    /// Teletext: declares a control.
+    TT_CONTROL = 116,
+    /// Teletext: the cells a text takes.
+    TT_MEASURE = 117,
+    /// Teletext: the languages the engine writes, as JSON text.
+    TT_LANGUAGES = 118,
+    /// Teletext: the receiver's presentation level.
+    TT_LEVEL = 119,
+    /// ReGIS: names a colour and sets it; gives its entry.
+    RG_COLOUR_DEFINE = 200,
+    /// ReGIS: sets a colour entry.
+    RG_COLOUR_SET = 201,
+    /// ReGIS: makes a numbered drawing; gives its handle.
+    RG_DRAWING = 202,
+    /// ReGIS: sets a property of a drawing.
+    RG_SET = 203,
+    /// ReGIS: sets or removes a drawing's clip rectangle.
+    RG_CLIP = 204,
+    /// ReGIS: sets or removes a drawing's frame list.
+    RG_FRAMES = 205,
+    /// ReGIS: sets or removes a drawing's label.
+    RG_LABEL = 206,
+    /// ReGIS: defines a drawing's contents from a painter program.
+    RG_DEFINE = 207,
+    /// ReGIS: removes a drawing and its children.
+    RG_REMOVE = 208,
+    /// ReGIS: removes every drawing of the context.
+    RG_CLEAR = 209,
+    /// ReGIS: an animation operation on a drawing.
+    RG_ANIMATE = 210,
+    /// ReGIS: defines a macrograph (work package R2).
+    RG_MACROGRAPH = 211,
+    /// ReGIS: measures text (work package R2).
+    RG_MEASURE = 212,
+    /// ReGIS: a tracked drawing's rectangle as of the last step.
+    RG_BOUNDS = 213,
+    /// ReGIS: a property or other field of a drawing as the host holds it.
+    RG_GET = 214,
+    /// NAPLPS: defines a colour; its 24 bits and its name; gives its entry.
+    NP_COLOUR_DEFINE = 300,
+    /// NAPLPS: redefines a colour entry.
+    NP_COLOUR_SET = 301,
+    /// NAPLPS: an entry blinks to another, or (to -1) is steady.
+    NP_BLINK = 302,
+    /// NAPLPS: appends a painter program to the backdrop.
+    NP_PAINT = 303,
+    /// NAPLPS: starts a new generation with a painter program.
+    NP_REPAINT = 304,
+    /// NAPLPS: measures text; gives `width,height` in dots.
+    NP_MEASURE = 312,
 }
 
 numbered! {
@@ -193,6 +273,10 @@ numbered! {
     SSE_EVENT = 40,
     /// An event stream was lost and is being reconnected.
     SSE_RETRYING = 41,
+    /// ReGIS: the last step's commit failed and its changes were
+    /// discarded (section 6.2, "Commit"): the commit error's code and the
+    /// drawing concerned; the drawings that are gone and those that are back.
+    RG_COMMIT_FAILED = 50,
 }
 
 impl EventKind {
@@ -252,7 +336,7 @@ mod tests {
         let own: Vec<EventKind> =
             EventKind::ALL.iter().map(|(_, kind)| *kind).filter(|kind| !Carried::ALL.iter().any(|carried| EventKind::of(*carried) == *kind)).collect();
         // The network's events are the host's own too: it makes them from the web client's answers.
-        assert_eq!(own.iter().copied().filter(|kind| !kind.is_network()).collect::<Vec<_>>(), vec![EventKind::SOUND_ALLOWED]);
+        assert_eq!(own.iter().copied().filter(|kind| !kind.is_network()).collect::<Vec<_>>(), vec![EventKind::SOUND_ALLOWED, EventKind::RG_COMMIT_FAILED]);
         assert!(own.iter().filter(|kind| kind.is_network()).all(|kind| Carried::of(u8::try_from(kind.number()).unwrap()).is_err()));
         assert!(Carried::of(u8::try_from(EventKind::SOUND_ALLOWED.number()).unwrap()).is_err());
     }
@@ -333,6 +417,75 @@ numbered! {
     WHEEL = 13,
     /// Whether its bounds are reported.
     TRACK = 14,
+}
+
+numbered! {
+    /// What operation `RG_GET` gives of a drawing beside the properties
+    /// of section 10.4, which it gives by their own numbers (work package
+    /// R1's numbering; the specification has no operation that reads).
+    RegisField:
+    /// Its clip rectangle: text `x,y,width,height`, or undefined.
+    CLIP = 20,
+    /// Its frame list: the frames' handles as text with commas between, or undefined.
+    FRAMES = 21,
+    /// Its label, or undefined.
+    LABEL = 22,
+    /// The frame last set.
+    FRAME = 23,
+    /// The look last forced: 0 none, 1 hover, 2 pressed, 3 alternative.
+    LOOK = 24,
+}
+
+numbered! {
+    /// A call of a ReGIS painter program (sections 6.3 and 10.2): one for
+    /// each call of section 6.3's table, in its order from 1. Work
+    /// package R1 encodes the first eight, `FILL` and `INK`; the rest are
+    /// work package R2's.
+    RegisPaint:
+    /// `moveTo(x, y)`.
+    MOVE_TO = 1,
+    /// `moveBy(dx, dy)`.
+    MOVE_BY = 2,
+    /// `lineTo(x, y)`.
+    LINE_TO = 3,
+    /// `lineBy(dx, dy)`.
+    LINE_BY = 4,
+    /// `dot()`.
+    DOT = 5,
+    /// `polyline(points)`: the count of points, then each point's x and y.
+    POLYLINE = 6,
+    /// `polygon(points)`: as `POLYLINE`.
+    POLYGON = 7,
+    /// `rect(x, y, width, height)`.
+    RECT = 8,
+    /// `vector(digits, { multiplier })`.
+    VECTOR = 9,
+    /// `circle(radius)`.
+    CIRCLE = 10,
+    /// `circleThrough(x, y)`.
+    CIRCLE_THROUGH = 11,
+    /// `arc(cx, cy, degrees)`.
+    ARC = 12,
+    /// `curve(points, { closed })`.
+    CURVE = 13,
+    /// `fill(fn)`: the length of its body in whole numbers, then the body.
+    FILL = 14,
+    /// `ink(entry)`.
+    INK = 15,
+    /// `mode(m)`.
+    MODE = 16,
+    /// `negative(on)`.
+    NEGATIVE = 17,
+    /// `pattern(p, { multiplier })`.
+    PATTERN = 18,
+    /// `planes(mask)`.
+    PLANES = 19,
+    /// `shade(s)`.
+    SHADE = 20,
+    /// `text(string, options)`.
+    TEXT = 21,
+    /// `call(macrograph)`.
+    CALL = 22,
 }
 
 numbered! {
@@ -462,7 +615,16 @@ pub fn prelude() -> String {
         ("MAX_MIDI_BEND", i64::from(limits::MAX_MIDI_BEND)),
     ];
     table("BOUND", &mut bounds.iter().copied());
+    table("NP", &mut crate::host::naplps::program::table());
+    table("NP_BOUND", &mut crate::host::naplps::prelude_bounds().into_iter());
+    table("TT", &mut crate::teletext::prelude_numbers().iter().copied());
+    table("RG_FIELD", &mut RegisField::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table("RG_PAINT", &mut RegisPaint::ALL.iter().map(|(name, one)| (*name, i64::from(one.number()))));
+    table("RG_BOUND", &mut crate::host::regis_prelude_bounds().into_iter());
     out.push_str(include_str!("prelude.js"));
+    out.push_str(include_str!("host/naplps/prelude.js"));
+    out.push_str(crate::teletext::PRELUDE);
+    out.push_str(include_str!("regis.js"));
     // The web APIs (work package W2), inside the same function.
     crate::web::write_prelude(&mut out);
     out.push_str("\n})();\n");

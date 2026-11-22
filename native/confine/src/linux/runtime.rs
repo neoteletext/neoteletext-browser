@@ -100,7 +100,7 @@ fn needed(role: Role) -> Vec<PathBuf> {
                 std::env::var("PULSE_SERVER").ok().and_then(|server| server.strip_prefix(PULSE_LOCAL).map(PathBuf::from)).filter(|path| path.is_absolute()),
             );
         }
-        Role::Decoder | Role::Network | Role::Core | Role::Updater { .. } => {}
+        Role::Decoder | Role::Script | Role::Network | Role::Core | Role::Updater { .. } => {}
     }
     paths
 }

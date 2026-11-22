@@ -743,6 +743,13 @@ impl Container {
             self.machine.host().set_hidden(false);
             self.tell_both(EventKind::VISIBILITY, 0)?;
         }
+        // A ReGIS commit the last step's end refused is told first, so
+        // that a script hears of it before it draws again (section 6.2).
+        for context in DISPATCH_ORDER {
+            if let Some((numbers, payload)) = self.machine.host().regis_take_failure(context) {
+                self.deliver(context, EventKind::RG_COMMIT_FAILED, numbers, Given::Ints(&payload), self.time.callback)?;
+            }
+        }
         self.run_input(step, events, verdicts)?;
         self.run_network()?;
         self.run_timers()?;
@@ -777,9 +784,16 @@ impl Container {
         }
         self.step_used = Duration::ZERO;
         self.machine.host().begin_step(step.tick, step.flags.sound_allowed);
+        self.machine.host().regis_reports(step);
         let mut verdicts = vec![0_u8; step.events.len()];
         // A stop is noted where it happens; the step is answered either way.
         let _ = self.run_phases(step, events, &mut verdicts);
+        // The step's one ReGIS commit is checked by the renderer's
+        // validator here, inside the step's time: host time is the
+        // script's time (section 3.2).
+        let began = Instant::now();
+        self.machine.host().regis_commit();
+        self.step_used = self.step_used.saturating_add(began.elapsed());
         self.costs.last_step = self.step_used;
         self.costs.longest_step = self.costs.longest_step.max(self.step_used);
         // The budget over a second: this tick's time joins the window.

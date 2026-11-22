@@ -63,7 +63,7 @@ fn first_words(helper: &Started) -> Option<Vec<u8>> {
         }
         Program::Decoder => protocol::decoder::write_to_core(&mut bytes, &FromDecoder::Confined).ok()?,
         Program::Fetcher => protocol::fetcher::write_to_core_for(&mut bytes, protocol::fetcher::PROCESS_TAB, &FromFetcher::Confined).ok()?,
-        Program::Interface | Program::Keyboard | Program::Sound | Program::Updater => {}
+        Program::Interface | Program::Keyboard | Program::Sound | Program::Updater | Program::ScriptHost => {}
     }
     Some(bytes)
 }
@@ -240,7 +240,7 @@ impl Watch {
                         }
                     }
                 }
-                Program::Interface | Program::Keyboard | Program::Sound | Program::Updater => {}
+                Program::Interface | Program::Keyboard | Program::Sound | Program::Updater | Program::ScriptHost => {}
             }
         }
         assert!(self.unmapped < self.channels.len(), "the channels of {} helpers could not be told, of {}", self.unmapped, self.channels.len());
@@ -313,7 +313,7 @@ fn check_starts(core: &Core, requests: &[Request], described: &str) {
                 let shares = !arguments.iter().any(|argument| argument == "--no-http3" || argument == "--proxy");
                 assert_eq!(*udp_port, own.filter(|_| shares), "{described}: a fetcher's UDP port");
             }
-            Program::Keyboard | Program::Updater => assert_eq!(*udp_port, None, "{described} gave the {} a UDP port", program.name()),
+            Program::Keyboard | Program::Updater | Program::ScriptHost => assert_eq!(*udp_port, None, "{described} gave the {} a UDP port", program.name()),
         }
     }
 }

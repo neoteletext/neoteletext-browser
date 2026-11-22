@@ -41,7 +41,9 @@ pub mod link;
 pub mod machine;
 pub mod ops;
 pub mod probe;
+pub mod process;
 pub mod random;
+pub mod teletext;
 pub mod watchdog;
 pub mod web;
 
@@ -52,4 +54,5 @@ pub const API_VERSION: u16 = 1;
 pub use container::{Container, Costs, Settings, TimeLimits};
 pub use link::{InProcess, LinkError, ScriptLink};
 pub use machine::{Engine, Stop};
+pub use process::ProcessLink;
 pub use watchdog::Watchdog;

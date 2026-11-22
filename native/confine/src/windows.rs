@@ -169,7 +169,11 @@ fn spawn_in(spawn: &Spawn<'_>, sid: &ContainerSid) -> io::Result<Process> {
     let their_stderr = errors.as_ref().map_or(0, |(_, theirs)| theirs.raw());
     let information = start(spawn, &inherited, their_stdin.raw(), their_stdout.raw(), their_stderr, sid, &capabilities)
         .map_err(|error| io::Error::new(error.kind(), format!("cannot start in its AppContainer: {error}")))?;
-    report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Core) { "less privileged AppContainer" } else { "AppContainer" }));
+    report.layers.push(String::from(if matches!(spawn.role, Role::Decoder | Role::Script | Role::Core) {
+        "less privileged AppContainer"
+    } else {
+        "AppContainer"
+    }));
     let process = Owned::new(information.hProcess);
     let thread = Owned::new(information.hThread);
     // Into the job before it runs a single instruction.

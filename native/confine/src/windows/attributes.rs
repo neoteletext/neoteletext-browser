@@ -117,7 +117,7 @@ pub(super) fn start(
         | mitigation::IMAGE_LOAD_NO_LOW_LABEL_ALWAYS_ON;
     // No window system for those without a window. The sound helper keeps
     // it: Core Audio's COM apartments may need it.
-    if matches!(spawn.role, Role::Decoder | Role::Network | Role::Core | Role::Updater { .. }) {
+    if matches!(spawn.role, Role::Decoder | Role::Script | Role::Network | Role::Core | Role::Updater { .. }) {
         policy |= mitigation::WIN32K_SYSTEM_CALL_DISABLE_ALWAYS_ON;
     }
     let policy = [policy, 0_u64];
@@ -135,7 +135,7 @@ pub(super) fn start(
     };
     add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES as usize, &security, size_of::<SECURITY_CAPABILITIES>())?;
     let opt_out: u32 = PROCESS_CREATION_ALL_APPLICATION_PACKAGES_OPT_OUT;
-    if matches!(spawn.role, Role::Decoder | Role::Core) {
+    if matches!(spawn.role, Role::Decoder | Role::Script | Role::Core) {
         add_attribute(&attributes, PROC_THREAD_ATTRIBUTE_ALL_APPLICATION_PACKAGES_POLICY as usize, &opt_out, size_of::<u32>())?;
     }
     // SAFETY: an all-zero STARTUPINFOEXW is a valid value of a plain C struct.

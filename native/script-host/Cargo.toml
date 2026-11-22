@@ -1,0 +1,30 @@
+[package]
+name = "neoteletext-script-host"
+description = "The script-host process (script-api.md section 11.1, DEC-7266): one (tab, channel)'s scripts run in the script library's container, confined to its pipes, speaking the script link's messages and the web client's on its standard input and output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "script_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "neoteletext-script-host"
+path = "src/main.rs"
+
+# The script library and the messages, and nothing of the decoder, the
+# renderers that draw, the network or the interface (section 11.1).
+[dependencies]
+neoteletext-script = { path = "../script" }
+protocol.workspace = true
+confine.workspace = true
+# A context's fresh seed, from the operating system (script-api.md section
+# 13 item 7, TODO-7279 item 3): the workspace's ring, which the script
+# library already links for the same sources.
+ring.workspace = true
+
+[lints]
+workspace = true

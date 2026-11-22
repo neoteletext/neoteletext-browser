@@ -7,6 +7,8 @@
 
 use core::time::Duration;
 
+pub mod regis;
+
 /// A byte as the whole number a host call's argument is compared with.
 const fn wide(byte: u8) -> i32 {
     byte as i32
@@ -239,6 +241,11 @@ pub const MAX_HOST_STATE_BYTES: usize = 8 * 1024 * 1024;
 /// The operating system's limit on a script-host process's memory, set by
 /// the program that runs the library (work package F3).
 pub const SCRIPT_PROCESS_MEMORY_BYTES: usize = 128 * 1024 * 1024;
+
+/// The most redefinitions of one colour entry in a second: three flashes
+/// (section 10.5; the security review's finding S-10, TODO-7276: more
+/// than three flashes a second is unsafe for viewers).
+pub const MAX_COLOUR_SETS_PER_SECOND: usize = 6;
 
 /// The most random bytes one call gives: the Web Cryptography standard's
 /// quota for `getRandomValues`.
