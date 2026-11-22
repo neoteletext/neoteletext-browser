@@ -485,6 +485,14 @@ impl AddressSpace {
 /// page ask).
 pub const FILE_PAGE_SPACE: AddressSpace = AddressSpace::Loopback;
 
+/// The channel identity a web client is started with for a page opened
+/// from disk (DEC-7315 version 2, TODO-7395 step 1): its origin as it is
+/// written. Such a page has no channel address: its requests carry
+/// `Origin: null`, are cross-origin to every address, and send and keep
+/// no cookie. The trusted core starts one web client for each such page
+/// and tells it nothing of the file's path.
+pub const FILE_PAGE_IDENTITY: &str = "null";
+
 /// The referrer a request starts with (the Fetch standard's request
 /// referrer).
 #[derive(Clone, Debug, PartialEq, Eq)]

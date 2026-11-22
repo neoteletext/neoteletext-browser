@@ -388,6 +388,41 @@ fn a_request_from_a_script_host_without_the_network_is_not_relayed() {
     assert!(test.started(Program::Fetcher).is_empty(), "a web client was started");
 }
 
+/// DEC-7315 version 2 (TODO-7395 step 1): the script of a page opened
+/// from disk has the network. Its request starts a web client of that
+/// page alone, with the origin `null` for its identity and this
+/// computer's address space, whose sandbox reaches this computer; the
+/// script host is not ended.
+#[test]
+fn a_file_pages_request_starts_a_web_client_of_the_origin_null() {
+    let mut test = Test::piped(|helper| match helper.program {
+        Program::ScriptHost => Some(asks_the_network()),
+        _ => Some(Vec::new()),
+    });
+    // The channel as one opened from disk is: with no web address.
+    for tab in test.core.session.all_tabs_mut() {
+        tab.channel.web = None;
+    }
+    test.decoder_writes(&hello());
+    test.core.script_network(test.channel, true);
+    assert!(matches!(test.decoder_reads(), Some(FromScriptHost::Ready { .. })));
+    while test.pump(Duration::from_millis(500)) {}
+    assert_eq!(test.core.script_state(test.channel), ScriptState::Running);
+    let clients = test.started(Program::Fetcher);
+    assert_eq!(clients.len(), 1);
+    let [identity, flag, _token, space_flag, space] = clients[0].arguments.as_slice() else { panic!("{:?}", clients[0].arguments) };
+    assert_eq!((identity.as_str(), flag.as_str()), (protocol::web::FILE_PAGE_IDENTITY, "--web-client"));
+    assert_eq!((space_flag.as_str(), space.as_str()), ("--page-space", "loopback"));
+    assert!(clients[0].local_network, "its sandbox reaches this computer and the local network");
+    // The partition is the page's own: another page from disk, or a web
+    // channel, is never served by it.
+    let own = test.core.partition_of(test.channel).unwrap();
+    let mut other = own.clone();
+    other.file = Some(test.channel + 1);
+    assert_ne!(own, other);
+    assert_eq!(own.file, Some(test.channel));
+}
+
 /// Sections 11.1 and 11.3 (DEC-7268, DEC-7317 items 4 and 5, DEC-7333
 /// item 1): with the network reported, a script host's request reaches
 /// its partition's one web client, started with the channel's identity

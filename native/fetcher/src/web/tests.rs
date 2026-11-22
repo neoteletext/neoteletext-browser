@@ -7,6 +7,7 @@ mod support;
 
 mod cookies;
 mod fetching;
+mod file_page;
 mod hostile;
 mod protections;
 mod sockets;

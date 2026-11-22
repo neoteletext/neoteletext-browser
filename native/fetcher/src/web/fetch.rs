@@ -73,7 +73,7 @@ impl Engine {
     /// and whether it is a secure context, loaded over `https` or from
     /// this computer itself. Nothing of it is a script host's word.
     pub(crate) fn asker(&self) -> Asker {
-        Asker { space: self.space, secure: self.policy.folder().is_some_and(|folder| folder.scheme() == "https" || is_loopback(folder)) }
+        Asker { space: self.space, secure: self.policy.is_secure_context() }
     }
 }
 
@@ -303,7 +303,7 @@ impl<'a> Request<'a> {
     /// and whether it is a secure context, loaded over `https` or from
     /// this computer itself. Nothing of it is a script host's word.
     fn asker(&self) -> Asker {
-        Asker { space: self.space, secure: self.policy.folder().is_some_and(|folder| folder.scheme() == "https" || is_loopback(folder)) }
+        Asker { space: self.space, secure: self.policy.is_secure_context() }
     }
 
     /// Whether the request carries and keeps cookies (the standard's

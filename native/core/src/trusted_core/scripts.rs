@@ -190,13 +190,14 @@ impl Core {
     /// The decoder of `channel` reported whether a context of its scripts
     /// has the network (section 11.1: "it relays the network kinds only
     /// for a context the decoder reported with `network: true` and only
-    /// while `ChannelPolicy::network_allowed()` holds"). A channel that is
-    /// not a web channel, a file opened from disk, has none whatever its
-    /// decoder says (section 2, rule P6).
+    /// while `ChannelPolicy::network_allowed()` holds"). A web channel
+    /// and a page opened from disk each have a partition to ask through
+    /// (DEC-7315 version 2); a channel with none has no network whatever
+    /// its decoder says.
     pub(super) fn script_network(&mut self, channel: u32, reported: bool) {
-        let web = self.session.all_tabs().any(|tab| tab.channel.id == channel && tab.channel.web.is_some());
+        let served = self.partition_of(channel).is_some();
         if let Some(host) = self.scripts.hosts.get_mut(&channel) {
-            host.network = reported && web;
+            host.network = reported && served;
         }
     }
 

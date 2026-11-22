@@ -36,7 +36,8 @@ use protocol::fetcher::PROCESS_TAB;
 use protocol::script::FailReason;
 use protocol::script::relay::Relayed;
 use protocol::web::{
-    FromClientFrame, FromWebClient, MAX_WEB_CLIENTS, PARTITION_TOKEN_BYTES, PartitionToken, ToWebClient, relay_from_client, relay_to_client, write_to_client,
+    FILE_PAGE_IDENTITY, FILE_PAGE_SPACE, FromClientFrame, FromWebClient, MAX_WEB_CLIENTS, PARTITION_TOKEN_BYTES, PartitionToken, ToWebClient,
+    relay_from_client, relay_to_client, write_to_client,
 };
 use ring::rand::SecureRandom as _;
 
@@ -50,13 +51,17 @@ const END_WAIT: std::time::Duration = protocol::fetcher::FETCHER_END_WAIT;
 /// What decides which web client serves a channel's scripts: everything
 /// the process is started with but its token.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Partition {
+pub(super) struct Partition {
     /// The channel's address, which is its identity.
     channel: String,
     /// The tab is private: the private jar's.
     private: bool,
     /// Where it may connect: the local addresses allowed and the proxy.
     reach: Vec<String>,
+    /// For a page opened from disk, the channel it is: no two such pages
+    /// share a web client, as no two are of one origin (DEC-7315 version
+    /// 2; TODO-7395 step 1).
+    pub(super) file: Option<u32>,
 }
 
 /// One partition's web client.
@@ -117,7 +122,9 @@ fn start_client(broker: &Arc<Broker>, partition: Partition, generation: u64, eve
     let token = PartitionToken::new(bytes);
     let mut arguments = vec![partition.channel.clone(), String::from("--web-client"), token_argument(&token)];
     arguments.extend(partition.reach.iter().cloned());
-    let local_network = arguments.iter().any(|argument| argument == "--allow-local");
+    // A page opened from disk asks this computer and the local network
+    // unasked, so its web client's sandbox lets it.
+    let local_network = partition.file.is_some() || arguments.iter().any(|argument| argument == "--allow-local");
     // No UDP: a web client shares no HTTP/3 connection (REQ-6981 is a
     // channel fetcher's).
     let mut child = broker.spawn_fetcher(&arguments, local_network, None).map_err(|error| format!("cannot start the web client: {error}"))?;
@@ -129,13 +136,18 @@ fn start_client(broker: &Arc<Broker>, partition: Partition, generation: u64, eve
 }
 
 impl Core {
-    /// The partition of `channel`: its web address and its tab's jar.
-    /// None for a channel that is not a web channel, which has no
-    /// network (section 2, rule P6).
-    fn partition_of(&self, channel: u32) -> Option<Partition> {
+    /// The partition of `channel`: its web address and its tab's jar. A
+    /// page opened from disk has a partition of its own, with no address
+    /// but the origin `null` and this computer's address space, as the
+    /// behaviour DEC-7315 version 2 follows gives a local file.
+    pub(super) fn partition_of(&self, channel: u32) -> Option<Partition> {
         let tab = self.session.all_tabs().find(|tab| tab.channel.id == channel)?;
-        let address = tab.channel.web.clone()?;
-        Some(Partition { channel: address, private: tab.private, reach: Reach::of(&self.allow_local, &self.settings).web_client_arguments() })
+        let mut reach = Reach::of(&self.allow_local, &self.settings).web_client_arguments();
+        let Some(address) = tab.channel.web.clone() else {
+            reach.extend([String::from("--page-space"), String::from(FILE_PAGE_SPACE.name())]);
+            return Some(Partition { channel: String::from(FILE_PAGE_IDENTITY), private: tab.private, reach, file: Some(channel) });
+        };
+        Some(Partition { channel: address, private: tab.private, reach, file: None })
     }
 
     /// Passes a script host's request to its partition's web client,

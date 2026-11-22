@@ -319,11 +319,20 @@ pub(crate) struct Jar {
     suffixes: Suffixes,
     /// Whether it changed since it was last written out.
     changed: bool,
+    /// Whether it keeps nothing: the jar of a page opened from disk.
+    closed: bool,
 }
 
 impl Jar {
     pub(crate) fn new(suffixes: Suffixes) -> Self {
-        Self { store: CookieStore::new(), created: HashMap::new(), next: 0, suffixes, changed: false }
+        Self { store: CookieStore::new(), created: HashMap::new(), next: 0, suffixes, changed: false, closed: false }
+    }
+
+    /// The jar of a page opened from disk (DEC-7315 version 2, TODO-7395
+    /// step 1): it keeps no cookie, whoever sets one or hands one back,
+    /// and so sends none.
+    pub(crate) fn closed() -> Self {
+        Self { closed: true, ..Self::new(None) }
     }
 
     /// The public suffix list the jar keeps to.
@@ -351,7 +360,7 @@ impl Jar {
     /// Keeps the cookie the `Set-Cookie` value `header` of an answer from
     /// `url` sets, if the standard lets it be kept; whether it was.
     pub(crate) fn store(&mut self, url: &Url, header: &[u8], context: Context) -> bool {
-        self.read(url, header, context).is_some_and(|cookie| self.keep(url, cookie))
+        !self.closed && self.read(url, header, context).is_some_and(|cookie| self.keep(url, cookie))
     }
 
     /// The cookie `header` sets, checked against everything but the jar's
@@ -574,6 +583,9 @@ impl Jar {
     pub(crate) fn read_written(&mut self, mut bytes: &[u8]) {
         /// The cookies as they were kept went with same-site requests.
         const KEPT: Context = Context { same_site: true, navigation: true, safe_method: true };
+        if self.closed {
+            return;
+        }
         let now = now_unix();
         while !bytes.is_empty() {
             let read = (|| {
