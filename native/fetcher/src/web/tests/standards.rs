@@ -313,7 +313,6 @@ fn each_range_holds_its_edges_and_nothing_past_them() {
 /// `no-referrer` still names its origin; in the mode `same-origin` it is
 /// `null`.
 #[test]
-#[ignore = "fault TODO-7345 item 4: the referrer policy withholds Origin in the mode cors too (and fetching.rs asserts that)"]
 fn the_referrer_policy_withholds_origin_only_outside_the_mode_cors() {
     let server = serve(|_| Reply::ok("x"));
     let mut client = Client::new(&server.url("/a/"));

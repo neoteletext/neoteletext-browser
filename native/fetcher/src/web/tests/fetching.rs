@@ -300,11 +300,15 @@ fn cache_modes_and_the_referrer_set_the_headers_the_standard_gives() {
     // A request that is not a GET names its origin, or `null` under
     // `no-referrer`.
     let origin = format!("http://site.test:{}", server.port);
-    assert_eq!(asked_with("/a/o1", &|start| start.method = "POST".into()).header("origin"), Some(origin));
-    assert_eq!(
-        asked_with("/a/o2", &|start| (start.method, start.referrer_policy) = ("POST".into(), ReferrerPolicy::NoReferrer)).header("origin").as_deref(),
-        Some("null")
-    );
+    assert_eq!(asked_with("/a/o1", &|start| start.method = "POST".into()).header("origin"), Some(origin.clone()));
+    // Under `no-referrer` it still names its origin in the mode `cors`,
+    // a script's own, and is `null` only outside it (the standard's
+    // "append a request `Origin` header", step 3.1).
+    let no_referrer = |mode: Mode| {
+        move |start: &mut protocol::web::Start| (start.method, start.referrer_policy, start.mode) = ("POST".into(), ReferrerPolicy::NoReferrer, mode)
+    };
+    assert_eq!(asked_with("/a/o2", &no_referrer(Mode::Cors)).header("origin"), Some(origin.clone()));
+    assert_eq!(asked_with("/a/o3", &no_referrer(Mode::SameOrigin)).header("origin").as_deref(), Some("null"));
     client.finish().unwrap();
 }
 

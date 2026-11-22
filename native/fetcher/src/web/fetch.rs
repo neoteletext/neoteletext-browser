@@ -304,14 +304,18 @@ impl<'a> Request<'a> {
             return None;
         }
         let downgraded = self.client.as_ref().is_some_and(|client| client.scheme() == "https") && self.url.scheme() != "https";
-        let withheld = match self.referrer_policy {
-            ReferrerPolicy::NoReferrer => true,
-            ReferrerPolicy::NoReferrerWhenDowngrade | ReferrerPolicy::StrictOrigin | ReferrerPolicy::StrictOriginWhenCrossOrigin | ReferrerPolicy::Unset => {
-                downgraded
-            }
-            ReferrerPolicy::SameOrigin => !self.is_own(&self.url),
-            ReferrerPolicy::Origin | ReferrerPolicy::OriginWhenCrossOrigin | ReferrerPolicy::UnsafeUrl => false,
-        };
+        // The referrer policy withholds the origin only of a request that
+        // is not in the mode `cors` (the standard's step 3.1).
+        let withheld = self.start.mode != Mode::Cors
+            && match self.referrer_policy {
+                ReferrerPolicy::NoReferrer => true,
+                ReferrerPolicy::NoReferrerWhenDowngrade
+                | ReferrerPolicy::StrictOrigin
+                | ReferrerPolicy::StrictOriginWhenCrossOrigin
+                | ReferrerPolicy::Unset => downgraded,
+                ReferrerPolicy::SameOrigin => !self.is_own(&self.url),
+                ReferrerPolicy::Origin | ReferrerPolicy::OriginWhenCrossOrigin | ReferrerPolicy::UnsafeUrl => false,
+            };
         Some(if withheld { "null".to_owned() } else { self.origin() })
     }
 
