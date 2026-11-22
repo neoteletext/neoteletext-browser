@@ -42,15 +42,25 @@ const LIMIT: Duration = Duration::from_secs(60);
 /// media type each is served with. The channel file names a script for
 /// the channel, one for page 100 and one for page 101; page 101's own
 /// file names another, which wins (section 12.6).
-const FILES: [(&str, &str, &str); 11] = [
+const FILES: [(&str, &str, &str); 12] = [
     (
         "channel.ttx",
         "application/vnd.neoteletext+json",
-        r#"{"name":"Harbour","initial_page":"100","scripts":{"channel":"channel.js","pages":{"100":"p100.js","101":"other.js","201":"js201.js","300":"js300.js","400":"js400.js"}}}"#,
+        r#"{"name":"Harbour","initial_page":"100","scripts":{"channel":"channel.js","pages":{"100":"p100.js","101":"other.js","201":"js201.js","202":"ticks.js","300":"js300.js","400":"js400.js"}}}"#,
     ),
     ("100.tti", "text/x-teletext-tti", "PN,10000\nSC,0000\nPS,8000\nOL,1,PAGE ONE HUNDRED\n"),
     ("101.tti", "text/x-teletext-tti", "PN,10100\nSC,0000\nPS,8000\nJS,own.js\nOL,1,PAGE ONE OH ONE\n"),
-    ("channel.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"c\"]} */ nt.log('channel');"),
+    (
+        "channel.js",
+        "text/javascript",
+        "/*! nt {\"api\":1,\"keys\":[\"c\"],\"tick\":6} */ nt.log('channel'); nt.addEventListener('tick', () => console.log('channel ticks'));",
+    ),
+    // A JavaScript page whose script ticks and has a timer (TODO-7423).
+    (
+        "ticks.js",
+        "text/javascript",
+        "/*! nt {\"api\":1,\"keys\":[\"k\"],\"tick\":6} */ nt.addEventListener('tick', () => console.log('page ticks')); setInterval(() => console.log('page timer'), 100);",
+    ),
     ("p100.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"1\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY P100');"),
     ("other.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"x\"]} */ nt.teletext.page.put(5, 0, 'OTHER');"),
     ("own.js", "text/javascript", "/*! nt {\"api\":1,\"keys\":[\"o\"]} */ nt.teletext.page.put(5, 0, 'DRAWN BY OWN');"),
@@ -363,5 +373,84 @@ fn a_javascript_page_opens_blank_in_its_renderer_and_its_script_runs() {
         browser.core.tick().and_then(|()| browser.core.flush()).unwrap();
     }
     assert!(matches!(browser.core.session.tabs[0].channel.failed, Some((_, Some(0x555)))), "{:?}", browser.core.session.tabs[0].channel.failed);
+    shut_down(browser.core);
+}
+
+/// Runs the event loop for `time`.
+fn run(browser: &mut Browser, time: Duration) {
+    let until = Instant::now() + time;
+    while Instant::now() < until {
+        if let Ok(event) = browser.incoming.recv_timeout(Duration::from_millis(20)) {
+            assert_eq!(handle(&mut browser.core, event), Ok(true), "an event of the helpers");
+        }
+        browser.core.tick().and_then(|()| browser.core.flush()).unwrap();
+    }
+}
+
+/// Section 3.1's table and TODO-7423, through the real fetcher, decoder
+/// and confined script host, with the intents an interface gives: a tab
+/// hidden behind another pauses both of its contexts (no tick, no
+/// timer), and shown again both go on; and the tab already in front
+/// chosen again changes nothing: its scripts tick on and its page keeps
+/// its keys, though the interface says nothing new of the page.
+#[test]
+fn a_hidden_tab_pauses_its_scripts_and_the_tab_in_front_chosen_again_changes_nothing() {
+    confine::raise_descriptor_limit().unwrap();
+    let mut browser = Browser::start();
+    // A new tab opens the same channel on this computer, never the
+    // default home page.
+    browser.core.settings.home = browser.core.session.tabs[0].address().unwrap().text.clone();
+    browser.open(0x202);
+    assert!(browser.until_claimed(&["c", "k"]), "page 202's script never ran: {:?}", browser.core.script_claims(browser.channel));
+    let channel = browser.channel;
+    let lines = ["channel ticks", "page ticks", "page timer"];
+    // How many of each line the channel's log has gained since last
+    // asked: the console opened afresh gives the whole log.
+    let mut seen = [0_usize; 3];
+    let mut gained = |browser: &mut Browser| -> [usize; 3] {
+        browser.core.console.set_open(false);
+        browser.core.console.set_open(true);
+        let said = format!("{:?}", browser.core.console.updates(Some(channel)));
+        browser.core.console.set_open(false);
+        let now = lines.map(|line| said.matches(line).count());
+        let more = [now[0].saturating_sub(seen[0]), now[1].saturating_sub(seen[1]), now[2].saturating_sub(seen[2])];
+        seen = now;
+        more
+    };
+    // The scripts' start takes its time on a loaded machine: wait for the
+    // first tick of each context and the timer's first firing.
+    let mut first = [0_usize; 3];
+    let deadline = Instant::now() + LIMIT;
+    while first.contains(&0) && Instant::now() < deadline {
+        run(&mut browser, Duration::from_millis(200));
+        for (total, more) in first.iter_mut().zip(gained(&mut browser)) {
+            *total += more;
+        }
+    }
+    assert!(first.iter().all(|count| *count > 0), "both contexts tick and the page's timer runs: {first:?}");
+    // The tab already in front is chosen again (its own key): nothing
+    // changes, and the interface says nothing new.
+    assert_eq!(browser.core.intent(ToCore::SelectTab(0)), Ok(true));
+    run(&mut browser, Duration::from_secs(1));
+    let again = gained(&mut browser);
+    assert!(again.iter().all(|count| *count > 0), "chosen again, everything goes on: {again:?}");
+    let key = PageKey { channel, page: 0x202 };
+    assert_eq!(browser.core.typing.opened_page(), Some(key), "and the page is still the open one, with its keys");
+    assert_eq!(browser.core.typing.rules_open(channel), browser.core.script_claims(channel).map(|claims| claims.page));
+    // Another tab in front: both contexts pause.
+    assert_eq!(browser.core.intent(ToCore::NewTab), Ok(true));
+    run(&mut browser, Duration::from_millis(500));
+    gained(&mut browser);
+    run(&mut browser, Duration::from_secs(1));
+    let hidden = gained(&mut browser);
+    assert_eq!(hidden, [0, 0, 0], "hidden: no tick and no timer of either context");
+    assert_eq!(browser.core.script_state(channel), ScriptState::Running);
+    // The first tab comes back, and the interface says its page is open.
+    assert_eq!(browser.core.intent(ToCore::SelectTab(0)), Ok(true));
+    browser.open(0x202);
+    run(&mut browser, Duration::from_secs(1));
+    let back = gained(&mut browser);
+    assert!(back.iter().all(|count| *count > 0), "shown again, both contexts go on: {back:?}");
+    assert_eq!(browser.core.script_state(channel), ScriptState::Running);
     shut_down(browser.core);
 }

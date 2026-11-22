@@ -1043,3 +1043,17 @@ fn the_bounds_are_their_owners() {
     assert_eq!(StepFlags::of(0b1_0000).unwrap(), StepFlags { sound_allowed: true, ..StepFlags::default() });
     assert_eq!(pack([true, false]), 1, "a verdict's bit 0 is the default cancelled");
 }
+
+/// TODO-7414: a script's log line is shown at the level its level means,
+/// by the one mapping: an error and a warning as themselves, and a
+/// debug, a log and an info line as information; every level there is
+/// has its name, in the order `console`'s methods number them.
+#[test]
+fn a_scripts_log_level_is_shown_as_what_it_means() {
+    use crate::console::Level;
+    use crate::script::batch::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_LOG, LOG_WARN, MAX_LOG_LEVEL, console_level};
+    assert_eq!([LOG_DEBUG, LOG_LOG, LOG_INFO, LOG_WARN, LOG_ERROR], [0, 1, 2, 3, 4]);
+    assert_eq!(MAX_LOG_LEVEL, LOG_ERROR);
+    let shown: Vec<Level> = (0..=MAX_LOG_LEVEL).map(console_level).collect();
+    assert_eq!(shown, [Level::Info, Level::Info, Level::Info, Level::Warning, Level::Error]);
+}

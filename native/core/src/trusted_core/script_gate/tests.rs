@@ -604,18 +604,18 @@ fn the_log_says_why_a_channels_scripts_stopped() {
     assert_eq!(viewer.core.script_state(channel), ScriptState::Stopped(FailReason::Memory));
     let said = logged(&mut viewer);
     assert!(said.contains("a memory limit was passed") && said.contains("QUICKJS_HEAP_BYTES passed"), "{said}");
+    assert_eq!(said.matches("were stopped").count(), 1, "one line for one stop: {said}");
     // The viewer's stop says so.
     let mut viewer = Viewer::new();
     viewer.core.intent(ToCore::StopScripts).unwrap();
-    assert!(logged(&mut viewer).contains("the viewer stopped the page's program"));
+    let said = logged(&mut viewer);
+    assert_eq!(said.matches("the viewer stopped the page's program").count(), 1, "said once: {said}");
 }
 
 /// Section 3.1's table and TODO-7405: only a hidden tab pauses a
 /// channel's scripts. A change of the open page, the page chosen again,
 /// and the tab's own key pressed for the tab already in front tell the
-/// decoder that the tab is shown, whatever they say of the open page;
-/// another tab in front tells it the tab is hidden, and coming back that
-/// it is shown, before the page is named.
+/// decoder that the tab is shown, whatever they say of the open page.
 #[test]
 fn only_a_hidden_tab_is_told_as_hidden() {
     let shown = |told: &[ToDecoder]| -> Vec<bool> {
@@ -634,21 +634,12 @@ fn only_a_hidden_tab_is_told_as_hidden() {
     assert!(!shown(&told).contains(&false), "a change of page hides nothing: {told:?}");
     // The tab's own key, for the tab already in front.
     viewer.core.intent(ToCore::SelectTab(0)).unwrap();
-    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
-    assert!(!shown(&viewer.decoder()).contains(&false), "the tab in front chosen again is not hidden");
-    // Another tab comes in front, and this one comes back.
-    viewer.core.intent(ToCore::NewTab).unwrap();
-    viewer.core.intent(ToCore::Opened(None)).unwrap();
-    let told = viewer.decoder();
-    assert_eq!(shown(&told).last(), Some(&false), "{told:?}");
-    assert!(told.iter().any(|message| matches!(message, ToDecoder::RulesPage(None))), "{told:?}");
-    viewer.core.intent(ToCore::SelectTab(0)).unwrap();
-    viewer.core.intent(ToCore::Opened(Some(next))).unwrap();
-    let told = viewer.decoder();
-    let place = |wanted: fn(&ToDecoder) -> bool| told.iter().position(wanted);
-    let (said_shown, named) =
-        (place(|message| matches!(message, ToDecoder::Script(ScriptOrder::TabShown(true)))), place(|message| matches!(message, ToDecoder::RulesPage(Some(_)))));
-    assert!(said_shown.is_some() && said_shown < named, "shown again, then its page: {told:?}");
+    assert_eq!(viewer.decoder(), [], "the tab in front chosen again tells its decoder nothing");
+    // The tab's own key changes nothing at all: the page is still the
+    // open one, and the decoder is told nothing (TODO-7423). Another tab
+    // in front, and this one coming back, is tested with the real
+    // decoder and script host (`scripts/loading_tests.rs`).
+    assert_eq!(viewer.core.typing.opened_page(), Some(next));
     assert_eq!(viewer.core.script_state(viewer.channel()), ScriptState::Running);
 }
 

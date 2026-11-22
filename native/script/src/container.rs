@@ -39,8 +39,8 @@ use crate::random::math_seed;
 use crate::watchdog::Watchdog;
 
 /// The log levels the container itself writes at: a warning, an error.
-const LEVEL_WARN: u8 = 3;
-const LEVEL_ERROR: u8 = 4;
+const LEVEL_WARN: u8 = protocol::script::batch::LOG_WARN;
+const LEVEL_ERROR: u8 = protocol::script::batch::LOG_ERROR;
 /// The bits of a pointer event's first whole number that hold the action.
 const POINTER_ACTION_MASK: i32 = 0x0F;
 /// The whole numbers a pointer event's payload starts with: the pointer's

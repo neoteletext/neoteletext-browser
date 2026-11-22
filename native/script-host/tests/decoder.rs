@@ -309,14 +309,18 @@ fn a_script_that_never_returns_is_stopped_and_the_page_file_stays() {
 fn a_change_of_page_and_a_hidden_tab_stop_no_script() {
     let (first, second) = (PageSub::new(0x100, 0), PageSub::new(0x101, 0));
     let file = b"PN,10000\nSC,0000\nPS,8000\nOL,1,PAGE ONE\n\nPN,10100\nSC,0000\nPS,8000\nOL,1,PAGE TWO\n";
-    let channel = br#"/*! nt {"api":1} */
+    let channel = br#"/*! nt {"api":1,"tick":6} */
+        nt.addEventListener("tick", () => console.log("channel tick"));
+        setInterval(() => console.log("channel timer"), 100);
         nt.addEventListener("pageshow", (e) => console.log("channel pageshow " + e.page.number));
         nt.addEventListener("pagehide", (e) => console.log("channel pagehide " + e.page.number));
         nt.addEventListener("visibilitychange", () => console.log("channel hidden " + nt.hidden));"#;
     let page_one = br#"/*! nt {"api":1} */
         nt.addEventListener("close", () => console.log("one closed"));
         console.log("one runs");"#;
-    let page_two = br#"/*! nt {"api":1} */
+    let page_two = br#"/*! nt {"api":1,"tick":6} */
+        nt.addEventListener("tick", () => console.log("two tick"));
+        setInterval(() => console.log("two timer"), 100);
         nt.addEventListener("visibilitychange", () => console.log("two hidden " + nt.hidden));
         console.log("two runs");"#;
     let source = |level: ContextId, page: PageSub, name: &str, bytes: &[u8]| {
@@ -344,16 +348,49 @@ fn a_change_of_page_and_a_hidden_tab_stop_no_script() {
     assert!(place("channel pagehide 100") < place("channel pageshow 101"), "{logged:?}");
     assert!(!logged.iter().any(|line| line.contains("hidden")), "a change of page hides no tab: {logged:?}");
     assert!(browser.scripts.running());
+    // Both contexts tick and their timers run (TODO-7423).
+    let count = |browser: &Browser, line: &str| browser.logged().iter().filter(|logged| logged.as_str() == line).count();
+    let lines = ["channel tick", "channel timer", "two tick", "two timer"];
+    let counts = |browser: &Browser| lines.map(|line| count(browser, line));
+    let run_for = |browser: &mut Browser, time: Duration| {
+        let began = Instant::now();
+        browser.run_until(|_| began.elapsed() >= time);
+    };
+    let more = |browser: &mut Browser, what: &str| {
+        let before = counts(browser);
+        run_for(browser, Duration::from_millis(600));
+        let after = counts(browser);
+        assert!(
+            before.iter().zip(after).all(|(before, after)| after > *before),
+            "{what}: every tick and timer of both contexts goes on: {before:?} then {after:?}"
+        );
+    };
+    more(&mut browser, "on the page");
+    // The trusted core names no page and the same page again, as when the
+    // tab already in front is chosen: nothing changes for the scripts.
+    browser.page(None);
+    more(&mut browser, "with no page named");
+    browser.page(Some(second));
+    more(&mut browser, "with the page named again");
+    assert!(!browser.logged().iter().any(|line| line.contains("hidden")), "and no tab was hidden");
     // The tab is hidden, then shown again.
     browser.shown(false);
     browser.run_until(|browser| (said(browser, "channel hidden true") && said(browser, "two hidden true")) || browser.scripts.stopped().is_some());
     assert_eq!(browser.scripts.stopped(), None, "a hidden tab pauses its scripts and stops none: {:?}", browser.reports);
     assert!(said(&browser, "channel hidden true") && said(&browser, "two hidden true"), "{:?}", browser.logged());
+    // Hidden, both contexts are paused: no tick and no timer of either.
+    run_for(&mut browser, Duration::from_millis(100));
+    let hidden = counts(&browser);
+    run_for(&mut browser, Duration::from_millis(600));
+    assert_eq!(counts(&browser), hidden, "no tick and no timer while the tab is hidden");
     browser.shown(true);
     browser.run_until(|browser| (said(browser, "channel hidden false") && said(browser, "two hidden false")) || browser.scripts.stopped().is_some());
     assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
     assert!(said(&browser, "channel hidden false") && said(&browser, "two hidden false"), "{:?}", browser.logged());
     assert!(browser.scripts.running());
+    // Shown again, both tick on and their timers run on.
+    more(&mut browser, "shown again");
+    assert_eq!(browser.scripts.stopped(), None, "{:?}", browser.reports);
 }
 
 /// Section 3.5, end to end through the real script host (TODO-7379 item
@@ -392,6 +429,37 @@ fn a_scripts_synthesizer_starts_and_plays_once_the_viewer_has_acted() {
     let sounds = browser.engine.take_sounds();
     assert!(sounds.iter().any(|sound| matches!(sound, Audio::Local { channel: 0, start } if start.gain == 100)), "the synthesizer's start: {sounds:?}");
     assert!(sounds.iter().any(|sound| matches!(sound, Audio::LocalMidi { channel: 0, status: 0x90, data1: 60, data2: 100 })), "its note: {sounds:?}");
+}
+
+/// TODO-7414, end to end through the real script host: each of
+/// `console`'s methods, and an uncaught exception, reaches the decoder's
+/// report at the level the protocol crate names for it, which the
+/// trusted core shows by the same crate's one mapping.
+#[test]
+fn a_scripts_log_lines_keep_their_levels() {
+    use protocol::script::batch::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_LOG, LOG_WARN};
+    let page = PageSub::new(0x100, 0);
+    let script = br#"/*! nt {"api":1,"tick":1} */
+        console.debug("d"); console.log("l"); console.info("i"); console.warn("w"); console.error("e");
+        let thrown = false;
+        nt.addEventListener("tick", () => { if (!thrown) { thrown = true; throw new Error("x"); } console.log("after"); });"#;
+    let browser = drawn(|| {
+        let mut browser = Browser::new(b"PN,10000\nSC,0000\nPS,8000\nOL,1,FILE ROW ONE\n");
+        browser.open(page, "100.js", script);
+        browser.run_until(|browser| browser.logged().iter().any(|line| line == "after") || browser.scripts.stopped().is_some());
+        browser
+    });
+    assert!(browser.scripts.stopped().is_none(), "{:?}", browser.reports);
+    let level = |starts: &str| {
+        browser.reports.iter().find_map(|report| match report {
+            ScriptReport::Log { level, text, .. } if text.starts_with(starts) => Some(*level),
+            _ => None,
+        })
+    };
+    assert_eq!(
+        [level("d"), level("l"), level("i"), level("w"), level("e"), level("uncaught")],
+        [Some(LOG_DEBUG), Some(LOG_LOG), Some(LOG_INFO), Some(LOG_WARN), Some(LOG_ERROR), Some(LOG_ERROR)]
+    );
 }
 
 /// Section 4.1 and principle 5 ("Fail open"), timed end to end through

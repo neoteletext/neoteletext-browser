@@ -182,11 +182,13 @@ fn a_page_change_ends_the_page_context_and_the_channel_context_lives_on() {
     fixture.show(Some(0x101));
     let (reports, link) = written(&mut fixture.out);
     assert!(matches!(link[0], ToScriptHost::ContextClose(ContextId::Page)), "{link:?}");
-    let ToScriptHost::Step(step) = &link[1] else { panic!("a step for the page's change: {link:?}") };
-    assert_eq!(
-        step.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(),
-        vec![(EventKind::PageHide, 0x100), (EventKind::PageShow, 0x101)]
-    );
+    // `pagehide` in a step of its own, ahead of anything of the next
+    // page: the script host drops the page's renderer state at it, and a
+    // new page's context, opened after, keeps what its top level draws.
+    let ToScriptHost::Step(hidden) = &link[1] else { panic!("a step for the page hidden: {link:?}") };
+    assert_eq!(hidden.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(), vec![(EventKind::PageHide, 0x100)]);
+    let ToScriptHost::Step(step) = &link[2] else { panic!("a step for the page shown: {link:?}") };
+    assert_eq!(step.events.iter().map(|event| (event.kind, event.numbers[0])).collect::<Vec<_>>(), vec![(EventKind::PageShow, 0x101)]);
     let claims = ScriptClaims { page: at(0x101), running: true, network: true, text: false, pointer: PointerClaim::None, wheel: false, keys: vec!["i".into()] };
     assert_eq!(reports, vec![ScriptReport::Claims(claims)]);
     assert!(fixture.scripts.page_context().is_none());

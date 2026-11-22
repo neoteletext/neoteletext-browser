@@ -628,6 +628,17 @@ impl Scripts {
                 changed = true;
             }
         }
+        // The channel context hears that the page before is hidden ahead
+        // of the new page's context opening, in a step of its own: the
+        // script host drops what the channel context drew, and the
+        // renderer state of the page left, at `pagehide` (section 3.1),
+        // and a new page's top level, which runs as its context opens,
+        // must not have its first drawings dropped with them.
+        if let Some(before) = self.shown.filter(|before| self.channel.is_some() && *before != open) {
+            self.push(Event { kind: EventKind::PageHide, numbers: [i32::from(before.page), i32::from(before.sub), 0, 0], payload: Vec::new() }, None, false);
+            self.shown = None;
+            self.step(engine, false, StepFlags::default(), out)?;
+        }
         if self.page.is_none()
             && wanted.is_some()
             && let Some(script) = self.pages.remove(&open)
@@ -645,13 +656,6 @@ impl Scripts {
         }
         // The channel context hears of the page shown (section 4.2).
         if self.channel.is_some() && self.shown != Some(open) {
-            if let Some(before) = self.shown {
-                self.push(
-                    Event { kind: EventKind::PageHide, numbers: [i32::from(before.page), i32::from(before.sub), 0, 0], payload: Vec::new() },
-                    None,
-                    false,
-                );
-            }
             let renderer = self.target(engine).map_or(Renderer::Teletext, |at| at.renderer);
             let shown = Event {
                 kind: EventKind::PageShow,
