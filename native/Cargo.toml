@@ -3,7 +3,7 @@
 # drawing back ends, the interface process and the trusted core.
 [workspace]
 resolver = "3"
-members = ["interface-core", "draw-raster", "draw-embedded", "protocol", "interface", "presenter", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "sound-output", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser", "dbus", "secret-store", "dialog", "script", "script-host", "script-run"]
+members = ["interface-core", "draw-raster", "draw-embedded", "protocol", "interface", "presenter", "core", "decoder", "fetcher", "site", "dock-menu", "web-opener", "keyboard", "confine", "sound", "sound-output", "update", "release-identity", "launcher", "os-install", "stub", "installer", "icon", "chooser", "dbus", "secret-store", "dialog", "script", "script-host", "script-run", "script-wpt"]
 # Built with a nightly compiler of its own (scripts/tools.sh).
 exclude = ["fuzz", "tuf"]
 

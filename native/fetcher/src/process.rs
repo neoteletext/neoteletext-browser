@@ -318,7 +318,19 @@ fn page_bytes(page: &neoteletext_web::agent::PageBytes<'_>, actions: &mut Vec<Ac
     }
 }
 
+/// What the agent put out, as what the loop does with it.
 fn collect(output: Output<'_>, actions: &mut Vec<Action>) {
+    if let Output::Event(event) = &output
+        && let Some(told) = scripts_told(event)
+    {
+        actions.extend(told.into_iter().map(Action::Tell));
+        return;
+    }
+    collect_other(output, actions);
+}
+
+/// [`collect`], for everything but a channel's scripts.
+fn collect_other(output: Output<'_>, actions: &mut Vec<Action>) {
     if let Some(net) = output.net() {
         actions.push(match net {
             NetOutput::Connect { connection, host, port, security } => Action::Connect { connection, host: host.to_owned(), port, security },
@@ -481,6 +493,71 @@ fn exchanged(method: neoteletext_web::http::Method, url: &str, status: u16, byte
     if bundle_missing(url, status) {
         actions.push(Action::BundleSettled);
     }
+}
+
+/// What an event of a channel's scripts tells the trusted core
+/// (script-api.md section 12.5 step 1), or none for any other event: a
+/// script the agent fetched goes in pieces, unread; one it could not
+/// fetch is said, so that its page runs without it; and scripts that are
+/// not used are said for the developer.
+fn scripts_told(event: &Event<'_>) -> Option<Vec<FromFetcher>> {
+    Some(match *event {
+        Event::Script { level, page, subcode, name, bytes } => script_pieces(level, page, subcode, name, bytes),
+        Event::ScriptFailed { level, page, subcode, name, failure } => {
+            eprintln!("neoteletext-fetcher: the script {name:?} of page {:03X} failed ({failure:?})", page.mpp());
+            // A name that is no script name names no script to forget.
+            let name = neoteletext_core::types::ScriptName::parse(name.as_bytes())?;
+            let name = String::from_utf8_lossy(name.as_bytes()).into_owned();
+            vec![FromFetcher::ScriptFailed { level: script_level(level), page: script_page(page, subcode), name }]
+        }
+        Event::ScriptsIgnored(why) => vec![FromFetcher::Notice(
+            match why {
+                neoteletext_web::agent::ScriptsIgnored::LiveChannel => "the channel is live, so the scripts its channel.ttx names are not run",
+                neoteletext_web::agent::ScriptsIgnored::NoRoom => "the table of scripts in channel.ttx is too long, so none of its scripts is run",
+            }
+            .to_owned(),
+        )],
+        _ => return None,
+    })
+}
+
+/// The context a script of the engine's `level` runs in.
+const fn script_level(level: neoteletext_web::scripts::ScriptLevel) -> protocol::script::ContextId {
+    match level {
+        neoteletext_web::scripts::ScriptLevel::Channel => protocol::script::ContextId::Channel,
+        neoteletext_web::scripts::ScriptLevel::Page => protocol::script::ContextId::Page,
+    }
+}
+
+/// The page and sub-code a script is for: a page with no sub-code is its
+/// sub-code 0 (script-api.md section 12.1: keys are exact).
+fn script_page(page: PageAddress, subcode: Option<SubCode>) -> protocol::rules::PageSub {
+    protocol::rules::PageSub::new(page.mpp(), subcode.map_or(0, SubCode::value))
+}
+
+/// A fetched script as the messages that carry it to the trusted core:
+/// pieces in order from its first byte. None for an empty script, a name
+/// that is no script name or a length no script has, which the agent
+/// does not give.
+fn script_pieces(level: neoteletext_web::scripts::ScriptLevel, page: PageAddress, subcode: Option<SubCode>, name: &str, bytes: &[u8]) -> Vec<FromFetcher> {
+    let Ok(total) = u32::try_from(bytes.len()) else { return Vec::new() };
+    if bytes.len() > protocol::script::MAX_SCRIPT_BYTES || neoteletext_core::types::ScriptName::parse(name.as_bytes()).is_none() {
+        return Vec::new();
+    }
+    let mut offset = 0_u32;
+    let mut pieces = Vec::new();
+    for piece in bytes.chunks(protocol::script::MAX_SOURCE_PIECE_BYTES) {
+        pieces.push(FromFetcher::Script(protocol::decoder::script::SourcePiece {
+            level: script_level(level),
+            page: script_page(page, subcode),
+            name: name.to_owned(),
+            total,
+            offset,
+            bytes: piece.to_vec(),
+        }));
+        offset = offset.saturating_add(u32::try_from(piece.len()).unwrap_or(u32::MAX));
+    }
+    pieces
 }
 
 /// What a part of a page's list of sub-pages asks of the loop (REQ-1888).
@@ -999,6 +1076,16 @@ fn tell_failures(transport: &mut Tcp, output: &CorePipe) -> Result<(), String> {
 /// trusted core checked the page and the sub-code (decision 112), and the
 /// agent queues and spaces the requests at its own rate.
 fn fetch(agent: &mut Agent<'_>, clock: &dyn Fn() -> Instant, asked: &ToFetcher, actions: &mut Vec<Action>) {
+    // A script a page file names, by its name alone: the agent refuses a
+    // name that is no script name and fetches it only from the channel's
+    // own folder (script-api.md section 12.5 step 2).
+    if let ToFetcher::FetchScript { page, name } = asked {
+        if let Some(address) = PageAddress::from_mpp(page.page) {
+            let subcode = (page.sub != 0).then(|| SubCode::new(page.sub));
+            agent.handle(clock(), Input::FetchScript { page: address, subcode, name }, &mut |out| collect(out, actions));
+        }
+        return;
+    }
     let input = match *asked {
         ToFetcher::FetchContents => Some(Input::FetchContents),
         ToFetcher::FetchPage { page } => PageAddress::from_mpp(page).map(|page| Input::FetchPage { page, subcode: None }),
@@ -1077,9 +1164,11 @@ impl Commands {
             ToFetcher::MeasureRoundTrip(on) => self.wakes.send(Wake::RoundTrip(on)).is_ok(),
             answer @ ToFetcher::StateAnswer { .. } => self.answers.send(answer).is_ok(),
             unprompted @ (ToFetcher::StateSendOffer | ToFetcher::StateSendNone(_)) => self.wakes.send(Wake::State(unprompted)).is_ok(),
-            asked @ (ToFetcher::FetchContents | ToFetcher::FetchPage { .. } | ToFetcher::FetchSubPages { .. } | ToFetcher::FetchSubPage { .. }) => {
-                self.wakes.send(Wake::Fetch(asked)).is_ok()
-            }
+            asked @ (ToFetcher::FetchContents
+            | ToFetcher::FetchPage { .. }
+            | ToFetcher::FetchSubPages { .. }
+            | ToFetcher::FetchSubPage { .. }
+            | ToFetcher::FetchScript { .. }) => self.wakes.send(Wake::Fetch(asked)).is_ok(),
             ToFetcher::TabOpens | ToFetcher::TabLeaves => false,
         }
     }

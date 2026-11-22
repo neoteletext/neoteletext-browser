@@ -925,7 +925,7 @@ impl Host {
                 batch.watch = Some(Watch { painted: Some(painted), tracked: None, wheel: None });
             }
         }
-        self.naplps.take_batch(&mut batch);
+        self.naplps_take(&mut batch);
         self.regis_take(&mut batch);
         batch.title = self.title.take();
         batch.navigate = self.navigate.take();
@@ -1117,9 +1117,19 @@ impl Host {
             | Op::WS_CLOSE
             | Op::URL_SET
             | Op::DECODE => self.web_operation(context, op, ints, payload),
-            Op::NP_COLOUR_DEFINE | Op::NP_COLOUR_SET | Op::NP_BLINK | Op::NP_PAINT | Op::NP_REPAINT | Op::NP_MEASURE => {
-                self.naplps_operation(context, op, ints, payload)
-            }
+            Op::NP_COLOUR_DEFINE
+            | Op::NP_COLOUR_SET
+            | Op::NP_BLINK
+            | Op::NP_PAINT
+            | Op::NP_REPAINT
+            | Op::NP_SYMBOL
+            | Op::NP_DRCS
+            | Op::NP_TEXTURE
+            | Op::NP_ACTOR
+            | Op::NP_LABEL
+            | Op::NP_ANIMATE
+            | Op::NP_REMOVE
+            | Op::NP_MEASURE => self.naplps_operation(context, op, ints, payload),
             Op::TT_PUT
             | Op::TT_CODES
             | Op::TT_BLIT
@@ -1340,7 +1350,8 @@ impl Host {
             held.scopes.retain(|scope| *scope != id);
             held.scope_stack.retain(|scope| *scope != id);
             held.timers.retain(|timer| timer.scope != id);
-            let removed = self.teletext.scope_end(context, id);
+            let mut removed = self.teletext.scope_end(context, id);
+            removed.extend(self.naplps_scope_end(context, id));
             if let Some(held) = self.context_mut(context) {
                 held.listens.retain(|(handle, _)| !removed.contains(handle));
             }
@@ -1596,7 +1607,7 @@ impl Host {
             }
             let _ = write!(out, "\"{name}\":{{\"used\":{used},\"limit\":{limit}}}");
         }
-        self.naplps.budget(&mut out);
+        self.naplps.budget(context, &mut out);
         self.teletext.budget(&mut out);
         self.regis_budget(context, &mut out);
         out.push('}');

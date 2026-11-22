@@ -157,6 +157,7 @@ pub(crate) fn broker() -> Result<(), String> {
         font: Arc::new(Mutex::new(None)),
     };
     let read_source = |path: &Path| read_given(path, &access, &places());
+    let read_script = |path: &Path, name: &str| read_script_given(path, name, &access, &places());
     let (chosen_picture, chosen_save) = (Arc::clone(&chooser.picture), Arc::clone(&chooser.save));
     let read_picture = move |path: &Path| read_chosen_picture(path, &chosen_picture, &places());
     let chosen_font = Arc::clone(&chooser.font);
@@ -175,6 +176,7 @@ pub(crate) fn broker() -> Result<(), String> {
     let environment = confine::environment;
     let handlers = Handlers {
         read_source: &read_source,
+        read_script: &read_script,
         open_web: &open_web,
         environment: &environment,
         viewer_keys_key: &viewer_keys_key,
@@ -232,6 +234,18 @@ fn read_given(path: &Path, access: &Mutex<Access>, places: &source::Places) -> R
         lock(access).read(&canonical, identity, keep);
     }
     Ok(read.into_bytes())
+}
+
+/// The script `name` of the page file at `path`, read for the core only
+/// when that file's grant stands, which it does once the file was given
+/// and read (the script API's specification section 12.7): from the
+/// file's own folder and nowhere else, by `source::read_script`'s rules.
+fn read_script_given(path: &Path, name: &str, access: &Mutex<Access>, places: &source::Places) -> Result<Vec<u8>, String> {
+    let canonical = path.canonicalize().map_err(|_| String::from(source::REFUSAL))?;
+    if !matches!(lock(access).admit(&canonical, Instant::now()), Admission::Granted(_)) {
+        return Err(source::REFUSAL.to_owned());
+    }
+    source::read_script(&canonical, name, places).map_err(String::from)
 }
 
 /// The home folder, as `places` takes it.

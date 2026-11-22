@@ -83,6 +83,7 @@ fn url_and_url_search_params_are_the_url_standards() {
         equal("dot segments", new URL("https://example.test/a/./b/../c").pathname, "/a/c");
         equal("a NUL in the input is the input's", new URL("https://example.test/a\0b").pathname, "/a%00b");
         equal("lone surrogate", new URL("https://example.test/?\ud800").search, "?%EF%BF%BD");
+        equal("an address that ends at an empty authority", new URL("foo://").href + "|" + new URL("foo://").host + "|" + new URL("foo://").origin, "foo://||null");
         throws("relative with no base", TypeError, "", () => new URL("/x"));
         throws("bad base", TypeError, "", () => new URL("/x", "nonsense"));
         throws("no argument", TypeError, "", () => new URL());
@@ -129,7 +130,7 @@ fn url_and_url_search_params_are_the_url_standards() {
         "##,
         silent(),
         1,
-        55,
+        56,
     );
 }
 

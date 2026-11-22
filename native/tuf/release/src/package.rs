@@ -150,7 +150,7 @@ fn chooser_plist(version: Version) -> String {
 
 /// The `AppArmor` profile every Linux version carries (`sandboxing.md`
 /// section 8.3; `installation-and-updates.md` section 14), for the default
-/// installation's root: the four programs that make namespaces, there
+/// installation's root: the five programs that make namespaces, there
 /// alone (decision 95). `neoteletext --install` writes and prints one for
 /// the root it installs in.
 fn apparmor() -> String {
@@ -400,13 +400,13 @@ mod tests {
     use super::*;
 
     /// Decision 95 (finding F-23): the profile every Linux release carries
-    /// lets only the four programs that make namespaces make them, at the
+    /// lets only the five programs that make namespaces make them, at the
     /// default installation's path, and says so.
     #[test]
     fn the_release_profile_names_only_the_programs_that_make_namespaces() {
         let profile = apparmor();
         assert!(
-            profile.contains("\"@{HOME}/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound}\""),
+            profile.contains("\"@{HOME}/.local/share/neoteletext/versions/*/{neoteletext,neoteletext-decoder,neoteletext-interface,neoteletext-sound,neoteletext-script-host}\""),
             "{profile}"
         );
         assert!(!profile.contains("neoteletext{,-*}"), "no pattern for every program: {profile}");

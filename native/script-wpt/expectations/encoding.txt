@@ -1,0 +1,310 @@
+# The web-platform-tests' encoding suite at commit 42e27408034f57afe4c726476d1a0bd96b873129, as run in the standalone runner.
+# Written by the harness (NEOTELETEXT_WPT_BLESS=1); reasons come from reasons.txt.
+# 47 files run, 156 not run here; cases: 11661 pass, 99 fail as a listed departure, 1 fail as a fault with its to-do (0 of them unlisted)
+# FILE <file> <harness status> <cases passed> <cases not passed>
+# <status> <reason> <file> <case>     for each case that does not pass
+# HARNESS <reason> <file> <status> <what was said>     for a file that did not run to its end
+# SKIP <why> <reason> <file>     for a file not run here
+FILE	encoding/api-basics.any.js	OK	6	0
+FILE	encoding/api-invalid-label.any.js?1-1000	OK	1000	0
+FILE	encoding/api-invalid-label.any.js?1001-2000	OK	1000	0
+FILE	encoding/api-invalid-label.any.js?2001-3000	OK	1000	0
+FILE	encoding/api-invalid-label.any.js?3001-last	OK	421	0
+FILE	encoding/api-replacement-encodings.any.js	OK	6	0
+FILE	encoding/api-surrogates-utf8.any.js	OK	6	0
+FILE	encoding/encodeInto-tail-unmodified.any.js	OK	1	0
+FILE	encoding/encodeInto.any.js	OK	56	55
+FILE	encoding/idlharness.any.js	NO-FILE	0	0
+FILE	encoding/iso-2022-jp-decoder.any.js	OK	38	0
+FILE	encoding/legacy-mb-schinese/gb18030/gb18030-decoder.any.js	OK	275	0
+FILE	encoding/legacy-mb-schinese/gbk/gbk-decoder.any.js	OK	82	0
+FILE	encoding/replacement-encodings.any.js	OK	0	12
+FILE	encoding/streams/backpressure.any.js	OK	4	0
+FILE	encoding/streams/decode-attributes.any.js	OK	28	0
+FILE	encoding/streams/decode-bad-chunks.any.js	OK	5	0
+FILE	encoding/streams/decode-ignore-bom.any.js	OK	12	0
+FILE	encoding/streams/decode-incomplete-input.any.js	OK	2	0
+FILE	encoding/streams/decode-non-utf8.any.js	OK	13	0
+FILE	encoding/streams/decode-split-character.any.js	OK	11	0
+FILE	encoding/streams/decode-utf8.any.js	NO-REPORT	0	0
+FILE	encoding/streams/encode-bad-chunks.any.js	OK	6	0
+FILE	encoding/streams/encode-utf8.any.js	OK	19	0
+FILE	encoding/streams/readable-writable-properties.any.js	OK	2	0
+FILE	encoding/textdecoder-arguments.any.js	OK	4	0
+FILE	encoding/textdecoder-byte-order-marks.any.js	OK	3	0
+FILE	encoding/textdecoder-copy.any.js	OK	1	1
+FILE	encoding/textdecoder-eof.any.js	OK	2	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?1-1000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?1001-2000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?2001-3000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?3001-4000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?4001-5000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?5001-6000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?6001-7000	OK	1000	0
+FILE	encoding/textdecoder-fatal-single-byte.any.js?7001-last	OK	168	0
+FILE	encoding/textdecoder-fatal-streaming.any.js	OK	8	0
+FILE	encoding/textdecoder-fatal.any.js	OK	36	0
+FILE	encoding/textdecoder-ignorebom.any.js	OK	4	0
+FILE	encoding/textdecoder-labels.any.js	OK	222	0
+FILE	encoding/textdecoder-mistakes.any.js	OK	108	0
+FILE	encoding/textdecoder-streaming.any.js	OK	16	16
+FILE	encoding/textdecoder-utf16-surrogates.any.js	OK	10	0
+FILE	encoding/textencoder-constructor-non-utf.any.js	OK	79	0
+FILE	encoding/textencoder-utf16-surrogates.any.js	OK	7	0
+FILE	encoding/unsupported-encodings.any.js	OK	0	14
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with Hi and destination length 0, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with A and destination length 10, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306} and destination length 4, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{1d306}A and destination length 3, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with U+d834AU+df06A\u{a5}Hi and destination length 10, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with AU+df06 and destination length 4, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 0, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 4, filler 0
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 0, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 4, filler 128
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 0, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	encodeInto() into SharedArrayBuffer with \u{a5}\u{a5} and destination length 4, offset 4, filler random
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: DataView, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Int8Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Int16Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Int32Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Uint16Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Uint32Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Uint8ClampedArray, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: BigInt64Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: BigUint64Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Float16Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Float32Array, backed by: SharedArrayBuffer
+FAIL	DEC-7282/11	encoding/encodeInto.any.js	Invalid encodeInto() destination: Float64Array, backed by: SharedArrayBuffer
+FAIL	D-9.1	encoding/encodeInto.any.js	encodeInto() and a detached output buffer
+HARNESS	TODO-7372/14b	encoding/idlharness.any.js	NO-FILE	no file resources/WebIDLParser.js
+FAIL	D-9.1	encoding/replacement-encodings.any.js	csiso2022kr - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	csiso2022kr - empty input decodes to empty output.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	hz-gb-2312 - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	hz-gb-2312 - empty input decodes to empty output.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-cn - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-cn - empty input decodes to empty output.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-cn-ext - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-cn-ext - empty input decodes to empty output.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-kr - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	iso-2022-kr - empty input decodes to empty output.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	replacement - non-empty input decodes to one replacement character.
+FAIL	D-9.1	encoding/replacement-encodings.any.js	replacement - empty input decodes to empty output.
+HARNESS	DEC-7282/11	encoding/streams/decode-utf8.any.js	NO-REPORT	uncaught: TypeError: not a function     at <anonymous> (<input>:5272:41)     at <anonymous> (<input>:5289:50)     at forEach (native)     at <eval> (<input>:528
+FAIL	DEC-7282/11	encoding/textdecoder-copy.any.js	Modify buffer after passing it in (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-8, 1 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-8, 2 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-8, 3 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-8, 4 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-8, 5 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16le, 1 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16le, 2 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16le, 3 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16le, 4 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16le, 5 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16be, 1 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16be, 2 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16be, 3 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16be, 4 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: utf-16be, 5 byte window (SharedArrayBuffer)
+FAIL	DEC-7282/11	encoding/textdecoder-streaming.any.js	Streaming decode: UTF-8 chunk tests (SharedArrayBuffer)
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-7 should not be supported
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-7 should not be supported
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32 with BOM should decode as UTF-16LE
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32 with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32 with BOM should decode as UTF-16LE
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32 with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32LE with BOM should decode as UTF-16LE
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32LE with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32le with BOM should decode as UTF-16LE
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32le with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32be with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	UTF-32be with BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32be with no BOM should decode as UTF-8
+FAIL	D-9.1	encoding/unsupported-encodings.any.js	utf-32be with BOM should decode as UTF-8
+SKIP	PAGE	D-9.1	encoding/big5-encoder.html
+SKIP	PAGE	D-9.1	encoding/bom-handling.html
+SKIP	PAGE	D-9.1	encoding/eof-shift_jis.html
+SKIP	PAGE	D-9.1	encoding/eof-utf-8-one.html
+SKIP	PAGE	D-9.1	encoding/eof-utf-8-three.html
+SKIP	PAGE	D-9.1	encoding/eof-utf-8-two.html
+SKIP	PAGE	D-9.1	encoding/iso-2022-jp-encoder.html
+SKIP	PAGE	D-9.1	encoding/json-document-utf8.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-decode-cseucpkdfmtjapanese.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-decode-errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-decode-x-euc-jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-decode.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-cseucpkdfmtjapanese.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form-x-euc-jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-form.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp-encode-href.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp_chars-cseucpkdfmtjapanese.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp_chars-x-euc-jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp_chars.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/euc-jp/eucjp_errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-csiso2022jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode-errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-decode.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-csiso2022jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form-errors-stateful.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-form.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp-encode-href.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_chars-csiso2022jp.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_chars.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/iso-2022-jp/iso2022jp_errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-csshiftjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-ms932.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-ms_kanji.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-shift-jis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-windows-31j.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode-x-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-decode.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-csshiftjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-ms932.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-ms_kanji.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-shift-jis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-windows-31j.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form-x-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-form.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-href-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis-encode-href.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-csshiftjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-ms932.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-ms_kanji.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-shift-jis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-windows-31j.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars-x-sjis.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_chars.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-japanese/shift_jis/sjis_errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-cseuckr.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-csksc56011987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-iso-ir-149.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-korean.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-ks_c_5601-1987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-ks_c_5601-1989.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-ksc5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-ksc_5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode-windows-949.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-decode.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-cseuckr.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-csksc56011987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-iso-ir-149.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-korean.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ks_c_5601-1987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ks_c_5601-1989.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ksc5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-ksc_5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form-windows-949.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-form.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-href-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-href-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr-encode-href.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-cseuckr.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-csksc56011987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-iso-ir-149.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-korean.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-ks_c_5601-1987.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-ks_c_5601-1989.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-ksc5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-ksc_5601.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars-windows-949.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_chars.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-korean/euc-kr/euckr_errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-schinese/gb18030/gb18030-encoder.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-schinese/gbk/gbk-encoder.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-big5-hkscs.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-cn-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-csbig5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-errors.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-extra.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode-x-x-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-decode.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-enc-ascii.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-big5-hkscs.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-cn-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-csbig5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-extBa.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-extBb.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-errors-pua.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form-x-x-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-form.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-han.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-hangul.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-href-errors-misc.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5-encode-href.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars-big5-hkscs.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars-cn-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars-csbig5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars-x-x-big5.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_chars_extra.html
+SKIP	PAGE	D-9.1	encoding/legacy-mb-tchinese/big5/big5_errors.html
+SKIP	PAGE	D-9.1	encoding/remove-only-one-bom.html
+SKIP	PAGE	D-9.1	encoding/sharedarraybuffer.https.html
+SKIP	PAGE	D-9.1	encoding/single-byte-decoder-iframe.window.js
+SKIP	PAGE	D-9.1	encoding/single-byte-decoder.any.js?XMLHttpRequest
+SKIP	PAGE	D-9.1	encoding/single-byte-decoder.any.js?TextDecoder
+SKIP	PAGE	D-9.1	encoding/sniffing.html
+SKIP	PAGE	D-9.1	encoding/streams/invalid-realm.window.js
+SKIP	PAGE	D-9.1	encoding/streams/realms.window.js
+SKIP	PAGE	D-9.1	encoding/streams/stringification-crash.html
+SKIP	PAGE	D-9.1	encoding/unsupported-labels.window.js
+SKIP	PAGE	D-9.1	encoding/utf-32-from-win1252.html
+SKIP	PAGE	D-9.1	encoding/utf-32.html
