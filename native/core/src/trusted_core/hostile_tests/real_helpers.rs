@@ -177,6 +177,10 @@ fn is_strip_input(intent: &ToCore) -> bool {
         ToCore::Focused(_) => false,
         #[cfg(feature = "interaction")]
         ToCore::Editing(_) | ToCore::WallWithoutPage | ToCore::Input(_) => false,
+        // The browser's own key that stops a page's program fetches
+        // nothing: it ends the page's script host.
+        #[cfg(feature = "interaction")]
+        ToCore::StopScripts => false,
     }
 }
 

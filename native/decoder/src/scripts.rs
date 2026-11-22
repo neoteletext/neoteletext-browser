@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use neoteletext_rules::limits::{MAX_EVENTS_PER_TICK, MAX_KEYS_DOWN};
 use protocol::ProtocolError;
-use protocol::decoder::script::{ChannelFacts, PointerClaim, ScriptClaims, ScriptOrder, ScriptReport, SourcePiece};
+use protocol::decoder::script::{ChannelFacts, PointerClaim, PointerKind, ScriptClaims, ScriptOrder, ScriptReport, SourcePiece};
 use protocol::decoder::{FromDecoder, write_to_core};
 use protocol::rules::{KeyAction, PageSub, PointerAction, RuleInput};
 use protocol::script::link::{Asked, HostLink, Received, Stopped};
@@ -306,6 +306,32 @@ impl Scripts {
                 let event = Event { kind: EventKind::Wheel, numbers: [i32::from(delta_x), i32::from(delta_y), thing, 0], payload: Vec::new() };
                 let _ = sequence;
                 self.enqueue(claimed, event, None, false, out)?;
+            }
+            // Section 4.2: a pointer with its number and kind, the mouse's
+            // or a contact's. A press and a release are answered, claimed
+            // or not, as the rule table's input is.
+            ScriptOrder::Pointer(pointer) => {
+                let moving = pointer.action == PointerAction::Move;
+                let answered = matches!(pointer.action, PointerAction::Press | PointerAction::Release).then_some(pointer.sequence);
+                let claim = if moving { PointerClaim::Move } else { PointerClaim::Press };
+                let claimed = self.claimed(|manifest| manifest.pointer >= claim);
+                let at = self.target(engine);
+                let things = at.map(|at| engine.script_pick(at, pointer.x, pointer.y)).unwrap_or_default();
+                let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
+                let which = events::Which { id: i32::from(pointer.pointer), kind: pointer.kind, primary: pointer.primary };
+                let event = events::pointer(pointer.action, pointer.button, (pointer.x, pointer.y), teletext, &things, which);
+                // A move of one pointer never replaces another's (section
+                // 4.7 merges the waiting moves "for one target"): only the
+                // mouse's moves are merged, a contact's are each kept.
+                self.enqueue(claimed, event, answered, moving && pointer.kind == PointerKind::Mouse, out)?;
+            }
+            // Section 4.2: `navigate`, to the page context then the
+            // channel's, before the tab goes. Only a cause the browser's
+            // own controls made is told today, which no script can cancel,
+            // so no verdict is waited for.
+            ScriptOrder::Navigating { cause, target } => {
+                let event = Event { kind: EventKind::Navigate, numbers: [i32::from(cause.code()), 0, 0, 0], payload: target.into_bytes() };
+                self.enqueue(true, event, None, false, out)?;
             }
         }
         self.settle(engine, out)
@@ -692,7 +718,7 @@ impl Scripts {
                 let claimed = self.claimed(|manifest| manifest.pointer >= claim);
                 let things = at.map(|at| engine.script_pick(at, x, y)).unwrap_or_default();
                 let teletext = at.is_some_and(|at| at.renderer == Renderer::Teletext);
-                let event = events::pointer(action, button, (x, y), teletext, &things);
+                let event = events::pointer(action, button, (x, y), teletext, &things, events::Which::MOUSE);
                 self.enqueue(claimed, event, sequence, action == PointerAction::Move, out)?;
             }
             RuleInput::Drawing { leave, drawing } => {

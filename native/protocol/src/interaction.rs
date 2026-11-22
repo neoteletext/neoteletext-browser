@@ -6,6 +6,7 @@
 //! trusted core checks whole and encodes.
 
 mod intent;
+pub mod script;
 #[cfg(test)]
 pub(crate) mod tests;
 mod typing;
