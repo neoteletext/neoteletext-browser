@@ -23,7 +23,7 @@ use super::cookies::{self, Jar};
 use super::cors::{self, Allowed, PreflightCache};
 use super::integrity;
 use super::limits::{DECODED_RATIO_FLOOR, MAX_DECODED_BODY, MAX_DECOMPRESSED_RATIO, MAX_INTEGRITY_BODY, MAX_REDIRECTS, PIECE};
-use super::local::{Asker, space_of};
+use super::local::{Asker, is_as_declared, known_local, space_of};
 use super::policy::ChannelPolicy;
 use super::pool::{Answer, Body, Outgoing, Pool};
 use super::referrer::{DEFAULT_POLICY, policy_of, referer};
@@ -304,6 +304,11 @@ impl<'a> Request<'a> {
     /// for one connection and from the local network for the next is
     /// asked nothing more, and what it answered is not used.
     fn lands(&self, peer: Option<IpAddr>) -> Result<(), Reason> {
+        // An address the script declared the space of answers from that
+        // space, or the answer is not used (TODO-7316 item 10).
+        if !is_as_declared(peer, self.start.target_space) {
+            return Err(Reason::LocalRefused);
+        }
         lands_as_before(&self.landed, peer)
     }
 
@@ -613,7 +618,10 @@ pub(crate) async fn fetch(engine: &Engine, start: &Start, body: Option<Bytes>) -
         }
         // A page loaded securely asks nothing of an address that is not.
         let secure_client = request.client.as_ref().is_some_and(|client| client.scheme() == "https");
-        if secure_client && request.url.scheme() != "https" && !is_loopback(&request.url) {
+        // An address known to be of the local network is not held to that
+        // (TODO-7316 item 10): its devices have no certificates, and the
+        // rule on the local network decides whether it is asked.
+        if secure_client && request.url.scheme() != "https" && !is_loopback(&request.url) && !known_local(&request.url, start.target_space) {
             return Err(Reason::MixedContent);
         }
         // Main fetch, step 12: which kind of answer the script may have.

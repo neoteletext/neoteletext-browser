@@ -349,6 +349,47 @@ mod tests {
         }
     }
 
+    /// rdm TODO-7390: the addresses that break the `url` crate's slicing
+    /// by position (one that ends at an empty authority, a user name with
+    /// no password, and their neighbours), alone and joined to the
+    /// repository's folders as the update library joins a file's name,
+    /// are each refused by what they name, with no request made and no
+    /// panic. The transport reads an address by the crate's accessors
+    /// only; this is run in a debug build, where the crate's assertions
+    /// are on.
+    #[test]
+    fn an_address_that_breaks_position_slicing_is_refused_by_what_it_names() {
+        const HARD: [&str; 14] = [
+            "foo://",
+            "web://",
+            "foo://x",
+            "foo://?q",
+            "foo:",
+            "x://@",
+            "x://:@",
+            "x://u@",
+            "ssh://me@example.net",
+            "https://me@other.example/metadata/a",
+            "https://me@update.example/elsewhere",
+            "https://:pw@update.example/elsewhere?q",
+            "//me@update.example/elsewhere",
+            "http://me@update.example/metadata/a",
+        ];
+        let https = Https::new("update.example", HTTPS_PORT, None, None).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let bases = [Url::parse("https://update.example/metadata/").unwrap(), Url::parse("https://update.example/targets/").unwrap()];
+        let mut refused = 0;
+        for hard in HARD {
+            let urls = Url::parse(hard).into_iter().chain(bases.iter().filter_map(|base| base.join(hard).ok()));
+            for url in urls {
+                let Err(error) = runtime.block_on(https.fetch(url.clone())) else { panic!("{url} was fetched") };
+                assert!(matches!(error.kind(), TransportErrorKind::UnsupportedUrlScheme), "{url}: {error}");
+                refused += 1;
+            }
+        }
+        assert!(refused >= HARD.len(), "{refused} addresses were refused");
+    }
+
     /// Finding F-81: metadata is read to its own bound, far below a
     /// release file's, however long the body the host sends.
     #[test]
